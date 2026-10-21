@@ -1,5 +1,7 @@
 # yonder
 
+![yonder](branding/banner.png)
+
 An ActivityPub server in Rust, (almost) fully compatible with Mastodon
 
 ## Development setup

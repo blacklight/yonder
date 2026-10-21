@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 1280 320"
+   width="1280"
+   height="320"
+   role="img"
+   aria-label="yonder"
+   version="1.1"
+   id="svg6"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs6" />
+  <!--
+    Yonder banner source: logo mark plus the "yonder" wordmark on a dark
+    slate field, for the README header. Authored with a live text layer;
+    the shipped branding/banner.svg is produced by the generator script,
+    which runs Inkscape with text-to-path conversion so the wordmark
+    becomes outlines and renders identically everywhere (Poppins need not
+    be installed). Edit the wordmark here, then re-run the script.
+  -->
+  <style
+     id="style1">
+    .bg { fill: #0f172a; }
+    .mark-fill { fill: #0d9488; }
+    .mark-node { fill: #2dd4bf; }
+    .mark-stroke { fill: none; stroke: #0d9488; stroke-linecap: round; }
+    .wordmark {
+      fill: #e2e8f0;
+      font-family: 'Poppins', 'DejaVu Sans', sans-serif;
+      font-weight: 600;
+      font-size: 150px;
+      letter-spacing: 2px;
+    }
+  </style>
+  <rect
+     id="background"
+     class="bg"
+     width="1280"
+     height="320" />
+  <g
+     id="mark"
+     transform="translate(285 160) scale(0.5) translate(-256 -256)">
+    <g
+       id="rays">
+      <path
+         class="mark-stroke"
+         stroke-width="32"
+         d="M256 335 L256 80"
+         id="path1" />
+      <path
+         class="mark-stroke"
+         stroke-width="32"
+         d="M256 335 L92 140"
+         id="path2" />
+      <path
+         class="mark-stroke"
+         stroke-width="32"
+         d="M256 335 L420 140"
+         id="path3" />
+    </g>
+    <g
+       id="nodes">
+      <circle
+         class="mark-node"
+         cx="256"
+         cy="80"
+         r="50"
+         id="circle3" />
+      <circle
+         class="mark-node"
+         cx="92"
+         cy="140"
+         r="50"
+         id="circle4" />
+      <circle
+         class="mark-node"
+         cx="420"
+         cy="140"
+         r="50"
+         id="circle5" />
+    </g>
+    <g
+       id="home">
+      <circle
+         class="mark-fill"
+         cx="256"
+         cy="335"
+         r="105"
+         id="circle6" />
+    </g>
+  </g>
+  <path
+     d="m 617.27509,128.9 -21.75,58.05 -21.45,-58.05 h -23.55 l 33.3,81 -18,41.4 h 22.35 l 51.45,-122.4 z m 72.49994,84.45 c 24.15,0 43.35,-16.8 43.35,-42.9 0,-26.25 -18.75,-42.9 -42.75,-42.9 -24,0 -42.75,16.65 -42.75,42.9 0,26.1 18.15,42.9 42.15,42.9 z m 0,-18.3 c -11.25,0 -20.85,-8.1 -20.85,-24.6 0,-16.65 10.05,-24.6 21.15,-24.6 11.1,0 21.45,7.95 21.45,24.6 0,16.5 -10.65,24.6 -21.75,24.6 z M 808.77511,166.1 V 212 h 21 v -48.75 c 0,-22.95 -13.8,-35.55 -33.15,-35.55 -10.65,0 -19.65,4.5 -25.05,11.55 V 128.9 h -21 V 212 h 21 v -45.9 c 0,-13.35 7.35,-20.55 18.75,-20.55 11.1,0 18.45,7.2 18.45,20.55 z m 37.5499,4.05 c 0,25.95 16.8,43.2 37.95,43.2 13.05,0 22.35,-6 27.3,-13.65 V 212 h 21.3 V 101 h -21.3 v 39.45 c -5.7,-7.8 -16.2,-12.9 -27.15,-12.9 -21.3,0 -38.1,16.65 -38.1,42.6 z m 65.4,0.3 c 0,15.75 -10.5,24.45 -22.05,24.45 -11.25,0 -21.9,-9 -21.9,-24.75 0,-15.75 10.65,-24.15 21.9,-24.15 11.55,0 22.05,8.7 22.05,24.45 z M 991.1249,144.8 c 10.8,0 19.5,6.9 19.8,17.85 h -39.45 c 1.65,-11.4 9.6,-17.85 19.65,-17.85 z m 39.45,41.1 h -22.65 c -2.7,5.55 -7.65,10.05 -16.65,10.05 -10.5,0 -18.9,-6.9 -19.95,-19.2 h 60.75 c 0.45,-2.7 0.6,-5.4 0.6,-8.1 0,-24.75 -16.95,-41.1 -40.95,-41.1 -24.6,0 -41.7,16.65 -41.7,42.9 0,26.1 17.55,42.9 41.7,42.9 20.55,0 34.35,-12.15 38.85,-27.45 z m 40.4001,-15.3 c 0,-16.05 7.5,-20.85 19.95,-20.85 h 5.55 V 127.7 c -11.55,0 -20.25,5.55 -25.5,14.1 v -12.9 h -21 V 212 h 21 z"
+     id="wordmark"
+     class="wordmark"
+     style="font-weight:600;font-size:150px;font-family:Poppins, 'DejaVu Sans', sans-serif;letter-spacing:2px;text-anchor:middle;fill:#e2e8f0"
+     aria-label="yonder" />
+</svg>

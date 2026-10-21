@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Yonder">
+  <!--
+    Yonder maskable icon: full-bleed brand background with the mark in
+    white, scaled to sit inside the central 80% safe zone (a circle of
+    radius 40% of the icon size) so Android/PWA masking never clips it.
+    Mark geometry is the favicon variant, scaled 0.62 about the center.
+  -->
+  <style>
+    .bg { fill: #0d9488; }
+    .mark-fill { fill: #f8fafc; }
+    .mark-node { fill: #f8fafc; fill-opacity: 0.72; }
+    .mark-stroke { fill: none; stroke: #f8fafc; stroke-linecap: round; }
+  </style>
+
+  <rect id="background" class="bg" width="512" height="512"/>
+
+  <g id="mark" transform="translate(256 256) scale(0.62) translate(-256 -256)">
+    <g id="rays">
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L256 80"/>
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L92 140"/>
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L420 140"/>
+    </g>
+    <g id="nodes">
+      <circle class="mark-node" cx="256" cy="80" r="50"/>
+      <circle class="mark-node" cx="92" cy="140" r="50"/>
+      <circle class="mark-node" cx="420" cy="140" r="50"/>
+    </g>
+    <g id="home">
+      <circle class="mark-fill" cx="256" cy="335" r="105"/>
+    </g>
+  </g>
+</svg>

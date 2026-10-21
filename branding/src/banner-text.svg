@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" role="img" aria-label="yonder">
+  <!--
+    Yonder banner source: logo mark plus the "yonder" wordmark on a dark
+    slate field, for the README header. Authored with a live text layer;
+    the shipped branding/banner.svg is produced by the generator script,
+    which runs Inkscape with text-to-path conversion so the wordmark
+    becomes outlines and renders identically everywhere (Poppins need not
+    be installed). Edit the wordmark here, then re-run the script.
+  -->
+  <style>
+    .bg { fill: #0f172a; }
+    .mark-fill { fill: #0d9488; }
+    .mark-node { fill: #2dd4bf; }
+    .mark-stroke { fill: none; stroke: #0d9488; stroke-linecap: round; }
+    .wordmark {
+      fill: #e2e8f0;
+      font-family: 'Poppins', 'DejaVu Sans', sans-serif;
+      font-weight: 600;
+      font-size: 150px;
+      letter-spacing: 2px;
+    }
+  </style>
+
+  <rect id="background" class="bg" width="1280" height="320"/>
+
+  <g id="mark" transform="translate(285 160) scale(0.5) translate(-256 -256)">
+    <g id="rays">
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L256 80"/>
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L92 140"/>
+      <path class="mark-stroke" stroke-width="32" d="M256 335 L420 140"/>
+    </g>
+    <g id="nodes">
+      <circle class="mark-node" cx="256" cy="80" r="50"/>
+      <circle class="mark-node" cx="92" cy="140" r="50"/>
+      <circle class="mark-node" cx="420" cy="140" r="50"/>
+    </g>
+    <g id="home">
+      <circle class="mark-fill" cx="256" cy="335" r="105"/>
+    </g>
+  </g>
+
+  <text id="wordmark" class="wordmark" x="825" y="212" text-anchor="middle">yonder</text>
+</svg>

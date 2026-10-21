@@ -1,0 +1,15 @@
+DROP TABLE interaction_mentions;
+DROP TABLE interactions;
+DROP TABLE notifications;
+DROP TABLE emoji_reactions;
+DROP TABLE bookmarks;
+DROP TABLE favourites;
+DROP TABLE list_accounts;
+DROP TABLE lists;
+DROP TABLE account_notes;
+DROP TABLE subscriptions;
+DROP TABLE account_domain_blocks;
+DROP TABLE mutes;
+DROP TABLE blocks;
+DROP TABLE follow_requests;
+DROP TABLE follows;

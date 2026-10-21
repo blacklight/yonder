@@ -33,7 +33,12 @@ pub enum Command {
     /// Run the HTTP server (default).
     Serve,
     /// Run database migrations.
-    Migrate,
+    Migrate {
+        /// Roll back instead of applying: to the given target version
+        /// (exclusive), or one step back when omitted.
+        #[arg(long, value_name = "VERSION")]
+        revert: Option<Option<i64>>,
+    },
     /// Inspect instance configuration.
     Config {
         #[command(subcommand)]
@@ -56,27 +61,41 @@ pub async fn main() -> Result<()> {
     let path = cli.config.as_deref();
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(path).await,
-        Command::Migrate => migrate(path).await,
+        Command::Migrate { revert } => migrate(path, revert).await,
         Command::Config { command } => config(path, command),
     }
 }
 
 async fn serve(path: Option<&Path>) -> Result<()> {
-    let (config, _pool) = Config::load_full(path).await?;
+    let (config, pool) = Config::load_full(path).await?;
     logging::init(&config.server)?;
     tracing::info!(
         domain = %config.instance.domain,
         "resolved effective configuration"
     );
+    if config.server.migrate_on_start {
+        db::migrate::run(&pool).await?;
+        tracing::info!("schema migrations applied");
+    }
     tracing::info!("HTTP server lands in epic 04 — nothing to serve yet");
     Ok(())
 }
 
-async fn migrate(path: Option<&Path>) -> Result<()> {
+async fn migrate(path: Option<&Path>, revert: Option<Option<i64>>) -> Result<()> {
     let config = Config::load(path)?;
     logging::init(&config.server)?;
-    let _pool = db::connect(&config.database).await?;
-    tracing::info!("no migrations defined yet — schema lands in epic 02");
+    let pool = db::connect(&config.database).await?;
+    match revert {
+        Some(target) => {
+            db::migrate::revert(&pool, target).await?;
+            tracing::info!(target = ?target, "migrations reverted");
+        }
+        None => {
+            db::migrate::run(&pool).await?;
+            let versions = db::migrate::applied_versions(&pool).await?;
+            tracing::info!(?versions, "migrations applied");
+        }
+    }
     Ok(())
 }
 

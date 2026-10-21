@@ -1,0 +1,12 @@
+DROP TABLE status_pins;
+DROP TABLE preview_cards;
+DROP TABLE media_attachments;
+DROP TABLE tag_follows;
+DROP TABLE status_tags;
+DROP TABLE tags;
+DROP TABLE status_mentions;
+ALTER TABLE statuses DROP CONSTRAINT fk_statuses_poll;
+DROP TABLE poll_votes;
+DROP TABLE poll_options;
+DROP TABLE polls;
+DROP TABLE statuses;

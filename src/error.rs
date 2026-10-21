@@ -17,6 +17,9 @@ pub enum Error {
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    #[error("migration error: {0}")]
+    Migration(#[from] sqlx::migrate::MigrateError),
+
     #[error("redis error: {0}")]
     Redis(#[from] redis::RedisError),
 
@@ -57,6 +60,7 @@ impl Error {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Config(_)
             | Self::Database(_)
+            | Self::Migration(_)
             | Self::Redis(_)
             | Self::Io(_)
             | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -68,6 +72,7 @@ impl Error {
         match self {
             Self::Config(_) => "config",
             Self::Database(_) => "database",
+            Self::Migration(_) => "migration",
             Self::Redis(_) => "redis",
             Self::Io(_) => "io",
             Self::NotFound(_) => "not_found",

@@ -23,6 +23,9 @@ log_format = "pretty"
 # Trusted reverse-proxy hops used to resolve the client IP from
 # X-Forwarded-For. Keep 0 when no proxy is in front.
 trusted_proxy_hops = 0
+# Run pending schema migrations on startup. Disable to manage migrations
+# explicitly via `yonder migrate`.
+migrate_on_start = true
 
 [database]
 url = "postgres://yonder:yonder@localhost:5432/yonder"

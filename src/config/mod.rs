@@ -141,6 +141,9 @@ pub struct ServerConfig {
     /// Number of trusted reverse-proxy hops used when resolving the real
     /// client IP from `X-Forwarded-For`.
     pub trusted_proxy_hops: u16,
+    /// Run pending schema migrations on startup. Disable to manage
+    /// migrations explicitly via `yonder migrate`.
+    pub migrate_on_start: bool,
 }
 
 impl Default for ServerConfig {
@@ -151,6 +154,7 @@ impl Default for ServerConfig {
             log_level: "info".to_string(),
             log_format: LogFormat::Pretty,
             trusted_proxy_hops: 0,
+            migrate_on_start: true,
         }
     }
 }

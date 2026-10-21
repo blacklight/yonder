@@ -1,11 +1,12 @@
 //! PostgreSQL access via `sqlx`.
 //!
-//! The schema and migrations arrive in epic 02; this module ships the pool
-//! helper and the guarded `config_overlays` read the config loader needs.
-//! All queries are runtime-checked (`sqlx::query*`, never `query!` macros)
-//! so builds don't require a live `DATABASE_URL`.
+//! This module ships the pool helper, the embedded schema migrations, and
+//! the guarded `config_overlays` read the config loader needs. All queries
+//! are runtime-checked (`sqlx::query*`, never `query!` macros) so builds
+//! don't require a live `DATABASE_URL`.
 
 pub mod config_overlays;
+pub mod migrate;
 
 use std::time::Duration;
 

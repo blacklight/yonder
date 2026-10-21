@@ -1,0 +1,228 @@
+# Yonder configuration
+#
+# Copy this file to config.toml and adjust the values.
+#
+# Resolution order (highest priority wins):
+#   1. database overlays (config_overlays table, set via admin panel/CLI)
+#   2. environment variables — YONDER_ prefix, __ as nesting separator,
+#      e.g. YONDER_DATABASE__URL or YONDER_INSTANCE__NAME
+#   3. this file
+#   4. built-in defaults
+#
+# `yonder config list` prints every key as both `toml.path` and
+# `YONDER_ENV__NAME`. Prefer environment variables (or .env) for secrets.
+
+[server]
+host = "127.0.0.1"
+port = 3000
+# tracing filter directive (e.g. "info", "debug", "yonder=debug,sqlx=warn").
+# RUST_LOG overrides this when set.
+log_level = "info"
+# pretty | compact | json
+log_format = "pretty"
+# Trusted reverse-proxy hops used to resolve the client IP from
+# X-Forwarded-For. Keep 0 when no proxy is in front.
+trusted_proxy_hops = 0
+
+[database]
+url = "postgres://yonder:yonder@localhost:5432/yonder"
+max_connections = 10
+min_connections = 1
+# Seconds a request may wait for a pooled connection before failing.
+acquire_timeout_seconds = 5
+# Seconds an idle pooled connection is kept.
+idle_timeout_seconds = 600
+
+[redis]
+url = "redis://localhost:6379/0"
+
+[instance]
+# Public domain name of this instance (no scheme, no path).
+domain = "example.com"
+name = "Yonder"
+description = "A Mastodon-compatible ActivityPub server"
+short_description = ""
+# BCP-47 languages the instance primarily operates in.
+languages = ["en"]
+# contact_name = "Instance Admin"
+# contact_email = "admin@example.com"
+# contact_url = "https://example.com/@admin"
+# logo_path = "/var/lib/yonder/logo.png"
+# banner_path = "/var/lib/yonder/banner.png"
+# Server rules shown on the /about page.
+rules = []
+# Publish the list of moderated instances over API/UI.
+expose_moderated_instances = true
+# Enable the profile directory.
+directory_enabled = true
+
+[auth]
+# open | approval-required | closed
+registration_mode = "open"
+# Allow non-admin/mod users to generate invite links.
+invite_links_enabled = true
+require_email_verification = true
+# Signing secret for session/token material — set it via
+# YONDER_AUTH__SECRET_KEY rather than committing it here.
+# secret_key = ""
+access_token_expiry_minutes = 120
+refresh_token_expiry_days = 30
+
+[federation]
+enabled = true
+# When false, instance content requires authentication to view.
+public = true
+# Allow remote relays to subscribe to all public posts.
+allow_relays = true
+# Sign outbound object fetches with the instance HTTP signature.
+sign_fetches = true
+# Require HTTP signatures on inbound ActivityPub fetches.
+authorized_fetch = false
+# Maximum depth of incoming federated reply threads to fetch.
+max_reply_depth = 100
+follow_handshake_timeout_seconds = 30
+# Timeout for the initiation of outbound HTTP requests.
+request_timeout_seconds = 10
+# Timeout for the completion of outbound HTTP requests.
+receive_timeout_seconds = 30
+# Number of outbound HTTP connections to keep open.
+pool_size = 10
+# proxy_url = "http://proxy.example:3128"
+# user_agent = "Yonder/0.1.0"
+# Maximum number of items to fetch from a remote collection.
+max_collection_objects = 50
+# Remote activities older than this are pruned when no local user has
+# interacted with them.
+remote_activity_retention_days = 30
+# Optional 5-field cron expression scheduling remote-activity pruning.
+# remote_activity_prune_schedule = "0 4 * * *"
+
+[media]
+# local | s3
+backend = "local"
+local_path = "./media"
+# s3_endpoint = "https://s3.amazonaws.com"
+# s3_bucket = "yonder-media"
+# Prefer YONDER_MEDIA__S3_ACCESS_KEY / YONDER_MEDIA__S3_SECRET_KEY.
+# s3_access_key = ""
+# s3_secret_key = ""
+# s3_region = "us-east-1"
+# Maximum upload size in bytes (default: 50 MiB).
+max_upload_size = 52428800
+# Maximum avatar/banner upload size in bytes (default: 2 MiB).
+max_avatar_size = 2097152
+# Fetch and cache remote media attachments instead of serving them
+# from the remote instance.
+fetch_remote_media = false
+# Optional 5-field cron expression scheduling remote-media cleanup
+# (only relevant when fetch_remote_media = true).
+# remote_cleanup_schedule = "0 5 * * *"
+# Cleanup thresholds: total cached bytes / file age.
+remote_cleanup_max_bytes = 10737418240
+remote_cleanup_max_age_days = 7
+strip_exif = true
+max_attachments_per_post = 4
+
+[email]
+# Outgoing mail server. Email is disabled until smtp_host is set.
+# smtp_host = "smtp.example.com"
+smtp_port = 587
+# smtp_username = "yonder@example.com"
+# Prefer YONDER_EMAIL__SMTP_PASSWORD.
+# smtp_password = ""
+smtp_tls = true
+from_address = "yonder@example.com"
+# Send a welcome email to newly registered users.
+send_welcome = true
+
+[search]
+# Allow unauthenticated users to search.
+unauthenticated_enabled = true
+# Fetch remote results (actors, posts) when a search doesn't match locally.
+remote_fetch = true
+# Optional Elasticsearch/OpenSearch URL for indexed search.
+# elasticsearch_url = "http://localhost:9200"
+
+[http]
+# Enable CORS — only with an explicit origin allow-list.
+cors_enabled = false
+# cors_origins = ["https://app.example.com"]
+# mailto: contact embedded in WebPush requests.
+# webpush_subject = "mailto:admin@example.com"
+# VAPID keys for WebPush. Prefer YONDER_HTTP__VAPID_PRIVATE_KEY.
+# vapid_public_key = ""
+# vapid_private_key = ""
+
+# Rate limits: `limit` requests per `period_seconds`.
+# `authenticated_limit` overrides `limit` for authenticated requests.
+[rate_limit.search]
+limit = 20
+period_seconds = 60
+# authenticated_limit = 60
+
+[rate_limit.timeline]
+limit = 5
+period_seconds = 10
+
+[rate_limit.account_creation]
+limit = 5
+period_seconds = 60
+
+# Follow/unfollow requests.
+[rate_limit.relation]
+limit = 10
+period_seconds = 60
+
+# Status create/update/delete.
+[rate_limit.status]
+limit = 15
+period_seconds = 60
+
+[rate_limit.authentication]
+limit = 5
+period_seconds = 60
+
+[polls]
+max_options = 10
+max_option_chars = 200
+min_duration_seconds = 300
+# Default: 30 days.
+max_duration_seconds = 2592000
+
+[content]
+max_post_length = 5000
+max_bio_length = 5000
+max_profile_fields = 10
+max_profile_field_name_length = 250
+max_profile_field_value_length = 2000
+max_username_length = 100
+max_registration_message_length = 5000
+max_report_comment = 2000
+# Maximum number of items in RSS/Atom feeds.
+max_feed_items = 50
+# Maximum number of pinned posts per account.
+max_pinned_posts = 5
+# URL schemes accepted in posts, profile fields and link preview fetches.
+valid_url_schemes = ["http", "https"]
+# google-web | google-api | deepl | libretranslate
+translation_backend = "google-web"
+# Prefer YONDER_CONTENT__GOOGLE_TRANSLATE_API_KEY / YONDER_CONTENT__DEEPL_API_KEY.
+# google_translate_api_key = ""
+# deepl_api_key = ""
+# libretranslate_url = "https://translate.example.com"
+# text/plain | text/markdown
+default_post_content_type = "text/plain"
+
+[admin]
+# Remove follow relationships in both directions on user block.
+unfollow_blocked = true
+# Let a user see the (limited) profile of someone who blocked them.
+blockers_visible = false
+# Accounts that newly registered users automatically follow.
+auto_follow_accounts = []
+# Accounts that automatically follow every newly registered user.
+auto_followed_by = []
+# Frontend served by default.
+default_frontend = "yonder"
+# Days to retain moderation audit log entries.
+audit_log_retention_days = 365

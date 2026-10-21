@@ -1,0 +1,32 @@
+[package]
+name = "yonder"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "A Mastodon-compatible ActivityPub server in Rust"
+repository = "https://git.platypush.tech/blacklight/yonder"
+keywords = ["activitypub", "fediverse", "federation", "mastodon"]
+
+# axum 0.8, redis 0.27 and thiserror 2 are pinned to match pubby-sdk's
+# dependency versions — types from these crates cross the pubby boundary
+# once epic 06 lands the federation integration.
+[dependencies]
+axum = "0.8"
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+figment = { version = "0.10", features = ["env", "toml"] }
+redis = "0.27"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "postgres",
+    "runtime-tokio-rustls",
+    "json",
+] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+figment = { version = "0.10", features = ["env", "toml", "test"] }

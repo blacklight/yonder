@@ -1,0 +1,52 @@
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-yaml
+    -   id: check-toml
+    -   id: check-added-large-files
+    -   id: check-merge-conflict
+
+-   repo: local
+    hooks:
+    # Backend: format + lint. Only run when .rs files change.
+    -   id: cargo-fmt
+        name: cargo fmt
+        language: system
+        entry: cargo
+        args: ['fmt', '--all', '--', '--check']
+        files: \.rs$
+        pass_filenames: false
+
+    -   id: cargo-clippy
+        name: cargo clippy
+        language: system
+        entry: cargo
+        args: ['clippy', '--all-targets', '--', '-D', 'warnings']
+        files: \.rs$
+        pass_filenames: false
+
+    # Frontend: no-op until frontend/ exists (no file matches the pattern).
+    -   id: prettier-frontend
+        name: prettier (frontend)
+        language: system
+        entry: frontend/node_modules/.bin/prettier
+        args: ['--ignore-unknown', '--write']
+        files: ^frontend/
+
+    -   id: eslint-frontend
+        name: eslint (frontend)
+        language: system
+        entry: frontend/node_modules/.bin/eslint
+        args: ['--fix']
+        files: ^frontend/.*\.(js|jsx|ts|tsx|vue)$
+
+    # Markdown table of contents ([TOC]/[[_TOC_]] markers and
+    # <!-- toc -->/<!-- tocstop --> managed regions).
+    -   id: markdown-toc
+        name: Regenerate Markdown table of contents
+        language: system
+        entry: python3 scripts/update_toc.py
+        files: .*\.md$

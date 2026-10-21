@@ -5,12 +5,14 @@
 //! exists so `config list`/`config get` exercise the registry contract.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
 use crate::{
+    cache,
     config::{registry, Config},
-    db, logging, Error, Result,
+    db, jobs, logging, Error, Result,
 };
 
 #[derive(Debug, Parser)]
@@ -32,6 +34,8 @@ pub struct Cli {
 pub enum Command {
     /// Run the HTTP server (default).
     Serve,
+    /// Run the background-job worker (queue drain + scheduler).
+    Worker,
     /// Run database migrations.
     Migrate {
         /// Roll back instead of applying: to the given target version
@@ -61,6 +65,7 @@ pub async fn main() -> Result<()> {
     let path = cli.config.as_deref();
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => serve(path).await,
+        Command::Worker => worker(path).await,
         Command::Migrate { revert } => migrate(path, revert).await,
         Command::Config { command } => config(path, command),
     }
@@ -77,7 +82,57 @@ async fn serve(path: Option<&Path>) -> Result<()> {
         db::migrate::run(&pool).await?;
         tracing::info!("schema migrations applied");
     }
+    if config.jobs.enabled {
+        let (worker, _scheduler) = start_worker(&config, pool).await?;
+        tokio::select! {
+            result = worker.run() => result?,
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("shutdown signal received");
+                worker.cancel_token().cancel();
+            }
+        }
+        return Ok(());
+    }
     tracing::info!("HTTP server lands in epic 04 — nothing to serve yet");
+    Ok(())
+}
+
+/// Build the job registry (stubs for now) and the worker over it. The
+/// returned scheduler must be kept alive for cron jobs to keep firing.
+async fn start_worker(
+    config: &Config,
+    pool: sqlx::PgPool,
+) -> Result<(jobs::worker::Worker, tokio_cron_scheduler::JobScheduler)> {
+    let redis = cache::connect(&config.redis).await?;
+    let mut registry = jobs::Registry::default();
+    jobs::stub::register_all(&mut registry);
+    let ctx = jobs::JobContext {
+        db: pool,
+        redis: redis.clone(),
+        config: Arc::new(config.clone()),
+    };
+    let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
+    let scheduler = jobs::scheduler::start(config, &dispatcher).await?;
+    let worker = jobs::worker::Worker::new(
+        ctx,
+        Arc::new(registry),
+        Arc::new(config.jobs.clone()),
+        jobs::worker::default_consumer(),
+    );
+    Ok((worker, scheduler))
+}
+
+async fn worker(path: Option<&Path>) -> Result<()> {
+    let (config, pool) = Config::load_full(path).await?;
+    logging::init(&config.server)?;
+    let (worker, _scheduler) = start_worker(&config, pool).await?;
+    tokio::select! {
+        result = worker.run() => result?,
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("shutdown signal received");
+            worker.cancel_token().cancel();
+        }
+    }
     Ok(())
 }
 

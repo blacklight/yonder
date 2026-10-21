@@ -1,0 +1,53 @@
+# Yonder development deployment — STUB for epic 28 to finish.
+#
+# There is no Dockerfile yet, so `app`/`worker` reference a `yonder`
+# image that epic 28 will publish. Until then, run the binary locally
+# against `postgres`/`redis` from this file.
+name: yonder
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: yonder
+      POSTGRES_USER: yonder
+      POSTGRES_PASSWORD: yonder
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis:/data
+    ports:
+      - "6379:6379"
+
+  app:
+    # epic 28: replace with the real build/image.
+    image: yonder:latest
+    command: serve
+    environment:
+      YONDER_DATABASE__URL: postgres://yonder:yonder@postgres:5432/yonder
+      YONDER_REDIS__URL: redis://redis:6379/0
+      YONDER_JOBS__ENABLED: "false" # the worker service owns the queues
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+
+  worker:
+    image: yonder:latest
+    command: worker
+    environment:
+      YONDER_DATABASE__URL: postgres://yonder:yonder@postgres:5432/yonder
+      YONDER_REDIS__URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  postgres:
+  redis:

@@ -38,6 +38,29 @@ idle_timeout_seconds = 600
 
 [redis]
 url = "redis://localhost:6379/0"
+# Maximum connections in the async pool.
+pool_size = 10
+# Prefix for every Redis key Yonder writes ({key_prefix}:cache:… etc.).
+key_prefix = "yonder"
+
+[jobs]
+# Run the background worker in-process with `serve`; set false to run
+# the dedicated `yonder worker` binary instead.
+enabled = true
+# Worker tasks draining each queue concurrently.
+concurrency = 4
+# Delivery attempts before a job is dead-lettered.
+max_attempts = 5
+# Exponential backoff: base ^ attempt seconds, capped at
+# backoff_max_seconds.
+backoff_base_seconds = 2
+backoff_max_seconds = 3600
+# Pending entries idle this long are reclaimed from dead workers.
+reclaim_idle_seconds = 300
+# Approximate maximum stream length (XTRIM MAXLEN ~).
+stream_maxlen = 10000
+# Delayed-job poll cadence in milliseconds.
+poll_interval_ms = 1000
 
 [instance]
 # Public domain name of this instance (no scheme, no path).

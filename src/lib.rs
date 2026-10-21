@@ -14,6 +14,7 @@ pub mod db;
 pub mod error;
 pub mod feeds;
 pub mod http;
+pub mod jobs;
 pub mod logging;
 pub mod media;
 pub mod moderation;

@@ -57,6 +57,7 @@ pub struct Config {
     pub polls: PollsConfig,
     pub content: ContentConfig,
     pub admin: AdminConfig,
+    pub jobs: JobsConfig,
 }
 
 impl Config {
@@ -187,12 +188,18 @@ impl Default for DatabaseConfig {
 #[serde(default)]
 pub struct RedisConfig {
     pub url: String,
+    /// Maximum number of connections in the async pool.
+    pub pool_size: u32,
+    /// Prefix for every Redis key Yonder writes (`{key_prefix}:…`).
+    pub key_prefix: String,
 }
 
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
             url: "redis://localhost:6379/0".to_string(),
+            pool_size: 10,
+            key_prefix: "yonder".to_string(),
         }
     }
 }
@@ -671,6 +678,44 @@ impl Default for AdminConfig {
             auto_followed_by: Vec::new(),
             default_frontend: "yonder".to_string(),
             audit_log_retention_days: 365,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JobsConfig {
+    /// Run the background worker in-process with `serve`; disable to run
+    /// the dedicated `yonder worker` binary instead.
+    pub enabled: bool,
+    /// Worker tasks draining each queue concurrently.
+    pub concurrency: u32,
+    /// Delivery attempts before a job is dead-lettered.
+    pub max_attempts: u32,
+    /// Exponential backoff base in seconds (`base ^ attempt`).
+    pub backoff_base_seconds: u64,
+    /// Cap for the retry backoff in seconds.
+    pub backoff_max_seconds: u64,
+    /// Pending entries idle this long are reclaimed from dead workers
+    /// (`XAUTOCLAIM` threshold).
+    pub reclaim_idle_seconds: u64,
+    /// Approximate maximum stream length (`XTRIM MAXLEN ~`).
+    pub stream_maxlen: u64,
+    /// Delayed-job poll cadence in milliseconds.
+    pub poll_interval_ms: u64,
+}
+
+impl Default for JobsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            concurrency: 4,
+            max_attempts: 5,
+            backoff_base_seconds: 2,
+            backoff_max_seconds: 3600,
+            reclaim_idle_seconds: 300,
+            stream_maxlen: 10_000,
+            poll_interval_ms: 1_000,
         }
     }
 }

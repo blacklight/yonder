@@ -23,6 +23,9 @@ pub enum Error {
     #[error("redis error: {0}")]
     Redis(#[from] redis::RedisError),
 
+    #[error("redis pool error: {0}")]
+    RedisPool(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -50,6 +53,17 @@ impl From<figment::Error> for Error {
     }
 }
 
+impl From<bb8::RunError<redis::RedisError>> for Error {
+    fn from(error: bb8::RunError<redis::RedisError>) -> Self {
+        match error {
+            bb8::RunError::User(e) => Self::Redis(e),
+            bb8::RunError::TimedOut => {
+                Self::RedisPool("timed out acquiring connection".to_string())
+            }
+        }
+    }
+}
+
 impl Error {
     /// HTTP status code this error maps to once it crosses the API boundary.
     pub fn status_code(&self) -> StatusCode {
@@ -62,6 +76,7 @@ impl Error {
             | Self::Database(_)
             | Self::Migration(_)
             | Self::Redis(_)
+            | Self::RedisPool(_)
             | Self::Io(_)
             | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -74,6 +89,7 @@ impl Error {
             Self::Database(_) => "database",
             Self::Migration(_) => "migration",
             Self::Redis(_) => "redis",
+            Self::RedisPool(_) => "redis_pool",
             Self::Io(_) => "io",
             Self::NotFound(_) => "not_found",
             Self::Unauthorized => "unauthorized",

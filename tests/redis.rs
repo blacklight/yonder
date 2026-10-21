@@ -424,3 +424,103 @@ async fn restart_survives() {
 
     container.stop().await.unwrap();
 }
+
+struct PanicOnceHandler(Arc<AtomicUsize>);
+
+#[async_trait::async_trait]
+impl JobHandler for PanicOnceHandler {
+    async fn run(&self, _ctx: &JobContext, _payload: &Value) -> yonder::Result<()> {
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            panic!("first attempt panics");
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn backlog_beyond_maxlen_is_not_dropped() {
+    let Some((redis, container)) = test_redis().await else {
+        return;
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut registry = Registry::default();
+    registry.register(JobKind::EmailSend, CountHandler(counter.clone()));
+
+    let mut jobs_config = (*test_jobs()).clone();
+    jobs_config.stream_maxlen = 5;
+    let jobs_config = Arc::new(jobs_config);
+
+    // Enqueue far more than stream_maxlen with no worker running —
+    // live queues are never length-trimmed, so every job must run.
+    let dispatcher = Dispatcher::new(&redis, &jobs_config);
+    const JOBS: usize = 20;
+    for _ in 0..JOBS {
+        dispatcher
+            .enqueue(JobKind::EmailSend, json!({}))
+            .await
+            .unwrap();
+    }
+
+    let worker = worker_for(&test_ctx(&redis), registry, jobs_config);
+    let cancel = worker.cancel_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let counter_ref = counter.clone();
+    assert!(
+        wait_for(Duration::from_secs(15), move || {
+            let counter_ref = counter_ref.clone();
+            async move { counter_ref.load(Ordering::SeqCst) >= JOBS }
+        })
+        .await,
+        "only {} of {JOBS} queued jobs executed",
+        counter.load(Ordering::SeqCst)
+    );
+    cancel.cancel();
+    handle.await.unwrap().unwrap();
+    assert_eq!(pending_count(&redis, Queue::Default).await, 0);
+
+    container.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn panicking_handler_fails_the_job_and_the_worker_survives() {
+    let Some((redis, container)) = test_redis().await else {
+        return;
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut registry = Registry::default();
+    registry.register(JobKind::EmailSend, PanicOnceHandler(counter.clone()));
+
+    let mut jobs_config = (*test_jobs()).clone();
+    jobs_config.max_attempts = 2;
+    jobs_config.backoff_base_seconds = 1;
+    let jobs_config = Arc::new(jobs_config);
+
+    let dispatcher = Dispatcher::new(&redis, &jobs_config);
+    dispatcher
+        .enqueue(JobKind::EmailSend, json!({}))
+        .await
+        .unwrap();
+
+    let worker = worker_for(&test_ctx(&redis), registry, jobs_config);
+    let cancel = worker.cancel_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    // First attempt panics; the retry (1s backoff) succeeds — the
+    // consumer task must survive the panic.
+    let counter_ref = counter.clone();
+    assert!(
+        wait_for(Duration::from_secs(15), move || {
+            let counter_ref = counter_ref.clone();
+            async move { counter_ref.load(Ordering::SeqCst) >= 2 }
+        })
+        .await,
+        "panicking job was not retried"
+    );
+    cancel.cancel();
+    handle.await.unwrap().unwrap();
+    assert_eq!(pending_count(&redis, Queue::Default).await, 0);
+    assert!(dead_entries(&redis, Queue::Default).await.is_empty());
+
+    container.stop().await.unwrap();
+}

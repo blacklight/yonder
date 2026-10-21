@@ -126,7 +126,30 @@ impl Worker {
             .await;
             return;
         };
-        match handler.run(&self.ctx, &envelope.payload).await {
+        // Run the handler in its own task under a timeout: a panic
+        // surfaces as a JoinError instead of killing this consumer, and
+        // a runaway job is failed instead of holding the consumer slot
+        // past `reclaim_idle_seconds` (which would re-dispatch it while
+        // still running).
+        let timeout = Duration::from_secs(self.jobs.handler_timeout_seconds);
+        let mut task = tokio::spawn({
+            let handler = handler.clone();
+            let ctx = self.ctx.clone();
+            let payload = envelope.payload.clone();
+            async move { handler.run(&ctx, &payload).await }
+        });
+        let outcome = match tokio::time::timeout(timeout, &mut task).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(e)) => Err(crate::Error::Internal(format!("job handler panicked: {e}"))),
+            Err(_) => {
+                task.abort();
+                Err(crate::Error::Internal(format!(
+                    "job timed out after {}s",
+                    timeout.as_secs()
+                )))
+            }
+        };
+        match outcome {
             Ok(()) => {
                 if let Err(e) = queue::ack(&self.ctx.redis, queue_name, stream_id).await {
                     tracing::warn!(stream_id, error = %e, "job ack failed");

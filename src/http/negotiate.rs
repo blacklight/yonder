@@ -25,40 +25,45 @@ pub enum ContentKind {
 }
 
 /// Resolve the best-known content kind from the `Accept` header,
-/// honouring `q=` weights. [`ContentKind::Any`] when nothing known is
+/// honouring `q=` weights and media-range specificity (`q=0` means
+/// "not acceptable"). [`ContentKind::Any`] when nothing known is
 /// preferred.
 pub fn accept(headers: &HeaderMap) -> ContentKind {
     let Some(value) = headers.get(ACCEPT).and_then(|v| v.to_str().ok()) else {
         return ContentKind::Any;
     };
-    let mut offers: Vec<(&str, f32)> = value
-        .split(',')
-        .filter_map(|entry| {
-            let mut parts = entry.trim().split(';');
-            let media = parts.next()?.trim();
-            if media.is_empty() {
-                return None;
-            }
-            let q = parts
-                .filter_map(|p| p.trim().strip_prefix("q="))
-                .find_map(|v| v.parse::<f32>().ok())
-                .unwrap_or(1.0);
-            Some((media, q))
-        })
-        .collect();
-    offers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    for (media, _) in offers {
-        let kind = match media {
-            "application/activity+json" => ContentKind::ActivityJson,
-            "application/ld+json" => ContentKind::LdJson,
-            "text/html" => ContentKind::Html,
-            "application/json" => ContentKind::Json,
-            "*/*" => return ContentKind::Any,
+    let mut best: Option<(f32, bool, ContentKind)> = None;
+    for entry in value.split(',') {
+        let mut parts = entry.trim().split(';');
+        let media = parts.next().unwrap_or("").trim();
+        if media.is_empty() {
+            continue;
+        }
+        let q = parts
+            .filter_map(|p| p.trim().strip_prefix("q="))
+            .find_map(|v| v.parse::<f32>().ok())
+            .unwrap_or(1.0);
+        if q <= 0.0 {
+            continue; // q=0: client explicitly refuses this type
+        }
+        let (kind, specific) = match media.to_ascii_lowercase().as_str() {
+            "application/activity+json" => (ContentKind::ActivityJson, true),
+            "application/ld+json" => (ContentKind::LdJson, true),
+            "text/html" => (ContentKind::Html, true),
+            "application/json" => (ContentKind::Json, true),
+            "*/*" => (ContentKind::Any, false),
             _ => continue,
         };
-        return kind;
+        // Higher q wins; on ties the more specific media range wins.
+        let candidate = (q, specific, kind);
+        if best
+            .as_ref()
+            .is_none_or(|b| candidate.0 > b.0 || (candidate.0 == b.0 && candidate.1 && !b.1))
+        {
+            best = Some(candidate);
+        }
     }
-    ContentKind::Any
+    best.map(|(_, _, kind)| kind).unwrap_or(ContentKind::Any)
 }
 
 #[cfg(test)]

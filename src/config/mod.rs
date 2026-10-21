@@ -103,7 +103,41 @@ impl Config {
         } else {
             Self::with_overlays(path, &overlays)?
         };
+        config.validate()?;
         Ok((config, pool))
+    }
+
+    /// Cheap semantic validation of the resolved config — catches
+    /// combinations that deserialize fine but break at runtime.
+    pub fn validate(&self) -> Result<()> {
+        for name in [
+            "search",
+            "timeline",
+            "account_creation",
+            "relation",
+            "status",
+            "authentication",
+        ] {
+            let limit = self.rate_limit.bucket(name).expect("static bucket name");
+            if limit.limit == 0 || limit.period_seconds == 0 {
+                return Err(crate::Error::Validation(format!(
+                    "rate_limit.{name}: limit and period_seconds must be > 0"
+                )));
+            }
+        }
+        if self.jobs.handler_timeout_seconds >= self.jobs.reclaim_idle_seconds {
+            return Err(crate::Error::Validation(
+                "jobs.handler_timeout_seconds must be < jobs.reclaim_idle_seconds \
+                 (otherwise a still-running job is reclaimed and executed twice)"
+                    .to_string(),
+            ));
+        }
+        if self.jobs.poll_interval_ms == 0 {
+            return Err(crate::Error::Validation(
+                "jobs.poll_interval_ms must be > 0".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn figment(path: Option<&Path>) -> Figment {
@@ -707,16 +741,24 @@ pub struct JobsConfig {
     pub enabled: bool,
     /// Worker tasks draining each queue concurrently.
     pub concurrency: u32,
-    /// Delivery attempts before a job is dead-lettered.
+    /// Delivery attempts before a job is dead-lettered. The default
+    /// keeps a failing job retrying for roughly a day — federation
+    /// delivery must survive remote deploys and outages.
     pub max_attempts: u32,
     /// Exponential backoff base in seconds (`base ^ attempt`).
     pub backoff_base_seconds: u64,
     /// Cap for the retry backoff in seconds.
     pub backoff_max_seconds: u64,
+    /// Maximum execution time per job attempt in seconds; a timed-out
+    /// job fails and retries normally. Must stay under
+    /// `reclaim_idle_seconds` so a still-running job is never
+    /// reclaimed and executed twice.
+    pub handler_timeout_seconds: u64,
     /// Pending entries idle this long are reclaimed from dead workers
     /// (`XAUTOCLAIM` threshold).
     pub reclaim_idle_seconds: u64,
-    /// Approximate maximum stream length (`XTRIM MAXLEN ~`).
+    /// Approximate maximum length of each queue's dead-letter stream
+    /// (`XTRIM MAXLEN ~`); live queues are never trimmed by length.
     pub stream_maxlen: u64,
     /// Delayed-job poll cadence in milliseconds.
     pub poll_interval_ms: u64,
@@ -727,9 +769,10 @@ impl Default for JobsConfig {
         Self {
             enabled: true,
             concurrency: 4,
-            max_attempts: 5,
-            backoff_base_seconds: 2,
+            max_attempts: 16,
+            backoff_base_seconds: 10,
             backoff_max_seconds: 3600,
+            handler_timeout_seconds: 240,
             reclaim_idle_seconds: 300,
             stream_maxlen: 10_000,
             poll_interval_ms: 1_000,

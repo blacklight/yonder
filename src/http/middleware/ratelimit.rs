@@ -16,8 +16,9 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use axum::{
     body::Body,
@@ -32,20 +33,30 @@ use crate::{
     config::RateLimit,
     error::ErrorBody,
     http::{
-        middleware::auth::{self, MaybeAuth},
+        middleware::auth::{self, TokenResolution},
         AppState,
     },
 };
 
 /// INCR the bucket; seed its expiry on first hit; report the count and
-/// ms until reset. One round trip, atomic.
-static CHECK_SCRIPT: &str = r#"
+/// ms until reset. One round trip, atomic. `LazyLock` keeps the script
+/// SHA-1 cached across requests.
+static CHECK_SCRIPT: LazyLock<Script> = LazyLock::new(|| {
+    Script::new(
+        r#"
 local count = redis.call('INCR', KEYS[1])
 if count == 1 then
     redis.call('PEXPIRE', KEYS[1], ARGV[1])
 end
 return {count, redis.call('PTTL', KEYS[1])}
-"#;
+"#,
+    )
+});
+
+/// Budget for one limiter check — long enough for a healthy Redis,
+/// short enough that an outage fails open quickly rather than stalling
+/// every request on the pool's connection timeout.
+const CHECK_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// Fixed-window limiter over the app's Redis handle.
 #[derive(Clone)]
@@ -88,7 +99,8 @@ impl RateLimiter {
             .redis
             .key(&format!("ratelimit:{bucket}:{identity}"));
         let mut conn = self.state.redis.conn().await?;
-        let (count, pttl): (u32, i64) = Script::new(CHECK_SCRIPT)
+        let (count, pttl): (u32, i64) = CHECK_SCRIPT
+            .clone()
             .key(key)
             .arg(limit.period_seconds.saturating_mul(1000))
             .invoke_async(&mut *conn)
@@ -114,7 +126,15 @@ fn too_many(retry_after_seconds: u64) -> Response {
 
 /// A tower [`Layer`] applying `bucket`'s [`RateLimit`] to a router:
 /// `.route_layer(layer(&state, "status"))`.
+///
+/// # Panics
+/// When `bucket` isn't a known `rate_limit.*` key — a programming
+/// error caught at router build time, not a runtime 500.
 pub fn layer(state: &Arc<AppState>, bucket: &'static str) -> RateLimitLayer {
+    assert!(
+        state.config.rate_limit.bucket(bucket).is_some(),
+        "unknown rate-limit bucket {bucket}"
+    );
     RateLimitLayer {
         state: state.clone(),
         bucket,
@@ -177,32 +197,38 @@ where
                         .into_response(),
                 );
             };
-            let token = auth::bearer_token(req.headers(), req.uri());
-            let auth = match token {
-                Some(t) => auth::resolve_token(&state, &t).await.ok(),
-                None => None,
-            };
+            // Resolution errors (database down) are not cached: the
+            // request counts against the anonymous IP bucket, and a
+            // downstream `AuthContext` re-resolves and surfaces the
+            // real error rather than a spurious 401.
+            let resolution = auth::resolve_request(&state, req.headers(), req.uri()).await;
+            let failed = matches!(resolution, TokenResolution::Failed(_));
+            if !failed {
+                req.extensions_mut().insert(resolution.clone());
+            }
             let ip = super::client_ip::client_ip(
                 req.headers(),
                 req.extensions(),
                 state.config.server.trusted_proxy_hops,
             );
-            match RateLimiter::new(state)
-                .check(bucket, &limit, auth.as_ref(), &ip)
-                .await
-            {
-                Ok(Verdict { allowed: true, .. }) => {
-                    // Cache the resolved auth for downstream extractors.
-                    req.extensions_mut().insert(MaybeAuth(auth));
-                    inner.call(req).await
-                }
-                Ok(Verdict {
+            let check = tokio::time::timeout(
+                CHECK_TIMEOUT,
+                RateLimiter::new(state).check(bucket, &limit, resolution.auth(), &ip),
+            )
+            .await;
+            match check {
+                Ok(Ok(Verdict { allowed: true, .. })) => inner.call(req).await,
+                Ok(Ok(Verdict {
                     retry_after_seconds,
                     ..
-                }) => Ok(too_many(retry_after_seconds)),
-                Err(e) => {
+                })) => Ok(too_many(retry_after_seconds)),
+                Ok(Err(e)) => {
                     // Limiter outage shouldn't take the API down.
                     tracing::warn!(error = %e, bucket, "rate limiter check failed; allowing");
+                    inner.call(req).await
+                }
+                Err(_) => {
+                    tracing::warn!(bucket, "rate limiter check timed out; allowing");
                     inner.call(req).await
                 }
             }

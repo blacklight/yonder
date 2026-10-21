@@ -29,6 +29,9 @@ services:
     image: yonder:latest
     command: serve
     environment:
+      # The container must bind beyond loopback for the published port
+      # to be reachable.
+      YONDER_SERVER__HOST: 0.0.0.0
       YONDER_DATABASE__URL: postgres://yonder:yonder@postgres:5432/yonder
       YONDER_REDIS__URL: redis://redis:6379/0
       YONDER_JOBS__ENABLED: "false" # the worker service owns the queues

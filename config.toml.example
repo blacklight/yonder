@@ -49,15 +49,19 @@ key_prefix = "yonder"
 enabled = true
 # Worker tasks draining each queue concurrently.
 concurrency = 4
-# Delivery attempts before a job is dead-lettered.
-max_attempts = 5
+# Delivery attempts before a job is dead-lettered. The default keeps a
+# failing job retrying for roughly a day.
+max_attempts = 16
 # Exponential backoff: base ^ attempt seconds, capped at
 # backoff_max_seconds.
-backoff_base_seconds = 2
+backoff_base_seconds = 10
 backoff_max_seconds = 3600
+# Maximum execution time per job attempt; a timed-out job retries
+# normally. Must stay under reclaim_idle_seconds.
+handler_timeout_seconds = 240
 # Pending entries idle this long are reclaimed from dead workers.
 reclaim_idle_seconds = 300
-# Approximate maximum stream length (XTRIM MAXLEN ~).
+# Approximate maximum length of the dead-letter streams.
 stream_maxlen = 10000
 # Delayed-job poll cadence in milliseconds.
 poll_interval_ms = 1000

@@ -2,13 +2,16 @@
 //!
 //! Layout under `{redis.key_prefix}`:
 //! - `queue:{name}` — one stream per [`Queue`], one `job` JSON field per
-//!   entry;
-//! - `queue:{name}:dead` — the dead-letter stream for that queue;
+//!   entry. Entries are `XACK`ed **and `XDEL`eted** once handled, so the
+//!   stream only ever holds outstanding work — it is never trimmed by
+//!   length, which would drop undelivered jobs;
+//! - `queue:{name}:dead` — the dead-letter stream for that queue,
+//!   trimmed approximately to `jobs.stream_maxlen`;
 //! - `jobs:delayed` — a ZSET of delayed envelopes (score = run-at ms).
 
 use std::time::SystemTime;
 
-use redis::{streams::*, AsyncCommands};
+use redis::{streams::*, AsyncCommands, Script};
 
 use crate::{
     cache::Redis,
@@ -19,6 +22,18 @@ use crate::{
 
 /// Consumer-group name shared by every queue.
 pub const GROUP: &str = "yonder";
+
+/// Atomically claim and promote one delayed job: `ZREM` is the commit
+/// gate for concurrent pollers; the `XADD` runs in the same script so a
+/// member can't be removed without being re-queued.
+static PROMOTE_SCRIPT: &str = r#"
+local removed = redis.call('ZREM', KEYS[1], ARGV[1])
+if removed == 0 then
+    return 0
+end
+redis.call('XADD', KEYS[2], '*', 'job', ARGV[1])
+return 1
+"#;
 
 fn stream_key(redis: &Redis, queue: Queue) -> String {
     redis.key(&format!("queue:{}", queue.as_str()))
@@ -45,24 +60,12 @@ pub fn backoff_seconds(attempt: u32, base: u64, max: u64) -> u64 {
     base.saturating_pow(attempt.min(31)).min(max)
 }
 
-/// Append `envelope` to `queue`'s stream and trim it approximately.
+/// Append `envelope` to `queue`'s stream.
 pub async fn push(redis: &Redis, queue: Queue, envelope: &JobEnvelope) -> Result<()> {
     let mut conn = redis.conn().await?;
     let body = serde_json::to_string(envelope).map_err(|e| Error::Internal(e.to_string()))?;
     let _: String = conn
         .xadd(stream_key(redis, queue), "*", &[("job", body.as_str())])
-        .await?;
-    Ok(())
-}
-
-/// Trim `queue`'s stream to `maxlen` entries (approximate).
-pub async fn trim(redis: &Redis, queue: Queue, maxlen: u64) -> Result<()> {
-    let mut conn = redis.conn().await?;
-    let _: usize = conn
-        .xtrim(
-            stream_key(redis, queue),
-            redis::streams::StreamMaxlen::Approx(maxlen as usize),
-        )
         .await?;
     Ok(())
 }
@@ -127,11 +130,15 @@ pub async fn read_batch(
     Ok(entries)
 }
 
-/// Acknowledge `stream_id` on `queue`.
+/// Acknowledge `stream_id` on `queue` and delete the stream entry — the
+/// stream then only retains unprocessed work, so it stays bounded
+/// without `MAXLEN` trimming (which would drop undelivered jobs).
 pub async fn ack(redis: &Redis, queue: Queue, stream_id: &str) -> Result<()> {
     let mut conn = redis.conn().await?;
-    let _: usize = conn
+    redis::pipe()
         .xack(stream_key(redis, queue), GROUP, &[stream_id])
+        .xdel(stream_key(redis, queue), &[stream_id])
+        .query_async::<()>(&mut *conn)
         .await?;
     Ok(())
 }
@@ -165,8 +172,13 @@ pub async fn fail(
     } else {
         let mut conn = redis.conn().await?;
         let body = serde_json::to_string(&envelope).map_err(|e| Error::Internal(e.to_string()))?;
-        let _: String = conn
+        redis::pipe()
             .xadd(dead_key(redis, queue), "*", &[("job", body.as_str())])
+            .xtrim(
+                dead_key(redis, queue),
+                redis::streams::StreamMaxlen::Approx(jobs.stream_maxlen as usize),
+            )
+            .query_async::<()>(&mut *conn)
             .await?;
         tracing::warn!(
             job = %envelope.id,
@@ -179,7 +191,9 @@ pub async fn fail(
 }
 
 /// Reclaim pending entries idle for at least `min_idle_ms` from dead
-/// workers and return them for re-dispatch.
+/// workers and return them for re-dispatch. Entries without a `job`
+/// field are returned as empty bodies so the caller acks them out of
+/// the pending list.
 pub async fn reclaim(
     redis: &Redis,
     queue: Queue,
@@ -201,18 +215,22 @@ pub async fn reclaim(
         .await?;
     let mut entries = Vec::new();
     for entry in reply.claimed {
-        if let Some(value) = entry.map.get("job") {
-            let body: String =
-                redis::from_redis_value(value).map_err(|e| Error::Internal(e.to_string()))?;
-            entries.push((entry.id, body));
-        }
+        let body = match entry.map.get("job") {
+            Some(value) => {
+                redis::from_redis_value(value).map_err(|e| Error::Internal(e.to_string()))?
+            }
+            None => String::new(),
+        };
+        entries.push((entry.id, body));
     }
     Ok(entries)
 }
 
-/// Move every due delayed job into its target stream. `ZREM` is the
-/// commit gate — concurrent pollers can't double-dispatch the same
-/// member.
+/// Move every due delayed job into its target stream. Promotion is
+/// atomic per member (`ZREM` + `XADD` in one script): concurrent
+/// pollers can't double-dispatch, and a job can't vanish between the
+/// two commands. A failed member is logged and the rest of the batch
+/// proceeds.
 pub async fn dispatch_due(redis: &Redis, limit: usize) -> Result<usize> {
     let mut conn = redis.conn().await?;
     let due: Vec<String> = conn
@@ -226,17 +244,25 @@ pub async fn dispatch_due(redis: &Redis, limit: usize) -> Result<usize> {
         .await?;
     let mut moved = 0;
     for member in due {
-        let removed: usize = conn.zrem(delayed_key(redis), &member).await?;
-        if removed == 0 {
-            continue; // another poller won the member
-        }
-        match serde_json::from_str::<JobEnvelope>(&member) {
-            Ok(envelope) => {
-                push(redis, envelope.queue, &envelope).await?;
-                moved += 1;
-            }
+        let queue = match serde_json::from_str::<JobEnvelope>(&member) {
+            Ok(envelope) => envelope.queue,
             Err(e) => {
                 tracing::warn!(error = %e, "dropping malformed delayed job");
+                let _: usize = conn.zrem(delayed_key(redis), &member).await?;
+                continue;
+            }
+        };
+        let promoted: std::result::Result<u32, redis::RedisError> = Script::new(PROMOTE_SCRIPT)
+            .key(delayed_key(redis))
+            .key(stream_key(redis, queue))
+            .arg(&member)
+            .invoke_async(&mut *conn)
+            .await;
+        match promoted {
+            Ok(1) => moved += 1,
+            Ok(_) => {} // another poller won the member
+            Err(e) => {
+                tracing::warn!(error = %e, "delayed-job promotion failed; will retry")
             }
         }
     }

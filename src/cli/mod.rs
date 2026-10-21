@@ -1,8 +1,10 @@
 //! `yonder` command line.
 //!
-//! One binary, subcommand-driven: `serve` (default), `migrate`, `config`.
-//! Epic 27 grows this with worker/admin subcommands; the config tree already
-//! exists so `config list`/`config get` exercise the registry contract.
+//! One binary, subcommand-driven: `serve` (default — HTTP plus the
+//! optional in-process worker), `worker` (standalone queue drain +
+//! scheduler), `migrate`, `config`. Epic 27 grows this with admin
+//! subcommands; the config tree already exists so `config list`/
+//! `config get` exercise the registry contract.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -54,7 +56,9 @@ pub enum Command {
 pub enum ConfigCommand {
     /// List every configuration key as `toml.path` ↔ `YONDER_ENV_NAME`.
     List,
-    /// Print the effective value of a configuration key (dotted TOML path).
+    /// Print the value of a configuration key (dotted TOML path) as
+    /// resolved from config.toml, env vars and defaults — database
+    /// overlays (`config_overlays`) are not consulted.
     Get { key: String },
 }
 
@@ -85,39 +89,88 @@ async fn serve(path: Option<&Path>) -> Result<()> {
     let redis = cache::connect(&config.redis).await?;
     let state = Arc::new(http::AppState::new(config.clone(), pool.clone(), redis));
 
-    // The in-process worker runs alongside HTTP when enabled; its
-    // scheduler stays bound for the function's lifetime.
-    let worker_parts = if config.jobs.enabled {
-        Some(start_worker(&config, pool).await?)
+    // The in-process worker runs alongside HTTP when enabled. The
+    // scheduler must stay bound for the function's lifetime — dropping
+    // it stops cron firings.
+    let mut worker_parts = if config.jobs.enabled {
+        let (worker, scheduler) = start_worker(&config, pool).await?;
+        let token = worker.cancel_token();
+        let join = tokio::spawn(async move { worker.run().await });
+        Some((join, token, scheduler))
     } else {
         None
     };
-    let worker_handle = worker_parts.as_ref().map(|(worker, _scheduler)| {
-        let token = worker.cancel_token();
-        let worker = worker.clone();
-        (tokio::spawn(async move { worker.run().await }), token)
-    });
 
-    http::serve(state, async {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("shutdown signal received");
-    })
-    .await?;
+    // HTTP serves until a termination signal — or until the worker
+    // exits early: a dead queue backend shouldn't leave a half-working
+    // instance serving 200s.
+    let mut worker_join = worker_parts.as_mut().map(|(join, token, _)| (join, token));
+    tokio::select! {
+        result = http::serve(state, shutdown_signal()) => result?,
+        exited = async {
+            match &mut worker_join {
+                Some((join, _)) => join.await,
+                None => std::future::pending().await,
+            }
+        } => {
+            match exited {
+                Ok(Ok(())) => tracing::warn!("worker exited early"),
+                Ok(Err(e)) => tracing::error!(error = %e, "worker failed"),
+                Err(e) => tracing::error!(error = %e, "worker task panicked"),
+            }
+            return Err(Error::Internal("background worker exited".to_string()));
+        }
+    }
 
-    if let Some((handle, token)) = worker_handle {
+    if let Some((join, token, _scheduler)) = worker_parts {
         token.cancel();
-        handle.await.map_err(|e| Error::Internal(e.to_string()))??;
+        join.await.map_err(|e| Error::Internal(e.to_string()))??;
     }
     Ok(())
 }
 
+/// Resolves when the process should shut down: SIGINT (ctrl-c) or, on
+/// Unix, SIGTERM — the signal Docker/Kubernetes/systemd send.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "SIGTERM handler unavailable");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
 /// Build the job registry (stubs for now) and the worker over it. The
 /// returned scheduler must be kept alive for cron jobs to keep firing.
+///
+/// The worker gets its own Redis pool sized for its blocking
+/// consumers: each of the `concurrency` tasks per queue holds a
+/// connection for the duration of `XREADGROUP BLOCK`, so the pool
+/// needs `queues × concurrency + headroom` connections.
 async fn start_worker(
     config: &Config,
     pool: sqlx::PgPool,
 ) -> Result<(jobs::worker::Worker, tokio_cron_scheduler::JobScheduler)> {
-    let redis = cache::connect(&config.redis).await?;
+    let blocking_consumers = config.jobs.concurrency * jobs::Queue::ALL.len() as u32;
+    let redis = cache::connect(&crate::config::RedisConfig {
+        pool_size: config.redis.pool_size.max(blocking_consumers + 4),
+        ..config.redis.clone()
+    })
+    .await?;
     let mut registry = jobs::Registry::default();
     jobs::stub::register_all(&mut registry);
     let ctx = jobs::JobContext {
@@ -142,7 +195,7 @@ async fn worker(path: Option<&Path>) -> Result<()> {
     let (worker, _scheduler) = start_worker(&config, pool).await?;
     tokio::select! {
         result = worker.run() => result?,
-        _ = tokio::signal::ctrl_c() => {
+        _ = shutdown_signal() => {
             tracing::info!("shutdown signal received");
             worker.cancel_token().cancel();
         }

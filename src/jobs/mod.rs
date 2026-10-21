@@ -221,17 +221,15 @@ impl Registry {
 pub struct Dispatcher {
     redis: Redis,
     max_attempts: u32,
-    stream_maxlen: u64,
 }
 
 impl Dispatcher {
-    /// Create a dispatcher over `redis` with the retry budget and trim
-    /// bound from `jobs`.
+    /// Create a dispatcher over `redis` with the retry budget from
+    /// `jobs`.
     pub fn new(redis: &Redis, jobs: &crate::config::JobsConfig) -> Self {
         Dispatcher {
             redis: redis.clone(),
             max_attempts: jobs.max_attempts,
-            stream_maxlen: jobs.stream_maxlen,
         }
     }
 
@@ -245,7 +243,6 @@ impl Dispatcher {
         let envelope = JobEnvelope::new(kind, queue, payload, self.max_attempts);
         let id = envelope.id.clone();
         queue::push(&self.redis, queue, &envelope).await?;
-        queue::trim(&self.redis, queue, self.stream_maxlen).await?;
         Ok(id)
     }
 

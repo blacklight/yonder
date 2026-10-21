@@ -2,25 +2,36 @@
 //!
 //! `/api/v1/streaming` implements Mastodon's protocol: clients upgrade
 //! with `?access_token=` or an `Authorization` header (same token auth
-//! as REST), then send `{"type":"subscribe","stream":"<name>"}` /
-//! `{"type":"unsubscribe","stream":"<name>"}` text frames and receive
-//! `{"stream":[…],"event":…,"payload":…}` frames. `user` and
-//! `user:notification` subscriptions require authentication. The
-//! server pings every [`HEARTBEAT_SECONDS`]s and client pings are
-//! echoed back as pongs. Event producers arrive in epic 16 — the
-//! transport, registry and bus live here.
+//! as REST) and may pre-subscribe with `?stream=…` (plus `tag`/`list`
+//! parameters). Connected clients send
+//! `{"type":"subscribe","stream":"<name>", …}` /
+//! `{"type":"unsubscribe","stream":"<name>", …}` text frames and receive
+//! `{"stream":[…],"event":…,"payload":…}` frames — the wire stream name
+//! is the *subscription* (`["user"]`, `["hashtag","foo"]`), never the
+//! internal scoped key (`user:7`).
+//!
+//! `user*`, `direct` and `list*` subscriptions require authentication;
+//! scoped delivery additionally only reaches the owning user's
+//! connections (see [`registry::Connection::matching`]). The server
+//! pings every [`HEARTBEAT_SECONDS`]s and client pings are echoed back
+//! as pongs. Event producers arrive in epic 16 — the transport,
+//! registry and bus live here.
 
 mod registry;
 
-pub use registry::{ConnId, ConnectionRegistry, EventBus, StreamEvent};
+pub use registry::{
+    ConnId, Connection, ConnectionRegistry, EventBus, StreamEvent, MAX_STREAM_NAME_LEN,
+    MAX_SUBSCRIPTIONS,
+};
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
     http::{HeaderMap, Uri},
     response::{IntoResponse, Response},
@@ -30,15 +41,18 @@ use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::http::{
-    middleware::auth::{self, AuthContext},
-    AppState,
+use crate::{
+    http::{
+        middleware::auth::{self, AuthContext, TokenResolution},
+        AppState,
+    },
+    Error,
 };
 
 /// Server heartbeat interval.
 const HEARTBEAT_SECONDS: u64 = 30;
 
-/// Close code sent when a `user*` stream is requested without auth.
+/// Close code sent when a private stream is requested without auth.
 const CLOSE_UNAUTHORIZED: u16 = 4401;
 
 /// Messages the read loop hands to the write task.
@@ -59,6 +73,7 @@ enum Outbound {
     get,
     path = "/api/v1/streaming",
     tag = "streaming",
+    params(("stream" = Option<String>, Query, description = "Stream to pre-subscribe to")),
     responses(
         (status = 101, description = "WebSocket upgrade"),
         (status = 401, description = "Invalid access token", body = crate::error::ErrorBody),
@@ -67,27 +82,43 @@ enum Outbound {
 pub async fn streaming(
     headers: HeaderMap,
     uri: Uri,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let auth = match auth::bearer_token(&headers, &uri) {
-        Some(token) => match auth::resolve_token(&state, &token).await {
-            Ok(auth) => Some(auth),
-            Err(e) => return e.into_response(),
-        },
-        None => None,
+    let auth = match auth::resolve_request(&state, &headers, &uri).await {
+        TokenResolution::Authed(auth) => Some(auth),
+        TokenResolution::Anonymous => None,
+        TokenResolution::Rejected => return Error::Unauthorized.into_response(),
+        TokenResolution::Failed(e) => return Error::Internal(e.to_string()).into_response(),
     };
-    ws.on_upgrade(move |socket| handle_socket(state, socket, auth))
+    // Mastodon clients may pre-subscribe on the upgrade URL:
+    // `?stream=user`, `?stream=hashtag&tag=rust`, `?stream=list&list=7`.
+    let initial = params
+        .get("stream")
+        .filter(|s| !s.is_empty())
+        .map(|s| subscription_name(s, &params));
+    if let Some(stream) = &initial {
+        if private_scoped(stream) && auth.is_none() {
+            return Error::Unauthorized.into_response();
+        }
+    }
+    ws.on_upgrade(move |socket| handle_socket(state, socket, auth, initial))
 }
 
 /// One authenticated/anonymous socket's lifetime: a read loop
 /// maintaining its subscriptions and a write task multiplexing bus
 /// events, client-ping replies and the heartbeat.
-async fn handle_socket(state: Arc<AppState>, socket: WebSocket, auth: Option<AuthContext>) {
-    let conn_id = state
-        .connections
-        .add(auth.as_ref().map(|a| a.user_id))
-        .await;
+async fn handle_socket(
+    state: Arc<AppState>,
+    socket: WebSocket,
+    auth: Option<AuthContext>,
+    initial: Option<String>,
+) {
+    let (conn_id, conn) = state.connections.add(auth.as_ref().map(|a| a.user_id));
+    if let Some(stream) = initial {
+        conn.subscribe(&stream);
+    }
     let authed = auth.is_some();
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<Outbound>(64);
@@ -95,6 +126,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, auth: Option<Aut
 
     let writer = {
         let state = state.clone();
+        let conn = conn.clone();
         let cancel = cancel.clone();
         tokio::spawn(async move {
             let mut rx = state.bus.subscribe();
@@ -119,9 +151,9 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, auth: Option<Aut
                     },
                     ev = rx.recv() => match ev {
                         Ok(ev) => {
-                            if state.connections.matches(conn_id, &ev.stream).await {
+                            if let Some(sub) = conn.matching(&ev.stream) {
                                 let frame = json!({
-                                    "stream": [ev.stream],
+                                    "stream": wire_stream(&sub),
                                     "event": ev.event,
                                     // Mastodon sends the entity as a
                                     // JSON-encoded string.
@@ -155,7 +187,7 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, auth: Option<Aut
     while let Some(Ok(msg)) = stream.next().await {
         match msg {
             Message::Text(text) => {
-                if !handle_client_message(&state, conn_id, authed, &text, &out_tx).await {
+                if !handle_client_message(&conn, authed, &text, &out_tx).await {
                     break;
                 }
             }
@@ -172,14 +204,55 @@ async fn handle_socket(state: Arc<AppState>, socket: WebSocket, auth: Option<Aut
     }
     cancel.cancel();
     let _ = writer.await;
-    state.connections.remove(conn_id).await;
+    state.connections.remove(conn_id);
+}
+
+/// Internal stream name for a subscription request. Mastodon clients
+/// send `{"stream":"hashtag","tag":"rust"}` and
+/// `{"stream":"list","list":"7"}` — the parameter is folded into the
+/// internal name (`hashtag:rust`, `list:7`).
+fn subscription_name(stream: &str, params: &HashMap<String, String>) -> String {
+    match stream {
+        "hashtag" | "hashtag:local" => params
+            .get("tag")
+            .map(|tag| format!("{stream}:{tag}"))
+            .unwrap_or_else(|| stream.to_string()),
+        "list" => params
+            .get("list")
+            .map(|id| format!("list:{id}"))
+            .unwrap_or_else(|| stream.to_string()),
+        _ => stream.to_string(),
+    }
+}
+
+/// The wire form of an internal subscription name. Mastodon carries
+/// parameterized streams as two array entries (`["hashtag","rust"]`,
+/// `["list","7"]`); plain names are a single entry.
+fn wire_stream(subscription: &str) -> Vec<String> {
+    for prefix in ["hashtag:local:", "hashtag:", "list:"] {
+        if let Some(param) = subscription.strip_prefix(prefix) {
+            return vec![prefix.trim_end_matches(':').to_string(), param.to_string()];
+        }
+    }
+    vec![subscription.to_string()]
+}
+
+/// Streams carrying private events — require authentication.
+/// Ownership of `list:{id}` is enforced in epic 16 when the events are
+/// published (the scoped match already prevents cross-user delivery of
+/// `list:{id}:{uid}` events).
+fn private_scoped(stream: &str) -> bool {
+    stream == "user"
+        || stream.starts_with("user:")
+        || stream == "direct"
+        || stream == "list"
+        || stream.starts_with("list:")
 }
 
 /// Process one client text frame (`subscribe`/`unsubscribe`).
 /// Returns `false` when the connection must close.
 async fn handle_client_message(
-    state: &Arc<AppState>,
-    conn_id: ConnId,
+    conn: &Connection,
     authed: bool,
     text: &str,
     out_tx: &mpsc::Sender<Outbound>,
@@ -192,9 +265,18 @@ async fn handle_client_message(
         .get("stream")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let params: HashMap<String, String> = msg
+        .as_object()
+        .map(|o| {
+            o.iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let name = subscription_name(stream, &params);
     match kind {
-        "subscribe" if !stream.is_empty() => {
-            if user_scoped(stream) && !authed {
+        "subscribe" if !name.is_empty() => {
+            if private_scoped(&name) && !authed {
                 let _ = out_tx
                     .send(Outbound::Frame(Message::Close(Some(CloseFrame {
                         code: CLOSE_UNAUTHORIZED,
@@ -203,19 +285,20 @@ async fn handle_client_message(
                     .await;
                 return false;
             }
-            state.connections.subscribe(conn_id, stream).await;
+            if !conn.subscribe(&name) {
+                let _ = out_tx
+                    .send(Outbound::Frame(Message::Text(
+                        json!({"error": "subscription limit reached", "status": 400})
+                            .to_string()
+                            .into(),
+                    )))
+                    .await;
+            }
         }
-        "unsubscribe" if !stream.is_empty() => {
-            state.connections.unsubscribe(conn_id, stream).await;
-        }
+        "unsubscribe" if !name.is_empty() => conn.unsubscribe(&name),
         _ => {}
     }
     true
-}
-
-/// Streams carrying private events — require authentication.
-fn user_scoped(stream: &str) -> bool {
-    stream == "user" || stream.starts_with("user:")
 }
 
 #[cfg(test)]
@@ -223,50 +306,74 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[tokio::test]
-    async fn user_subscription_scopes_events() {
+    #[test]
+    fn user_subscription_scopes_events() {
         let registry = ConnectionRegistry::default();
-        let alice = registry.add(Some(7)).await;
-        let bob = registry.add(Some(9)).await;
-        registry.subscribe(alice, "user").await;
-        registry.subscribe(bob, "user").await;
-        // Own events match; another user's don't.
-        assert!(registry.matches(alice, "user:7").await);
-        assert!(!registry.matches(alice, "user:9").await);
-        assert!(registry.matches(bob, "user:9").await);
+        let (_id, alice) = registry.add(Some(7));
+        let (_id, bob) = registry.add(Some(9));
+        alice.subscribe("user");
+        bob.subscribe("user");
+        // Own events match — as the bare subscription name.
+        assert_eq!(alice.matching("user:7").as_deref(), Some("user"));
+        assert_eq!(alice.matching("user:9"), None);
+        assert_eq!(bob.matching("user:9").as_deref(), Some("user"));
         // Public stream names only match their exact subscription.
-        assert!(!registry.matches(alice, "public").await);
-        registry.subscribe(alice, "public:local").await;
-        assert!(registry.matches(alice, "public:local").await);
-    }
-
-    #[tokio::test]
-    async fn anonymous_connection_never_matches_user_streams() {
-        let registry = ConnectionRegistry::default();
-        let anon = registry.add(None).await;
-        registry.subscribe(anon, "user").await;
-        assert!(registry.matches(anon, "user").await);
-        assert!(!registry.matches(anon, "user:7").await);
-    }
-
-    #[tokio::test]
-    async fn unsubscribe_stops_delivery() {
-        let registry = ConnectionRegistry::default();
-        let id = registry.add(Some(1)).await;
-        registry.subscribe(id, "public").await;
-        registry.unsubscribe(id, "public").await;
-        assert!(!registry.matches(id, "public").await);
-        registry.remove(id).await;
-        assert!(!registry.matches(id, "public").await);
-        assert_eq!(registry.len().await, 0);
+        assert_eq!(alice.matching("public"), None);
+        alice.subscribe("public:local");
+        assert_eq!(
+            alice.matching("public:local").as_deref(),
+            Some("public:local")
+        );
     }
 
     #[test]
-    fn user_scoped_covers_user_streams_only() {
-        assert!(user_scoped("user"));
-        assert!(user_scoped("user:notification"));
-        assert!(!user_scoped("public"));
-        assert!(!user_scoped("list"));
+    fn anonymous_connection_never_matches_user_streams() {
+        let registry = ConnectionRegistry::default();
+        let (_id, anon) = registry.add(None);
+        anon.subscribe("user");
+        assert_eq!(anon.matching("user").as_deref(), Some("user"));
+        assert_eq!(anon.matching("user:7"), None);
+    }
+
+    #[test]
+    fn unsubscribe_stops_delivery() {
+        let registry = ConnectionRegistry::default();
+        let (id, conn) = registry.add(Some(1));
+        conn.subscribe("public");
+        conn.unsubscribe("public");
+        assert_eq!(conn.matching("public"), None);
+        registry.remove(id);
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn subscription_caps_apply() {
+        let registry = ConnectionRegistry::default();
+        let (_id, conn) = registry.add(None);
+        for i in 0..MAX_SUBSCRIPTIONS {
+            assert!(conn.subscribe(&format!("s{i}")));
+        }
+        assert!(!conn.subscribe("one-too-many"));
+        assert!(!conn.subscribe(&"x".repeat(MAX_STREAM_NAME_LEN + 1)));
+    }
+
+    #[test]
+    fn private_scoped_covers_user_direct_list() {
+        for s in ["user", "user:notification", "direct", "list", "list:3"] {
+            assert!(private_scoped(s), "{s} should require auth");
+        }
+        for s in ["public", "public:local", "hashtag", "hashtag:rust"] {
+            assert!(!private_scoped(s), "{s} should be public");
+        }
+    }
+
+    #[test]
+    fn subscription_name_folds_params() {
+        let params = HashMap::from([("tag".to_string(), "rust".to_string())]);
+        assert_eq!(subscription_name("hashtag", &params), "hashtag:rust");
+        let params = HashMap::from([("list".to_string(), "7".to_string())]);
+        assert_eq!(subscription_name("list", &params), "list:7");
+        assert_eq!(subscription_name("public", &HashMap::new()), "public");
     }
 
     #[test]

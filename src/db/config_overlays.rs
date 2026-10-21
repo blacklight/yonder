@@ -1,8 +1,9 @@
 //! `config_overlays` read path for the configuration loader.
 //!
-//! The table (`key` dotted TOML path → `value` JSONB) is created in epic 02;
-//! until then the guarded lookup below makes this a no-op returning an
-//! empty list rather than an error.
+//! The table (`key` dotted TOML path → `value` JSONB) is created by the
+//! schema migrations; the guarded lookup below degrades to an empty
+//! list rather than an error when it doesn't exist yet (fresh installs
+//! resolving config before the first `migrate`).
 
 use serde_json::Value;
 use sqlx::PgPool;

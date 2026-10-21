@@ -75,15 +75,17 @@ impl Error {
     /// HTTP status code this error maps to once it crosses the API boundary.
     pub fn status_code(&self) -> StatusCode {
         match self {
-            Self::Validation(_) => StatusCode::BAD_REQUEST,
+            // Mastodon reports validation failures as 422.
+            Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            // Pool saturation is transient — 503 invites a retry.
+            Self::RedisPool(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Config(_)
             | Self::Database(_)
             | Self::Migration(_)
             | Self::Redis(_)
-            | Self::RedisPool(_)
             | Self::Io(_)
             | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }

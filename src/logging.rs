@@ -2,8 +2,8 @@
 //!
 //! [`init`] installs the global subscriber from `server.log_format` and
 //! `server.log_level`; `RUST_LOG` overrides the configured level when set.
-//! Request-scoped spans (a `tower-http` `TraceLayer` carrying
-//! `info_span!` fields) land with the HTTP stack in epic 04.
+//! Request-scoped spans come from the `tower-http` `TraceLayer`
+//! assembled in `http::build_router`.
 
 use tracing_subscriber::{fmt, EnvFilter};
 

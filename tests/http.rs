@@ -517,5 +517,110 @@ async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
         panic!("expected text frame, got {frame:?}");
     };
     let event: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(event["stream"], json!(["user:1"]));
+    // Mastodon wire format carries the subscription name, not the
+    // internal scoped key.
+    assert_eq!(event["stream"], json!(["user"]));
+}
+
+#[tokio::test]
+async fn websocket_pre_subscribes_via_query_and_folds_params() {
+    let Some((state, _containers)) = test_state(|_| {}).await else {
+        return;
+    };
+    let token = seed_token(&state).await;
+    let addr = serve_ephemeral(state.clone()).await;
+
+    // `?stream=` requires auth for private streams even on the
+    // upgrade request.
+    let err = tokio_tungstenite::connect_async(format!("ws://{addr}/api/v1/streaming?stream=user"))
+        .await
+        .expect_err("anonymous ?stream=user must be rejected");
+    assert!(err.to_string().contains("401"), "expected 401, got {err:?}");
+
+    // Authenticated pre-subscription receives scoped events as ["user"].
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/v1/streaming?access_token={token}&stream=user"
+    ))
+    .await
+    .expect("websocket connect with ?stream=user");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    state.bus.publish("user:1", "update", json!({"x": 1}));
+    let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("user event timeout")
+        .unwrap()
+        .unwrap();
+    let tokio_tungstenite::tungstenite::Message::Text(text) = frame else {
+        panic!("expected text frame, got {frame:?}");
+    };
+    let event: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(event["stream"], json!(["user"]));
+
+    // Parameterized subscribe: {"stream":"hashtag","tag":"rust"} →
+    // events publish on `hashtag:rust` and arrive as
+    // ["hashtag","rust"].
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            r#"{"type":"subscribe","stream":"hashtag","tag":"rust"}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    state
+        .bus
+        .publish("hashtag:rust", "update", json!({"id": "1"}));
+    state
+        .bus
+        .publish("hashtag:go", "update", json!({"id": "2"}));
+    let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("hashtag event timeout")
+        .unwrap()
+        .unwrap();
+    let tokio_tungstenite::tungstenite::Message::Text(text) = frame else {
+        panic!("expected text frame, got {frame:?}");
+    };
+    let event: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(event["stream"], json!(["hashtag", "rust"]));
+}
+
+#[tokio::test]
+async fn database_outage_is_500_not_401() {
+    let Some((state, _containers)) = test_state(|_| {}).await else {
+        return;
+    };
+    let token = seed_token(&state).await;
+
+    async fn protected(auth: http::middleware::auth::AuthContext) -> String {
+        format!("user {}", auth.user_id)
+    }
+    let app = http::build_router(state.clone()).merge(
+        axum::Router::new()
+            .route("/protected", axum::routing::get(protected))
+            .with_state(state.clone()),
+    );
+
+    // Kill the database pool: token resolution hits infrastructure
+    // failure, which must surface as 5xx — never 401 (Mastodon clients
+    // log the user out on 401).
+    state.db.close().await;
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/protected")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "infra failure must not look like an auth failure"
+    );
+    assert_eq!(
+        body_json(resp).await,
+        json!({"error": "Internal server error"})
+    );
 }

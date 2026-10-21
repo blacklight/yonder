@@ -128,6 +128,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                         request_id,
                         method = %req.method(),
                         path,
+                        status = tracing::field::Empty,
                     )
                 })
                 .on_response(|response: &Response, latency: Duration, span: &Span| {

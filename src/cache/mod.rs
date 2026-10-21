@@ -37,11 +37,18 @@ pub struct Redis {
 }
 
 /// Connect to Redis with the configured pool bound.
+///
+/// Callers needing guaranteed capacity for long-blocking consumers
+/// (the job worker's `XREADGROUP BLOCK` loops) can adjust
+/// `config.pool_size` beforehand — see [`crate::jobs::worker`].
 pub async fn connect(config: &RedisConfig) -> Result<Redis> {
     let client = Client::open(config.url.as_str())?;
     let manager = RedisConnectionManager::new(config.url.as_str())?;
     let pool = Pool::builder()
         .max_size(config.pool_size)
+        // 5s beats bb8's 30s default: a Redis outage should fail fast
+        // (and the rate limiter fail-open) rather than stall requests.
+        .connection_timeout(Duration::from_secs(5))
         .build(manager)
         .await?;
     Ok(Redis {
@@ -121,7 +128,8 @@ impl RedisCache {
         }
     }
 
-    /// Store `value` under `key` for `ttl`.
+    /// Store `value` under `key` for `ttl` (millisecond granularity;
+    /// sub-second TTLs are valid).
     pub async fn set(&self, key: &str, value: &impl Serialize, ttl: Duration) -> Result<()> {
         let envelope = json!({
             "v": serde_json::to_value(value).map_err(|e| Error::Internal(e.to_string()))?,
@@ -129,7 +137,7 @@ impl RedisCache {
         });
         let mut conn = self.redis.conn().await?;
         let _: () = conn
-            .set_ex(self.key(key), envelope.to_string(), ttl.as_secs())
+            .pset_ex(self.key(key), envelope.to_string(), ttl.as_millis() as u64)
             .await?;
         Ok(())
     }
@@ -155,7 +163,12 @@ impl RedisCache {
         if doomed.is_empty() {
             return Ok(0);
         }
-        let dropped: usize = conn.del(doomed).await?;
+        let mut dropped = 0;
+        // Delete in batches — one giant DEL would block Redis and an
+        // unbounded Vec already collected every matching key.
+        for chunk in doomed.chunks(500) {
+            dropped += conn.del::<_, usize>(chunk).await?;
+        }
         Ok(dropped)
     }
 
@@ -163,7 +176,12 @@ impl RedisCache {
     ///
     /// Concurrent callers share a single in-flight load: the first
     /// caller renders and stores, waiters block on the same per-key
-    /// mutex and then re-read the cache.
+    /// mutex and then re-read the cache. Coalescing is per process —
+    /// other nodes may still load concurrently.
+    ///
+    /// The per-key mutex is removed from the map once the load
+    /// finishes and no other waiter holds it, so the map doesn't grow
+    /// with key cardinality.
     pub async fn get_or_load<V, F, Fut>(&self, key: &str, ttl: Duration, load: F) -> Result<V>
     where
         V: Serialize + DeserializeOwned,
@@ -175,21 +193,37 @@ impl RedisCache {
                 return Ok(v);
             }
         }
+        let full_key = self.key(key);
         let guard = {
             let mut map = self.inflight.lock().await;
-            map.entry(self.key(key))
+            map.entry(full_key.clone())
                 .or_insert_with(|| Arc::new(Mutex::new(())))
                 .clone()
         };
         let _lock = guard.lock().await;
-        // Another caller may have filled the cache while we waited.
-        if let Some(value) = self.get(key).await? {
-            if let Ok(v) = serde_json::from_value(value) {
-                return Ok(v);
+        let result: Result<V> = async {
+            // Another caller may have filled the cache while we waited.
+            let cached = self
+                .get(key)
+                .await?
+                .and_then(|value| serde_json::from_value(value).ok());
+            match cached {
+                Some(v) => Ok(v),
+                None => {
+                    let value = load().await?;
+                    self.set(key, &value, ttl).await?;
+                    Ok(value)
+                }
             }
         }
-        let value = load().await?;
-        self.set(key, &value, ttl).await?;
-        Ok(value)
+        .await;
+        drop(_lock);
+        // Drop the map entry only when nobody else is queued on it —
+        // a waiter still blocked on `guard` holds a second strong ref.
+        let mut map = self.inflight.lock().await;
+        if Arc::strong_count(&guard) == 2 {
+            map.remove(&full_key);
+        }
+        result
     }
 }

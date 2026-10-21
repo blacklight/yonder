@@ -1,4 +1,10 @@
 #[tokio::main]
-async fn main() -> yonder::Result<()> {
-    yonder::cli::main().await
+async fn main() -> std::process::ExitCode {
+    match yonder::cli::main().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e}");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }

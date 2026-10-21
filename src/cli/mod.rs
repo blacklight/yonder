@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use crate::{
     cache,
     config::{registry, Config},
-    db, jobs, logging, Error, Result,
+    db, http, jobs, logging, Error, Result,
 };
 
 #[derive(Debug, Parser)]
@@ -82,18 +82,32 @@ async fn serve(path: Option<&Path>) -> Result<()> {
         db::migrate::run(&pool).await?;
         tracing::info!("schema migrations applied");
     }
-    if config.jobs.enabled {
-        let (worker, _scheduler) = start_worker(&config, pool).await?;
-        tokio::select! {
-            result = worker.run() => result?,
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("shutdown signal received");
-                worker.cancel_token().cancel();
-            }
-        }
-        return Ok(());
+    let redis = cache::connect(&config.redis).await?;
+    let state = Arc::new(http::AppState::new(config.clone(), pool.clone(), redis));
+
+    // The in-process worker runs alongside HTTP when enabled; its
+    // scheduler stays bound for the function's lifetime.
+    let worker_parts = if config.jobs.enabled {
+        Some(start_worker(&config, pool).await?)
+    } else {
+        None
+    };
+    let worker_handle = worker_parts.as_ref().map(|(worker, _scheduler)| {
+        let token = worker.cancel_token();
+        let worker = worker.clone();
+        (tokio::spawn(async move { worker.run().await }), token)
+    });
+
+    http::serve(state, async {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown signal received");
+    })
+    .await?;
+
+    if let Some((handle, token)) = worker_handle {
+        token.cancel();
+        handle.await.map_err(|e| Error::Internal(e.to_string()))??;
     }
-    tracing::info!("HTTP server lands in epic 04 — nothing to serve yet");
     Ok(())
 }
 

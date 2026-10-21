@@ -12,16 +12,19 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 # once epic 06 lands the federation integration.
 [dependencies]
 async-trait = "0.1"
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 bb8 = "0.8"
 bb8-redis = "0.17"
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy = "0.15"
 figment = { version = "0.10", features = ["env", "toml"] }
+futures-util = "0.3.34"
+hex = "0.4.3"
 hostname = "0.4"
 redis = "0.27"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.11.1"
 sqlx = { version = "0.8", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
@@ -30,14 +33,20 @@ sqlx = { version = "0.8", default-features = false, features = [
     "macros",
 ] }
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
 tokio-cron-scheduler = { version = "0.15", default-features = false }
 tokio-util = "0.7"
+tower = "0.5.3"
+tower-http = { version = "0.7.1", features = ["cors", "trace", "request-id"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+utoipa = "6.0.0"
+utoipa-swagger-ui = { version = "10.0.2", features = ["axum"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 figment = { version = "0.10", features = ["env", "toml", "test"] }
 testcontainers = "0.24"
 testcontainers-modules = { version = "0.12", features = ["postgres", "redis"] }
+tokio-tungstenite = "0.29"
+tower = "0.5.3"

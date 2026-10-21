@@ -81,3 +81,50 @@ epic 28 ships the image.
 3. Enqueue with `dispatcher.enqueue(kind, payload)` or
    `enqueue_delayed(kind, payload, delay)`. Payloads are `serde_json`
    values; keep them small and self-contained.
+
+## HTTP API
+
+`yonder serve` binds `server.host`/`server.port` and, when
+`jobs.enabled` is set, runs the job worker in-process alongside it.
+The router (`http::build_router`) is modular: feature epics merge
+their subrouters under `http::api::v1`/`v2` and register an OpenAPI
+fragment in their module's `ApiDoc` — no changes to core wiring.
+
+- **Endpoints** — `GET /healthz`, `GET /openapi.json` (OpenAPI 3 via
+  utoipa), Swagger-UI at `/swagger-ui`, and the streaming WebSocket at
+  `/api/v1/streaming`. `/ap` ActivityPub routes are nested in epic 06.
+- **Middleware** — request ids (`x-request-id`, generated when absent
+  and propagated to the response), per-request tracing spans, CORS
+  (`http.cors_enabled` + `http.cors_origins`, off by default), and
+  Redis-backed rate limits.
+- **Auth** — handlers take `AuthContext` (401 on missing/invalid
+  token) or `MaybeAuth` (optional). Tokens resolve from
+  `Authorization: Bearer` or `?access_token=` against
+  `oauth_access_tokens` (`token_hash = hex(sha256(token))`; epic 07
+  owns issuance). The streaming endpoint shares the same resolution.
+- **Rate limiting** — `ratelimit::layer(&state, "<bucket>")` applied
+  with `.route_layer()`. Buckets are the `rate_limit.*` config keys
+  (`search`, `timeline`, `account_creation`, `relation`, `status`,
+  `authentication`); authenticated requests use
+  `authenticated_limit` when set and a separate `u:{id}` identity.
+  Rejects with 429 + `Retry-After`.
+- **Errors** — `Error` implements `IntoResponse` with Mastodon's
+  `{"error": "…"}` shape; 5xx responses return a generic message
+  (internals are logged, never leaked).
+- **Streaming** — Mastodon's protocol: `{"type":"subscribe",
+  "stream":"<name>"}` / `unsubscribe` frames, server→client
+  `{"stream":[…],"event":…,"payload":…}` frames, 30 s server pings
+  and echoed client pings. `user*` streams require auth and only
+  receive the owner's events (`user:{id}`). Producers publish via
+  `state.bus.publish(stream, event, payload)` (epic 16).
+
+### Adding a route module
+
+1. Create `src/http/api/{v1,v2}/<feature>.rs` (or a dedicated module);
+   handlers take `State<Arc<AppState>>` plus extractors.
+2. Merge its `Router<Arc<AppState>>` in `api::v1::router()` /
+   `api::v2::router()`.
+3. Annotate handlers with `#[utoipa::path]` and list them in the
+   module's `ApiDoc` `paths(...)` — `openapi::document()` merges it.
+4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
+   maps to a configured bucket.

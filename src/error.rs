@@ -1,11 +1,18 @@
 //! Crate-wide error type.
 //!
-//! Epic 04 will implement `axum::response::IntoResponse` for [`Error`],
-//! emitting Mastodon-style `{"error": "..."}` JSON bodies; until then
-//! [`Error::status_code`] and [`Error::error_kind`] carry the contract.
+//! [`Error`] implements `axum::response::IntoResponse`, emitting
+//! Mastodon-style `{"error": "..."}` JSON bodies. Client-facing
+//! variants carry their real message; infrastructure variants return a
+//! generic 500 so internals never leak (the cause is logged instead).
 
-use axum::http::StatusCode;
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::Serialize;
 use thiserror::Error;
+use utoipa::ToSchema;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -82,6 +89,17 @@ impl Error {
         }
     }
 
+    /// Message safe to send to clients: real message for client-facing
+    /// variants, generic text for infrastructure failures.
+    fn public_message(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::NotFound(_) | Self::Unauthorized | Self::Forbidden | Self::Validation(_) => {
+                self.to_string().into()
+            }
+            _ => "Internal server error".into(),
+        }
+    }
+
     /// Machine-readable error kind for the eventual JSON error body.
     pub fn error_kind(&self) -> &'static str {
         match self {
@@ -97,5 +115,28 @@ impl Error {
             Self::Validation(_) => "validation",
             Self::Internal(_) => "internal",
         }
+    }
+}
+
+/// Mastodon-compatible JSON error body: `{"error": "<message>"}`.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorBody {
+    /// Human-readable error description.
+    pub error: String,
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response {
+        let status = self.status_code();
+        if status.is_server_error() {
+            tracing::error!(error = %self, kind = self.error_kind(), "request failed");
+        }
+        (
+            status,
+            Json(ErrorBody {
+                error: self.public_message().into_owned(),
+            }),
+        )
+            .into_response()
     }
 }

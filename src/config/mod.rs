@@ -515,6 +515,23 @@ pub struct RateLimitConfig {
     pub authentication: RateLimit,
 }
 
+impl RateLimitConfig {
+    /// Look up a named bucket (`"search"`, `"timeline"`,
+    /// `"account_creation"`, `"relation"`, `"status"`,
+    /// `"authentication"`).
+    pub fn bucket(&self, name: &str) -> Option<&RateLimit> {
+        match name {
+            "search" => Some(&self.search),
+            "timeline" => Some(&self.timeline),
+            "account_creation" => Some(&self.account_creation),
+            "relation" => Some(&self.relation),
+            "status" => Some(&self.status),
+            "authentication" => Some(&self.authentication),
+            _ => None,
+        }
+    }
+}
+
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {

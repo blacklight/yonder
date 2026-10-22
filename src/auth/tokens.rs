@@ -527,6 +527,30 @@ pub async fn get_secret_key<T: serde::de::DeserializeOwned>(
     .transpose()
 }
 
+/// `SET KEEPTTL` needs Redis 6.2 — this Lua equivalent works on all
+/// supported versions.
+pub async fn set_keep_ttl(
+    conn: &mut bb8::PooledConnection<'_, bb8_redis::RedisConnectionManager>,
+    key: &str,
+    value: &str,
+) -> Result<()> {
+    static SCRIPT: std::sync::LazyLock<redis::Script> = std::sync::LazyLock::new(|| {
+        redis::Script::new(
+            "local ttl = redis.call('PTTL', KEYS[1])\n\
+             if ttl < 0 then ttl = 1 end\n\
+             redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)\n\
+             return 1",
+        )
+    });
+    SCRIPT
+        .clone()
+        .key(key)
+        .arg(value)
+        .invoke_async::<()>(&mut **conn)
+        .await?;
+    Ok(())
+}
+
 fn now_unix() -> i64 {
     chrono::Utc::now().timestamp()
 }

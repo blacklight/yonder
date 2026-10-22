@@ -97,6 +97,9 @@ invite_links_enabled = true
 require_email_verification = true
 # Signing secret for session/token material — set it via
 # YONDER_AUTH__SECRET_KEY rather than committing it here.
+# Also load-bearing for two-factor authentication: it is the HKDF
+# master key encrypting TOTP secrets at rest — TOTP enrollment fails
+# with a 500 while this is unset.
 # secret_key = ""
 access_token_expiry_minutes = 120
 refresh_token_expiry_days = 30

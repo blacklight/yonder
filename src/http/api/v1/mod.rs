@@ -10,6 +10,7 @@ pub mod apps;
 pub mod instance;
 pub mod sessions;
 pub mod tokens;
+pub mod two_factor;
 
 use std::sync::Arc;
 
@@ -58,6 +59,38 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/sessions/{id}",
             axum::routing::delete(sessions::revoke_session),
         )
+        // 2FA management (epic 08) — inside the `authentication` bucket.
+        .route(
+            "/api/v1/2fa",
+            get(two_factor::status).delete(two_factor::disable),
+        )
+        .route("/api/v1/2fa/totp/setup", post(two_factor::totp_setup))
+        .route("/api/v1/2fa/totp/confirm", post(two_factor::totp_confirm))
+        .route(
+            "/api/v1/2fa/totp",
+            axum::routing::delete(two_factor::totp_delete),
+        )
+        .route("/api/v1/2fa/backup_codes", post(two_factor::backup_codes))
+        .route(
+            "/api/v1/2fa/webauthn/register/begin",
+            post(two_factor::webauthn_register_begin),
+        )
+        .route(
+            "/api/v1/2fa/webauthn/register",
+            post(two_factor::webauthn_register),
+        )
+        .route(
+            "/api/v1/2fa/webauthn/credentials",
+            get(two_factor::webauthn_credentials),
+        )
+        .route(
+            "/api/v1/2fa/webauthn/credentials/{id}/rename",
+            post(two_factor::webauthn_rename),
+        )
+        .route(
+            "/api/v1/2fa/webauthn/credentials/{id}",
+            axum::routing::delete(two_factor::webauthn_delete),
+        )
         .route("/api/v1/instance", get(instance::instance))
         // The `authentication` bucket covers every auth-adjacent
         // endpoint registered above.
@@ -85,6 +118,17 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     tokens::revoke_token,
     sessions::list_sessions,
     sessions::revoke_session,
+    two_factor::status,
+    two_factor::totp_setup,
+    two_factor::totp_confirm,
+    two_factor::totp_delete,
+    two_factor::backup_codes,
+    two_factor::webauthn_register_begin,
+    two_factor::webauthn_register,
+    two_factor::webauthn_credentials,
+    two_factor::webauthn_rename,
+    two_factor::webauthn_delete,
+    two_factor::disable,
     instance::instance
 ))]
 pub struct ApiDoc;

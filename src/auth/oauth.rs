@@ -17,105 +17,126 @@ use sqlx::Row;
 use crate::{
     auth::{
         scopes::ScopeSet,
-        tokens::{get_secret_key, random_secret, set_secret_key, take_secret_key},
+        tokens::{get_secret_key, random_secret, set_keep_ttl, set_secret_key, take_secret_key},
     },
     http::AppState,
     Error, Result,
 };
 
 /// OAuth2 error response rendered as the doorkeeper/RFC 6749 JSON shape.
+/// `extra` carries additional top-level body fields (the `mfa_required`
+/// response's `mfa_token`/`methods`).
 #[derive(Debug)]
 pub struct GrantError {
     pub error: &'static str,
     pub description: String,
     pub status: StatusCode,
+    pub extra: Option<Value>,
 }
 
 impl GrantError {
-    pub fn server(description: &str) -> Self {
+    /// A 5xx grant failure — the cause is logged for operators but the
+    /// client gets a generic description (internals never leak into the
+    /// doorkeeper body).
+    pub fn server(cause: &str) -> Self {
+        tracing::error!(error = %cause, "oauth grant failed internally");
         GrantError {
             error: "server_error",
-            description: description.to_string(),
+            description: "The authorization server encountered an unexpected condition."
+                .to_string(),
             status: StatusCode::INTERNAL_SERVER_ERROR,
+            extra: None,
         }
     }
 }
 
 impl IntoResponse for GrantError {
     fn into_response(self) -> axum::response::Response {
-        (
-            self.status,
-            Json(json!({
-                "error": self.error,
-                "error_description": self.description,
-            })),
-        )
-            .into_response()
+        let mut body = json!({
+            "error": self.error,
+            "error_description": self.description,
+        });
+        if let Some(extra) = self.extra.and_then(|v| v.as_object().cloned()) {
+            for (key, value) in extra {
+                body[key] = value;
+            }
+        }
+        (self.status, Json(body)).into_response()
+    }
+}
+
+fn grant_error(error: &'static str, description: &str, status: StatusCode) -> GrantError {
+    GrantError {
+        error,
+        description: description.to_string(),
+        status,
+        extra: None,
     }
 }
 
 pub fn invalid_client(description: &str) -> GrantError {
-    GrantError {
-        error: "invalid_client",
-        description: description.to_string(),
-        status: StatusCode::UNAUTHORIZED,
-    }
+    grant_error("invalid_client", description, StatusCode::UNAUTHORIZED)
 }
 
 pub fn invalid_grant(description: &str) -> GrantError {
-    GrantError {
-        error: "invalid_grant",
-        description: description.to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error("invalid_grant", description, StatusCode::BAD_REQUEST)
 }
 
 pub fn invalid_request(description: &str) -> GrantError {
-    GrantError {
-        error: "invalid_request",
-        description: description.to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error("invalid_request", description, StatusCode::BAD_REQUEST)
 }
 
 pub fn invalid_scope(description: &str) -> GrantError {
-    GrantError {
-        error: "invalid_scope",
-        description: description.to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error("invalid_scope", description, StatusCode::BAD_REQUEST)
 }
 
 pub fn unsupported_grant_type() -> GrantError {
-    GrantError {
-        error: "unsupported_grant_type",
-        description: "The authorization grant type is not supported.".to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error(
+        "unsupported_grant_type",
+        "The authorization grant type is not supported.",
+        StatusCode::BAD_REQUEST,
+    )
+}
+
+/// The password grant verified the credentials but the account has 2FA
+/// enabled — the client completes a second factor against
+/// `/oauth/2fa/*` using `mfa_token` (or retries the grant with `code`).
+/// `methods` lists the factors that can finish the login.
+pub fn mfa_required(mfa_token: &str, methods: &[String]) -> GrantError {
+    let mut err = grant_error(
+        "mfa_required",
+        "Two-factor authentication is required.",
+        StatusCode::BAD_REQUEST,
+    );
+    err.extra = Some(json!({
+        "mfa_token": mfa_token,
+        "methods": methods,
+    }));
+    err
 }
 
 pub fn authorization_pending() -> GrantError {
-    GrantError {
-        error: "authorization_pending",
-        description: "The device authorization is still pending.".to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error(
+        "authorization_pending",
+        "The device authorization is still pending.",
+        StatusCode::BAD_REQUEST,
+    )
 }
 
 pub fn slow_down() -> GrantError {
-    GrantError {
-        error: "slow_down",
-        description: "Polling too fast — respect the interval.".to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error(
+        "slow_down",
+        "Polling too fast — respect the interval.",
+        StatusCode::BAD_REQUEST,
+    )
 }
 
 pub fn expired_token() -> GrantError {
-    GrantError {
-        error: "expired_token",
-        description: "The device code has expired.".to_string(),
-        status: StatusCode::BAD_REQUEST,
-    }
+    grant_error(
+        "expired_token",
+        "The device code has expired.",
+        StatusCode::BAD_REQUEST,
+    )
 }
 
 /// An `oauth_applications` row used across the auth module.
@@ -623,30 +644,6 @@ pub async fn approve_device_code(
         .map_err(|e| Error::Internal(format!("serialize device entry: {e}")))?;
     set_keep_ttl(&mut conn, &key, &encoded).await?;
     Ok(true)
-}
-
-/// `SET KEEPTTL` needs Redis 6.2 — this Lua equivalent works on all
-/// supported versions.
-async fn set_keep_ttl(
-    conn: &mut bb8::PooledConnection<'_, bb8_redis::RedisConnectionManager>,
-    key: &str,
-    value: &str,
-) -> Result<()> {
-    static SCRIPT: std::sync::LazyLock<redis::Script> = std::sync::LazyLock::new(|| {
-        redis::Script::new(
-            "local ttl = redis.call('PTTL', KEYS[1])\n\
-             if ttl < 0 then ttl = 1 end\n\
-             redis.call('SET', KEYS[1], ARGV[1], 'PX', ttl)\n\
-             return 1",
-        )
-    });
-    SCRIPT
-        .clone()
-        .key(key)
-        .arg(value)
-        .invoke_async::<()>(&mut **conn)
-        .await?;
-    Ok(())
 }
 
 /// Device-code grant polling. `Ok(entry)` means granted and consumed —

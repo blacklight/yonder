@@ -18,6 +18,7 @@ use crate::{
     auth::{
         oauth::{self, invalid_client, invalid_grant, invalid_request, unsupported_grant_type},
         tokens::{self, SessionMeta},
+        two_factor, webauthn,
     },
     http::{middleware::auth::AuthContext, middleware::client_ip::ClientIp, AppState},
     Result,
@@ -31,6 +32,16 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/oauth/device_code", post(device_code))
         .route("/oauth/device", get(device_info))
         .route("/oauth/device/authorize", post(device_authorize))
+        // 2FA exchange endpoints share the `authentication` bucket.
+        .route("/oauth/2fa/verify", post(two_factor_verify))
+        .route(
+            "/oauth/2fa/webauthn/assert/begin",
+            post(two_factor_webauthn_begin),
+        )
+        .route(
+            "/oauth/2fa/webauthn/assert",
+            post(two_factor_webauthn_assert),
+        )
         .route_layer(crate::http::middleware::ratelimit::layer(
             state,
             "authentication",
@@ -180,6 +191,47 @@ async fn password_grant(
     }
     let user_id: i64 = row.get("id");
     let scope = requested_scope(params.scope.as_deref(), client.as_ref())?;
+
+    // 2FA gate: an enrolled account either finishes inline (a `code`
+    // form param — TOTP first, then backup code) or gets an
+    // `mfa_required` answer carrying a pending-login token for the
+    // `/oauth/2fa/*` exchange endpoints. Inline attempts aren't counted
+    // against an attempt budget — each one re-verifies the argon2id
+    // password — only the exchange endpoints carry a budget.
+    let twofa = two_factor::two_factor_state(&state.db, user_id)
+        .await
+        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    if twofa.enabled() {
+        match params
+            .code
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        {
+            Some(code) => {
+                let ok = two_factor::verify_totp(state, user_id, code)
+                    .await
+                    .map_err(|e| oauth::GrantError::server(&e.to_string()))?
+                    || two_factor::consume_backup_code(&state.db, user_id, code)
+                        .await
+                        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+                if !ok {
+                    return Err(invalid_grant("The provided two-factor code is invalid."));
+                }
+            }
+            None => {
+                let mfa_token = two_factor::stage_pending_login(
+                    state,
+                    user_id,
+                    client.as_ref().map(|a| a.id),
+                    &scope,
+                )
+                .await
+                .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+                return Err(oauth::mfa_required(&mfa_token, &twofa.methods()));
+            }
+        }
+    }
 
     // Interactive login → linked session row.
     let meta = SessionMeta {
@@ -413,4 +465,161 @@ async fn device_authorize(
         return Err(crate::Error::NotFound("device code".into()));
     }
     Ok(Json(json!({ "approved": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Two-factor exchange (`/oauth/2fa/*`)
+// ---------------------------------------------------------------------------
+
+/// Management-API errors crossing into the doorkeeper shape: known
+/// client problems (`NotFound`, `Validation`) become `invalid_grant`;
+/// anything else is an infrastructure `server_error`.
+fn grantify(e: crate::Error) -> oauth::GrantError {
+    match e {
+        crate::Error::NotFound(_) | crate::Error::Validation(_) => {
+            invalid_grant("The provided authorization grant is invalid, expired or revoked.")
+        }
+        other => oauth::GrantError::server(&other.to_string()),
+    }
+}
+
+/// Load the pending login for `mfa_token` — `invalid_grant` when it
+/// expired or never existed.
+async fn require_pending_login(
+    state: &Arc<AppState>,
+    mfa_token: &str,
+) -> std::result::Result<two_factor::PendingLogin, oauth::GrantError> {
+    two_factor::pending_login(state, mfa_token)
+        .await
+        .map_err(|e| oauth::GrantError::server(&e.to_string()))?
+        .ok_or_else(|| {
+            invalid_grant("The provided authorization grant is invalid, expired or revoked.")
+        })
+}
+
+/// Count a failed second-factor attempt against the pending login and
+/// answer `invalid_grant` — consistent with the wrong-password shape.
+async fn failed_second_factor(state: &Arc<AppState>, mfa_token: &str) -> oauth::GrantError {
+    if let Err(e) = two_factor::fail_pending_login(state, mfa_token).await {
+        return oauth::GrantError::server(&e.to_string());
+    }
+    invalid_grant("The provided two-factor credential is invalid.")
+}
+
+/// Finish a completed pending login exactly like a successful
+/// `password_grant`: token pair + session row (interactive login) +
+/// `oauth_authorizations` upsert for client-bound grants.
+async fn issue_for_pending_login(
+    state: &Arc<AppState>,
+    mfa_token: &str,
+    headers: &HeaderMap,
+    ip: &str,
+) -> std::result::Result<Value, oauth::GrantError> {
+    let pending = two_factor::consume_pending_login(state, mfa_token)
+        .await
+        .map_err(|e| oauth::GrantError::server(&e.to_string()))?
+        .ok_or_else(|| {
+            invalid_grant("The provided authorization grant is invalid, expired or revoked.")
+        })?;
+    let meta = SessionMeta {
+        user_agent: headers
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(String::from),
+        ip: ip.parse::<std::net::IpAddr>().ok().map(|_| ip.to_string()),
+    };
+    let issued = tokens::issue_token_pair(
+        state,
+        pending.application_id,
+        pending.user_id,
+        &pending.scope,
+        None,
+        Some(&meta),
+    )
+    .await
+    .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    if let Some(application_id) = pending.application_id {
+        tokens::record_authorization(&state.db, pending.user_id, application_id, &pending.scope)
+            .await
+            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    }
+    Ok(tokens::token_entity(&issued))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TwoFactorVerifyParams {
+    mfa_token: String,
+    code: String,
+}
+
+/// `POST /oauth/2fa/verify` — complete a pending login with a TOTP
+/// code or a backup code (consumed on success).
+async fn two_factor_verify(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    Form(params): Form<TwoFactorVerifyParams>,
+) -> std::result::Result<TokenResponse, oauth::GrantError> {
+    let pending = require_pending_login(&state, &params.mfa_token).await?;
+    let ok = two_factor::verify_totp(&state, pending.user_id, &params.code)
+        .await
+        .map_err(|e| oauth::GrantError::server(&e.to_string()))?
+        || two_factor::consume_backup_code(&state.db, pending.user_id, &params.code)
+            .await
+            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    if !ok {
+        return Err(failed_second_factor(&state, &params.mfa_token).await);
+    }
+    issue_for_pending_login(&state, &params.mfa_token, &headers, &ip)
+        .await
+        .map(TokenResponse)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TwoFactorMfaTokenParams {
+    mfa_token: String,
+}
+
+/// `POST /oauth/2fa/webauthn/assert/begin` — assertion options for the
+/// pending login's registered keys.
+async fn two_factor_webauthn_begin(
+    State(state): State<Arc<AppState>>,
+    Form(params): Form<TwoFactorMfaTokenParams>,
+) -> std::result::Result<Json<Value>, oauth::GrantError> {
+    let pending = require_pending_login(&state, &params.mfa_token).await?;
+    let options = webauthn::begin_authentication(&state, &params.mfa_token, pending.user_id)
+        .await
+        .map_err(grantify)?;
+    Ok(Json(options))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TwoFactorAssertParams {
+    mfa_token: String,
+    /// JSON-serialized `PublicKeyCredential` from the user agent.
+    credential: String,
+}
+
+/// `POST /oauth/2fa/webauthn/assert` — verify the assertion and issue
+/// the token pair.
+async fn two_factor_webauthn_assert(
+    State(state): State<Arc<AppState>>,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    Form(params): Form<TwoFactorAssertParams>,
+) -> std::result::Result<TokenResponse, oauth::GrantError> {
+    let pending = require_pending_login(&state, &params.mfa_token).await?;
+    let credential: webauthn_rs::prelude::PublicKeyCredential =
+        serde_json::from_str(&params.credential)
+            .map_err(|_| invalid_grant("The credential payload is malformed."))?;
+    let ok =
+        webauthn::finish_authentication(&state, &params.mfa_token, pending.user_id, &credential)
+            .await
+            .map_err(grantify)?;
+    if !ok {
+        return Err(failed_second_factor(&state, &params.mfa_token).await);
+    }
+    issue_for_pending_login(&state, &params.mfa_token, &headers, &ip)
+        .await
+        .map(TokenResponse)
 }

@@ -11,6 +11,10 @@
 //! - [`tokens`] — bearer material (random, sha256-hex stored), token-pair
 //!   issuance, app tokens, refresh rotation, Redis secret keys.
 //! - [`sessions`] — interactive-login tracking (browser/IP/activity).
+//! - [`two_factor`] — TOTP enrollment/verification, backup codes and
+//!   the pending-login state machine (epic 08).
+//! - [`webauthn`] — FIDO2 security-key registration/assertion
+//!   ceremonies (epic 08).
 
 pub mod oauth;
 pub mod password;
@@ -18,3 +22,5 @@ pub mod registration;
 pub mod scopes;
 pub mod sessions;
 pub mod tokens;
+pub mod two_factor;
+pub mod webauthn;

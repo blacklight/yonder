@@ -178,6 +178,11 @@ remote_cleanup_max_bytes = 10737418240
 remote_cleanup_max_age_days = 7
 strip_exif = true
 max_attachments_per_post = 4
+# Unattached uploads older than this are deleted by the orphan cleanup
+# (days). Media reserved by a scheduled status is never orphaned.
+orphan_retention_days = 7
+# 5-field cron for the orphan-media cleanup. Set to "" to disable.
+orphan_cleanup_schedule = "30 3 * * *"
 
 [email]
 # Outgoing mail server. Email is disabled until smtp_host is set.
@@ -234,6 +239,11 @@ period_seconds = 60
 limit = 15
 period_seconds = 60
 
+# Media uploads (/api/v1/media, /api/v2/media).
+[rate_limit.media]
+limit = 30
+period_seconds = 300
+
 [rate_limit.authentication]
 limit = 5
 period_seconds = 60
@@ -274,6 +284,16 @@ translation_backend = "google-web"
 # libretranslate_url = "https://translate.example.com"
 # text/plain | text/markdown
 default_post_content_type = "text/plain"
+# Fetch Open Graph metadata for the first link of a status.
+link_previews = true
+# Redis TTL for per-URL link-preview metadata (hours).
+link_preview_cache_hours = 24
+# 5-field cron re-enqueueing due scheduled statuses (lost-job
+# recovery). Set to "" to disable.
+scheduled_status_sweep_schedule = "0 * * * *"
+# 5-field cron enqueueing due scheduled status deletions
+# (users' scheduled_deletion_days setting). Set to "" to disable.
+scheduled_deletion_sweep_schedule = "0 * * * *"
 
 [admin]
 # Remove follow relationships in both directions on user block.

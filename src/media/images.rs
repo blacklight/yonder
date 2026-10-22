@@ -146,6 +146,75 @@ struct StoredSeed {
     blurhash: String,
 }
 
+/// The processed output of [`process_image`] — shared by profile
+/// uploads and status media (epic 12).
+pub struct ProcessedImage {
+    /// Stored bytes (re-encoded when EXIF stripping applies).
+    pub bytes: Vec<u8>,
+    /// Canonical MIME type for the sniffed format.
+    pub content_type: String,
+    /// Storage-key extension.
+    pub ext: &'static str,
+    /// Decoded pixel width.
+    pub width: u32,
+    /// Decoded pixel height.
+    pub height: u32,
+    /// Blurhash placeholder of the first frame.
+    pub blurhash: String,
+}
+
+/// The sniff → bound-decode → EXIF-strip → blurhash core, generalized
+/// for status media. Pure CPU work — callers wrap it in
+/// `spawn_blocking`. `label` names the upload kind in error messages.
+pub(crate) fn process_image(bytes: &[u8], strip_exif: bool, label: &str) -> Result<ProcessedImage> {
+    let format = image::guess_format(bytes)
+        .map_err(|_| Error::Validation(format!("{label} must be an image (png/jpeg/webp/gif)")))?;
+    let Some(&(_, ext, content_type)) = ALLOWED.iter().find(|(f, _, _)| *f == format) else {
+        return Err(Error::Validation(format!(
+            "{label} must be an image (png/jpeg/webp/gif)"
+        )));
+    };
+
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| Error::Validation(format!("{label} is not a readable image: {e}")))?;
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DIMENSION);
+    limits.max_image_height = Some(MAX_DIMENSION);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|e| {
+        Error::Validation(format!(
+            "{label} could not be decoded (limits: {}x{}, {} MiB): {e}",
+            MAX_DIMENSION,
+            MAX_DIMENSION,
+            MAX_DECODE_ALLOC / 1024 / 1024
+        ))
+    })?;
+    let (width, height) = (decoded.width(), decoded.height());
+    let rgba = decoded.to_rgba8();
+    let blurhash = blurhash::encode(4, 3, width, height, rgba.as_raw())
+        .map_err(|e| Error::Internal(format!("blurhash encode failed: {e}")))?;
+
+    let bytes = if format == ImageFormat::Gif || !strip_exif {
+        bytes.to_vec()
+    } else {
+        let mut out = Cursor::new(Vec::with_capacity(bytes.len()));
+        decoded
+            .write_to(&mut out, format)
+            .map_err(|e| Error::Internal(format!("image re-encode failed: {e}")))?;
+        out.into_inner()
+    };
+    Ok(ProcessedImage {
+        bytes,
+        content_type: content_type.to_string(),
+        ext,
+        width,
+        height,
+        blurhash,
+    })
+}
+
 /// Validate, process and persist an upload; returns the storage key
 /// and metadata. Files land under `media.local_path` at
 /// `{kind_dir}/{account_id}/{uuid}.{ext}`.
@@ -191,11 +260,13 @@ pub async fn store_profile_image(
 }
 
 /// Content-type for a storage key's extension — the serving route's
-/// allow-list, kept in lockstep with [`ALLOWED`].
+/// allow-list, kept in lockstep with [`ALLOWED`] and the audio/video
+/// table in [`crate::media::attachments`].
 pub fn content_type_for_key(key: &str) -> Option<&'static str> {
     let ext = key.rsplit('.').next()?;
     ALLOWED
         .iter()
         .find(|(_, e, _)| *e == ext)
         .map(|(_, _, t)| *t)
+        .or_else(|| super::attachments::content_type_for_ext(ext))
 }

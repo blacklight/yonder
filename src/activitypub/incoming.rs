@@ -148,6 +148,18 @@ fn activity_id_of(payload: &Value) -> &str {
 pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
     let core = core.clone();
     Arc::new(move |activity: &Activity, raw: &Value| {
+        // Create/Update/Delete of status objects materialize into
+        // `statuses` rows (epic 12) — PassThrough keeps pubby's
+        // interaction bookkeeping intact.
+        if matches!(
+            activity.activity_type.as_str(),
+            "Create" | "Update" | "Delete"
+        ) {
+            // `handle` logs its own failures and never errors the
+            // hook — PassThrough keeps pubby's dispatch intact.
+            sync_block(crate::posts::remote::handle(&core, activity, raw));
+            return Ok(ActivityDisposition::PassThrough);
+        }
         let outcome = match activity.activity_type.as_str() {
             "Move" => sync_block(handle_move(&core, activity, raw)),
             "Flag" => sync_block(handle_flag(&core.db, activity, raw)),

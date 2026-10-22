@@ -20,6 +20,7 @@ pub mod follows;
 pub mod inbox;
 pub mod incoming;
 pub mod moderation;
+pub mod posts;
 pub mod storage;
 
 use std::sync::Arc;
@@ -228,6 +229,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             state,
             "federation_inbox",
         ))
+        // Status object documents — visibility-scoped, custom handler
+        // (registered before the dispatch_multi catch-all).
+        .route(
+            "/ap/users/{username}/statuses/{id}",
+            get(posts::serve_object),
+        )
         // Every GET under /ap/* fans into dispatch_multi.
         .route("/ap/{*rest}", get(serve(state)))
         // Well-known + nodeinfo endpoints.

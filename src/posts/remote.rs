@@ -1,0 +1,543 @@
+//! Remote status materialization — inbound `Create`/`Update`/`Delete`
+//! for `Note`/`Question` objects (epic 12).
+//!
+//! Called from `activitypub::incoming::on_activity_fn` via
+//! `sync_block` (it does sqlx I/O the sync hook can't); it answers
+//! `PassThrough` so pubby's own interaction bookkeeping still runs.
+//!
+//! **Ownership gate** (before any write): `activity.actor` must equal
+//! the object's `attributedTo` for Create/Update/Delete, and
+//! Update/Delete must additionally match the `account_id` already
+//! stored for the target `statuses.uri`. Bare-URI Deletes resolve
+//! ownership from the existing row. Mismatches are logged and skipped.
+
+use serde_json::{json, Value};
+use sqlx::Row;
+
+use crate::activitypub::ApCore;
+use crate::jobs::JobKind;
+use crate::Result;
+
+/// The object types we materialize — Notes, Questions and the
+/// Mastodon-compatible Article/Page shapes degrade to Notes.
+const NOTE_TYPES: &[&str] = &["Note", "Question", "Article", "Page"];
+
+/// Entry point from `on_activity_fn`: decide whether `activity` is a
+/// status-bearing Create/Update/Delete and materialize it. Returns
+/// `false` when the activity isn't ours to handle (caller passes
+/// through without side effects either way).
+pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) -> bool {
+    let object = raw.get("object").cloned().unwrap_or(Value::Null);
+    match activity.activity_type.as_str() {
+        "Create" | "Update" => {
+            let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if !NOTE_TYPES.contains(&object_type) {
+                return false;
+            }
+            if let Err(e) = upsert(core, activity, &object).await {
+                tracing::warn!(error = %e, "remote status upsert failed");
+            }
+            true
+        }
+        "Delete" => {
+            // Bare-URI Deletes resolve through the stored row.
+            let id = object.as_str().map(str::to_string).or_else(|| {
+                object
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            });
+            let Some(id) = id else { return false };
+            match tombstone(core, activity, &id).await {
+                Ok(done) => done,
+                Err(e) => {
+                    tracing::warn!(error = %e, "remote status delete failed");
+                    true
+                }
+            }
+        }
+        _ => false,
+    }
+}
+
+/// `attributedTo` → actor URL (string, `{id}`, or first array item).
+fn attributed_to(object: &Value) -> Option<String> {
+    match object.get("attributedTo") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Object(o)) => o.get("id").and_then(|v| v.as_str()).map(str::to_string),
+        Some(Value::Array(a)) => a.first().and_then(|v| {
+            v.as_str()
+                .map(str::to_string)
+                .or_else(|| v.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        }),
+        _ => None,
+    }
+}
+
+/// Bare `accounts` upsert for a remote actor + `RemoteActorFetch`
+/// enrichment — the `handle_flag` pattern (no network I/O).
+async fn ensure_account(core: &ApCore, actor_url: &str) -> Result<i64> {
+    let domain = crate::activitypub::moderation::actor_domain(actor_url)
+        .unwrap_or_else(|| "unknown".to_string());
+    let username = actor_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(actor_url)
+        .trim_start_matches('@');
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
+    )
+    .bind(domain)
+    .bind(username)
+    .bind(actor_url)
+    .execute(&core.db)
+    .await?;
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
+        .bind(actor_url)
+        .fetch_optional(&core.db)
+        .await?;
+    if let Some(id) = id {
+        core.dispatcher
+            .enqueue(JobKind::RemoteActorFetch, json!({"actor_url": actor_url}))
+            .await?;
+        Ok(id)
+    } else {
+        Err(crate::Error::Internal("account upsert failed".to_string()))
+    }
+}
+
+/// The followers-collection URL `addressing` produces — used to
+/// recognize followers-only inbound posts.
+fn followers_url(actor_id: &str) -> String {
+    format!("{}/followers", actor_id.trim_end_matches('/'))
+}
+
+/// Infer stored visibility from the activity+object `to`/`cc` fields:
+/// Public in `to` → `public`; Public only in `cc` → `unlisted`; a
+/// followers collection with no Public → `followers_only`; otherwise
+/// actor/mention-limited → `direct`.
+fn infer_visibility(
+    activity: &pubby_sdk::Activity,
+    object: &Value,
+    actor_id: &str,
+) -> &'static str {
+    // Activity addressing is parsed on the `Activity`; object
+    // addressing supplements it (some servers address only the inner
+    // object).
+    let mut to = activity.to.clone();
+    let mut cc = activity.cc.clone();
+    to.extend(str_list(object.get("to")));
+    cc.extend(str_list(object.get("cc")));
+    let public = "https://www.w3.org/ns/activitystreams#Public";
+    if to.iter().any(|u| u == public) {
+        return "public";
+    }
+    if cc.iter().any(|u| u == public) {
+        return "unlisted";
+    }
+    let followers = followers_url(actor_id);
+    if to.iter().chain(cc.iter()).any(|u| *u == followers) {
+        return "followers_only";
+    }
+    "direct"
+}
+
+fn str_list(v: Option<&Value>) -> Vec<String> {
+    match v {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(|i| i.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Create/Update materialization. The ownership gate runs before any
+/// write: `activity.actor` must equal `attributedTo`, and an Update
+/// must match the stored owner.
+async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -> Result<()> {
+    let Some(author) = attributed_to(object) else {
+        return Ok(());
+    };
+    if author != activity.actor {
+        tracing::warn!(
+            actor = %activity.actor, attributed = %author,
+            "spoofed remote status mutation dropped"
+        );
+        return Ok(());
+    }
+    let object_id = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if object_id.is_empty() {
+        return Ok(());
+    }
+    let existing = super::load_by_uri(&core.db, &object_id).await?;
+    if let Some(existing) = &existing {
+        // Update only: stored owner must match, and the incoming
+        // `updated` must be newer (idempotent redeliveries).
+        let owner_actor: String = sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
+            .bind(existing.account_id)
+            .fetch_one(&core.db)
+            .await?;
+        if owner_actor != activity.actor {
+            tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
+            return Ok(());
+        }
+        if activity.activity_type == "Update" {
+            let incoming = object.get("updated").and_then(pubby_sdk::model::parse_dt);
+            let stored_newest = existing.edited_at.unwrap_or(existing.updated_at);
+            if let Some(incoming) = incoming {
+                if incoming <= stored_newest {
+                    return Ok(());
+                }
+            }
+        }
+    } else if activity.activity_type == "Update" {
+        // An Update for an unknown object materializes like a Create
+        // (some servers never send the Create).
+    }
+
+    let account_id = ensure_account(core, &author).await?;
+    let visibility = infer_visibility(activity, object, &author);
+    let content_html = object
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let content_html = super::render::sanitize_html(
+        content_html,
+        &crate::config::Config {
+            content: core.config.content.clone(),
+            ..Default::default()
+        },
+    );
+    let source_text = object
+        .get("source")
+        .and_then(|s| s.get("content"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .chars()
+        .take(20000)
+        .collect::<String>();
+    let spoiler = object
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().take(2000).collect::<String>())
+        .filter(|s| !s.is_empty());
+    let sensitive = object
+        .get("sensitive")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let language = object
+        .get("language")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            // `contentMap` → first language key.
+            object
+                .get("contentMap")
+                .and_then(|m| m.as_object())
+                .and_then(|m| m.keys().next())
+                .cloned()
+        });
+    let in_reply_to_uri = object
+        .get("inReplyTo")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let (reply_id, reply_account) = match &in_reply_to_uri {
+        Some(uri) => match super::load_by_uri(&core.db, uri).await? {
+            Some(p) => (Some(p.id), Some(p.account_id)),
+            None => (None, None),
+        },
+        None => (None, None),
+    };
+    let published = object.get("published").and_then(pubby_sdk::model::parse_dt);
+    let updated = object.get("updated").and_then(pubby_sdk::model::parse_dt);
+    let url = object
+        .get("url")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| object_id.clone());
+
+    // One transaction for the whole materialization — a mid-way
+    // failure never leaves a half-written status.
+    let mut tx = core.db.begin().await?;
+
+    // Upsert the statuses row (ON CONFLICT uri → update). `edited_at`
+    // keeps its stored value when the Update carries no `updated`.
+    let status_id: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
+             visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
+             in_reply_to_account_id, created_at, edited_at) \
+         VALUES ($1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11, \
+                 COALESCE($12, now()), $13) \
+         ON CONFLICT (uri) DO UPDATE SET \
+             content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
+             language = EXCLUDED.language, visibility = EXCLUDED.visibility, \
+             spoiler_text = EXCLUDED.spoiler_text, sensitive = EXCLUDED.sensitive, \
+             in_reply_to_id = EXCLUDED.in_reply_to_id, \
+             in_reply_to_account_id = EXCLUDED.in_reply_to_account_id, \
+             edited_at = COALESCE(EXCLUDED.edited_at, statuses.edited_at), \
+             updated_at = now() \
+         RETURNING id",
+    )
+    .bind(account_id)
+    .bind(&source_text)
+    .bind(&content_html)
+    .bind(&language)
+    .bind(visibility)
+    .bind(&spoiler)
+    .bind(sensitive)
+    .bind(&object_id)
+    .bind(&url)
+    .bind(reply_id)
+    .bind(reply_account)
+    .bind(published)
+    .bind(updated)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // Sync mentions: `Mention` tags → known accounts.
+    sqlx::query("DELETE FROM status_mentions WHERE status_id = $1")
+        .bind(status_id)
+        .execute(&mut *tx)
+        .await?;
+    for tag in object
+        .get("tag")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        if tag.get("type").and_then(|t| t.as_str()) == Some("Mention") {
+            if let Some(href) = tag.get("href").and_then(|v| v.as_str()) {
+                if let Some((aid, _, _, _)) = mentions_account(&mut tx, href).await? {
+                    sqlx::query(
+                        "INSERT INTO status_mentions (status_id, account_id) \
+                         VALUES ($1,$2) ON CONFLICT DO NOTHING",
+                    )
+                    .bind(status_id)
+                    .bind(aid)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+        }
+    }
+    // Hashtags → tags/status_tags.
+    sqlx::query("DELETE FROM status_tags WHERE status_id = $1")
+        .bind(status_id)
+        .execute(&mut *tx)
+        .await?;
+    for tag in object
+        .get("tag")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        if tag.get("type").and_then(|t| t.as_str()) == Some("Hashtag") {
+            if let Some(name) = tag
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|n| n.trim_start_matches('#').to_lowercase())
+                .filter(|n| !n.is_empty())
+            {
+                let tag_id: i64 = sqlx::query_scalar(
+                    "INSERT INTO tags (name) VALUES ($1) ON CONFLICT (lower(name)) \
+                     DO UPDATE SET name = EXCLUDED.name RETURNING id",
+                )
+                .bind(&name)
+                .fetch_one(&mut *tx)
+                .await?;
+                sqlx::query(
+                    "INSERT INTO status_tags (status_id, tag_id) VALUES ($1,$2) \
+                     ON CONFLICT DO NOTHING",
+                )
+                .bind(status_id)
+                .bind(tag_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+    // Media attachments — remote_url rows only while
+    // `media.fetch_remote_media` is off (epic 18 owns caching). On
+    // Update, rows the object no longer names are dropped so stale
+    // attachments don't linger.
+    let mut remote_urls: Vec<String> = Vec::new();
+    for att in object
+        .get("attachment")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let url = att.get("url").and_then(|v| v.as_str());
+        let Some(url) = url else { continue };
+        let media_type = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+        let kind = if media_type.starts_with("image/") {
+            "image"
+        } else if media_type.starts_with("video/") {
+            "video"
+        } else if media_type.starts_with("audio/") {
+            "audio"
+        } else {
+            continue;
+        };
+        remote_urls.push(url.to_string());
+        let description = att
+            .get("name")
+            .or_else(|| att.get("summary"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.chars().take(5000).collect::<String>());
+        sqlx::query(
+            "INSERT INTO media_attachments \
+                 (account_id, status_id, type, remote_url, content_type, description) \
+             SELECT $1,$2,$3,$4,$5,$6 WHERE NOT EXISTS ( \
+                 SELECT 1 FROM media_attachments \
+                 WHERE status_id = $2 AND remote_url = $4 \
+             )",
+        )
+        .bind(account_id)
+        .bind(status_id)
+        .bind(kind)
+        .bind(url)
+        .bind(media_type)
+        .bind(&description)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "DELETE FROM media_attachments \
+         WHERE status_id = $1 AND remote_url IS NOT NULL \
+           AND NOT (remote_url = ANY($2))",
+    )
+    .bind(status_id)
+    .bind(&remote_urls)
+    .execute(&mut *tx)
+    .await?;
+    // Question → polls/poll_options (votes stay remote).
+    if object.get("type").and_then(|v| v.as_str()) == Some("Question") {
+        sync_poll(&mut tx, status_id, object).await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// `status_mentions` account lookup for a Mention `href`.
+async fn mentions_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    actor_url: &str,
+) -> Result<Option<(i64, String, Option<String>, String)>> {
+    let row =
+        sqlx::query("SELECT id, username, domain, actor_id FROM accounts WHERE actor_id = $1")
+            .bind(actor_url)
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(row.map(|r| {
+        (
+            r.get("id"),
+            r.get("username"),
+            r.get("domain"),
+            r.get("actor_id"),
+        )
+    }))
+}
+
+/// Materialize a remote `Question`: `oneOf`/`anyOf` options and
+/// `endTime`; `replies.totalItems` seeds `votes_count`.
+async fn sync_poll(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    status_id: i64,
+    object: &Value,
+) -> Result<()> {
+    let options_value = object
+        .get("oneOf")
+        .or_else(|| object.get("anyOf"))
+        .and_then(|v| v.as_array());
+    let Some(options) = options_value else {
+        return Ok(());
+    };
+    if options.is_empty() {
+        return Ok(());
+    }
+    let multiple = object.get("anyOf").is_some();
+    let expires_at = object.get("endTime").and_then(pubby_sdk::model::parse_dt);
+    let poll_id: i64 = sqlx::query_scalar(
+        "INSERT INTO polls (status_id, expires_at, multiple) VALUES ($1,$2,$3) \
+         ON CONFLICT (status_id) DO UPDATE SET expires_at = EXCLUDED.expires_at, \
+             multiple = EXCLUDED.multiple, updated_at = now() RETURNING id",
+    )
+    .bind(status_id)
+    .bind(expires_at)
+    .bind(multiple)
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query("UPDATE statuses SET poll_id = $2 WHERE id = $1")
+        .bind(status_id)
+        .bind(poll_id)
+        .execute(&mut **tx)
+        .await?;
+    for (idx, option) in options.iter().enumerate() {
+        let title = option
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .chars()
+            .take(500)
+            .collect::<String>();
+        let votes = option
+            .get("replies")
+            .and_then(|r| r.get("totalItems"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        sqlx::query(
+            "INSERT INTO poll_options (poll_id, idx, title, votes_count) VALUES ($1,$2,$3,$4) \
+             ON CONFLICT (poll_id, idx) DO UPDATE SET title = EXCLUDED.title, \
+                 votes_count = EXCLUDED.votes_count",
+        )
+        .bind(poll_id)
+        .bind(idx as i32)
+        .bind(&title)
+        .bind(votes)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// `Delete` — tombstone by `uri`; bare-URI objects resolve ownership
+/// from the stored row.
+async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &str) -> Result<bool> {
+    let Some(existing) = super::load_by_uri(&core.db, object_id).await? else {
+        return Ok(false);
+    };
+    let owner_actor: String = sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
+        .bind(existing.account_id)
+        .fetch_one(&core.db)
+        .await?;
+    if owner_actor != activity.actor {
+        tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Delete dropped");
+        return Ok(true);
+    }
+    if existing.tombstone {
+        return Ok(true);
+    }
+    // Tombstone in place — a remote Delete doesn't need our Delete
+    // re-published, and remote media has no local objects to detach.
+    sqlx::query("DELETE FROM media_attachments WHERE status_id = $1")
+        .bind(existing.id)
+        .execute(&core.db)
+        .await?;
+    sqlx::query(
+        "UPDATE statuses SET content = '', content_html = '', spoiler_text = NULL, \
+             sensitive = false, tombstone = true, updated_at = now() WHERE id = $1",
+    )
+    .bind(existing.id)
+    .execute(&core.db)
+    .await?;
+    Ok(true)
+}

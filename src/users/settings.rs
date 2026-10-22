@@ -259,15 +259,17 @@ pub fn normalize_filter_languages(tags: Vec<String>) -> Result<Vec<String>> {
 }
 
 /// Stored `accounts.default_visibility` → the value reported on the
-/// wire. Legacy `direct` rows (the DB CHECK admits it, the API never
-/// writes it) render conservatively as `private` without rewriting
-/// storage.
+/// wire. Mastodon's wire value is `private`, so the stored
+/// `followers_only` alias maps to it; legacy `direct` rows (the DB
+/// CHECK admits it, the API never writes it) also render
+/// conservatively as `private` without rewriting storage.
 pub fn public_visibility(stored: &str) -> Value {
     match stored {
         "direct" => {
             tracing::warn!("legacy direct default_visibility rendered as private");
             Value::String("private".to_string())
         }
+        "followers_only" => Value::String("private".to_string()),
         other => Value::String(other.to_string()),
     }
 }

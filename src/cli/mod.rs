@@ -197,6 +197,9 @@ async fn start_worker(
     if let Some(ap) = ap_ctx.as_ref() {
         crate::users::moves::register_jobs(&mut registry, ap);
     }
+    // Epic-12 posting jobs (scheduled publish, link previews,
+    // scheduled deletion, orphan-media cleanup).
+    crate::posts::register_jobs(&mut registry, ap_ctx.as_ref());
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),

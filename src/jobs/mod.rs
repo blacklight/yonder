@@ -101,6 +101,16 @@ pub enum JobKind {
     MigrateFollowers,
     /// Delete expired archive-export files.
     ExportCleanup,
+    /// Publish one scheduled status, or sweep due ones (epic 12).
+    ScheduledStatusPublish,
+    /// Fetch Open Graph link-preview metadata for a status (epic 12).
+    FetchLinkPreview,
+    /// Tombstone one status due for scheduled deletion, or sweep due
+    /// ones (epic 12, `users.scheduled_deletion_days`).
+    StatusDeletion,
+    /// Delete unattached media uploads past the retention window
+    /// (epic 12).
+    CleanupOrphanMedia,
 }
 
 impl JobKind {
@@ -121,6 +131,10 @@ impl JobKind {
         JobKind::AccountDeletion,
         JobKind::MigrateFollowers,
         JobKind::ExportCleanup,
+        JobKind::ScheduledStatusPublish,
+        JobKind::FetchLinkPreview,
+        JobKind::StatusDeletion,
+        JobKind::CleanupOrphanMedia,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -141,6 +155,10 @@ impl JobKind {
             JobKind::AccountDeletion => "account_deletion",
             JobKind::MigrateFollowers => "migrate_followers",
             JobKind::ExportCleanup => "export_cleanup",
+            JobKind::ScheduledStatusPublish => "scheduled_status_publish",
+            JobKind::FetchLinkPreview => "fetch_link_preview",
+            JobKind::StatusDeletion => "status_deletion",
+            JobKind::CleanupOrphanMedia => "cleanup_orphan_media",
         }
     }
 
@@ -157,7 +175,9 @@ impl JobKind {
             | JobKind::VerifyProfileLinks
             | JobKind::AccountDeletion
             | JobKind::MigrateFollowers
-            | JobKind::ExportCleanup => Queue::Bulk,
+            | JobKind::ExportCleanup
+            | JobKind::StatusDeletion
+            | JobKind::CleanupOrphanMedia => Queue::Bulk,
             _ => Queue::Default,
         }
     }

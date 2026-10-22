@@ -97,23 +97,28 @@ pub async fn delete_account_files(config: &crate::config::Config, account_id: i6
 }
 
 /// A storage key is servable only when it stays inside an allow-listed
-/// prefix and names a known image extension.
+/// prefix with the right shape and names a known extension.
+///
+/// Prefixes and their segment counts (below the prefix):
+/// `avatars`, `headers`, `media_attachments` → `{prefix}/{account}/{file}`
+/// (two segments); `previews` → `{prefix}/{file}` (one).
 fn valid_key(key: &str) -> bool {
     if key.starts_with('/') || key.ends_with('/') {
         return false;
     }
-    let mut parts = key.split('/');
-    let Some(prefix) = parts.next() else {
+    let parts: Vec<&str> = key.split('/').collect();
+    if parts.iter().any(|p| p.is_empty() || *p == "..") {
+        return false;
+    }
+    let Some(&prefix) = parts.first() else {
         return false;
     };
-    if !matches!(prefix, "avatars" | "headers") {
-        return false;
-    }
-    if parts.clone().any(|p| p.is_empty() || p == "..") {
-        return false;
-    }
-    // Exactly one key segment below the prefix (`{dir}/{account}/{file}`).
-    parts.clone().count() == 2 && super::images::content_type_for_key(key).is_some()
+    let expected = match prefix {
+        "avatars" | "headers" | "media_attachments" => 3,
+        "previews" => 2,
+        _ => return false,
+    };
+    parts.len() == expected && super::images::content_type_for_key(key).is_some()
 }
 
 async fn serve_media(

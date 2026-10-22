@@ -22,5 +22,5 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // `authentication` bucket guards connection attempts.
         .route_layer(ratelimit::layer(state, "authentication"))
         .merge(v1::router(state))
-        .merge(v2::router())
+        .merge(v2::router(state))
 }

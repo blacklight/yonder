@@ -401,7 +401,8 @@ async fn yonder_settings_set_read_unset() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["interface_language"], "es");
     assert_eq!(body["default_posting_language"], "ar");
-    assert_eq!(body["default_visibility"], "followers_only");
+    // Stored `followers_only` renders as Mastodon's `private` on the wire.
+    assert_eq!(body["default_visibility"], "private");
     assert_eq!(body["default_sensitive"], true);
     assert_eq!(body["theme"], "dark");
     assert_eq!(body["accent"], "#a1b2c3");
@@ -422,12 +423,12 @@ async fn yonder_settings_set_read_unset() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(again, body);
     let cred = verify(&env.app, &token).await;
-    assert_eq!(cred["source"]["privacy"], "followers_only");
+    assert_eq!(cred["source"]["privacy"], "private");
     assert_eq!(cred["source"]["language"], "ar");
     assert_eq!(cred["source"]["sensitive"], true);
     let (status, prefs) = get_json(&env.app, &token, PREFS).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(prefs["posting:default:visibility"], "followers_only");
+    assert_eq!(prefs["posting:default:visibility"], "private");
     assert_eq!(prefs["posting:default:language"], "ar");
     assert_eq!(prefs["posting:default:sensitive"], true);
     assert_eq!(prefs["reading:expand:spoilers"], true);

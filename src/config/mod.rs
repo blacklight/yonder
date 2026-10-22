@@ -117,6 +117,7 @@ impl Config {
             "account_creation",
             "relation",
             "status",
+            "media",
             "authentication",
             "federation_inbox",
         ] {
@@ -489,6 +490,13 @@ pub struct MediaConfig {
     pub strip_exif: bool,
     /// Maximum media attachments per post.
     pub max_attachments_per_post: u32,
+    /// Unattached uploads older than this are deleted by the orphan
+    /// cleanup (days). Media reserved by a scheduled status is never
+    /// orphaned.
+    pub orphan_retention_days: u32,
+    /// Cron expression for the orphan-media cleanup. Set to `""` to
+    /// disable.
+    pub orphan_cleanup_schedule: Option<String>,
 }
 
 impl Default for MediaConfig {
@@ -509,6 +517,8 @@ impl Default for MediaConfig {
             remote_cleanup_max_age_days: 7,
             strip_exif: true,
             max_attachments_per_post: 4,
+            orphan_retention_days: 7,
+            orphan_cleanup_schedule: Some("30 3 * * *".to_string()),
         }
     }
 }
@@ -613,6 +623,8 @@ pub struct RateLimitConfig {
     pub relation: RateLimit,
     /// Status create/update/delete.
     pub status: RateLimit,
+    /// Media uploads (`/api/v1/media`, `/api/v2/media`).
+    pub media: RateLimit,
     pub authentication: RateLimit,
     /// Inbound ActivityPub inbox POSTs.
     pub federation_inbox: RateLimit,
@@ -620,7 +632,7 @@ pub struct RateLimitConfig {
 
 impl RateLimitConfig {
     /// Look up a named bucket (`"search"`, `"timeline"`,
-    /// `"account_creation"`, `"relation"`, `"status"`,
+    /// `"account_creation"`, `"relation"`, `"status"`, `"media"`,
     /// `"authentication"`, `"federation_inbox"`).
     pub fn bucket(&self, name: &str) -> Option<&RateLimit> {
         match name {
@@ -629,6 +641,7 @@ impl RateLimitConfig {
             "account_creation" => Some(&self.account_creation),
             "relation" => Some(&self.relation),
             "status" => Some(&self.status),
+            "media" => Some(&self.media),
             "authentication" => Some(&self.authentication),
             "federation_inbox" => Some(&self.federation_inbox),
             _ => None,
@@ -662,6 +675,11 @@ impl Default for RateLimitConfig {
             status: RateLimit {
                 limit: 15,
                 period_seconds: 60,
+                authenticated_limit: None,
+            },
+            media: RateLimit {
+                limit: 30,
+                period_seconds: 300,
                 authenticated_limit: None,
             },
             authentication: RateLimit {
@@ -752,6 +770,16 @@ pub struct ContentConfig {
     pub deepl_api_key: Option<String>,
     pub libretranslate_url: Option<String>,
     pub default_post_content_type: PostContentType,
+    /// Fetch Open Graph metadata for the first link of a status.
+    pub link_previews: bool,
+    /// Redis TTL for per-URL link-preview metadata (hours).
+    pub link_preview_cache_hours: u32,
+    /// Cron expression re-enqueueing due scheduled statuses (lost-job
+    /// recovery). Set to `""` to disable.
+    pub scheduled_status_sweep_schedule: Option<String>,
+    /// Cron expression enqueueing due scheduled status deletions
+    /// (`users.scheduled_deletion_days`). Set to `""` to disable.
+    pub scheduled_deletion_sweep_schedule: Option<String>,
 }
 
 impl Default for ContentConfig {
@@ -774,6 +802,10 @@ impl Default for ContentConfig {
             deepl_api_key: None,
             libretranslate_url: None,
             default_post_content_type: PostContentType::TextPlain,
+            link_previews: true,
+            link_preview_cache_hours: 24,
+            scheduled_status_sweep_schedule: Some("0 * * * *".to_string()),
+            scheduled_deletion_sweep_schedule: Some("0 * * * *".to_string()),
         }
     }
 }

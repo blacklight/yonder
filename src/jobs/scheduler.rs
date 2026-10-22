@@ -75,6 +75,19 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.admin.export_cleanup_schedule.as_deref(),
             JobKind::ExportCleanup,
         ),
+        // Epic-12 posting sweeps.
+        (
+            config.content.scheduled_status_sweep_schedule.as_deref(),
+            JobKind::ScheduledStatusPublish,
+        ),
+        (
+            config.content.scheduled_deletion_sweep_schedule.as_deref(),
+            JobKind::StatusDeletion,
+        ),
+        (
+            config.media.orphan_cleanup_schedule.as_deref(),
+            JobKind::CleanupOrphanMedia,
+        ),
     ];
     for (expression, kind) in schedules {
         let Some(expression) = expression else {

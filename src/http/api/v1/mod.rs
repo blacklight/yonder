@@ -10,8 +10,12 @@ pub mod accounts;
 pub mod apps;
 pub mod instance;
 pub mod invites;
+pub mod media;
+pub mod polls;
+pub mod scheduled_statuses;
 pub mod sessions;
 pub mod settings;
+pub mod statuses;
 pub mod tokens;
 pub mod transfer;
 pub mod two_factor;
@@ -154,6 +158,40 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .get(transfer::list_imports),
         )
         .route("/api/v1/yonder/imports/{id}", get(transfer::get_import))
+        // Posting (epic 12) — outside the `authentication` bucket;
+        // writes carry their own buckets.
+        .route(
+            "/api/v1/statuses",
+            axum::routing::post(statuses::create).route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}",
+            get(statuses::show)
+                .put(statuses::update)
+                .delete(statuses::delete_status)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/media",
+            axum::routing::post(media::upload)
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config.media.max_upload_size as usize + 64 * 1024,
+                ))
+                .route_layer(ratelimit::layer(state, "media")),
+        )
+        .route("/api/v1/media/{id}", axum::routing::put(media::update))
+        .route("/api/v1/polls/{id}", get(polls::show))
+        .route(
+            "/api/v1/polls/{id}/votes",
+            axum::routing::post(polls::vote).route_layer(ratelimit::layer(state, "status")),
+        )
+        .route("/api/v1/scheduled_statuses", get(scheduled_statuses::list))
+        .route(
+            "/api/v1/scheduled_statuses/{id}",
+            get(scheduled_statuses::show)
+                .put(scheduled_statuses::update)
+                .delete(scheduled_statuses::cancel),
+        )
         // The `authentication` bucket covers every auth-adjacent
         // endpoint registered above.
         .route_layer(ratelimit::layer(state, "authentication"))
@@ -218,6 +256,18 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     transfer::download_export,
     transfer::create_import,
     transfer::list_imports,
-    transfer::get_import
+    transfer::get_import,
+    statuses::create,
+    statuses::show,
+    statuses::update,
+    statuses::delete_status,
+    media::upload,
+    media::update,
+    polls::show,
+    polls::vote,
+    scheduled_statuses::list,
+    scheduled_statuses::show,
+    scheduled_statuses::update,
+    scheduled_statuses::cancel
 ))]
 pub struct ApiDoc;

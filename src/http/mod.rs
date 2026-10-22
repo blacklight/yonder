@@ -9,6 +9,7 @@
 pub mod api;
 pub mod middleware;
 pub mod negotiate;
+pub mod oauth;
 pub mod openapi;
 pub mod ws;
 
@@ -104,6 +105,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let mut router = Router::new()
         .route("/healthz", get(healthz))
         .merge(api::router(&state))
+        .merge(oauth::router(&state))
         .merge(openapi::router());
 
     if state.ap.is_some() {

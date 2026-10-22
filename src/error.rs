@@ -48,6 +48,9 @@ pub enum Error {
     #[error("validation error: {0}")]
     Validation(String),
 
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 
@@ -83,6 +86,7 @@ impl Error {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             // Pool saturation is transient — 503 invites a retry.
             Self::RedisPool(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Config(_)
@@ -99,9 +103,11 @@ impl Error {
     /// variants, generic text for infrastructure failures.
     fn public_message(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            Self::NotFound(_) | Self::Unauthorized | Self::Forbidden | Self::Validation(_) => {
-                self.to_string().into()
-            }
+            Self::NotFound(_)
+            | Self::Unauthorized
+            | Self::Forbidden
+            | Self::Validation(_)
+            | Self::Conflict(_) => self.to_string().into(),
             _ => "Internal server error".into(),
         }
     }
@@ -119,6 +125,7 @@ impl Error {
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::Validation(_) => "validation",
+            Self::Conflict(_) => "conflict",
             Self::Internal(_) => "internal",
             Self::Federation(_) => "federation",
         }

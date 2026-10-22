@@ -21,6 +21,6 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // Token resolution is an authentication operation — the
         // `authentication` bucket guards connection attempts.
         .route_layer(ratelimit::layer(state, "authentication"))
-        .merge(v1::router())
+        .merge(v1::router(state))
         .merge(v2::router())
 }

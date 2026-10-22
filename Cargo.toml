@@ -11,8 +11,10 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 # dependency versions — types from these crates cross the pubby boundary
 # in the epic-06 federation integration.
 [dependencies]
+argon2 = "0.5"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
 bb8 = "0.8"
 bb8-redis = "0.17"
 chrono = "0.4"
@@ -50,6 +52,7 @@ utoipa-swagger-ui = { version = "10.0.2", features = ["axum"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+base64 = "0.22"
 figment = { version = "0.10", features = ["env", "toml", "test"] }
 testcontainers = "0.24"
 testcontainers-modules = { version = "0.12", features = ["postgres", "redis"] }

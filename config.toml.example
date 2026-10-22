@@ -91,6 +91,9 @@ directory_enabled = true
 registration_mode = "open"
 # Allow non-admin/mod users to generate invite links.
 invite_links_enabled = true
+# Custom message shown on approval-required registration forms
+# (≤ content.max_registration_message_length).
+# registration_message = ""
 require_email_verification = true
 # Signing secret for session/token material — set it via
 # YONDER_AUTH__SECRET_KEY rather than committing it here.

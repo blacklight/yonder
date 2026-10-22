@@ -65,3 +65,24 @@ mod tests {
         assert_eq!(xff_client("203.0.113.1", 2), None);
     }
 }
+
+/// Extractor resolving the client IP for session/audit rows — `"unknown"`
+/// when neither XFF nor `ConnectInfo` yields an address (e.g. `oneshot`
+/// tests without socket info).
+#[derive(Debug, Clone)]
+pub struct ClientIp(pub String);
+
+impl axum::extract::FromRequestParts<std::sync::Arc<crate::http::AppState>> for ClientIp {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &std::sync::Arc<crate::http::AppState>,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        Ok(ClientIp(client_ip(
+            &parts.headers,
+            &parts.extensions,
+            state.config.server.trusted_proxy_hops,
+        )))
+    }
+}

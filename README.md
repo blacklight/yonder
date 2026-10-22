@@ -145,3 +145,12 @@ authorizations). Outbound delivery is durable: a `deliveries` ledger
 row per inbox plus `FederationDelivery` jobs on the `federation`
 queue. `federation.base_url`/`allow_private_targets` support dev/test
 setups; `docs/activitypub.md` has the routing map and pipeline detail.
+
+## Authentication
+
+Mastodon-compatible auth: registration under `auth.registration_mode`
+(open / approval-required / closed), argon2id passwords, OAuth2 grants
+(password, client_credentials, authorization-code + PKCE, refresh,
+device flow), scoped and revocable tokens, authorized-app management,
+and session tracking. Bearer material is random 32-byte secrets stored
+sha256-hex; only passwords use the KDF. See `docs/authentication.md`.

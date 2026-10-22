@@ -304,6 +304,9 @@ pub struct AuthConfig {
     pub registration_mode: RegistrationMode,
     /// Allow non-admin/mod users to generate invite links.
     pub invite_links_enabled: bool,
+    /// Custom message shown in approval-required registration forms
+    /// (≤ `content.max_registration_message_length`).
+    pub registration_message: Option<String>,
     pub require_email_verification: bool,
     /// Signing secret for session/token material. Prefer
     /// `YONDER_AUTH__SECRET_KEY` over the TOML file.
@@ -317,6 +320,7 @@ impl Default for AuthConfig {
         Self {
             registration_mode: RegistrationMode::Open,
             invite_links_enabled: true,
+            registration_message: None,
             require_email_verification: true,
             secret_key: None,
             access_token_expiry_minutes: 120,

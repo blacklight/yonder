@@ -37,6 +37,14 @@ pub struct AuthContext {
     pub account_id: i64,
     /// OAuth scopes granted to the token (space-separated).
     pub scopes: String,
+    /// `accounts.role` (`user`/`moderator`/`admin`).
+    pub role: String,
+    /// Linked `sessions.id` when the token wraps an interactive login.
+    pub session_id: Option<i64>,
+    /// `users.approved_at IS NOT NULL` — the approval gate for writes.
+    pub approved: bool,
+    /// `users.email_verified_at IS NOT NULL`.
+    pub email_verified: bool,
 }
 
 /// Cached outcome of resolving a request's token — stored in the
@@ -77,10 +85,14 @@ pub fn token_hash(token: &str) -> String {
 /// when unknown, revoked, expired, or belonging to a suspended account.
 pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext> {
     let row = sqlx::query(
-        "SELECT t.user_id, u.account_id, t.scopes
+        "SELECT t.id AS token_id, t.user_id, u.account_id, t.scopes, \
+                a.role, s.id AS session_id, \
+                u.approved_at IS NOT NULL AS approved, \
+                u.email_verified_at IS NOT NULL AS email_verified
          FROM oauth_access_tokens t
          JOIN users u ON u.id = t.user_id
          JOIN accounts a ON a.id = u.account_id
+         LEFT JOIN sessions s ON s.access_token_id = t.id
          WHERE t.token_hash = $1
            AND t.revoked_at IS NULL
            AND (t.expires_at IS NULL OR t.expires_at > now())
@@ -92,11 +104,50 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
     let Some(row) = row else {
         return Err(Error::Unauthorized);
     };
-    Ok(AuthContext {
+    let auth = AuthContext {
         user_id: row.get("user_id"),
         account_id: row.get("account_id"),
         scopes: row.get("scopes"),
-    })
+        role: row.get("role"),
+        session_id: row.get("session_id"),
+        approved: row.get("approved"),
+        email_verified: row.get("email_verified"),
+    };
+    if let Some(session_id) = auth.session_id {
+        touch_session(state, session_id).await;
+    }
+    Ok(auth)
+}
+
+/// Bump `sessions.last_activity_at` at most once per minute per session
+/// (a Redis `SET NX EX` marker gates the Postgres write). A Redis
+/// outage must never invalidate a valid bearer token, so failures are
+/// logged and swallowed.
+async fn touch_session(state: &AppState, session_id: i64) {
+    let outcome: Result<()> = async {
+        let mut conn = state.redis.conn().await?;
+        let key = state.redis.key(&format!("session-touch:{session_id}"));
+        let acquired: Option<String> = redis::cmd("SET")
+            .arg(&key)
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(60)
+            .query_async(&mut *conn)
+            .await?;
+        if acquired.is_none() {
+            return Ok(());
+        }
+        sqlx::query("UPDATE sessions SET last_activity_at = now() WHERE id = $1")
+            .bind(session_id)
+            .execute(&state.db)
+            .await?;
+        Ok(())
+    }
+    .await;
+    if let Err(e) = outcome {
+        tracing::warn!(session_id, error = %e, "session activity touch failed");
+    }
 }
 
 /// Pull the token off a request — `Authorization: Bearer` first (the

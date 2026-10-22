@@ -2,7 +2,13 @@
 
 ![yonder](branding/banner.png)
 
-An ActivityPub server in Rust, (almost) fully compatible with Mastodon
+[![Codacy Badge](https://app.codacy.com/project/badge/Grade/02b6f6c4ec79460f847018963e4bbc00)](https://app.codacy.com/gh/blacklight/yonder/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
+[![Github stars](https://img.shields.io/github/stars/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)
+[![Github forks](https://img.shields.io/github/forks/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)
+[![Last Commit](https://img.shields.io/github/last-commit/BlackLight/yonder.svg)](https://git.platypush.tech/yonder/yonder/commits/branch/main)
+[![License](https://img.shields.io/github/license/blacklight/yonder.svg)](https://git.platypush.tech/blacklight/yonder/src/branch/main/LICENSE)
+
+A Mastodon-compatible ActivityPub server written in Rust.
 
 ## Development setup
 

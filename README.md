@@ -94,7 +94,7 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
 
 - **Endpoints** — `GET /healthz`, `GET /openapi.json` (OpenAPI 3 via
   utoipa), Swagger-UI at `/swagger-ui`, and the streaming WebSocket at
-  `/api/v1/streaming`. `/ap` ActivityPub routes are nested in epic 06.
+  `/api/v1/streaming`.
 - **Middleware** — request ids (`x-request-id`, generated when absent
   and propagated to the response), per-request tracing spans, CORS
   (`http.cors_enabled` + `http.cors_origins`, off by default), and
@@ -107,7 +107,7 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
 - **Rate limiting** — `ratelimit::layer(&state, "<bucket>")` applied
   with `.route_layer()`. Buckets are the `rate_limit.*` config keys
   (`search`, `timeline`, `account_creation`, `relation`, `status`,
-  `authentication`); authenticated requests use
+  `authentication`, `federation_inbox`); authenticated requests use
   `authenticated_limit` when set and a separate `u:{id}` identity.
   Rejects with 429 + `Retry-After`.
 - **Errors** — `Error` implements `IntoResponse` with Mastodon's
@@ -130,3 +130,18 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
    module's `ApiDoc` `paths(...)` — `openapi::document()` merges it.
 4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
    maps to a configured bucket.
+
+## Federation (ActivityPub)
+
+Federation runs on [`pubby-sdk`](https://crates.io/crates/pubby-sdk)
+0.6 (`src/activitypub/`). When `federation.enabled`, `serve` builds an
+`ApContext` (a `MultiActorHandler` over the Postgres
+`ActivityPubStorage` adapter + Redis document cache) and merges the AP
+router: POST inboxes (`/ap/inbox`, `/ap/users/{u}/inbox`) validate,
+dedupe and enqueue behind the `federation_inbox` rate limit, while
+every AP GET is dispatched through `dispatch_multi` (actor docs,
+WebFinger, NodeInfo, host-meta, outbox/followers/following, quote
+authorizations). Outbound delivery is durable: a `deliveries` ledger
+row per inbox plus `FederationDelivery` jobs on the `federation`
+queue. `federation.base_url`/`allow_private_targets` support dev/test
+setups; `docs/activitypub.md` has the routing map and pipeline detail.

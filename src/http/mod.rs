@@ -63,6 +63,8 @@ pub struct AppState {
     pub bus: ws::EventBus,
     /// Live `/api/v1/streaming` connections.
     pub connections: ws::ConnectionRegistry,
+    /// ActivityPub federation context — `Some` when `federation.enabled`.
+    pub ap: Option<crate::activitypub::ApContext>,
 }
 
 impl AppState {
@@ -77,6 +79,7 @@ impl AppState {
             dispatcher,
             bus: ws::EventBus::default(),
             connections: ws::ConnectionRegistry::default(),
+            ap: None,
         }
     }
 }
@@ -98,10 +101,14 @@ pub async fn healthz() -> Json<Value> {
 /// → routes. `x-request-id` is set before the trace span is built so
 /// the id lands in the span, and propagated to the response.
 pub fn build_router(state: Arc<AppState>) -> Router {
-    let router = Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(healthz))
         .merge(api::router(&state))
         .merge(openapi::router());
+
+    if state.ap.is_some() {
+        router = router.merge(crate::activitypub::router(&state));
+    }
 
     let router = match cors_layer(&state.config.http) {
         Some(cors) => router.layer(cors),

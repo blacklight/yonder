@@ -117,6 +117,7 @@ impl Config {
             "relation",
             "status",
             "authentication",
+            "federation_inbox",
         ] {
             let limit = self.rate_limit.bucket(name).expect("static bucket name");
             if limit.limit == 0 || limit.period_seconds == 0 {
@@ -337,6 +338,14 @@ pub struct FederationConfig {
     pub sign_fetches: bool,
     /// Require HTTP signatures on inbound ActivityPub fetches.
     pub authorized_fetch: bool,
+    /// Public base URL for ActivityPub identifiers (scheme included,
+    /// e.g. `https://example.com`). Defaults to `https://{instance.domain}`
+    /// at resolve time — set explicitly for http dev and containerized
+    /// federation tests.
+    pub base_url: Option<String>,
+    /// Allow federation traffic to loopback/private targets. Dev/test
+    /// only — the SSRF guard refuses them otherwise.
+    pub allow_private_targets: bool,
     /// Maximum depth of incoming federated reply threads to fetch.
     pub max_reply_depth: u32,
     pub follow_handshake_timeout_seconds: u64,
@@ -357,6 +366,11 @@ pub struct FederationConfig {
     pub remote_activity_retention_days: u32,
     /// Optional cron expression scheduling remote-activity pruning.
     pub remote_activity_prune_schedule: Option<String>,
+    /// Cron expression for the delivery-ledger reconciler — re-enqueues
+    /// `deliveries` rows still `pending` past `next_attempt_at` (a lost
+    /// `FederationDelivery` job: an enqueue failure or a crash between
+    /// the ledger insert and the enqueue). Set to `""` to disable.
+    pub delivery_sweep_schedule: Option<String>,
 }
 
 impl Default for FederationConfig {
@@ -367,6 +381,8 @@ impl Default for FederationConfig {
             allow_relays: true,
             sign_fetches: true,
             authorized_fetch: false,
+            base_url: None,
+            allow_private_targets: false,
             max_reply_depth: 100,
             follow_handshake_timeout_seconds: 30,
             request_timeout_seconds: 10,
@@ -377,6 +393,7 @@ impl Default for FederationConfig {
             max_collection_objects: 50,
             remote_activity_retention_days: 30,
             remote_activity_prune_schedule: None,
+            delivery_sweep_schedule: Some("*/15 * * * *".to_string()),
         }
     }
 }
@@ -547,12 +564,14 @@ pub struct RateLimitConfig {
     /// Status create/update/delete.
     pub status: RateLimit,
     pub authentication: RateLimit,
+    /// Inbound ActivityPub inbox POSTs.
+    pub federation_inbox: RateLimit,
 }
 
 impl RateLimitConfig {
     /// Look up a named bucket (`"search"`, `"timeline"`,
     /// `"account_creation"`, `"relation"`, `"status"`,
-    /// `"authentication"`).
+    /// `"authentication"`, `"federation_inbox"`).
     pub fn bucket(&self, name: &str) -> Option<&RateLimit> {
         match name {
             "search" => Some(&self.search),
@@ -561,6 +580,7 @@ impl RateLimitConfig {
             "relation" => Some(&self.relation),
             "status" => Some(&self.status),
             "authentication" => Some(&self.authentication),
+            "federation_inbox" => Some(&self.federation_inbox),
             _ => None,
         }
     }
@@ -597,6 +617,11 @@ impl Default for RateLimitConfig {
             authentication: RateLimit {
                 limit: 5,
                 period_seconds: 60,
+                authenticated_limit: None,
+            },
+            federation_inbox: RateLimit {
+                limit: 300,
+                period_seconds: 300,
                 authenticated_limit: None,
             },
         }

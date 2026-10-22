@@ -72,6 +72,10 @@ impl Queue {
 pub enum JobKind {
     /// Deliver an ActivityPub activity to a remote inbox.
     FederationDelivery,
+    /// Verify and process a queued inbound ActivityPub activity.
+    FederationIncoming,
+    /// Re-enqueue delivery-ledger rows whose queue entry was lost.
+    FederationDeliverySweep,
     /// Fetch and cache a remote media attachment.
     RemoteMediaFetch,
     /// Fetch and cache a remote actor document.
@@ -94,6 +98,8 @@ impl JobKind {
     /// Every known job kind.
     pub const ALL: &'static [JobKind] = &[
         JobKind::FederationDelivery,
+        JobKind::FederationIncoming,
+        JobKind::FederationDeliverySweep,
         JobKind::RemoteMediaFetch,
         JobKind::RemoteActorFetch,
         JobKind::NotificationFanout,
@@ -108,6 +114,8 @@ impl JobKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             JobKind::FederationDelivery => "federation_delivery",
+            JobKind::FederationIncoming => "federation_incoming",
+            JobKind::FederationDeliverySweep => "federation_delivery_sweep",
             JobKind::RemoteMediaFetch => "remote_media_fetch",
             JobKind::RemoteActorFetch => "remote_actor_fetch",
             JobKind::NotificationFanout => "notification_fanout",
@@ -122,7 +130,9 @@ impl JobKind {
     /// The queue this kind routes to by default.
     pub fn queue(&self) -> Queue {
         match self {
-            JobKind::FederationDelivery => Queue::Federation,
+            JobKind::FederationDelivery
+            | JobKind::FederationIncoming
+            | JobKind::FederationDeliverySweep => Queue::Federation,
             JobKind::Import
             | JobKind::Export
             | JobKind::CleanupRemoteActivities

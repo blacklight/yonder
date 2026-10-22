@@ -50,11 +50,25 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.media.remote_cleanup_schedule.as_deref(),
             JobKind::CleanupRemoteMedia,
         ),
+        // Only meaningful with the federation stack up — the ledger
+        // this reconciles doesn't exist otherwise.
+        (
+            if config.federation.enabled {
+                config.federation.delivery_sweep_schedule.as_deref()
+            } else {
+                None
+            },
+            JobKind::FederationDeliverySweep,
+        ),
     ];
     for (expression, kind) in schedules {
         let Some(expression) = expression else {
             continue;
         };
+        // An empty/blank expression is the documented "disable" value.
+        if expression.trim().is_empty() {
+            continue;
+        }
         let cron = to_cron(expression)?;
         let dispatcher = dispatcher.clone();
         let job = Job::new_async(cron, move |_id, _lock| {

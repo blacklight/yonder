@@ -50,6 +50,9 @@ pub enum Error {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("federation error: {0}")]
+    Federation(#[from] pubby_sdk::ActivityPubError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -87,7 +90,8 @@ impl Error {
             | Self::Migration(_)
             | Self::Redis(_)
             | Self::Io(_)
-            | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            | Self::Internal(_)
+            | Self::Federation(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -116,6 +120,7 @@ impl Error {
             Self::Forbidden => "forbidden",
             Self::Validation(_) => "validation",
             Self::Internal(_) => "internal",
+            Self::Federation(_) => "federation",
         }
     }
 }

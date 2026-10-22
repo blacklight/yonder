@@ -87,7 +87,12 @@ async fn serve(path: Option<&Path>) -> Result<()> {
         tracing::info!("schema migrations applied");
     }
     let redis = cache::connect(&config.redis).await?;
-    let state = Arc::new(http::AppState::new(config.clone(), pool.clone(), redis));
+    let mut app_state = http::AppState::new(config.clone(), pool.clone(), redis.clone());
+    if config.federation.enabled {
+        let ap = crate::activitypub::build(&config, &pool, &redis, &app_state.dispatcher).await?;
+        app_state.ap = Some(ap);
+    }
+    let state = Arc::new(app_state);
 
     // The in-process worker runs alongside HTTP when enabled. The
     // scheduler must stay bound for the function's lifetime — dropping
@@ -173,12 +178,17 @@ async fn start_worker(
     .await?;
     let mut registry = jobs::Registry::default();
     jobs::stub::register_all(&mut registry);
+    let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
+    // Real federation handlers replace the stubs when federation is on.
+    if config.federation.enabled {
+        let ap = crate::activitypub::build(config, &pool, &redis, &dispatcher).await?;
+        crate::activitypub::register_handlers(&mut registry, &ap);
+    }
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),
         config: Arc::new(config.clone()),
     };
-    let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
     let scheduler = jobs::scheduler::start(config, &dispatcher).await?;
     let worker = jobs::worker::Worker::new(
         ctx,

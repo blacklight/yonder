@@ -108,6 +108,12 @@ allow_relays = true
 sign_fetches = true
 # Require HTTP signatures on inbound ActivityPub fetches.
 authorized_fetch = false
+# Public base URL for ActivityPub identifiers (scheme included).
+# Defaults to https://{instance.domain} — set explicitly for http dev
+# or containerized federation tests.
+# base_url = "http://localhost:4000"
+# Allow federation traffic to loopback/private targets. Dev/test only.
+allow_private_targets = false
 # Maximum depth of incoming federated reply threads to fetch.
 max_reply_depth = 100
 follow_handshake_timeout_seconds = 30
@@ -126,6 +132,10 @@ max_collection_objects = 50
 remote_activity_retention_days = 30
 # Optional 5-field cron expression scheduling remote-activity pruning.
 # remote_activity_prune_schedule = "0 4 * * *"
+# 5-field cron for the delivery-ledger reconciler — re-enqueues
+# `deliveries` rows still pending past next_attempt_at (lost queue
+# jobs). Set to "" to disable.
+delivery_sweep_schedule = "*/15 * * * *"
 
 [media]
 # local | s3
@@ -211,6 +221,11 @@ period_seconds = 60
 [rate_limit.authentication]
 limit = 5
 period_seconds = 60
+
+# Inbound ActivityPub inbox POSTs (per remote IP).
+[rate_limit.federation_inbox]
+limit = 300
+period_seconds = 300
 
 [polls]
 max_options = 10

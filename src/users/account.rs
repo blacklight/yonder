@@ -30,18 +30,25 @@ pub struct AccountRow {
     pub followers_count: i32,
     pub following_count: i32,
     pub statuses_count: i32,
+    /// `users.indexable` for local accounts (`None` for remote rows,
+    /// which have no `users` row).
+    pub indexable: Option<bool>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Load an `accounts` row by primary key.
+/// Load an `accounts` row by primary key. The `users` LEFT JOIN is how
+/// `noindex` gets its value for local accounts; remote rows have no
+/// `users` row and keep the historical `noindex: false`.
 pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<AccountRow>> {
     let row = sqlx::query(
-        "SELECT id, username, domain, actor_id, url, display_name, bio, locked, \
-                bot, discoverable, avatar_path, banner_path, avatar_remote_url, \
-                banner_remote_url, avatar_blurhash, header_blurhash, \
-                profile_fields, followers_count, following_count, \
-                statuses_count, created_at \
-         FROM accounts WHERE id = $1",
+        "SELECT a.id, a.username, a.domain, a.actor_id, a.url, a.display_name, \
+                a.bio, a.locked, a.bot, a.discoverable, a.avatar_path, \
+                a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
+                a.avatar_blurhash, a.header_blurhash, \
+                a.profile_fields, a.followers_count, a.following_count, \
+                a.statuses_count, a.created_at, u.indexable \
+         FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
+         WHERE a.id = $1",
     )
     .bind(account_id)
     .fetch_optional(pool)
@@ -67,6 +74,7 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
         followers_count: r.get("followers_count"),
         following_count: r.get("following_count"),
         statuses_count: r.get("statuses_count"),
+        indexable: r.get("indexable"),
         created_at: r.get("created_at"),
     }))
 }
@@ -156,7 +164,9 @@ pub fn to_account(account: &AccountRow, base_url: &str) -> Value {
         "bot": account.bot,
         "group": false,
         "discoverable": account.discoverable,
-        "noindex": false,
+        // Local accounts honor the search-engine opt-out; remote rows
+        // carry no users.indexable and stay unmarked.
+        "noindex": !account.indexable.unwrap_or(true),
         "created_at": account.created_at.to_rfc3339(),
         "last_status_at": Value::Null,
         "followers_count": account.followers_count,

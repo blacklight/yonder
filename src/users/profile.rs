@@ -31,6 +31,7 @@ use crate::{
     http::{middleware::auth::AuthContext, AppState},
     jobs::{JobContext, JobHandler, JobKind},
     media::{self, MediaKind},
+    users::settings::{self, Patch},
     Error, Result,
 };
 
@@ -72,6 +73,24 @@ pub struct UpdateCredentialsSchema {
     pub bot: Option<bool>,
     /// Directory listing flag.
     pub discoverable: Option<bool>,
+    /// Hide followers/following collections.
+    pub hide_collections: Option<bool>,
+    /// Opt out of search-engine indexing.
+    pub indexable: Option<bool>,
+    /// Posting defaults (`source[privacy]` etc. in form bodies).
+    pub source: Option<SourceSchema>,
+}
+
+/// OpenAPI shape of the `source` posting-defaults block.
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct SourceSchema {
+    /// Default post visibility
+    /// (`public`/`unlisted`/`followers_only`/`private`).
+    pub privacy: Option<String>,
+    /// Mark new statuses sensitive by default.
+    pub sensitive: Option<bool>,
+    /// Default posting language (`en`/`es`/`it`/`de`/`ar`).
+    pub language: Option<String>,
 }
 
 /// OpenAPI shape of one profile field.
@@ -97,12 +116,22 @@ pub struct UpdateCredentials {
     pub header: MediaOp,
     /// `fields_attributes` — `Some` replaces the whole list.
     pub fields: Option<Vec<FieldInput>>,
-    /// `locked` flag.
-    pub locked: Option<bool>,
+    /// `locked` flag (epic-10 `Patch`: `""`/`null` resets to false).
+    pub locked: Patch<bool>,
     /// `bot` flag.
-    pub bot: Option<bool>,
+    pub bot: Patch<bool>,
     /// `discoverable` flag.
-    pub discoverable: Option<bool>,
+    pub discoverable: Patch<bool>,
+    /// `hide_collections` → `accounts.hide_network`.
+    pub hide_collections: Patch<bool>,
+    /// `indexable` → `users.indexable`.
+    pub indexable: Patch<bool>,
+    /// `source[sensitive]` → `accounts.default_sensitive`.
+    pub sensitive: Patch<bool>,
+    /// `source[privacy]` → `accounts.default_visibility`.
+    pub privacy: Patch<String>,
+    /// `source[language]` → `accounts.default_language`.
+    pub language: Patch<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,20 +255,6 @@ async fn parse_multipart(state: &Arc<AppState>, mp: &mut Multipart) -> Result<Up
     params_from_pairs(&pairs, avatar, header)
 }
 
-/// `true`-ish form values (Mastodon sends strings, JSON sends bools).
-fn parse_bool(value: Option<&String>) -> Result<Option<bool>> {
-    let Some(v) = value else {
-        return Ok(None);
-    };
-    match v.trim().to_lowercase().as_str() {
-        "true" | "1" | "yes" | "on" => Ok(Some(true)),
-        "false" | "0" | "no" | "off" => Ok(Some(false)),
-        _ => Err(Error::Validation(format!(
-            "invalid boolean value {v:?} — expected true/false"
-        ))),
-    }
-}
-
 /// Allocation guard for submitted field entries/indices — the real
 /// count limit applies to non-empty entries later (`render_fields`),
 /// so a sparse `[10]` slot carrying only blanks doesn't 422 a
@@ -305,9 +320,14 @@ fn params_from_pairs(
         avatar,
         header,
         fields: parse_fields_attrs(pairs)?,
-        locked: parse_bool(pairs.get("locked"))?,
-        bot: parse_bool(pairs.get("bot"))?,
-        discoverable: parse_bool(pairs.get("discoverable"))?,
+        locked: settings::form_flag_patch(pairs, "locked")?,
+        bot: settings::form_flag_patch(pairs, "bot")?,
+        discoverable: settings::form_flag_patch(pairs, "discoverable")?,
+        hide_collections: settings::form_flag_patch(pairs, "hide_collections")?,
+        indexable: settings::form_flag_patch(pairs, "indexable")?,
+        sensitive: settings::form_flag_patch(pairs, "source[sensitive]")?,
+        privacy: settings::pair_string_patch(pairs, "source[privacy]"),
+        language: settings::pair_string_patch(pairs, "source[language]"),
     })
 }
 
@@ -387,25 +407,60 @@ fn params_from_json(body: &Value) -> Result<UpdateCredentials> {
             )));
         }
     }
+
+    // `source: {privacy, sensitive, language}` plus flat `source_*`
+    // aliases; a nested/flat disagreement is a 422, never a coin flip.
+    let source = match body.get("source") {
+        None | Some(Value::Null) => None,
+        Some(map @ Value::Object(_)) => Some(map.clone()),
+        Some(_) => {
+            return Err(Error::Validation(
+                "source must be an object of {privacy, sensitive, language}".into(),
+            ))
+        }
+    };
+    if let Some(map) = source.as_ref().and_then(Value::as_object) {
+        for key in map.keys() {
+            match key.as_str() {
+                "privacy" | "sensitive" | "language" => {}
+                _ => {
+                    return Err(Error::Validation(format!("unknown source key {key:?}")));
+                }
+            }
+        }
+    }
+    let source_value = source.unwrap_or(Value::Null);
+    let privacy = settings::merge_alias_patch(
+        settings::json_string_patch(&source_value, "privacy")?,
+        settings::json_string_patch(body, "source_privacy")?,
+        "source[privacy]",
+    )?;
+    let language = settings::merge_alias_patch(
+        settings::json_string_patch(&source_value, "language")?,
+        settings::json_string_patch(body, "source_language")?,
+        "source[language]",
+    )?;
+    let sensitive = settings::merge_alias_patch(
+        settings::json_flag_patch(&source_value, "sensitive")?,
+        settings::json_flag_patch(body, "source_sensitive")?,
+        "source[sensitive]",
+    )?;
+
     Ok(UpdateCredentials {
         display_name: json_string(body, "display_name")?,
         note: json_string(body, "note")?,
         avatar: json_media_op(body, "avatar")?,
         header: json_media_op(body, "header")?,
         fields,
-        locked: json_bool(body, "locked")?,
-        bot: json_bool(body, "bot")?,
-        discoverable: json_bool(body, "discoverable")?,
+        locked: settings::json_flag_patch(body, "locked")?,
+        bot: settings::json_flag_patch(body, "bot")?,
+        discoverable: settings::json_flag_patch(body, "discoverable")?,
+        hide_collections: settings::json_flag_patch(body, "hide_collections")?,
+        indexable: settings::json_flag_patch(body, "indexable")?,
+        sensitive,
+        privacy,
+        language,
     })
-}
-
-fn json_bool(body: &Value, key: &str) -> Result<Option<bool>> {
-    match body.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::Bool(b)) => Ok(Some(*b)),
-        Some(Value::String(s)) => parse_bool(Some(s)),
-        Some(_) => Err(Error::Validation(format!("{key} must be a boolean"))),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +579,7 @@ fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> 
 pub async fn update_profile(
     state: &AppState,
     auth: &AuthContext,
-    params: UpdateCredentials,
+    mut params: UpdateCredentials,
 ) -> Result<()> {
     let config = &state.config;
 
@@ -548,6 +603,16 @@ pub async fn update_profile(
     }
     if let Some(inputs) = &params.fields {
         validate_fields(config, inputs)?;
+    }
+    // Epic-10 posting defaults — cheap enum checks before any upload
+    // work; invalid `source.*` must abort the whole PATCH.
+    if let Patch::Set(v) = &mut params.privacy {
+        *v = v.to_ascii_lowercase();
+        settings::validate_visibility(v)?;
+    }
+    if let Patch::Set(l) = &mut params.language {
+        *l = settings::normalize_locale(l);
+        settings::validate_supported_locale("source[language]", l)?;
     }
 
     // Upload processing is CPU + filesystem — run it before the row
@@ -575,7 +640,8 @@ pub async fn update_profile(
     let row = sqlx::query(
         "SELECT username, display_name, bio, avatar_path, banner_path, \
                 avatar_blurhash, header_blurhash, profile_fields, \
-                locked, bot, discoverable \
+                locked, bot, discoverable, hide_network, \
+                default_visibility, default_language, default_sensitive \
          FROM accounts WHERE id = $1 AND domain IS NULL FOR UPDATE",
     )
     .bind(auth.account_id)
@@ -615,9 +681,37 @@ pub async fn update_profile(
         None => row.get::<Value, _>("profile_fields"),
         Some(inputs) => Value::Array(render_fields(config, inputs, &previous_fields)?),
     };
-    let locked = params.locked.unwrap_or(row.get("locked"));
-    let bot = params.bot.unwrap_or(row.get("bot"));
-    let discoverable = params.discoverable.unwrap_or(row.get("discoverable"));
+    let locked = params.locked.resolve(row.get("locked"), false);
+    let bot = params.bot.resolve(row.get("bot"), false);
+    let discoverable = params.discoverable.resolve(row.get("discoverable"), true);
+    // Epic-10 account-level settings sharing this transaction.
+    let hide_network = params
+        .hide_collections
+        .resolve(row.get("hide_network"), false);
+    let default_visibility = params
+        .privacy
+        .resolve(row.get("default_visibility"), "public".to_string());
+    let default_language = params
+        .language
+        .resolve_nullable(row.get("default_language"));
+    let default_sensitive = params
+        .sensitive
+        .resolve(row.get("default_sensitive"), false);
+    // `indexable` lives on `users` — lock it after `accounts` (the same
+    // order `settings::save` uses) only when the flag is patched.
+    let indexable = if params.indexable.is_unset() {
+        None
+    } else {
+        let user = sqlx::query("SELECT indexable FROM users WHERE id = $1 FOR UPDATE")
+            .bind(auth.user_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        Some(
+            params
+                .indexable
+                .resolve(user.get::<bool, _>("indexable"), true),
+        )
+    };
 
     let avatar_path = avatar
         .as_ref()
@@ -637,6 +731,8 @@ pub async fn update_profile(
         .unwrap_or_else(|| row.get::<Option<String>, _>("header_blurhash"));
 
     // AP Update only when the visible profile actually changed.
+    // `hide_network` stays out: it is local-only (not in the AP actor
+    // document), so toggling it must not fan out an actor Update.
     let changed = display_name != row.get::<Option<String>, _>("display_name")
         || bio != row.get::<Option<String>, _>("bio")
         || fields != row.get::<Value, _>("profile_fields")
@@ -676,7 +772,9 @@ pub async fn update_profile(
         "UPDATE accounts SET display_name = $2, bio = $3, profile_fields = $4, \
                 avatar_path = $5, avatar_blurhash = $6, banner_path = $7, \
                 header_blurhash = $8, locked = $9, bot = $10, \
-                discoverable = $11, updated_at = now() \
+                discoverable = $11, hide_network = $12, \
+                default_visibility = $13, default_language = $14, \
+                default_sensitive = $15, updated_at = now() \
          WHERE id = $1",
     )
     .bind(auth.account_id)
@@ -690,8 +788,19 @@ pub async fn update_profile(
     .bind(locked)
     .bind(bot)
     .bind(discoverable)
+    .bind(hide_network)
+    .bind(&default_visibility)
+    .bind(&default_language)
+    .bind(default_sensitive)
     .execute(&mut *tx)
     .await?;
+    if let Some(indexable) = indexable {
+        sqlx::query("UPDATE users SET indexable = $2, updated_at = now() WHERE id = $1")
+            .bind(auth.user_id)
+            .bind(indexable)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
 
     if changed {

@@ -86,6 +86,11 @@ expose_moderated_instances = true
 # Enable the profile directory.
 directory_enabled = true
 
+[i18n]
+# Locale used when neither the user's stored preference nor the
+# client's Accept-Language is a supported locale (en/es/it/de/ar).
+fallback_locale = "en"
+
 [auth]
 # open | approval-required | closed
 registration_mode = "open"

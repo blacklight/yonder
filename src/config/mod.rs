@@ -47,6 +47,7 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
     pub instance: InstanceConfig,
+    pub i18n: I18nConfig,
     pub auth: AuthConfig,
     pub federation: FederationConfig,
     pub media: MediaConfig,
@@ -137,6 +138,12 @@ impl Config {
             return Err(crate::Error::Validation(
                 "jobs.poll_interval_ms must be > 0".to_string(),
             ));
+        }
+        if !crate::i18n::SUPPORTED_LOCALES.contains(&self.i18n.fallback_locale.as_str()) {
+            return Err(crate::Error::Validation(format!(
+                "i18n.fallback_locale must be one of: {}",
+                crate::i18n::SUPPORTED_LOCALES.join(", ")
+            )));
         }
         Ok(())
     }
@@ -280,6 +287,24 @@ impl Default for InstanceConfig {
             rules: Vec::new(),
             expose_moderated_instances: true,
             directory_enabled: true,
+        }
+    }
+}
+
+/// Interface-language settings (BOOTSTRAP i18n set: en/es/it/de/ar).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct I18nConfig {
+    /// Locale reported when neither the user's stored locale nor the
+    /// client's `Accept-Language` is a supported locale. Must be one of
+    /// the supported codes — validated in `Config::validate`.
+    pub fallback_locale: String,
+}
+
+impl Default for I18nConfig {
+    fn default() -> Self {
+        Self {
+            fallback_locale: "en".to_string(),
         }
     }
 }

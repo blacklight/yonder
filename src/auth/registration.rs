@@ -138,6 +138,16 @@ pub async fn register(
         )));
     }
     let password_hash = hash_password(&params.password)?;
+    // The registration `locale` feeds `users.locale` — the same
+    // supported set the settings API validates against (epic 10).
+    let locale = params
+        .locale
+        .as_deref()
+        .map(crate::users::settings::normalize_locale)
+        .filter(|l| !l.is_empty());
+    if let Some(locale) = &locale {
+        crate::users::settings::validate_supported_locale("locale", locale)?;
+    }
     let base_url = activitypub::federation_base_url(config);
     let actor_id = format!("{base_url}/ap/users/{username}");
     let email_verified = !requires_email_verification(config);
@@ -183,7 +193,7 @@ pub async fn register(
     .bind(approved)
     .bind(email_verified)
     .bind(reason)
-    .bind(&params.locale)
+    .bind(&locale)
     .fetch_one(&mut *tx)
     .await
     .map_err(registration_db_error)?;

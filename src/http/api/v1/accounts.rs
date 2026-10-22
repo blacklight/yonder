@@ -17,7 +17,7 @@ use crate::{
         middleware::auth::{bearer_token, AuthContext},
         AppState,
     },
-    users::{account as account_mapper, profile},
+    users::{account as account_mapper, profile, settings},
     Error, Result,
 };
 
@@ -73,30 +73,52 @@ pub async fn register(
 pub async fn verify_credentials(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
+    headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    credential_account(&state, &auth).await
+    credential_account(
+        &state,
+        &auth,
+        settings::accept_language(&headers).as_deref(),
+    )
+    .await
 }
 
 /// The CredentialAccount entity: `to_account` plus the own-account
-/// `source` block — shared by `verify_credentials` and
-/// `update_credentials`.
-async fn credential_account(state: &Arc<AppState>, auth: &AuthContext) -> Result<Json<Value>> {
+/// `source` block and the `yonder.settings` extension — shared by
+/// `verify_credentials` and `update_credentials`.
+///
+/// `source.language`/`source.privacy`/`source.sensitive` are the
+/// Mastodon *posting* defaults: `language` resolves stored posting
+/// language → stored interface language → `Accept-Language` →
+/// `i18n.fallback_locale` (see [`settings::effective_language`]).
+async fn credential_account(
+    state: &Arc<AppState>,
+    auth: &AuthContext,
+    accept_language: Option<&str>,
+) -> Result<Json<Value>> {
     let account = account_mapper::load(&state.db, auth.account_id)
         .await?
         .ok_or_else(|| Error::NotFound("account".into()))?;
+    let user_settings = settings::load(&state.db, auth.user_id).await?;
     let base_url = crate::activitypub::federation_base_url(&state.config);
     let mut entity = account_mapper::to_account(&account, &base_url);
-    let locale: Option<String> = sqlx::query_scalar("SELECT locale FROM users WHERE id = $1")
-        .bind(auth.user_id)
-        .fetch_one(&state.db)
-        .await?;
     entity["source"] = json!({
-        "privacy": Value::Null,
-        "sensitive": false,
-        "language": locale,
+        "privacy": settings::public_visibility(&user_settings.default_visibility),
+        "sensitive": user_settings.default_sensitive,
+        "language": settings::effective_language(
+            user_settings.default_language.as_deref(),
+            user_settings.locale.as_deref(),
+            accept_language,
+            &state.config,
+        ),
         "note": account.bio.clone().unwrap_or_default(),
         "fields": account_mapper::source_fields(&account.profile_fields),
     });
+    // Mastodon positions these on the CredentialAccount top level,
+    // not inside `source`.
+    entity["hide_collections"] = json!(user_settings.hide_network);
+    entity["indexable"] = json!(user_settings.indexable);
+    entity["yonder"]["settings"] = user_settings.yonder_json(&state.config, accept_language);
     Ok(Json(entity))
 }
 
@@ -124,9 +146,10 @@ pub async fn update_credentials(
     request: Request,
 ) -> Result<Json<Value>> {
     require_scope(&state.config, &auth, "write:accounts")?;
+    let accept_language = settings::accept_language(request.headers());
     let params = profile::parse_request(&state, request).await?;
     profile::update_profile(&state, &auth, params).await?;
-    credential_account(&state, &auth).await
+    credential_account(&state, &auth, accept_language.as_deref()).await
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

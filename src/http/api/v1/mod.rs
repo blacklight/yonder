@@ -9,6 +9,7 @@ pub mod accounts;
 pub mod apps;
 pub mod instance;
 pub mod sessions;
+pub mod settings;
 pub mod tokens;
 pub mod two_factor;
 
@@ -103,6 +104,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             axum::routing::delete(two_factor::webauthn_delete),
         )
         .route("/api/v1/instance", get(instance::instance))
+        // User settings (epic 10).
+        .route("/api/v1/preferences", get(settings::preferences))
+        .route(
+            "/api/v1/yonder/settings",
+            get(settings::get_settings).patch(settings::patch_settings),
+        )
         // The `authentication` bucket covers every auth-adjacent
         // endpoint registered above.
         .route_layer(ratelimit::layer(state, "authentication"))
@@ -141,6 +148,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     two_factor::webauthn_rename,
     two_factor::webauthn_delete,
     two_factor::disable,
-    instance::instance
+    instance::instance,
+    settings::preferences,
+    settings::get_settings,
+    settings::patch_settings
 ))]
 pub struct ApiDoc;

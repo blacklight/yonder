@@ -151,12 +151,13 @@ fn registry_covers_every_leaf_and_all_sections() {
         );
     }
 
-    // All fourteen top-level sections appear.
+    // The top-level sections appear.
     for section in [
         "server",
         "database",
         "redis",
         "instance",
+        "i18n",
         "auth",
         "federation",
         "media",
@@ -181,4 +182,25 @@ fn registry_covers_every_leaf_and_all_sections() {
     assert_eq!(entry.env, "YONDER_RATE_LIMIT__SEARCH__LIMIT");
     assert_eq!(registry::env_name("instance.name"), "YONDER_INSTANCE__NAME");
     assert!(registry::find("not.a.key").is_none());
+}
+
+#[test]
+fn i18n_fallback_locale() {
+    // Default is English.
+    let config = Config::default();
+    assert_eq!(config.i18n.fallback_locale, "en");
+    config.validate().expect("defaults are valid");
+
+    Jail::expect_with(|jail| {
+        jail.create_file("config.toml", "[i18n]\nfallback_locale = \"it\"")?;
+        let config =
+            Config::load(Some(&jail.directory().join("config.toml"))).expect("load i18n section");
+        assert_eq!(config.i18n.fallback_locale, "it");
+        Ok(())
+    });
+
+    // An unsupported code deserializes but fails semantic validation.
+    let mut config = Config::default();
+    config.i18n.fallback_locale = "fr".to_string();
+    assert!(config.validate().is_err());
 }

@@ -13,10 +13,11 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 [dependencies]
 argon2 = "0.5"
 async-trait = "0.1"
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 base64 = "0.22"
 bb8 = "0.8"
 bb8-redis = "0.17"
+blurhash = "0.2.3"
 chacha20poly1305 = "0.10"
 chrono = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
@@ -26,9 +27,16 @@ futures-util = "0.3.34"
 hex = "0.4.3"
 hkdf = "0.13.0"
 hostname = "0.4"
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "webp",
+    "gif",
+] }
 pubby-sdk = { version = "0.6", features = ["axum", "redis", "async"] }
 redis = "0.27"
 rsa = "0.9"
+scraper = { version = "0.27", features = ["atomic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11.1"
@@ -46,7 +54,7 @@ tokio-cron-scheduler = { version = "0.15", default-features = false }
 tokio-util = "0.7"
 totp-rs = { version = "6.0", features = ["otpauth", "qr"] }
 tower = "0.5.3"
-tower-http = { version = "0.7.1", features = ["cors", "trace", "request-id"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace", "request-id", "limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"

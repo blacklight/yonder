@@ -50,6 +50,13 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.media.remote_cleanup_schedule.as_deref(),
             JobKind::CleanupRemoteMedia,
         ),
+        (
+            config
+                .federation
+                .profile_link_verification_schedule
+                .as_deref(),
+            JobKind::VerifyProfileLinks,
+        ),
         // Only meaningful with the federation stack up — the ledger
         // this reconciles doesn't exist otherwise.
         (
@@ -69,17 +76,32 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
         if expression.trim().is_empty() {
             continue;
         }
-        let cron = to_cron(expression)?;
+        let cron = match to_cron(expression) {
+            Ok(cron) => cron,
+            // A bad config value shouldn't take the worker down — skip
+            // the schedule and log loudly.
+            Err(e) => {
+                tracing::error!(schedule = %expression, kind = kind.as_str(), error = %e,
+                    "invalid cron schedule — skipping");
+                continue;
+            }
+        };
         let dispatcher = dispatcher.clone();
-        let job = Job::new_async(cron, move |_id, _lock| {
+        let job = match Job::new_async(cron, move |_id, _lock| {
             let dispatcher = dispatcher.clone();
             Box::pin(async move {
                 if let Err(e) = dispatcher.enqueue(kind, json!({})).await {
                     tracing::warn!(kind = kind.as_str(), error = %e, "scheduled enqueue failed");
                 }
             })
-        })
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        }) {
+            Ok(job) => job,
+            Err(e) => {
+                tracing::error!(schedule = %expression, kind = kind.as_str(), error = %e,
+                    "cron schedule rejected — skipping");
+                continue;
+            }
+        };
         scheduler
             .add(job)
             .await

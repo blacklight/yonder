@@ -24,6 +24,8 @@ pub struct AccountRow {
     pub banner_path: Option<String>,
     pub avatar_remote_url: Option<String>,
     pub banner_remote_url: Option<String>,
+    pub avatar_blurhash: Option<String>,
+    pub header_blurhash: Option<String>,
     pub profile_fields: Value,
     pub followers_count: i32,
     pub following_count: i32,
@@ -36,7 +38,8 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
     let row = sqlx::query(
         "SELECT id, username, domain, actor_id, url, display_name, bio, locked, \
                 bot, discoverable, avatar_path, banner_path, avatar_remote_url, \
-                banner_remote_url, profile_fields, followers_count, following_count, \
+                banner_remote_url, avatar_blurhash, header_blurhash, \
+                profile_fields, followers_count, following_count, \
                 statuses_count, created_at \
          FROM accounts WHERE id = $1",
     )
@@ -58,6 +61,8 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
         banner_path: r.get("banner_path"),
         avatar_remote_url: r.get("avatar_remote_url"),
         banner_remote_url: r.get("banner_remote_url"),
+        avatar_blurhash: r.get("avatar_blurhash"),
+        header_blurhash: r.get("header_blurhash"),
         profile_fields: r.get("profile_fields"),
         followers_count: r.get("followers_count"),
         following_count: r.get("following_count"),
@@ -66,39 +71,87 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
     }))
 }
 
-fn media_url(local_path: &Option<String>, remote: &Option<String>) -> String {
-    // Local paths are served by the media epic (18); remote actors
-    // carry the upstream URL until remote-caching lands.
+/// Public media URL for a stored key (`avatars/…`, `headers/…`) or the
+/// remote URL — the remote value wins for remote rows (which never
+/// carry a local key).
+fn media_url(base_url: &str, local_key: &Option<String>, remote: &Option<String>) -> String {
     remote
         .clone()
-        .or_else(|| local_path.clone())
+        .or_else(|| {
+            local_key
+                .as_ref()
+                .map(|k| crate::media::public_url(base_url, k))
+        })
         .unwrap_or_default()
 }
 
-/// Map an `accounts` row to a Mastodon Account entity. `source` (privacy
-/// etc.) is added by the caller for own-account responses.
-pub fn to_account(account: &AccountRow) -> Value {
+/// `profile_fields` → the public REST `fields` projection
+/// (`{name, value(html), verified_at}`): internal `value_raw` is
+/// stripped; rows from before `verified_at` get a null.
+fn public_fields(profile_fields: &Value) -> Vec<Value> {
+    profile_fields
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "name": entry.get("name").cloned().unwrap_or(Value::Null),
+                "value": entry.get("value").cloned().unwrap_or(Value::Null),
+                "verified_at": entry.get("verified_at").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect()
+}
+
+/// `profile_fields` → the `source.fields` projection
+/// (`{name, value: raw}`) — what the edit UI shows.
+pub fn source_fields(profile_fields: &Value) -> Vec<Value> {
+    profile_fields
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "name": entry.get("name").cloned().unwrap_or(Value::Null),
+                "value": entry
+                    .get("value_raw")
+                    .or_else(|| entry.get("value"))
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            })
+        })
+        .collect()
+}
+
+/// Map an `accounts` row to a Mastodon Account entity. `base_url` is
+/// the public federation base (media keys render to absolute URLs
+/// against it). `source` (privacy etc.) is added by the caller for
+/// own-account responses.
+pub fn to_account(account: &AccountRow, base_url: &str) -> Value {
     let acct = match &account.domain {
         Some(domain) => format!("{}@{domain}", account.username),
         None => account.username.clone(),
     };
-    let fields = account
-        .profile_fields
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    // Local bios are stored raw and rendered on read; remote rows keep
+    // their stored HTML `summary`.
+    let note = match (&account.domain, &account.bio) {
+        (None, Some(raw)) => pubby_sdk::render_bio_html(raw),
+        (_, bio) => bio.clone().unwrap_or_default(),
+    };
     json!({
         "id": account.id.to_string(),
         "username": account.username,
         "acct": acct,
         "display_name": account.display_name.clone().unwrap_or_else(|| account.username.clone()),
-        "note": account.bio.clone().unwrap_or_default(),
+        "note": note,
         "url": account.url.clone().unwrap_or_else(|| account.actor_id.clone()),
         "uri": account.actor_id,
-        "avatar": media_url(&account.avatar_path, &account.avatar_remote_url),
-        "avatar_static": media_url(&account.avatar_path, &account.avatar_remote_url),
-        "header": media_url(&account.banner_path, &account.banner_remote_url),
-        "header_static": media_url(&account.banner_path, &account.banner_remote_url),
+        "avatar": media_url(base_url, &account.avatar_path, &account.avatar_remote_url),
+        "avatar_static": media_url(base_url, &account.avatar_path, &account.avatar_remote_url),
+        "header": media_url(base_url, &account.banner_path, &account.banner_remote_url),
+        "header_static": media_url(base_url, &account.banner_path, &account.banner_remote_url),
         "locked": account.locked,
         "bot": account.bot,
         "group": false,
@@ -109,7 +162,11 @@ pub fn to_account(account: &AccountRow) -> Value {
         "followers_count": account.followers_count,
         "following_count": account.following_count,
         "statuses_count": account.statuses_count,
-        "fields": fields,
+        "fields": public_fields(&account.profile_fields),
         "emojis": [],
+        "yonder": {
+            "avatar_blurhash": account.avatar_blurhash,
+            "header_blurhash": account.header_blurhash,
+        },
     })
 }

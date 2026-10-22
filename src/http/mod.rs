@@ -112,6 +112,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         router = router.merge(crate::activitypub::router(&state));
     }
 
+    if matches!(
+        state.config.media.backend,
+        crate::config::MediaBackend::Local
+    ) {
+        router = router.merge(crate::media::storage::router());
+    }
+
     let router = match cors_layer(&state.config.http) {
         Some(cors) => router.layer(cors),
         None => router,

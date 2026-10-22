@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Request, State},
     http::{HeaderMap, Uri},
     Json,
 };
@@ -12,11 +12,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    auth::{registration, tokens},
+    auth::{registration, scopes::require_scope, tokens},
     http::{
         middleware::auth::{bearer_token, AuthContext},
         AppState,
     },
+    users::{account as account_mapper, profile},
     Error, Result,
 };
 
@@ -73,10 +74,18 @@ pub async fn verify_credentials(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    let account = crate::users::account::load(&state.db, auth.account_id)
+    credential_account(&state, &auth).await
+}
+
+/// The CredentialAccount entity: `to_account` plus the own-account
+/// `source` block — shared by `verify_credentials` and
+/// `update_credentials`.
+async fn credential_account(state: &Arc<AppState>, auth: &AuthContext) -> Result<Json<Value>> {
+    let account = account_mapper::load(&state.db, auth.account_id)
         .await?
         .ok_or_else(|| Error::NotFound("account".into()))?;
-    let mut entity = crate::users::account::to_account(&account);
+    let base_url = crate::activitypub::federation_base_url(&state.config);
+    let mut entity = account_mapper::to_account(&account, &base_url);
     let locale: Option<String> = sqlx::query_scalar("SELECT locale FROM users WHERE id = $1")
         .bind(auth.user_id)
         .fetch_one(&state.db)
@@ -86,9 +95,38 @@ pub async fn verify_credentials(
         "sensitive": false,
         "language": locale,
         "note": account.bio.clone().unwrap_or_default(),
-        "fields": account.profile_fields,
+        "fields": account_mapper::source_fields(&account.profile_fields),
     });
     Ok(Json(entity))
+}
+
+/// `PATCH /api/v1/accounts/update_credentials` — edit the caller's
+/// profile (display name, bio, avatar/header, ordered fields, and the
+/// `locked`/`bot`/`discoverable` flags). Accepts
+/// `multipart/form-data` (file uploads), `application/x-www-form-urlencoded`
+/// and `application/json` (no files). Returns the CredentialAccount.
+#[utoipa::path(
+    patch,
+    path = "/api/v1/accounts/update_credentials",
+    tag = "accounts",
+    request_body(content_type = "application/json", content = crate::users::profile::UpdateCredentialsSchema),
+    responses(
+        (status = 200, description = "Updated CredentialAccount"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "Scope or account-state gate", body = crate::error::ErrorBody),
+        (status = 413, description = "Body exceeds the upload limit", body = crate::error::ErrorBody),
+        (status = 422, description = "Validation failure", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn update_credentials(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    request: Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config, &auth, "write:accounts")?;
+    let params = profile::parse_request(&state, request).await?;
+    profile::update_profile(&state, &auth, params).await?;
+    credential_account(&state, &auth).await
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

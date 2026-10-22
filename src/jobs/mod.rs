@@ -92,6 +92,9 @@ pub enum JobKind {
     CleanupRemoteActivities,
     /// Evict stale cached remote media.
     CleanupRemoteMedia,
+    /// Re-verify a local account's URL-valued profile fields
+    /// (`rel="me"`), or sweep all of them (epic 09).
+    VerifyProfileLinks,
 }
 
 impl JobKind {
@@ -108,6 +111,7 @@ impl JobKind {
         JobKind::Export,
         JobKind::CleanupRemoteActivities,
         JobKind::CleanupRemoteMedia,
+        JobKind::VerifyProfileLinks,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -124,6 +128,7 @@ impl JobKind {
             JobKind::Export => "export",
             JobKind::CleanupRemoteActivities => "cleanup_remote_activities",
             JobKind::CleanupRemoteMedia => "cleanup_remote_media",
+            JobKind::VerifyProfileLinks => "verify_profile_links",
         }
     }
 
@@ -136,7 +141,8 @@ impl JobKind {
             JobKind::Import
             | JobKind::Export
             | JobKind::CleanupRemoteActivities
-            | JobKind::CleanupRemoteMedia => Queue::Bulk,
+            | JobKind::CleanupRemoteMedia
+            | JobKind::VerifyProfileLinks => Queue::Bulk,
             _ => Queue::Default,
         }
     }

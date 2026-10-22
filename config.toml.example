@@ -142,6 +142,10 @@ remote_activity_retention_days = 30
 # `deliveries` rows still pending past next_attempt_at (lost queue
 # jobs). Set to "" to disable.
 delivery_sweep_schedule = "*/15 * * * *"
+# 5-field cron for the periodic profile-field `rel="me"` re-verification
+# sweep over local accounts. Set to "" to disable — verification on
+# profile edit is enqueued regardless.
+profile_link_verification_schedule = "0 4 * * *"
 
 [media]
 # local | s3
@@ -243,6 +247,7 @@ max_duration_seconds = 2592000
 [content]
 max_post_length = 5000
 max_bio_length = 5000
+max_display_name_length = 100
 max_profile_fields = 10
 max_profile_field_name_length = 250
 max_profile_field_value_length = 2000

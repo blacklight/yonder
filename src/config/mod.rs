@@ -375,6 +375,11 @@ pub struct FederationConfig {
     /// `FederationDelivery` job: an enqueue failure or a crash between
     /// the ledger insert and the enqueue). Set to `""` to disable.
     pub delivery_sweep_schedule: Option<String>,
+    /// Cron expression for the profile-link `rel="me"` re-verification
+    /// sweep (`VerifyProfileLinks` over every local account with
+    /// URL-valued fields). Set to `""` to disable; edits always enqueue
+    /// their own verification regardless of this schedule.
+    pub profile_link_verification_schedule: Option<String>,
 }
 
 impl Default for FederationConfig {
@@ -398,6 +403,7 @@ impl Default for FederationConfig {
             remote_activity_retention_days: 30,
             remote_activity_prune_schedule: None,
             delivery_sweep_schedule: Some("*/15 * * * *".to_string()),
+            profile_link_verification_schedule: Some("0 4 * * *".to_string()),
         }
     }
 }
@@ -683,6 +689,9 @@ pub enum PostContentType {
 pub struct ContentConfig {
     pub max_post_length: u32,
     pub max_bio_length: u32,
+    /// Display-name cap — deliberately under the `accounts.display_name`
+    /// CHECK of 500.
+    pub max_display_name_length: u32,
     pub max_profile_fields: u32,
     pub max_profile_field_name_length: u32,
     pub max_profile_field_value_length: u32,
@@ -710,6 +719,7 @@ impl Default for ContentConfig {
         Self {
             max_post_length: 5000,
             max_bio_length: 5000,
+            max_display_name_length: 100,
             max_profile_fields: 10,
             max_profile_field_name_length: 250,
             max_profile_field_value_length: 2000,

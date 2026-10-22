@@ -86,8 +86,15 @@ pub struct LocalActor {
     pub locked: bool,
     /// `accounts.bot` → `Service` actor type.
     pub bot: bool,
-    /// Avatar path/URL for `icon`.
-    pub avatar: Option<String>,
+    /// Avatar storage key or remote URL for `icon` (remote wins).
+    pub avatar_path: Option<String>,
+    /// Remote avatar URL, if any.
+    pub avatar_remote_url: Option<String>,
+    /// Banner storage key or remote URL — `image` on the actor document
+    /// (injected at publish; pubby `ActorConfig` has no banner field).
+    pub banner_path: Option<String>,
+    /// Remote banner URL, if any.
+    pub banner_remote_url: Option<String>,
     /// `profile_fields` rows → `PropertyValue` attachments.
     pub profile_fields: Value,
     /// PEM private key (migration 0009); `None` when unprovisioned.
@@ -105,6 +112,7 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
         r#"
         SELECT a.id, a.username, a.actor_id, a.url, a.display_name, a.bio,
                a.locked, a.bot, a.avatar_path, a.avatar_remote_url,
+               a.banner_path, a.banner_remote_url,
                a.profile_fields, a.private_key_pem,
                t.actor_id AS moved_to
         FROM accounts a
@@ -132,9 +140,10 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
         bio: r.get("bio"),
         locked: r.get("locked"),
         bot: r.get("bot"),
-        avatar: r
-            .get::<Option<String>, _>("avatar_path")
-            .or_else(|| r.get::<Option<String>, _>("avatar_remote_url")),
+        avatar_path: r.get("avatar_path"),
+        avatar_remote_url: r.get("avatar_remote_url"),
+        banner_path: r.get("banner_path"),
+        banner_remote_url: r.get("banner_remote_url"),
         profile_fields: r.get("profile_fields"),
         private_key_pem: r.get("private_key_pem"),
         moved_to: r.get("moved_to"),
@@ -269,8 +278,23 @@ fn actor_config(base_url: &str, actor: &LocalActor, actor_path: &str) -> ActorCo
         .display_name
         .clone()
         .or_else(|| Some(username.clone()));
-    cfg.summary = actor.bio.clone().unwrap_or_default();
-    cfg.icon_url = actor.avatar.clone().unwrap_or_default();
+    // Local bios are stored raw — render (escape + linkify) here so a
+    // `<` in the bio can't leak into the AP `summary`.
+    cfg.summary = actor
+        .bio
+        .as_deref()
+        .map(pubby_sdk::render_bio_html)
+        .unwrap_or_default();
+    cfg.icon_url = actor
+        .avatar_remote_url
+        .clone()
+        .or_else(|| {
+            actor
+                .avatar_path
+                .as_ref()
+                .map(|k| crate::media::public_url(base_url, k))
+        })
+        .unwrap_or_default();
     cfg.actor_path = actor_path.to_string();
     cfg.actor_type = if actor.bot {
         "Service".to_string()

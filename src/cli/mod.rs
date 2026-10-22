@@ -178,6 +178,8 @@ async fn start_worker(
     .await?;
     let mut registry = jobs::Registry::default();
     jobs::stub::register_all(&mut registry);
+    // Epic-09 profile jobs — independent of the federation gate.
+    crate::users::profile::register_jobs(&mut registry);
     let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
     // Real federation handlers replace the stubs when federation is on.
     if config.federation.enabled {

@@ -33,6 +33,17 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/accounts/verify_credentials",
             get(accounts::verify_credentials),
         )
+        // Profile editing (epic 09). Multipart bypasses
+        // `DefaultBodyLimit`, so the body cap rides on the route itself
+        // (two uploads + slack).
+        .route(
+            "/api/v1/accounts/update_credentials",
+            axum::routing::patch(accounts::update_credentials).route_layer(
+                tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config.media.max_avatar_size as usize * 2 + 64 * 1024,
+                ),
+            ),
+        )
         .route("/api/v1/apps", post(apps::create_app))
         .route(
             "/api/v1/apps/verify_credentials",
@@ -108,6 +119,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
 #[openapi(paths(
     accounts::register,
     accounts::verify_credentials,
+    accounts::update_credentials,
     accounts::verify_email,
     apps::create_app,
     apps::verify_credentials,

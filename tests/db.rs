@@ -50,7 +50,7 @@ async fn migrations_apply_idempotently() {
 
     db::migrate::run(&pool).await.unwrap();
     let after_first = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(after_first, (1..=12).collect::<Vec<i64>>());
+    assert_eq!(after_first, (1..=13).collect::<Vec<i64>>());
 
     db::migrate::run(&pool).await.unwrap();
     let after_second = db::migrate::applied_versions(&pool).await.unwrap();
@@ -70,7 +70,7 @@ async fn down_migrations_revert_cleanly() {
     // Single-step revert: 10 applied -> 9 applied.
     db::migrate::revert(&pool, None).await.unwrap();
     let versions = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(versions, (1..=11).collect::<Vec<i64>>());
+    assert_eq!(versions, (1..=12).collect::<Vec<i64>>());
 
     // Full revert: only the migrations bookkeeping table remains.
     db::migrate::revert(&pool, Some(0)).await.unwrap();
@@ -89,7 +89,7 @@ async fn down_migrations_revert_cleanly() {
     db::migrate::run(&pool).await.unwrap();
     assert_eq!(
         db::migrate::applied_versions(&pool).await.unwrap(),
-        (1..=12).collect::<Vec<i64>>()
+        (1..=13).collect::<Vec<i64>>()
     );
 
     container.stop().await.unwrap();

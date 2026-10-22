@@ -117,7 +117,7 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
                t.actor_id AS moved_to
         FROM accounts a
         LEFT JOIN accounts t ON t.id = a.moved_to_account_id
-        WHERE lower(a.username) = lower($1) AND a.domain IS NULL
+        WHERE lower(a.username) = lower($1) AND a.domain IS NULL AND a.deleted_at IS NULL
         "#,
     )
     .bind(username)

@@ -182,9 +182,20 @@ async fn start_worker(
     crate::users::profile::register_jobs(&mut registry);
     let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
     // Real federation handlers replace the stubs when federation is on.
+    let mut ap_ctx = None;
     if config.federation.enabled {
         let ap = crate::activitypub::build(config, &pool, &redis, &dispatcher).await?;
         crate::activitypub::register_handlers(&mut registry, &ap);
+        ap_ctx = Some(ap);
+    }
+    // Epic-11 account-management jobs: local work runs regardless of
+    // the federation gate; handlers degrade to "no AP emission" when
+    // `ap_ctx` is None. MigrateFollowers needs AP (actor fetches,
+    // Undo/Follow publishes), so it only registers under the gate.
+    crate::users::deletion::register_jobs(&mut registry, ap_ctx.as_ref());
+    crate::users::transfer::register_jobs(&mut registry, ap_ctx.as_ref());
+    if let Some(ap) = ap_ctx.as_ref() {
+        crate::users::moves::register_jobs(&mut registry, ap);
     }
     let ctx = jobs::JobContext {
         db: pool,

@@ -5,12 +5,15 @@
 //! `paths(...)`. Handlers carry `#[utoipa::path]`; keep them thin —
 //! logic lives in domain services.
 
+pub mod account_management;
 pub mod accounts;
 pub mod apps;
 pub mod instance;
+pub mod invites;
 pub mod sessions;
 pub mod settings;
 pub mod tokens;
+pub mod transfer;
 pub mod two_factor;
 
 use std::sync::Arc;
@@ -110,6 +113,47 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/settings",
             get(settings::get_settings).patch(settings::patch_settings),
         )
+        // Account management (epic 11).
+        .route(
+            "/api/v1/yonder/aliases",
+            get(account_management::list_aliases)
+                .post(account_management::add_alias)
+                .delete(account_management::remove_alias),
+        )
+        .route(
+            "/api/v1/yonder/move",
+            post(account_management::move_account).delete(account_management::cancel_move),
+        )
+        .route(
+            "/api/v1/yonder/account/delete",
+            post(account_management::delete_account),
+        )
+        .route(
+            "/api/v1/yonder/invites",
+            post(invites::create_invite).get(invites::list_invites),
+        )
+        .route(
+            "/api/v1/yonder/invites/{id}",
+            axum::routing::delete(invites::revoke_invite),
+        )
+        .route(
+            "/api/v1/yonder/exports",
+            post(transfer::create_export).get(transfer::list_exports),
+        )
+        .route("/api/v1/yonder/exports/{id}", get(transfer::get_export))
+        .route(
+            "/api/v1/yonder/exports/{id}/download",
+            get(transfer::download_export),
+        )
+        .route(
+            "/api/v1/yonder/imports",
+            post(transfer::create_import)
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config.admin.max_import_size as usize + 64 * 1024,
+                ))
+                .get(transfer::list_imports),
+        )
+        .route("/api/v1/yonder/imports/{id}", get(transfer::get_import))
         // The `authentication` bucket covers every auth-adjacent
         // endpoint registered above.
         .route_layer(ratelimit::layer(state, "authentication"))
@@ -118,6 +162,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/accounts",
             post(accounts::register).route_layer(ratelimit::layer(state, "account_creation")),
+        )
+        // Public invite check — outside the `authentication` bucket,
+        // counted against `account_creation` like registration itself.
+        .route(
+            "/api/v1/yonder/invites/check/{code}",
+            get(invites::check_invite).route_layer(ratelimit::layer(state, "account_creation")),
         )
 }
 
@@ -151,6 +201,23 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     instance::instance,
     settings::preferences,
     settings::get_settings,
-    settings::patch_settings
+    settings::patch_settings,
+    account_management::list_aliases,
+    account_management::add_alias,
+    account_management::remove_alias,
+    account_management::move_account,
+    account_management::cancel_move,
+    account_management::delete_account,
+    invites::create_invite,
+    invites::list_invites,
+    invites::revoke_invite,
+    invites::check_invite,
+    transfer::create_export,
+    transfer::list_exports,
+    transfer::get_export,
+    transfer::download_export,
+    transfer::create_import,
+    transfer::list_imports,
+    transfer::get_import
 ))]
 pub struct ApiDoc;

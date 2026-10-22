@@ -94,8 +94,9 @@ fallback_locale = "en"
 [auth]
 # open | approval-required | closed
 registration_mode = "open"
-# Allow non-admin/mod users to generate invite links.
-invite_links_enabled = true
+# Allow non-admin/mod users to generate invite links. Unset means
+# enabled while registrations are open, disabled otherwise.
+# invite_links_enabled = true
 # Custom message shown on approval-required registration forms
 # (≤ content.max_registration_message_length).
 # registration_message = ""
@@ -287,3 +288,14 @@ auto_followed_by = []
 default_frontend = "yonder"
 # Days to retain moderation audit log entries.
 audit_log_retention_days = 365
+# Days a self-service account deletion waits before the federated
+# Delete + purge run. 0 deletes immediately; a non-zero grace keeps the
+# account deactivated until the delay expires (admin-cancelable).
+account_deletion_grace_days = 0
+# 5-field cron sweeping due account deletions. Set to "" to disable.
+account_deletion_sweep_schedule = "*/15 * * * *"
+# 5-field cron removing expired account-archive exports. Set to "" to
+# disable.
+export_cleanup_schedule = "0 3 * * *"
+# Multipart size cap for account-archive import uploads (bytes).
+max_import_size = 52428800

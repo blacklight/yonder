@@ -67,6 +67,14 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             },
             JobKind::FederationDeliverySweep,
         ),
+        (
+            config.admin.account_deletion_sweep_schedule.as_deref(),
+            JobKind::AccountDeletion,
+        ),
+        (
+            config.admin.export_cleanup_schedule.as_deref(),
+            JobKind::ExportCleanup,
+        ),
     ];
     for (expression, kind) in schedules {
         let Some(expression) = expression else {

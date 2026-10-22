@@ -729,56 +729,72 @@ async fn handle_flag_reports_resolvable_objects() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn handle_move_records_relocation_and_ignores_self_moves() {
-    let Some((pool, _c)) = test_pool().await else {
+async fn handle_move_enqueues_verification_and_writes_nothing() {
+    let Some((state, _c)) = test_state().await else {
         return;
     };
-    let alice = seed_actor(&pool, "alice").await;
+    let alice = seed_actor(&state.db, "alice").await;
+    let core = state.ap.as_ref().unwrap().core.clone();
 
+    // An actor claiming to move onto a local account defers to
+    // MigrateFollowers — verification (target alsoKnownAs) and all
+    // writes happen in the job, never inline.
     let raw = json!({
         "type": "Move",
         "actor": "https://remote.example/users/mover",
+        "object": "https://remote.example/users/mover",
         "target": alice.actor_id,
     });
     let activity = Activity::from_json(&raw);
-    activitypub::incoming::handle_move(&pool, &activity, &raw)
+    activitypub::incoming::handle_move(&core, &activity, &raw)
         .await
         .unwrap();
+    assert_eq!(stream_len(&state.redis, "bulk").await, 1);
 
-    let moved_to: Option<i64> =
-        sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE actor_id = $1")
-            .bind("https://remote.example/users/mover")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(moved_to, Some(alice.id));
-    let alias: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM account_aliases WHERE account_id = $1 AND uri = $2)",
+    // No rows may be written before the target's alsoKnownAs is
+    // verified — in particular no alias letting a foreign actor pose
+    // as a local account's old address.
+    assert!(!sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)"
+    )
+    .bind("https://remote.example/users/mover")
+    .fetch_one(&state.db)
+    .await
+    .unwrap());
+    assert!(!sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM account_aliases WHERE account_id = $1)"
     )
     .bind(alice.id)
-    .bind("https://remote.example/users/mover")
-    .fetch_one(&pool)
+    .fetch_one(&state.db)
     .await
-    .unwrap();
-    assert!(alias);
+    .unwrap());
 
-    // A self-move is a no-op — not even the account row is created.
+    // Self-moves are dropped before enqueueing.
     let raw = json!({
         "type": "Move",
         "actor": "https://remote.example/users/self",
+        "object": "https://remote.example/users/self",
         "target": "https://remote.example/users/self",
     });
     let activity = Activity::from_json(&raw);
-    activitypub::incoming::handle_move(&pool, &activity, &raw)
+    activitypub::incoming::handle_move(&core, &activity, &raw)
         .await
         .unwrap();
-    let exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)")
-            .bind("https://remote.example/users/self")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(!exists);
+    assert_eq!(stream_len(&state.redis, "bulk").await, 1);
+
+    // A move where `object` differs from `actor` (moving someone else)
+    // is dropped too.
+    let raw = json!({
+        "type": "Move",
+        "actor": "https://remote.example/users/attacker",
+        "object": "https://remote.example/users/victim",
+        "target": alice.actor_id,
+    });
+    let activity = Activity::from_json(&raw);
+    activitypub::incoming::handle_move(&core, &activity, &raw)
+        .await
+        .unwrap();
+    assert_eq!(stream_len(&state.redis, "bulk").await, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -51,6 +51,9 @@ pub enum Error {
     #[error("conflict: {0}")]
     Conflict(String),
 
+    #[error("rate limited: {0}")]
+    RateLimited(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 
@@ -87,6 +90,7 @@ impl Error {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             // Pool saturation is transient — 503 invites a retry.
             Self::RedisPool(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Config(_)
@@ -107,7 +111,8 @@ impl Error {
             | Self::Unauthorized
             | Self::Forbidden
             | Self::Validation(_)
-            | Self::Conflict(_) => self.to_string().into(),
+            | Self::Conflict(_)
+            | Self::RateLimited(_) => self.to_string().into(),
             _ => "Internal server error".into(),
         }
     }
@@ -126,6 +131,7 @@ impl Error {
             Self::Forbidden => "forbidden",
             Self::Validation(_) => "validation",
             Self::Conflict(_) => "conflict",
+            Self::RateLimited(_) => "rate_limited",
             Self::Internal(_) => "internal",
             Self::Federation(_) => "federation",
         }

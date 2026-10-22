@@ -102,6 +102,8 @@ async fn credential_account(
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     let base_url = crate::activitypub::federation_base_url(&state.config);
     let mut entity = account_mapper::to_account(&account, &base_url);
+    // `moved` is a nested Account (one level deep, never recursive).
+    entity["moved"] = crate::users::moves::moved_account_json(&state.db, &account, &base_url).await;
     entity["source"] = json!({
         "privacy": settings::public_visibility(&user_settings.default_visibility),
         "sensitive": user_settings.default_sensitive,

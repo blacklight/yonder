@@ -57,8 +57,14 @@ pub fn deliver_fn(ctx: &Arc<super::ApCore>) -> DeliverFn {
 
 /// Insert the ledger row for (`activity`, `inbox`) and enqueue the job.
 /// `INSERT … ON CONFLICT DO NOTHING RETURNING` gives the dedupe: only a
-/// newly-created row enqueues.
-async fn enqueue_delivery(ctx: &super::ApCore, inbox_url: &str, activity: &Value) -> Result<()> {
+/// newly-created row enqueues. `pub(crate)` so the account-deletion
+/// purge can address inboxes pubby's fan-out doesn't collect (remote
+/// accounts the user followed).
+pub(crate) async fn enqueue_delivery(
+    ctx: &super::ApCore,
+    inbox_url: &str,
+    activity: &Value,
+) -> Result<()> {
     let activity_uri = activity
         .get("id")
         .and_then(|v| v.as_str())

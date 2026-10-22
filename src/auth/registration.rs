@@ -33,6 +33,9 @@ pub struct RegisterParams {
     pub locale: Option<String>,
     /// Approval-required registration reason.
     pub reason: Option<String>,
+    /// Invite code — bypasses `closed` registration and auto-approves
+    /// under `approval-required` (Mastodon's `invite_code` parameter).
+    pub invite_code: Option<String>,
 }
 
 /// What a successful [`register`] produced.
@@ -115,11 +118,18 @@ pub async fn register(
             config.content.max_registration_message_length
         )));
     }
+    let invite_code = params
+        .invite_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty());
     match config.auth.registration_mode {
-        RegistrationMode::Closed => {
+        // An invite code bypasses the closed gate; its validity is
+        // checked (and consumed atomically) inside the transaction.
+        RegistrationMode::Closed if invite_code.is_none() => {
             return Err(Error::Forbidden);
         }
-        RegistrationMode::ApprovalRequired if reason.is_none() => {
+        RegistrationMode::ApprovalRequired if reason.is_none() && invite_code.is_none() => {
             return Err(Error::Validation(
                 "reason is required when registrations need approval".to_string(),
             ));
@@ -151,7 +161,13 @@ pub async fn register(
     let base_url = activitypub::federation_base_url(config);
     let actor_id = format!("{base_url}/ap/users/{username}");
     let email_verified = !requires_email_verification(config);
-    let approved = matches!(config.auth.registration_mode, RegistrationMode::Open);
+    // Open registrations are active at once; under approval-required an
+    // invite auto-approves (Mastodon behavior). Closed registrations
+    // only get here with an invite, which also approves immediately.
+    let approved = matches!(
+        config.auth.registration_mode,
+        RegistrationMode::Open | RegistrationMode::Closed
+    ) || invite_code.is_some();
 
     // Friendly pre-checks; the unique indexes still guard the race.
     let taken: bool = sqlx::query_scalar(
@@ -173,6 +189,15 @@ pub async fn register(
     }
 
     let mut tx = state.db.begin().await?;
+    // A presented-but-invalid invite is a 422 in every mode — consumed
+    // atomically here so concurrent sign-ups can't exceed max_uses.
+    let invite_id = match invite_code {
+        Some(code) => crate::users::invites::consume(&mut tx, code)
+            .await?
+            .ok_or_else(|| Error::Validation("invite code is invalid or exhausted".to_string()))
+            .map(Some)?,
+        None => None,
+    };
     let account_id: i64 = sqlx::query_scalar(
         "INSERT INTO accounts (domain, username, actor_id) VALUES (NULL, $1, $2) RETURNING id",
     )
@@ -183,8 +208,8 @@ pub async fn register(
     .map_err(registration_db_error)?;
     let user_id: i64 = sqlx::query_scalar(
         "INSERT INTO users \
-         (account_id, email, password_hash, approved_at, email_verified_at, registration_reason, locale) \
-         VALUES ($1, $2, $3, CASE WHEN $4 THEN now() END, CASE WHEN $5 THEN now() END, $6, $7) \
+         (account_id, email, password_hash, approved_at, email_verified_at, registration_reason, locale, invite_id) \
+         VALUES ($1, $2, $3, CASE WHEN $4 THEN now() END, CASE WHEN $5 THEN now() END, $6, $7, $8) \
          RETURNING id",
     )
     .bind(account_id)
@@ -194,6 +219,7 @@ pub async fn register(
     .bind(email_verified)
     .bind(reason)
     .bind(&locale)
+    .bind(invite_id)
     .fetch_one(&mut *tx)
     .await
     .map_err(registration_db_error)?;
@@ -224,6 +250,23 @@ pub async fn register(
         enqueue_verification_email(state, user_id, email).await?;
     }
     tx.commit().await?;
+
+    // Auto-follow runs once the account is active — invited users are
+    // approved at registration, so they qualify too. Fire-and-forget:
+    // remote resolution must not add WebFinger latency to sign-up, and
+    // auto-follow failures must never fail a committed registration.
+    if approved {
+        let af = crate::users::auto_follow::AutoFollowCtx {
+            db: state.db.clone(),
+            config: state.config.clone(),
+            ap: state.ap.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = crate::users::auto_follow::apply(&af, account_id).await {
+                tracing::warn!(account_id, error = %e, "auto-follow failed");
+            }
+        });
+    }
 
     Ok((
         Registered {

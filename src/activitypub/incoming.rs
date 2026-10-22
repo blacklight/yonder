@@ -149,7 +149,7 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
     let core = core.clone();
     Arc::new(move |activity: &Activity, raw: &Value| {
         let outcome = match activity.activity_type.as_str() {
-            "Move" => sync_block(handle_move(&core.db, activity, raw)),
+            "Move" => sync_block(handle_move(&core, activity, raw)),
             "Flag" => sync_block(handle_flag(&core.db, activity, raw)),
             "Add" | "Remove" | "Block" => sync_block(store_unhandled(&core.storage, activity, raw)),
             _ => return Ok(ActivityDisposition::PassThrough),
@@ -168,55 +168,53 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
     })
 }
 
-/// `Move` — a remote actor migrated: upsert the source, resolve the
-/// target, point `moved_to_account_id` at it. A move *to* a local
-/// account also records the source URI in `account_aliases`.
-pub async fn handle_move(db: &PgPool, activity: &Activity, raw: &Value) -> Result<()> {
-    let target_url = raw
-        .get("target")
-        .and_then(|v| v.as_str().or_else(|| v.get("id").and_then(|i| i.as_str())))
-        .unwrap_or_default();
-    if target_url.is_empty() || activity.actor.is_empty() || target_url == activity.actor {
+/// `Move` — an actor claims it migrated. Only the cheap checks run
+/// inline (this callback is synchronous and network I/O isn't allowed
+/// here): an actor may only move *itself* (`actor == object`), the
+/// `target` must differ, and the origin must not be a local account
+/// (local moves go through `/api/v1/yonder/move`). Everything else is
+/// deferred to `MigrateFollowers`, which verifies the target's fresh
+/// `alsoKnownAs` before migrating any local follower. **No** database
+/// writes happen here — in particular no `account_aliases` rows: an
+/// unverified `Move` must not alias a foreign actor onto a local
+/// account.
+pub async fn handle_move(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -> Result<()> {
+    let extract_url = |field: &str| {
+        raw.get(field)
+            .and_then(|v| v.as_str().or_else(|| v.get("id").and_then(|i| i.as_str())))
+            .map(str::to_string)
+    };
+    // An actor may only move itself: `object` (the account moved) must
+    // exist and equal the signer `actor`, and `target` must differ.
+    // Signature verification already proved `activity.actor` is the
+    // sender.
+    let (Some(object_url), Some(target_url)) = (extract_url("object"), extract_url("target"))
+    else {
+        return Ok(());
+    };
+    if activity.actor.is_empty() || object_url != activity.actor || target_url == activity.actor {
         return Ok(());
     }
-    // Source row (remote), then target row (local or remote).
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(super::moderation::actor_domain(&activity.actor))
-    .bind(last_segment(&activity.actor))
-    .bind(&activity.actor)
-    .execute(db)
-    .await?;
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(super::moderation::actor_domain(target_url))
-    .bind(last_segment(target_url))
-    .bind(target_url)
-    .execute(db)
-    .await?;
-    sqlx::query(
-        "UPDATE accounts SET moved_to_account_id = \
-         (SELECT id FROM accounts WHERE actor_id = $2), updated_at = now() \
-         WHERE actor_id = $1",
+    let origin_is_local: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1 AND domain IS NULL)",
     )
     .bind(&activity.actor)
-    .bind(target_url)
-    .execute(db)
+    .fetch_one(&core.db)
     .await?;
-    // Moved *onto* this instance: register the old URI as an alias.
-    sqlx::query(
-        "INSERT INTO account_aliases (account_id, uri) \
-         SELECT id, $2 FROM accounts WHERE actor_id = $1 AND domain IS NULL \
-         ON CONFLICT (account_id, uri) DO NOTHING",
-    )
-    .bind(target_url)
-    .bind(&activity.actor)
-    .execute(db)
-    .await?;
+    if origin_is_local {
+        return Ok(());
+    }
+    core.dispatcher
+        .enqueue(
+            JobKind::MigrateFollowers,
+            json!({
+                "direction": "remote",
+                "origin_actor": activity.actor,
+                "target_actor": target_url,
+                "activity_id": activity.id,
+            }),
+        )
+        .await?;
     Ok(())
 }
 

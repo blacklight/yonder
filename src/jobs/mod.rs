@@ -95,6 +95,12 @@ pub enum JobKind {
     /// Re-verify a local account's URL-valued profile fields
     /// (`rel="me"`), or sweep all of them (epic 09).
     VerifyProfileLinks,
+    /// Purge one deleted account, or sweep due `account_deletions`.
+    AccountDeletion,
+    /// Migrate local followers after a verified account move.
+    MigrateFollowers,
+    /// Delete expired archive-export files.
+    ExportCleanup,
 }
 
 impl JobKind {
@@ -112,6 +118,9 @@ impl JobKind {
         JobKind::CleanupRemoteActivities,
         JobKind::CleanupRemoteMedia,
         JobKind::VerifyProfileLinks,
+        JobKind::AccountDeletion,
+        JobKind::MigrateFollowers,
+        JobKind::ExportCleanup,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -129,6 +138,9 @@ impl JobKind {
             JobKind::CleanupRemoteActivities => "cleanup_remote_activities",
             JobKind::CleanupRemoteMedia => "cleanup_remote_media",
             JobKind::VerifyProfileLinks => "verify_profile_links",
+            JobKind::AccountDeletion => "account_deletion",
+            JobKind::MigrateFollowers => "migrate_followers",
+            JobKind::ExportCleanup => "export_cleanup",
         }
     }
 
@@ -142,7 +154,10 @@ impl JobKind {
             | JobKind::Export
             | JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
-            | JobKind::VerifyProfileLinks => Queue::Bulk,
+            | JobKind::VerifyProfileLinks
+            | JobKind::AccountDeletion
+            | JobKind::MigrateFollowers
+            | JobKind::ExportCleanup => Queue::Bulk,
             _ => Queue::Default,
         }
     }

@@ -33,6 +33,8 @@ pub struct AccountRow {
     /// `users.indexable` for local accounts (`None` for remote rows,
     /// which have no `users` row).
     pub indexable: Option<bool>,
+    /// Move target — the `moved` entity renders it nested.
+    pub moved_to_account_id: Option<i64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -46,9 +48,9 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
                 a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
                 a.avatar_blurhash, a.header_blurhash, \
                 a.profile_fields, a.followers_count, a.following_count, \
-                a.statuses_count, a.created_at, u.indexable \
+                a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id \
          FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
-         WHERE a.id = $1",
+         WHERE a.id = $1 AND a.deleted_at IS NULL",
     )
     .bind(account_id)
     .fetch_optional(pool)
@@ -75,6 +77,7 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
         following_count: r.get("following_count"),
         statuses_count: r.get("statuses_count"),
         indexable: r.get("indexable"),
+        moved_to_account_id: r.get("moved_to_account_id"),
         created_at: r.get("created_at"),
     }))
 }
@@ -173,6 +176,13 @@ pub fn to_account(account: &AccountRow, base_url: &str) -> Value {
         "following_count": account.following_count,
         "statuses_count": account.statuses_count,
         "fields": public_fields(&account.profile_fields),
+        // CONTRACT: `moved` is a *placeholder* — `to_account` is
+        // synchronous and cannot load the nested entity. Every caller
+        // rendering an Account for a possibly-moved account MUST
+        // overwrite this with `moves::moved_account_json` (see
+        // `verify_credentials`); otherwise a moved account silently
+        // renders `"moved": null` and clients won't redirect.
+        "moved": Value::Null,
         "emojis": [],
         "yonder": {
             "avatar_blurhash": account.avatar_blurhash,

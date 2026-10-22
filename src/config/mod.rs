@@ -134,6 +134,11 @@ impl Config {
                     .to_string(),
             ));
         }
+        if self.admin.account_deletion_grace_days > 365 {
+            return Err(crate::Error::Validation(
+                "admin.account_deletion_grace_days must be <= 365".to_string(),
+            ));
+        }
         if self.jobs.poll_interval_ms == 0 {
             return Err(crate::Error::Validation(
                 "jobs.poll_interval_ms must be > 0".to_string(),
@@ -327,8 +332,9 @@ pub enum RegistrationMode {
 #[serde(default)]
 pub struct AuthConfig {
     pub registration_mode: RegistrationMode,
-    /// Allow non-admin/mod users to generate invite links.
-    pub invite_links_enabled: bool,
+    /// Allow non-admin/mod users to generate invite links. Unset means
+    /// "enabled when registrations are open, disabled otherwise".
+    pub invite_links_enabled: Option<bool>,
     /// Custom message shown in approval-required registration forms
     /// (≤ `content.max_registration_message_length`).
     pub registration_message: Option<String>,
@@ -340,11 +346,20 @@ pub struct AuthConfig {
     pub refresh_token_expiry_days: u64,
 }
 
+impl AuthConfig {
+    /// The effective invite-link policy for non-staff users: an explicit
+    /// value wins; unset means "on only while registration is open".
+    pub fn invite_links_enabled(&self) -> bool {
+        self.invite_links_enabled
+            .unwrap_or(matches!(self.registration_mode, RegistrationMode::Open))
+    }
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             registration_mode: RegistrationMode::Open,
-            invite_links_enabled: true,
+            invite_links_enabled: None,
             registration_message: None,
             require_email_verification: true,
             secret_key: None,
@@ -782,6 +797,19 @@ pub struct AdminConfig {
     pub default_frontend: String,
     /// Days to retain moderation audit log entries.
     pub audit_log_retention_days: u32,
+    /// Grace period between a self-service account-deletion request and
+    /// the federated `Delete` + purge. `0` (Mastodon's behavior) deletes
+    /// immediately; during a non-zero grace the account stays
+    /// deactivated and an admin can still cancel.
+    pub account_deletion_grace_days: u32,
+    /// Cron expression for the `account_deletions` sweep that executes
+    /// due deletions. Set to `""` to disable.
+    pub account_deletion_sweep_schedule: Option<String>,
+    /// Cron expression for expired archive-export cleanup. Set to `""`
+    /// to disable.
+    pub export_cleanup_schedule: Option<String>,
+    /// Multipart size cap for `/api/v1/yonder/imports` uploads (bytes).
+    pub max_import_size: u64,
 }
 
 impl Default for AdminConfig {
@@ -793,6 +821,10 @@ impl Default for AdminConfig {
             auto_followed_by: Vec::new(),
             default_frontend: "yonder".to_string(),
             audit_log_retention_days: 365,
+            account_deletion_grace_days: 0,
+            account_deletion_sweep_schedule: Some("*/15 * * * *".to_string()),
+            export_cleanup_schedule: Some("0 3 * * *".to_string()),
+            max_import_size: 50 * 1024 * 1024,
         }
     }
 }

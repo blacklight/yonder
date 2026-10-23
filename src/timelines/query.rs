@@ -19,7 +19,8 @@ use super::{
 };
 
 /// `STATUS_COLS` re-aliased for the joined query (`s.<col>`).
-fn select_cols() -> String {
+/// `pub(crate)` — epic-17 search builds the same joined select.
+pub(crate) fn select_cols() -> String {
     STATUS_COLS
         .split(',')
         .map(|c| format!("s.{}", c.trim()))
@@ -27,7 +28,7 @@ fn select_cols() -> String {
         .join(", ")
 }
 
-fn bind_all<'a>(
+pub(crate) fn bind_all<'a>(
     mut q: Query<'a, sqlx::Postgres, PgArguments>,
     binds: impl Iterator<Item = &'a Bind>,
 ) -> Query<'a, sqlx::Postgres, PgArguments> {

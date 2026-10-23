@@ -91,6 +91,21 @@ pub fn render(
     }
 }
 
+/// Plain text of an HTML fragment, whitespace-collapsed and capped at
+/// 20000 chars — the searchable `content` of a remote status that
+/// carries no `source` text.
+pub fn html_to_text(html: &str) -> String {
+    scraper::Html::parse_fragment(html)
+        .root_element()
+        .text()
+        .flat_map(str::split_whitespace)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(20000)
+        .collect()
+}
+
 /// The hardened allowlist applied to markdown output and inbound
 /// remote HTML. `a[href]` is limited to `content.valid_url_schemes`;
 /// every other attribute is stripped.

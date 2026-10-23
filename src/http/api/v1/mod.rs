@@ -15,9 +15,11 @@ pub mod interactions;
 pub mod invites;
 pub mod lists;
 pub mod media;
+pub mod notifications;
 pub mod polls;
 pub mod relationships;
 pub mod scheduled_statuses;
+pub mod search;
 pub mod sessions;
 pub mod settings;
 pub mod statuses;
@@ -398,6 +400,24 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/timelines/tag/{hashtag}",
             get(timelines::tag).route_layer(ratelimit::layer(state, "timeline")),
         )
+        // Epic 16 — notifications (no rate-limit bucket; Mastodon
+        // doesn't throttle these).
+        .route("/api/v1/notifications", get(notifications::list))
+        .route("/api/v1/notifications/clear", post(notifications::clear))
+        .route(
+            "/api/v1/notifications/unread_count",
+            get(notifications::unread_count),
+        )
+        .route("/api/v1/notifications/{id}", get(notifications::show))
+        .route(
+            "/api/v1/notifications/{id}/dismiss",
+            post(notifications::dismiss),
+        )
+        // Epic 17 — search (own `search` bucket, like timelines).
+        .route(
+            "/api/v1/search",
+            get(search::search_v1).route_layer(ratelimit::layer(state, "search")),
+        )
 }
 
 /// OpenAPI fragment merged into the root document.
@@ -505,9 +525,15 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     timelines::public,
     timelines::list_timeline,
     timelines::tag,
+    notifications::list,
+    notifications::show,
+    notifications::clear,
+    notifications::dismiss,
+    notifications::unread_count,
     scheduled_statuses::list,
     scheduled_statuses::show,
     scheduled_statuses::update,
-    scheduled_statuses::cancel
+    scheduled_statuses::cancel,
+    search::search_v1
 ))]
 pub struct ApiDoc;

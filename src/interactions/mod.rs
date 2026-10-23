@@ -116,6 +116,29 @@ pub async fn emit_notification_event(
     status_id: Option<i64>,
     to_account_id: i64,
 ) {
+    emit_notification_event_ext(
+        db,
+        dispatcher,
+        kind,
+        from_account_id,
+        status_id,
+        None,
+        to_account_id,
+    )
+    .await;
+}
+
+/// [`emit_notification_event`] plus a `report_id` — only
+/// `admin.report` events (epic 16 `notify_report`) carry one.
+pub async fn emit_notification_event_ext(
+    db: &PgPool,
+    dispatcher: &Dispatcher,
+    kind: &str,
+    from_account_id: i64,
+    status_id: Option<i64>,
+    report_id: Option<i64>,
+    to_account_id: i64,
+) {
     let outcome = async {
         if from_account_id == to_account_id {
             return Ok(());
@@ -132,6 +155,7 @@ pub async fn emit_notification_event(
                     "type": kind,
                     "from_account_id": from_account_id,
                     "status_id": status_id,
+                    "report_id": report_id,
                     "account_id": to_account_id,
                 }),
             )

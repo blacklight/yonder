@@ -20,6 +20,7 @@ pub mod jobs;
 pub mod logging;
 pub mod media;
 pub mod moderation;
+pub mod notifications;
 pub mod posts;
 pub mod search;
 pub mod social;

@@ -20,6 +20,7 @@ pub mod featured;
 pub mod follows;
 pub mod inbox;
 pub mod incoming;
+pub(crate) mod lookup;
 pub mod moderation;
 pub mod posts;
 pub mod storage;

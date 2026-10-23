@@ -16,7 +16,6 @@
 use serde_json::json;
 use sqlx::Row;
 
-use crate::activitypub::{actors::sync_call, delivery::http_client};
 use crate::{Error, Result};
 
 use super::{render::MentionLink, PostContext, StatusRow};
@@ -75,7 +74,7 @@ fn boundary_ok(text: &str, at: usize) -> bool {
 
 /// A domain is a plausible host when it contains a `.` and its TLD is
 /// alphabetic — mirrors pubby's `MENTION_RE` domain shape loosely.
-fn plausible_domain(domain: &str) -> bool {
+pub(crate) fn plausible_domain(domain: &str) -> bool {
     match domain.rsplit_once('.') {
         Some((head, tld)) => {
             !head.is_empty()
@@ -173,9 +172,20 @@ async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option
                 // bounded by federation.request_timeout_seconds), then
                 // a bare `accounts` upsert plus a `RemoteActorFetch`
                 // enrichment, exactly like inbound Flag handling.
-                None => match resolve_remote(ctx, &token.username, domain).await? {
+                None => match crate::activitypub::lookup::resolve_actor_url(
+                    ctx.ap.as_ref(),
+                    &token.username,
+                    domain,
+                )
+                .await?
+                {
                     Some(actor_url) => {
-                        upsert_remote_stub(ctx, &actor_url).await?;
+                        crate::activitypub::lookup::upsert_remote_stub(
+                            &ctx.db,
+                            &ctx.dispatcher,
+                            &actor_url,
+                        )
+                        .await?;
                         sqlx::query(
                             "SELECT id, actor_id, url, username, domain FROM accounts \
                              WHERE actor_id = $1",
@@ -210,55 +220,6 @@ async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option
         acct,
         token: token.token.clone(),
     }))
-}
-
-/// WebFinger-resolve `@username@domain` to an actor URL. Blocking
-/// pubby call → `sync_call`; only attempted when federation is up.
-async fn resolve_remote(ctx: &PostContext, username: &str, domain: &str) -> Result<Option<String>> {
-    let Some(ap) = &ctx.ap else {
-        return Ok(None);
-    };
-    let http = http_client(ap);
-    let username = username.to_string();
-    let domain = domain.to_string();
-    let url = sync_call(move || {
-        pubby_sdk::webfinger::resolve_actor_url_with_client(&username, &domain, &http)
-    });
-    // `resolve_actor_url_with_client` fabricates an `https://{d}/@{u}`
-    // fallback on failure — the returned URL is still a valid actor id
-    // candidate, so keep it (the RemoteActorFetch enrichment decides).
-    Ok(Some(url))
-}
-
-/// Bare `accounts` insert for a freshly-resolved remote actor — the
-/// same minimal shape `handle_flag` writes (no network I/O), with a
-/// `RemoteActorFetch` job enqueued to enrich it.
-async fn upsert_remote_stub(ctx: &PostContext, actor_url: &str) -> Result<()> {
-    let domain = crate::activitypub::moderation::actor_domain(actor_url)
-        .unwrap_or_else(|| "unknown".to_string());
-    let username = actor_url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(actor_url)
-        .trim_start_matches('@')
-        .to_string();
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(domain)
-    .bind(username)
-    .bind(actor_url)
-    .execute(&ctx.db)
-    .await?;
-    ctx.dispatcher
-        .enqueue(
-            crate::jobs::JobKind::RemoteActorFetch,
-            json!({ "actor_url": actor_url }),
-        )
-        .await?;
-    Ok(())
 }
 
 /// Resolve every mention in `source` for `author_account_id`, plus

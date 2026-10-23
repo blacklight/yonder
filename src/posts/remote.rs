@@ -11,11 +11,10 @@
 //! stored for the target `statuses.uri`. Bare-URI Deletes resolve
 //! ownership from the existing row. Mismatches are logged and skipped.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::Row;
 
 use crate::activitypub::ApCore;
-use crate::jobs::JobKind;
 use crate::Result;
 
 /// The object types we materialize — Notes, Questions and the
@@ -48,6 +47,12 @@ pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) 
                                     .await;
                                 let ctx = crate::timelines::stream::post_ctx_for_core(core);
                                 crate::timelines::stream::publish_update(&ctx, &status).await;
+                                crate::notifications::emit::emit_for_status(
+                                    &core.db,
+                                    &core.dispatcher,
+                                    &status,
+                                )
+                                .await;
                             }
                             Ok(_) => {}
                             Err(e) => {
@@ -99,35 +104,7 @@ fn attributed_to(object: &Value) -> Option<String> {
 /// enrichment — the `handle_flag` pattern (no network I/O).
 /// `pub(crate)` — the interaction handlers reuse it (epic 13).
 pub(crate) async fn ensure_account(core: &ApCore, actor_url: &str) -> Result<i64> {
-    let domain = crate::activitypub::moderation::actor_domain(actor_url)
-        .unwrap_or_else(|| "unknown".to_string());
-    let username = actor_url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or(actor_url)
-        .trim_start_matches('@');
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(domain)
-    .bind(username)
-    .bind(actor_url)
-    .execute(&core.db)
-    .await?;
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
-        .bind(actor_url)
-        .fetch_optional(&core.db)
-        .await?;
-    if let Some(id) = id {
-        core.dispatcher
-            .enqueue(JobKind::RemoteActorFetch, json!({"actor_url": actor_url}))
-            .await?;
-        Ok(id)
-    } else {
-        Err(crate::Error::Internal("account upsert failed".to_string()))
-    }
+    crate::activitypub::lookup::upsert_remote_stub(&core.db, &core.dispatcher, actor_url).await
 }
 
 /// The followers-collection URL `addressing` produces — used to
@@ -249,6 +226,13 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .chars()
         .take(20000)
         .collect::<String>();
+    // Most servers send no `source`; the sanitized HTML is then the only
+    // text, and `content` must hold it or the status is unsearchable.
+    let content = if source_text.is_empty() {
+        super::render::html_to_text(&content_html)
+    } else {
+        source_text
+    };
     let spoiler = object
         .get("summary")
         .and_then(|v| v.as_str())
@@ -325,7 +309,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
          RETURNING id",
     )
     .bind(account_id)
-    .bind(&source_text)
+    .bind(&content)
     .bind(&content_html)
     .bind(&language)
     .bind(visibility)

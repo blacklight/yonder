@@ -101,6 +101,17 @@ async fn serve(path: Option<&Path>) -> Result<()> {
     }
     let state = Arc::new(app_state);
 
+    // The stream relay forwards Redis pub/sub events onto the local
+    // bus — the job-side producers' only path to WebSocket clients
+    // (epic 16). Its task outlives the function via process lifetime;
+    // it self-heals on Redis outages.
+    let relay_cancel = tokio_util::sync::CancellationToken::new();
+    tokio::spawn(http::ws::relay::run(
+        state.redis.clone(),
+        state.bus.clone(),
+        relay_cancel.clone(),
+    ));
+
     // The in-process worker runs alongside HTTP when enabled. The
     // scheduler must stay bound for the function's lifetime — dropping
     // it stops cron firings.
@@ -138,6 +149,7 @@ async fn serve(path: Option<&Path>) -> Result<()> {
         token.cancel();
         join.await.map_err(|e| Error::Internal(e.to_string()))??;
     }
+    relay_cancel.cancel();
     Ok(())
 }
 
@@ -213,6 +225,8 @@ async fn start_worker(
     crate::social::register_jobs(&mut registry);
     // Epic-15 timeline jobs (fan-out + backfill).
     crate::timelines::register_jobs(&mut registry);
+    // Epic-16 notifications (fan-out + email enqueue).
+    crate::notifications::register_jobs(&mut registry);
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),

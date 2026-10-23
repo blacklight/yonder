@@ -80,6 +80,22 @@ impl Redis {
     pub fn key(&self, suffix: &str) -> String {
         format!("{}:{suffix}", self.prefix)
     }
+
+    /// Publish `payload` to `channel` — Redis pub/sub, used by the
+    /// WebSocket stream relay (epic 16).
+    pub async fn publish(&self, channel: &str, payload: &Value) -> Result<()> {
+        self.conn()
+            .await?
+            .publish::<_, _, ()>(channel, payload.to_string())
+            .await?;
+        Ok(())
+    }
+
+    /// A dedicated pub/sub connection — pooled connections can't
+    /// subscribe, so this comes from the raw client.
+    pub async fn pubsub(&self) -> Result<redis::aio::PubSub> {
+        Ok(self.client.get_async_pubsub().await?)
+    }
 }
 
 fn now_unix() -> f64 {

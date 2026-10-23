@@ -14,10 +14,11 @@
 //! scoped delivery additionally only reaches the owning user's
 //! connections (see [`registry::Connection::matching`]). The server
 //! pings every [`HEARTBEAT_SECONDS`]s and client pings are echoed back
-//! as pongs. Event producers arrive in epic 16 — the transport,
-//! registry and bus live here.
+//! as pongs. Notification producers (epic 16) reach the bus through the
+//! Redis [`relay`] — a standalone worker can push to live clients.
 
 mod registry;
+pub mod relay;
 
 pub use registry::{
     ConnId, Connection, ConnectionRegistry, EventBus, StreamEvent, MAX_STREAM_NAME_LEN,

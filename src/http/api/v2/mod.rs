@@ -2,6 +2,7 @@
 //! e.g. `/api/v2/instance` in epic 06/22).
 
 pub mod media;
+pub mod search;
 
 use std::sync::Arc;
 
@@ -21,9 +22,13 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "media")),
         )
         .route("/api/v2/media/{id}", axum::routing::get(media::show))
+        .route(
+            "/api/v2/search",
+            axum::routing::get(search::search_v2).route_layer(ratelimit::layer(state, "search")),
+        )
 }
 
 /// OpenAPI fragment merged into the root document.
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(media::upload, media::show))]
+#[openapi(paths(media::upload, media::show, search::search_v2))]
 pub struct ApiDoc;

@@ -34,7 +34,8 @@ pub const MAX_STREAM_NAME_LEN: usize = 128;
 /// One event delivered to subscribed connections. `payload` serializes
 /// inside the Mastodon frame
 /// `{"stream": ["<stream>"], "event": "<event>", "payload": "<json>"}`.
-#[derive(Debug, Clone)]
+/// Job-side producers ship it over Redis pub/sub to [`super::relay`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamEvent {
     /// Stream name the event belongs to (`"public"`, `"user:{id}"`, …).
     pub stream: String,

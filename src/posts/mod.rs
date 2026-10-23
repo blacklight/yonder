@@ -65,6 +65,11 @@ pub struct PostContext {
     /// ActivityPub context — `None` when federation is disabled, in
     /// which case posting works without AP fan-out.
     pub ap: Option<ApContext>,
+    /// Streaming event bus — `AppState`'s bus on request paths, a
+    /// detached bus under `from_job` (publishes are no-ops there;
+    /// epic-15 fan-out publishes its `user:{id}` events at the
+    /// enqueue site instead).
+    pub bus: crate::http::ws::EventBus,
 }
 
 impl PostContext {
@@ -76,6 +81,7 @@ impl PostContext {
             dispatcher: state.dispatcher.clone(),
             config: state.config.clone(),
             ap: state.ap.clone(),
+            bus: state.bus.clone(),
         }
     }
 
@@ -87,6 +93,7 @@ impl PostContext {
             dispatcher: crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs),
             config: ctx.config.clone(),
             ap,
+            bus: Default::default(),
         }
     }
 
@@ -219,13 +226,14 @@ pub struct StatusRow {
     pub updated_at: DateTime<Utc>,
 }
 
-const STATUS_COLS: &str = "id, account_id, content, content_html, content_type, language, \
+pub(crate) const STATUS_COLS: &str =
+    "id, account_id, content, content_html, content_type, language, \
      visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
      in_reply_to_account_id, reblog_of_id, quote_of_id, quote_uri, poll_id, replies_count, \
      reblogs_count, favourites_count, quotes_count, edited_at, tombstone, \
      created_at, updated_at";
 
-fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
+pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
     use sqlx::Row;
     StatusRow {
         id: r.get("id"),

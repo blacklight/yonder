@@ -89,7 +89,14 @@ async fn serve(path: Option<&Path>) -> Result<()> {
     let redis = cache::connect(&config.redis).await?;
     let mut app_state = http::AppState::new(config.clone(), pool.clone(), redis.clone());
     if config.federation.enabled {
-        let ap = crate::activitypub::build(&config, &pool, &redis, &app_state.dispatcher).await?;
+        let ap = crate::activitypub::build(
+            &config,
+            &pool,
+            &redis,
+            &app_state.dispatcher,
+            &app_state.bus,
+        )
+        .await?;
         app_state.ap = Some(ap);
     }
     let state = Arc::new(app_state);
@@ -98,7 +105,7 @@ async fn serve(path: Option<&Path>) -> Result<()> {
     // scheduler must stay bound for the function's lifetime — dropping
     // it stops cron firings.
     let mut worker_parts = if config.jobs.enabled {
-        let (worker, scheduler) = start_worker(&config, pool).await?;
+        let (worker, scheduler) = start_worker(&config, pool, &state.bus).await?;
         let token = worker.cancel_token();
         let join = tokio::spawn(async move { worker.run().await });
         Some((join, token, scheduler))
@@ -169,6 +176,7 @@ async fn shutdown_signal() {
 async fn start_worker(
     config: &Config,
     pool: sqlx::PgPool,
+    bus: &crate::http::ws::EventBus,
 ) -> Result<(jobs::worker::Worker, tokio_cron_scheduler::JobScheduler)> {
     let blocking_consumers = config.jobs.concurrency * jobs::Queue::ALL.len() as u32;
     let redis = cache::connect(&crate::config::RedisConfig {
@@ -184,7 +192,7 @@ async fn start_worker(
     // Real federation handlers replace the stubs when federation is on.
     let mut ap_ctx = None;
     if config.federation.enabled {
-        let ap = crate::activitypub::build(config, &pool, &redis, &dispatcher).await?;
+        let ap = crate::activitypub::build(config, &pool, &redis, &dispatcher, bus).await?;
         crate::activitypub::register_handlers(&mut registry, &ap);
         ap_ctx = Some(ap);
     }
@@ -203,6 +211,8 @@ async fn start_worker(
     // Epic-14 social jobs (FollowEvent settle — local work regardless
     // of the federation gate).
     crate::social::register_jobs(&mut registry);
+    // Epic-15 timeline jobs (fan-out + backfill).
+    crate::timelines::register_jobs(&mut registry);
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),
@@ -221,7 +231,11 @@ async fn start_worker(
 async fn worker(path: Option<&Path>) -> Result<()> {
     let (config, pool) = Config::load_full(path).await?;
     logging::init(&config.server)?;
-    let (worker, _scheduler) = start_worker(&config, pool).await?;
+    // A standalone worker serves no WebSockets — the bus it hands the
+    // federation context is detached by design (stream publishes are
+    // no-ops; epic 16 can bridge processes later).
+    let bus = crate::http::ws::EventBus::default();
+    let (worker, _scheduler) = start_worker(&config, pool, &bus).await?;
     tokio::select! {
         result = worker.run() => result?,
         _ = shutdown_signal() => {

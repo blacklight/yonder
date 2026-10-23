@@ -82,10 +82,16 @@ async fn test_env(mut config: Config) -> Option<Env> {
         .to_string();
 
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
-    let ap = activitypub::build(&config, &pool, &redis_handle, &dispatcher)
-        .await
-        .unwrap();
     let mut state = AppState::new(config, pool, redis_handle);
+    let ap = activitypub::build(
+        state.config.as_ref(),
+        &state.db,
+        &state.redis,
+        &dispatcher,
+        &state.bus,
+    )
+    .await
+    .unwrap();
     state.ap = Some(ap);
     let state = Arc::new(state);
     Some(Env {

@@ -59,6 +59,7 @@ pub struct Config {
     pub content: ContentConfig,
     pub admin: AdminConfig,
     pub jobs: JobsConfig,
+    pub timelines: TimelinesConfig,
 }
 
 impl Config {
@@ -143,6 +144,16 @@ impl Config {
         if self.jobs.poll_interval_ms == 0 {
             return Err(crate::Error::Validation(
                 "jobs.poll_interval_ms must be > 0".to_string(),
+            ));
+        }
+        if self.timelines.home_max_entries == 0
+            || self.timelines.fanout_batch_size == 0
+            || self.timelines.rebuild_page_size == 0
+        {
+            return Err(crate::Error::Validation(
+                "timelines.home_max_entries, timelines.fanout_batch_size and \
+                 timelines.rebuild_page_size must all be > 0"
+                    .to_string(),
             ));
         }
         if !crate::i18n::SUPPORTED_LOCALES.contains(&self.i18n.fallback_locale.as_str()) {
@@ -806,6 +817,30 @@ impl Default for ContentConfig {
             link_preview_cache_hours: 24,
             scheduled_status_sweep_schedule: Some("0 * * * *".to_string()),
             scheduled_deletion_sweep_schedule: Some("0 * * * *".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelinesConfig {
+    /// Entries kept per Redis home-feed index. Older entries are
+    /// trimmed on fan-out; the SQL read path always holds the full
+    /// truth, so this only bounds cache size (Mastodon uses 800).
+    pub home_max_entries: u32,
+    /// Followers processed per fan-out batch (`ZADD` pipeline).
+    pub fanout_batch_size: u32,
+    /// Statuses pulled per round-trip when a home feed is rebuilt
+    /// from Postgres (cache miss or cold start).
+    pub rebuild_page_size: u32,
+}
+
+impl Default for TimelinesConfig {
+    fn default() -> Self {
+        TimelinesConfig {
+            home_max_entries: 800,
+            fanout_batch_size: 500,
+            rebuild_page_size: 400,
         }
     }
 }

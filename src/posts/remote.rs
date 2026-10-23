@@ -34,8 +34,29 @@ pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) 
             if !NOTE_TYPES.contains(&object_type) {
                 return false;
             }
-            if let Err(e) = upsert(core, activity, &object).await {
-                tracing::warn!(error = %e, "remote status upsert failed");
+            match upsert(core, activity, &object).await {
+                Err(e) => tracing::warn!(error = %e, "remote status upsert failed"),
+                // Materialized remote posts fan out to local followers
+                // exactly like local ones — but only when the object is
+                // new. A redelivered Create (or an Update materializing
+                // a known row) must not re-notify subscribers.
+                Ok(is_new) if is_new => {
+                    if let Some(uri) = object.get("id").and_then(|v| v.as_str()) {
+                        match super::load_by_uri(&core.db, uri).await {
+                            Ok(Some(status)) if !status.tombstone => {
+                                crate::timelines::fanout::enqueue(&core.dispatcher, status.id)
+                                    .await;
+                                let ctx = crate::timelines::stream::post_ctx_for_core(core);
+                                crate::timelines::stream::publish_update(&ctx, &status).await;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                tracing::warn!(uri, error = %e, "post-create status reload failed")
+                            }
+                        }
+                    }
+                }
+                Ok(_) => {}
             }
             true
         }
@@ -158,17 +179,19 @@ fn str_list(v: Option<&Value>) -> Vec<String> {
 
 /// Create/Update materialization. The ownership gate runs before any
 /// write: `activity.actor` must equal `attributedTo`, and an Update
-/// must match the stored owner.
-async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -> Result<()> {
+/// must match the stored owner. Returns `true` when the object was
+/// previously unknown and a new row was materialized — fan-out and
+/// stream hooks key off it so a redelivered Create doesn't re-notify.
+async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -> Result<bool> {
     let Some(author) = attributed_to(object) else {
-        return Ok(());
+        return Ok(false);
     };
     if author != activity.actor {
         tracing::warn!(
             actor = %activity.actor, attributed = %author,
             "spoofed remote status mutation dropped"
         );
-        return Ok(());
+        return Ok(false);
     }
     let object_id = object
         .get("id")
@@ -176,9 +199,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .unwrap_or_default()
         .to_string();
     if object_id.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let existing = super::load_by_uri(&core.db, &object_id).await?;
+    let is_new = existing.is_none();
     if let Some(existing) = &existing {
         // Update only: stored owner must match, and the incoming
         // `updated` must be newer (idempotent redeliveries).
@@ -188,14 +212,14 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             .await?;
         if owner_actor != activity.actor {
             tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
-            return Ok(());
+            return Ok(false);
         }
         if activity.activity_type == "Update" {
             let incoming = object.get("updated").and_then(pubby_sdk::model::parse_dt);
             let stored_newest = existing.edited_at.unwrap_or(existing.updated_at);
             if let Some(incoming) = incoming {
                 if incoming <= stored_newest {
-                    return Ok(());
+                    return Ok(false);
                 }
             }
         }
@@ -476,7 +500,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .bind(&object_id)
     .execute(&core.db)
     .await?;
-    Ok(())
+    Ok(is_new)
 }
 
 /// `status_mentions` account lookup for a Mention `href`.
@@ -591,5 +615,14 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .bind(existing.id)
     .execute(&core.db)
     .await?;
+    crate::timelines::fanout::remove_quiet(
+        &core.db,
+        &core.redis,
+        &core.config.timelines,
+        existing.id,
+        existing.account_id,
+    )
+    .await;
+    crate::timelines::stream::publish_delete(&core.db, &core.bus, &existing).await;
     Ok(true)
 }

@@ -687,6 +687,8 @@ pub async fn publish(
         validated.media_ids.as_deref().unwrap_or_default(),
     )
     .await;
+    crate::timelines::fanout::enqueue(&ctx.dispatcher, status.id).await;
+    crate::timelines::stream::publish_update(ctx, &status).await;
     if let Some(ap) = &ctx.ap {
         if let Err(e) = crate::activitypub::posts::publish_create(ap, ctx, &status, &resolved).await
         {
@@ -960,6 +962,15 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
         }
         crate::activitypub::posts::invalidate_object(ap, status.id);
     }
+    crate::timelines::fanout::remove_quiet(
+        &ctx.db,
+        &ctx.redis,
+        &ctx.config.timelines,
+        status.id,
+        status.account_id,
+    )
+    .await;
+    crate::timelines::stream::publish_delete(&ctx.db, &ctx.bus, status).await;
     super::load_any(&ctx.db, status.id)
         .await?
         .ok_or_else(|| Error::Internal("status missing after delete".to_string()))

@@ -295,6 +295,17 @@ scheduled_status_sweep_schedule = "0 * * * *"
 # (users' scheduled_deletion_days setting). Set to "" to disable.
 scheduled_deletion_sweep_schedule = "0 * * * *"
 
+[timelines]
+# Entries kept per Redis home-feed index; older entries are trimmed on
+# fan-out. Postgres remains the source of truth — this only bounds the
+# cache.
+home_max_entries = 800
+# Followers processed per fan-out batch.
+fanout_batch_size = 500
+# Statuses pulled per round-trip when a home feed is rebuilt from
+# Postgres (cache miss or cold start).
+rebuild_page_size = 400
+
 [admin]
 # Remove follow relationships in both directions on user block.
 unfollow_blocked = true

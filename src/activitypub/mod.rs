@@ -53,6 +53,14 @@ pub struct ApCore {
     pub config: Arc<Config>,
     /// Job enqueue access for callbacks (deliveries, side-effects).
     pub dispatcher: Dispatcher,
+    /// Redis handle — the doc cache uses the sync client; timeline
+    /// fan-out jobs and stream contexts need the async side too
+    /// (epic 15).
+    pub redis: crate::cache::Redis,
+    /// Streaming event bus — `AppState`'s in the HTTP process, a
+    /// detached one elsewhere (epic 15 publishes `update`/`delete`
+    /// for remote materialization here).
+    pub bus: crate::http::ws::EventBus,
     /// Public AP base URL (`federation.base_url` or
     /// `https://{instance.domain}`).
     pub base_url: String,
@@ -123,6 +131,7 @@ pub async fn build(
     pool: &PgPool,
     redis: &Redis,
     dispatcher: &Dispatcher,
+    bus: &crate::http::ws::EventBus,
 ) -> Result<ApContext> {
     let base_url = federation_base_url(config);
     let storage = Arc::new(storage::PgActivityPubStorage::new(pool.clone()));
@@ -143,6 +152,8 @@ pub async fn build(
         doc_cache,
         config: Arc::new(config.clone()),
         dispatcher: dispatcher.clone(),
+        redis: redis.clone(),
+        bus: bus.clone(),
         base_url: base_url.clone(),
         blocked: moderation::blocked_domains(pool, config).await?,
     });

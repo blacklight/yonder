@@ -110,6 +110,9 @@ pub async fn reblog(
         }
     };
 
+    let boost = posts::load(&ctx.db, boost_id)
+        .await?
+        .ok_or_else(|| Error::Internal("boost missing after reblog".into()))?;
     if won_insert {
         if let Some(ap) = &ctx.ap {
             if let Err(e) = publish_announce(
@@ -135,10 +138,11 @@ pub async fn reblog(
             target.account_id,
         )
         .await;
+        // A boost is a statuses row — it fans out like any other post.
+        crate::timelines::fanout::enqueue(&ctx.dispatcher, boost.id).await;
+        crate::timelines::stream::publish_update(ctx, &boost).await;
     }
-    posts::load(&ctx.db, boost_id)
-        .await?
-        .ok_or_else(|| Error::Internal("boost missing after insert".into()))
+    Ok(boost)
 }
 
 /// `POST /api/v1/statuses/{id}/unreblog` — `{id}` is the original
@@ -196,6 +200,17 @@ pub async fn unreblog_row(ctx: &PostContext, boost: &StatusRow) -> Result<Status
     }
     tx.commit().await?;
 
+    if tombstoned > 0 {
+        crate::timelines::fanout::remove_quiet(
+            &ctx.db,
+            &ctx.redis,
+            &ctx.config.timelines,
+            boost.id,
+            boost.account_id,
+        )
+        .await;
+        crate::timelines::stream::publish_delete(&ctx.db, &ctx.bus, boost).await;
+    }
     if let Some(ap) = &ctx.ap {
         if let Err(e) = publish_undo_announce(ctx, ap, boost).await {
             tracing::error!(status_id = boost.id, error = %e, "AP Undo(Announce) publish failed");

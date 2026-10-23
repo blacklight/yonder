@@ -21,6 +21,7 @@ pub mod scheduled_statuses;
 pub mod sessions;
 pub mod settings;
 pub mod statuses;
+pub mod timelines;
 pub mod tokens;
 pub mod transfer;
 pub mod two_factor;
@@ -379,6 +380,24 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/invites/check/{code}",
             get(invites::check_invite).route_layer(ratelimit::layer(state, "account_creation")),
         )
+        // Timelines (epic 15) — registered after the `authentication`
+        // layer so reads count solely against the `timeline` bucket.
+        .route(
+            "/api/v1/timelines/home",
+            get(timelines::home).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/timelines/public",
+            get(timelines::public).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/timelines/list/{id}",
+            get(timelines::list_timeline).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/timelines/tag/{hashtag}",
+            get(timelines::tag).route_layer(ratelimit::layer(state, "timeline")),
+        )
 }
 
 /// OpenAPI fragment merged into the root document.
@@ -482,6 +501,10 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     media::update,
     polls::show,
     polls::vote,
+    timelines::home,
+    timelines::public,
+    timelines::list_timeline,
+    timelines::tag,
     scheduled_statuses::list,
     scheduled_statuses::show,
     scheduled_statuses::update,

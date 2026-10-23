@@ -473,10 +473,16 @@ async fn test_state() -> Option<(Arc<AppState>, Containers)> {
     config.federation.base_url = Some(BASE.to_string());
     config.federation.allow_private_targets = true;
     let dispatcher = Dispatcher::new(&redis, &config.jobs);
-    let ap = activitypub::build(&config, &pool, &redis, &dispatcher)
-        .await
-        .unwrap();
     let mut state = AppState::new(config, pool, redis);
+    let ap = activitypub::build(
+        state.config.as_ref(),
+        &state.db,
+        &state.redis,
+        &dispatcher,
+        &state.bus,
+    )
+    .await
+    .unwrap();
     state.ap = Some(ap);
     Some((
         Arc::new(state),

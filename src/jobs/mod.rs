@@ -115,6 +115,9 @@ pub enum JobKind {
     /// has stored the row — emits `follow` or `follow_request`
     /// depending on which row landed (epic 14).
     FollowEvent,
+    /// Fan a status out to follower home feeds, or backfill one
+    /// follower's feed from a new followee (epic 15).
+    TimelineFanOut,
 }
 
 impl JobKind {
@@ -140,6 +143,7 @@ impl JobKind {
         JobKind::StatusDeletion,
         JobKind::CleanupOrphanMedia,
         JobKind::FollowEvent,
+        JobKind::TimelineFanOut,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -165,6 +169,7 @@ impl JobKind {
             JobKind::StatusDeletion => "status_deletion",
             JobKind::CleanupOrphanMedia => "cleanup_orphan_media",
             JobKind::FollowEvent => "follow_event",
+            JobKind::TimelineFanOut => "timeline_fan_out",
         }
     }
 

@@ -74,10 +74,16 @@ async fn test_app(mut config: Config) -> Option<Env> {
     config.federation.base_url = Some("http://127.0.0.1:4000".to_string());
 
     let dispatcher = Dispatcher::new(&redis_handle, &config.jobs);
-    let ap = activitypub::build(&config, &pool, &redis_handle, &dispatcher)
-        .await
-        .unwrap();
     let mut state = AppState::new(config, pool, redis_handle);
+    let ap = activitypub::build(
+        state.config.as_ref(),
+        &state.db,
+        &state.redis,
+        &dispatcher,
+        &state.bus,
+    )
+    .await
+    .unwrap();
     state.ap = Some(ap);
     let state = Arc::new(state);
     let app = build_router(state.clone());

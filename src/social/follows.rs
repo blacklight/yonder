@@ -41,6 +41,12 @@ pub async fn follow(
         )
         .await;
     }
+    if matches!(outcome, FollowOutcome::Following) {
+        // A landed follow seeds the follower's home index with the
+        // followee's recent statuses. A `Requested` remote follow
+        // backfills later, off the inbound `Accept`.
+        crate::timelines::fanout::enqueue_backfill(&state.dispatcher, follower_id, target_id).await;
+    }
     Ok(outcome)
 }
 

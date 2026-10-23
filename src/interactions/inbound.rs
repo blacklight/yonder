@@ -152,7 +152,7 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
         return Ok(());
     }
     let mut tx = core.db.begin().await?;
-    let inserted = sqlx::query(
+    let boost_id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, content_type, visibility, \
              local, reblog_of_id, uri, url) \
          VALUES ($1,'','','text/plain','public',false,$2,$3,$4) \
@@ -167,16 +167,24 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
         Some(activity.id.clone())
     })
     .bind(&uri)
-    .execute(&mut *tx)
-    .await?
-    .rows_affected();
-    if inserted > 0 {
+    .fetch_optional(&mut *tx)
+    .await?;
+    if boost_id.is_some() {
         sqlx::query("UPDATE statuses SET reblogs_count = reblogs_count + 1 WHERE id = $1")
             .bind(target.id)
             .execute(&mut *tx)
             .await?;
     }
     tx.commit().await?;
+    if let Some(boost_id) = boost_id {
+        // A remote Announce is a status row like any other boost —
+        // it fans out to the remote actor's local followers.
+        crate::timelines::fanout::enqueue(&core.dispatcher, boost_id).await;
+        if let Ok(Some(boost)) = crate::posts::load(&core.db, boost_id).await {
+            let ctx = crate::timelines::stream::post_ctx_for_core(core);
+            crate::timelines::stream::publish_update(&ctx, &boost).await;
+        }
+    }
     Ok(())
 }
 
@@ -301,6 +309,17 @@ async fn undo_announce_inbound(core: &ApCore, activity: &Activity, inner: &Value
         }
     }
     tx.commit().await?;
+    if tombstoned > 0 {
+        crate::timelines::fanout::remove_quiet(
+            &core.db,
+            &core.redis,
+            &core.config.timelines,
+            boost.id,
+            boost.account_id,
+        )
+        .await;
+        crate::timelines::stream::publish_delete(&core.db, &core.bus, &boost).await;
+    }
     Ok(())
 }
 
@@ -393,6 +412,14 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
         Some("QuoteRequest")
     );
     if !is_quote_accept {
+        // An `Accept` wrapping a `Follow` settles our outbound follow:
+        // pubby's dispatch writes the `follows` row, so the home-feed
+        // backfill runs delayed — same deferral as `FollowEvent`.
+        if object.get("type").and_then(|v| v.as_str()) == Some("Follow") {
+            if let Err(e) = follow_accept_backfill(core, &object).await {
+                tracing::warn!(error = %e, "follow-accept backfill enqueue failed");
+            }
+        }
         return Ok(ActivityDisposition::PassThrough);
     }
     let Some(result_id) = raw
@@ -411,4 +438,38 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
         .store_quote_authorization(&result_id, &doc)
         .map_err(crate::Error::Federation)?;
     Ok(ActivityDisposition::Handled)
+}
+
+/// Resolve a `Follow` `Accept`'s actor pair — the inner `Follow`'s
+/// `actor` is our local follower, its `object` the remote followee —
+/// and enqueue the follower's home-feed backfill delayed (pubby's
+/// dispatch lands the `follows` row only after this hook returns,
+/// same deferral as `FollowEvent`).
+async fn follow_accept_backfill(core: &ApCore, object: &Value) -> Result<()> {
+    const BACKFILL_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+    let Some(local_actor) = object.get("actor").and_then(|v| v.as_str()) else {
+        return Ok(());
+    };
+    let Some(remote_actor) = object_uri(object.get("object")) else {
+        return Ok(());
+    };
+    let pair: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT f.id, t.id FROM accounts f, accounts t \
+         WHERE f.actor_id = $1 AND f.domain IS NULL AND t.actor_id = $2",
+    )
+    .bind(local_actor)
+    .bind(&remote_actor)
+    .fetch_optional(&core.db)
+    .await?;
+    let Some((follower, followee)) = pair else {
+        return Ok(());
+    };
+    crate::timelines::fanout::enqueue_backfill_delayed(
+        &core.dispatcher,
+        follower,
+        followee,
+        BACKFILL_DELAY,
+    )
+    .await;
+    Ok(())
 }

@@ -204,3 +204,16 @@ fn i18n_fallback_locale() {
     config.i18n.fallback_locale = "fr".to_string();
     assert!(config.validate().is_err());
 }
+
+#[test]
+fn timelines_limits_must_be_positive() {
+    for mutate in [
+        (|c: &mut Config| c.timelines.home_max_entries = 0) as fn(&mut Config),
+        |c| c.timelines.fanout_batch_size = 0,
+        |c| c.timelines.rebuild_page_size = 0,
+    ] {
+        let mut config = Config::default();
+        mutate(&mut config);
+        assert!(config.validate().is_err());
+    }
+}

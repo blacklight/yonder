@@ -46,6 +46,8 @@ pub struct StatusParams {
     pub media_ids: Option<Vec<i64>>,
     /// Poll definition — exclusive with `media_ids`.
     pub poll: Option<polls::PollParams>,
+    /// Quoted status id (epic 13) — exclusive with `in_reply_to_id`.
+    pub quote_id: Option<i64>,
     /// Future time → schedule instead of publishing.
     pub scheduled_at: Option<DateTime<Utc>>,
 }
@@ -73,6 +75,10 @@ pub struct ValidatedStatus {
     pub media_ids: Option<Vec<i64>>,
     /// Validated poll.
     pub poll: Option<polls::PollParams>,
+    /// Resolved quote target (validated to exist, be visible; boost
+    /// rows normalized to the original).
+    #[serde(default)]
+    pub quote_of_id: Option<i64>,
 }
 
 /// What a create produced.
@@ -147,12 +153,27 @@ pub async fn validate(
             )));
         }
     }
+    if params.in_reply_to_id.is_some() && params.quote_id.is_some() {
+        return Err(Error::Validation(
+            "a status is either a reply or a quote, not both".to_string(),
+        ));
+    }
     if let Some(parent_id) = params.in_reply_to_id {
         match super::load(&ctx.db, parent_id).await? {
             Some(parent) if super::can_see(&ctx.db, &parent, Some(auth.account_id)).await? => {}
             _ => return Err(Error::NotFound("in_reply_to status".into())),
         }
     }
+    // A quote_id on edit is validated but not applied — Mastodon
+    // forbids retargeting a quote post-hoc.
+    let quote_of_id = match params.quote_id {
+        Some(qid) => Some(
+            crate::interactions::quote::validate_target(ctx, qid, auth.account_id)
+                .await?
+                .id,
+        ),
+        None => None,
+    };
     if let Some(poll) = &params.poll {
         polls::validate(ctx, poll)?;
     }
@@ -189,6 +210,7 @@ pub async fn validate(
         in_reply_to_id: params.in_reply_to_id,
         media_ids,
         poll: params.poll.clone(),
+        quote_of_id,
     })
 }
 
@@ -267,6 +289,7 @@ fn fingerprint(validated: &ValidatedStatus, scheduled: bool) -> String {
         "in_reply_to_id": validated.in_reply_to_id,
         "media_ids": validated.media_ids.as_deref().unwrap_or_default(),
         "poll": validated.poll,
+        "quote_of_id": validated.quote_of_id,
         "scheduled": scheduled,
     });
     hex::encode(Sha256::digest(canonical.to_string().as_bytes()))
@@ -417,9 +440,9 @@ pub async fn insert_status_tx(
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, in_reply_to_id, \
-             in_reply_to_account_id, scheduled_deletion_at) \
+             in_reply_to_account_id, scheduled_deletion_at, quote_of_id) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10, \
-                 CASE WHEN $11::int > 0 THEN now() + $11::int * interval '1 day' ELSE NULL END) \
+                 CASE WHEN $11::int > 0 THEN now() + $11::int * interval '1 day' ELSE NULL END, $12) \
          RETURNING id",
     )
     .bind(account_id)
@@ -433,6 +456,7 @@ pub async fn insert_status_tx(
     .bind(v.in_reply_to_id)
     .bind(parent_account)
     .bind(scheduled_deletion_days)
+    .bind(v.quote_of_id)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -447,6 +471,12 @@ pub async fn insert_status_tx(
     if let Some(parent) = v.in_reply_to_id {
         sqlx::query("UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1")
             .bind(parent)
+            .execute(&mut **tx)
+            .await?;
+    }
+    if let Some(quoted) = v.quote_of_id {
+        sqlx::query("UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1")
+            .bind(quoted)
             .execute(&mut **tx)
             .await?;
     }
@@ -623,12 +653,23 @@ pub async fn publish(
         &ctx.base_url(),
         &ctx.config,
     );
+    // Quotes get the Pleroma `RE:` suffix appended to the rendered
+    // HTML (source stays verbatim). A target that vanished since
+    // validation drops the quote.
+    let mut rendered = rendered;
+    let mut effective = validated.clone();
+    let quote_target = crate::interactions::quote::prepare_quote(
+        ctx,
+        &mut effective.quote_of_id,
+        &mut rendered.html,
+    )
+    .await?;
     let deletion_days = scheduled_deletion_days(ctx, account_id).await;
     let status_id = insert_status(
         ctx,
         &username,
         account_id,
-        validated,
+        &effective,
         &resolved,
         &rendered,
         deletion_days,
@@ -651,6 +692,9 @@ pub async fn publish(
         {
             tracing::error!(status_id, error = %e, "AP Create publish failed");
         }
+    }
+    if let Some(target) = &quote_target {
+        crate::interactions::quote::finish_quote(ctx, ctx.ap.as_ref(), &status, target).await;
     }
     Ok(status)
 }
@@ -865,6 +909,11 @@ pub async fn delete_status(
     }
     if status.tombstone {
         return Err(Error::NotFound("status".into()));
+    }
+    // Deleting a boost row is an unreblog — `Undo(Announce)`, not the
+    // `Delete` envelope a normal status gets.
+    if status.reblog_of_id.is_some() {
+        return crate::interactions::boost::unreblog_row(ctx, &status).await;
     }
     tombstone(ctx, &status).await
 }

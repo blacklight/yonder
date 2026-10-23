@@ -217,6 +217,22 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         }
     }
     pubby_sdk::quotes::allow_public_quotes(&mut doc);
+    // Quotes (epic 13): stamp every FEP-0449 spelling. `quote_of_id`
+    // resolves through the target row; `quote_uri` covers remote
+    // targets not materialized yet.
+    let quote_uri: Option<String> = match status.quote_of_id {
+        Some(qid) => {
+            sqlx::query_scalar::<_, Option<String>>("SELECT uri FROM statuses WHERE id = $1")
+                .bind(qid)
+                .fetch_optional(&ctx.db)
+                .await?
+                .flatten()
+        }
+        None => status.quote_uri.clone(),
+    };
+    if let Some(uri) = quote_uri {
+        pubby_sdk::quotes::set_quote_target(&mut doc, &uri);
+    }
     Ok(doc)
 }
 
@@ -294,10 +310,22 @@ pub async fn publish_delete(ap: &ApContext, ctx: &PostContext, status: &StatusRo
     Ok(())
 }
 
-/// Copy the doc-only fields (`source`, poll fields) `Object::to_json`
-/// dropped onto the activity's embedded object.
+/// Copy the doc-only fields (`source`, poll fields, quote fields,
+/// `interactionPolicy`) `Object::to_json` dropped onto the activity's
+/// embedded object.
 fn merge_object_extras(target: &mut Value, doc: &Value) {
-    for key in ["source", "oneOf", "anyOf", "endTime", "votersCount"] {
+    for key in [
+        "source",
+        "oneOf",
+        "anyOf",
+        "endTime",
+        "votersCount",
+        "quote",
+        "quoteUri",
+        "quoteUrl",
+        "_misskey_quote",
+        "interactionPolicy",
+    ] {
         if let Some(v) = doc.get(key) {
             target[key] = v.clone();
         }
@@ -422,8 +450,9 @@ async fn serve_object_inner(
 
 /// Verify the HTTP signature when present — `Some(actor_url)` on
 /// success. `verify_fetch_signature` returns the signer's actor URL
-/// (resolved from `keyId`).
-async fn verify_signature(
+/// (resolved from `keyId`). `pub(crate)` — the featured collection
+/// gates on it too.
+pub(crate) async fn verify_signature(
     _state: &Arc<AppState>,
     ap: &ApContext,
     username: &str,

@@ -172,6 +172,8 @@ pub struct StatusCreateSchema {
     pub media_ids: Option<Vec<String>>,
     /// Poll definition.
     pub poll: Option<PollSchema>,
+    /// Quoted status id (epic 13).
+    pub quote_id: Option<String>,
     /// Future RFC-3339 time → scheduled post.
     pub scheduled_at: Option<String>,
 }
@@ -274,6 +276,7 @@ fn params_from_json(body: &Value) -> Result<StatusParams> {
                 .collect()
         }),
         poll: poll_from_json(body.get("poll"))?,
+        quote_id: opt_i64(body.get("quote_id"), "quote_id")?,
         scheduled_at: opt_time(body.get("scheduled_at"), "scheduled_at")?,
     })
 }
@@ -336,6 +339,12 @@ fn params_from_pairs(pairs: &[(String, String)]) -> Result<StatusParams> {
             }
         },
         poll,
+        quote_id: get("quote_id")
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| Error::Validation("quote_id must be an integer".into()))
+            })
+            .transpose()?,
         scheduled_at: match get("scheduled_at") {
             Some(s) => Some(
                 chrono::DateTime::parse_from_rfc3339(s)

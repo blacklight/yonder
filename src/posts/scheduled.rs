@@ -279,13 +279,22 @@ async fn publish_one(ctx: &PostContext, id: i64) -> Result<()> {
     };
     let resolved = mentions::resolve(ctx, &validated.status, account_id, parent.as_ref()).await?;
     let links: Vec<render::MentionLink> = resolved.iter().filter_map(|m| m.link()).collect();
-    let rendered = render::render(
+    let mut rendered = render::render(
         &validated.status,
         &validated.content_type,
         &links,
         &ctx.base_url(),
         &ctx.config,
     );
+    // Quote wiring — same as the immediate path: the Pleroma `RE:`
+    // link, and a target that vanished since scheduling drops the
+    // quote entirely.
+    let quote_target = crate::interactions::quote::prepare_quote(
+        ctx,
+        &mut validated.quote_of_id,
+        &mut rendered.html,
+    )
+    .await?;
     let deletion_days: i32 = sqlx::query_scalar::<_, Option<i32>>(
         "SELECT scheduled_deletion_days FROM users WHERE account_id = $1",
     )
@@ -354,6 +363,9 @@ async fn publish_one(ctx: &PostContext, id: i64) -> Result<()> {
         {
             tracing::error!(status_id, error = %e, "AP Create publish failed (scheduled)");
         }
+    }
+    if let Some(target) = &quote_target {
+        crate::interactions::quote::finish_quote(ctx, ctx.ap.as_ref(), &status, target).await;
     }
     Ok(())
 }

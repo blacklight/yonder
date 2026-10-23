@@ -16,6 +16,7 @@
 pub mod actors;
 pub mod adapter;
 pub mod delivery;
+pub mod featured;
 pub mod follows;
 pub mod inbox;
 pub mod incoming;
@@ -234,6 +235,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/ap/users/{username}/statuses/{id}",
             get(posts::serve_object),
+        )
+        // Featured (pinned) collection — pubby serves an empty one
+        // (registered before the dispatch_multi catch-all).
+        .route(
+            "/ap/users/{username}/collections/featured",
+            get(featured::serve_featured),
         )
         // Every GET under /ap/* fans into dispatch_multi.
         .route("/ap/{*rest}", get(serve(state)))

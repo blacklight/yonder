@@ -11,6 +11,7 @@ pub mod middleware;
 pub mod negotiate;
 pub mod oauth;
 pub mod openapi;
+pub mod paginate;
 pub mod ws;
 
 use std::future::Future;

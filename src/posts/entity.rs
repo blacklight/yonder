@@ -219,6 +219,18 @@ pub async fn status_entity(
     status: &StatusRow,
     viewer: Option<i64>,
 ) -> Result<Value> {
+    status_entity_inner(ctx, status, viewer, 0).await
+}
+
+/// `depth` bounds reblog/quote nesting to one level.
+/// `pub(crate)` — `interactions::entity::quote_json` recurses through
+/// it with `depth + 1`.
+pub(crate) async fn status_entity_inner(
+    ctx: &PostContext,
+    status: &StatusRow,
+    viewer: Option<i64>,
+    depth: u8,
+) -> Result<Value> {
     let base_url = ctx.base_url();
     let account = account_mapper::load(&ctx.db, status.account_id)
         .await?
@@ -240,6 +252,38 @@ pub async fn status_entity(
         .content_html
         .clone()
         .unwrap_or_else(|| pubby_sdk::content::html_escape(&status.content));
+    // Interaction state (epic 13): viewer flags, reblog nesting,
+    // the Mastodon-4.4 quote block and Pleroma reaction summary.
+    let flags = crate::interactions::entity::viewer_flags(ctx, status, viewer).await?;
+    let quote_block = crate::interactions::entity::quote_json(ctx, status, viewer, depth).await?;
+    let emoji_reactions =
+        crate::interactions::reactions::reaction_summary(ctx, status.id, viewer, false).await?;
+    let (reblog, content, spoiler, media_json, poll_json) = match (status.reblog_of_id, depth) {
+        (Some(orig), 0) => {
+            let inner = super::load(&ctx.db, orig).await?;
+            let nested = match &inner {
+                Some(s) if super::can_see(&ctx.db, s, viewer).await? => {
+                    Box::pin(status_entity_inner(ctx, s, viewer, 1)).await?
+                }
+                _ => Value::Null,
+            };
+            // Mastodon renders "" for the boost wrapper's own text.
+            (
+                nested,
+                Value::String(String::new()),
+                Value::String(String::new()),
+                Vec::new(),
+                Value::Null,
+            )
+        }
+        _ => (
+            Value::Null,
+            Value::String(content),
+            Value::String(status.spoiler_text.clone().unwrap_or_default()),
+            media_json,
+            poll_json,
+        ),
+    };
     Ok(json!({
         "id": status.id.to_string(),
         "uri": status.uri,
@@ -251,7 +295,7 @@ pub async fn status_entity(
         "edited_at": status.edited_at.map(|e| e.to_rfc3339()),
         "visibility": wire_visibility(&status.visibility),
         "sensitive": status.sensitive,
-        "spoiler_text": status.spoiler_text.clone().unwrap_or_default(),
+        "spoiler_text": spoiler,
         "media_attachments": media_json,
         "mentions": mention_entities(ctx, status.id).await?,
         "tags": tag_entities(ctx, status.id, &base_url).await?,
@@ -262,20 +306,29 @@ pub async fn status_entity(
         "language": status.language,
         "in_reply_to_id": status.in_reply_to_id.map(|i| i.to_string()),
         "in_reply_to_account_id": status.in_reply_to_account_id.map(|i| i.to_string()),
-        "reblog": Value::Null,
+        "reblog": reblog,
         "replies_count": status.replies_count,
         "reblogs_count": status.reblogs_count,
         "favourites_count": status.favourites_count,
         "quotes_count": status.quotes_count,
-        "reblogged": false,
-        "favourited": false,
-        "bookmarked": false,
-        "pinned": false,
+        "quote_id": quote_block.get("quote_id").cloned().unwrap_or(Value::Null),
+        "quote": quote_block.get("quote").cloned().unwrap_or(Value::Null),
+        "reblogged": flags["reblogged"],
+        "favourited": flags["favourited"],
+        "bookmarked": flags["bookmarked"],
+        "pinned": flags["pinned"],
         "muted": false,
+        "pleroma": {
+            "emoji_reactions": emoji_reactions,
+        },
         "yonder": {
             "source": status.content,
             "content_type": status.content_type,
-            "quote": status.quote_of_id.map(|id| json!({"id": id.to_string()})),
+            "quote": match (status.quote_of_id, &status.quote_uri) {
+                (Some(id), _) => json!({"id": id.to_string(), "uri": quote_block.get("yonder_quote_uri").cloned().unwrap_or(Value::Null)}),
+                (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
+                _ => Value::Null,
+            },
         },
     }))
 }

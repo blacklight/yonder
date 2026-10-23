@@ -76,7 +76,8 @@ fn attributed_to(object: &Value) -> Option<String> {
 
 /// Bare `accounts` upsert for a remote actor + `RemoteActorFetch`
 /// enrichment — the `handle_flag` pattern (no network I/O).
-async fn ensure_account(core: &ApCore, actor_url: &str) -> Result<i64> {
+/// `pub(crate)` — the interaction handlers reuse it (epic 13).
+pub(crate) async fn ensure_account(core: &ApCore, actor_url: &str) -> Result<i64> {
     let domain = crate::activitypub::moderation::actor_domain(actor_url)
         .unwrap_or_else(|| "unknown".to_string());
     let username = actor_url
@@ -245,6 +246,17 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
                 .and_then(|m| m.keys().next())
                 .cloned()
         });
+    // Quote target (epic 13): FEP-0449 fields first, then the
+    // Pleroma `RE:` link convention as a fallback.
+    let quote_target_uri = pubby_sdk::extract_quote_target(object)
+        .or_else(|| crate::interactions::quote::extract_re_link(&content_html));
+    let (quote_of_id, quote_uri_col): (Option<i64>, Option<String>) = match &quote_target_uri {
+        Some(uri) => match super::load_by_uri(&core.db, uri).await? {
+            Some(q) => (Some(q.id), None),
+            None => (None, Some(uri.clone())),
+        },
+        None => (None, None),
+    };
     let in_reply_to_uri = object
         .get("inReplyTo")
         .and_then(|v| v.as_str())
@@ -273,8 +285,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
-             in_reply_to_account_id, created_at, edited_at) \
-         VALUES ($1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11, \
+             in_reply_to_account_id, quote_of_id, quote_uri, created_at, edited_at) \
+         VALUES ($1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15, \
                  COALESCE($12, now()), $13) \
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
@@ -282,6 +294,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
              spoiler_text = EXCLUDED.spoiler_text, sensitive = EXCLUDED.sensitive, \
              in_reply_to_id = EXCLUDED.in_reply_to_id, \
              in_reply_to_account_id = EXCLUDED.in_reply_to_account_id, \
+             quote_of_id = EXCLUDED.quote_of_id, \
+             quote_uri = EXCLUDED.quote_uri, \
              edited_at = COALESCE(EXCLUDED.edited_at, statuses.edited_at), \
              updated_at = now() \
          RETURNING id",
@@ -299,6 +313,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .bind(reply_account)
     .bind(published)
     .bind(updated)
+    .bind(quote_of_id)
+    .bind(&quote_uri_col)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -423,7 +439,43 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     if object.get("type").and_then(|v| v.as_str()) == Some("Question") {
         sync_poll(&mut tx, status_id, object).await?;
     }
+    // Quote counters: only moves when the target changed. The prior
+    // row's `quote_of_id` was read before the upsert.
+    let old_quote: Option<i64> = existing.as_ref().and_then(|e| e.quote_of_id);
+    if old_quote != quote_of_id {
+        if let Some(old) = old_quote {
+            sqlx::query(
+                "UPDATE statuses SET quotes_count = GREATEST(quotes_count - 1, 0) WHERE id = $1",
+            )
+            .bind(old)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(new_q) = quote_of_id {
+            sqlx::query("UPDATE statuses SET quotes_count = quotes_count + 1 WHERE id = $1")
+                .bind(new_q)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     tx.commit().await?;
+
+    // Late-arriving quoted posts back-fill pending quotes — the
+    // counter bump applies to *this* status only (it is the quoted
+    // target); the pending quoters point at it via quote_uri.
+    sqlx::query(
+        "WITH upd AS ( \
+             UPDATE statuses SET quote_of_id = $1, quote_uri = NULL \
+             WHERE quote_uri = $2 AND quote_of_id IS NULL \
+             RETURNING quote_of_id \
+         ) \
+         UPDATE statuses SET quotes_count = quotes_count + (SELECT count(*) FROM upd) \
+         WHERE id = $1",
+    )
+    .bind(status_id)
+    .bind(&object_id)
+    .execute(&core.db)
+    .await?;
     Ok(())
 }
 

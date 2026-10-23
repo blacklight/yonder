@@ -9,6 +9,7 @@ pub mod account_management;
 pub mod accounts;
 pub mod apps;
 pub mod instance;
+pub mod interactions;
 pub mod invites;
 pub mod media;
 pub mod polls;
@@ -180,6 +181,67 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "media")),
         )
         .route("/api/v1/media/{id}", axum::routing::put(media::update))
+        // Interactions (epic 13) — writes carry the `status` bucket.
+        .route(
+            "/api/v1/statuses/{id}/favourite",
+            axum::routing::post(interactions::favourite)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/unfavourite",
+            axum::routing::post(interactions::unfavourite)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route("/api/v1/favourites", get(interactions::favourites_list))
+        .route(
+            "/api/v1/statuses/{id}/favourited_by",
+            get(interactions::favourited_by),
+        )
+        .route(
+            "/api/v1/statuses/{id}/reblog",
+            axum::routing::post(interactions::reblog)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/unreblog",
+            axum::routing::post(interactions::unreblog)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/reblogged_by",
+            get(interactions::reblogged_by),
+        )
+        .route(
+            "/api/v1/statuses/{id}/bookmark",
+            axum::routing::post(interactions::bookmark)
+                .delete(interactions::unbookmark)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/unbookmark",
+            axum::routing::post(interactions::unbookmark)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route("/api/v1/bookmarks", get(interactions::bookmarks_list))
+        .route(
+            "/api/v1/statuses/{id}/pin",
+            axum::routing::post(interactions::pin).route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/unpin",
+            axum::routing::post(interactions::unpin).route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/pleroma/statuses/{id}/reactions/{emoji}",
+            axum::routing::put(interactions::react)
+                .post(interactions::react)
+                .delete(interactions::unreact)
+                .route_layer(ratelimit::layer(state, "status")),
+        )
+        .route(
+            "/api/v1/pleroma/statuses/{id}/reactions",
+            get(interactions::reactions_list),
+        )
         .route("/api/v1/polls/{id}", get(polls::show))
         .route(
             "/api/v1/polls/{id}/votes",
@@ -261,6 +323,21 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     statuses::show,
     statuses::update,
     statuses::delete_status,
+    interactions::favourite,
+    interactions::unfavourite,
+    interactions::favourites_list,
+    interactions::favourited_by,
+    interactions::reblog,
+    interactions::unreblog,
+    interactions::reblogged_by,
+    interactions::bookmark,
+    interactions::unbookmark,
+    interactions::bookmarks_list,
+    interactions::pin,
+    interactions::unpin,
+    interactions::react,
+    interactions::unreact,
+    interactions::reactions_list,
     media::upload,
     media::update,
     polls::show,

@@ -160,6 +160,15 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
             sync_block(crate::posts::remote::handle(&core, activity, raw));
             return Ok(ActivityDisposition::PassThrough);
         }
+        // Interactions (epic 13): Like/Announce/EmojiReact normalize
+        // into favourites/boost/reaction rows + counters; EmojiReact
+        // answers Handled (pubby's dispatch ignores unknown types).
+        if matches!(
+            activity.activity_type.as_str(),
+            "Like" | "Announce" | "EmojiReact" | "Undo" | "Accept"
+        ) {
+            return crate::interactions::inbound::handle(&core, activity, raw);
+        }
         let outcome = match activity.activity_type.as_str() {
             "Move" => sync_block(handle_move(&core, activity, raw)),
             "Flag" => sync_block(handle_flag(&core.db, activity, raw)),

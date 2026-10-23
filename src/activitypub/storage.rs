@@ -139,20 +139,37 @@ async fn upsert_remote_account(
         .and_then(|i| i.get("url"))
         .and_then(|v| v.as_str())
         .map(String::from);
+    // Best-effort remote counters (epic 14): Mastodon-shaped actor docs
+    // publish `followersCount`/`followingCount`/`statusesCount`; absent
+    // fields leave the columns untouched.
+    let count = |key: &str| {
+        actor_data
+            .get(key)
+            .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
+            .map(|n| n.clamp(0, i32::MAX as i64) as i32)
+    };
+    let followers_count = count("followersCount");
+    let following_count = count("followingCount");
+    let statuses_count = count("statusesCount");
 
     sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO accounts (
             domain, username, actor_id, url, inbox, shared_inbox,
             outbox_url, public_key, actor_data, display_name, bio, bot,
-            avatar_remote_url, banner_remote_url
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            avatar_remote_url, banner_remote_url,
+            followers_count, following_count, statuses_count
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+                  COALESCE($15, 0), COALESCE($16, 0), COALESCE($17, 0))
         ON CONFLICT (actor_id) DO UPDATE SET
             url = EXCLUDED.url,
             inbox = EXCLUDED.inbox,
             shared_inbox = EXCLUDED.shared_inbox,
             outbox_url = EXCLUDED.outbox_url,
             public_key = COALESCE(EXCLUDED.public_key, accounts.public_key),
+            followers_count = COALESCE($15, accounts.followers_count),
+            following_count = COALESCE($16, accounts.following_count),
+            statuses_count = COALESCE($17, accounts.statuses_count),
             actor_data = CASE WHEN EXCLUDED.actor_data = '{}'::jsonb
                 THEN accounts.actor_data ELSE EXCLUDED.actor_data END,
             display_name = COALESCE(EXCLUDED.display_name, accounts.display_name),
@@ -177,6 +194,9 @@ async fn upsert_remote_account(
     .bind(bot)
     .bind(avatar)
     .bind(banner)
+    .bind(followers_count)
+    .bind(following_count)
+    .bind(statuses_count)
     .fetch_one(pool)
     .await
     .map(Some)

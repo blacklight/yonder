@@ -131,7 +131,7 @@ pub async fn reblog(
             &ctx.dispatcher,
             "reblog",
             auth.account_id,
-            target.id,
+            Some(target.id),
             target.account_id,
         )
         .await;

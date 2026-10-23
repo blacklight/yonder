@@ -81,7 +81,7 @@ async fn accept_outbound(pool: &PgPool, local_actor_id: &str, target_actor_id: &
     .execute(pool)
     .await?;
 
-    let done = sqlx::query(
+    sqlx::query(
         r#"
         INSERT INTO follows (account_id, target_account_id)
         SELECT la.id, ra.id
@@ -94,16 +94,6 @@ async fn accept_outbound(pool: &PgPool, local_actor_id: &str, target_actor_id: &
     .bind(target_actor_id)
     .execute(pool)
     .await?;
-    if done.rows_affected() > 0 {
-        // Keep following_count roughly honest; epic 14 owns the
-        // authoritative counter maintenance.
-        sqlx::query(
-            "UPDATE accounts SET following_count = following_count + 1 \
-             WHERE actor_id = $1 AND domain IS NULL",
-        )
-        .bind(local_actor_id)
-        .execute(pool)
-        .await?;
-    }
+    // Counters: the `follows` triggers (migration `0016`) own them.
     Ok(())
 }

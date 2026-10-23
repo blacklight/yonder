@@ -169,10 +169,21 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
         ) {
             return crate::interactions::inbound::handle(&core, activity, raw);
         }
+        // Social graph (epic 14): `Follow` stays PassThrough (pubby
+        // stores the follower/request — the hook just schedules the
+        // notification settle); `Block` severs the local follow.
+        if activity.activity_type == "Follow" {
+            return crate::social::inbound::handle_follow(&core, activity, raw)
+                .map_err(|e| pubby_sdk::ActivityPubError::General(e.to_string()));
+        }
+        if activity.activity_type == "Block" {
+            return crate::social::inbound::handle_block(&core, activity, raw)
+                .map_err(|e| pubby_sdk::ActivityPubError::General(e.to_string()));
+        }
         let outcome = match activity.activity_type.as_str() {
             "Move" => sync_block(handle_move(&core, activity, raw)),
             "Flag" => sync_block(handle_flag(&core.db, activity, raw)),
-            "Add" | "Remove" | "Block" => sync_block(store_unhandled(&core.storage, activity, raw)),
+            "Add" | "Remove" => sync_block(store_unhandled(&core.storage, activity, raw)),
             _ => return Ok(ActivityDisposition::PassThrough),
         };
         match outcome {

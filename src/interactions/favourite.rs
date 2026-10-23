@@ -49,7 +49,7 @@ pub async fn favourite(ctx: &PostContext, auth: &AuthContext, status_id: i64) ->
             &ctx.dispatcher,
             "favourite",
             auth.account_id,
-            status.id,
+            Some(status.id),
             status.account_id,
         )
         .await;

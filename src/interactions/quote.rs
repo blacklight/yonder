@@ -154,7 +154,7 @@ pub async fn finish_quote(
         &ctx.dispatcher,
         "quote",
         status.account_id,
-        target.id,
+        Some(target.id),
         target.account_id,
     )
     .await;

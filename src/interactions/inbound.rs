@@ -345,7 +345,7 @@ async fn react_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Resul
             &core.dispatcher,
             "emoji_reaction",
             actor,
-            target.id,
+            Some(target.id),
             target.account_id,
         )
         .await;

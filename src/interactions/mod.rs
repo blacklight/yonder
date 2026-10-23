@@ -105,12 +105,15 @@ pub async fn stored_activity(db: &PgPool, activity_uri: &str) -> Result<Option<V
 /// author gets the AP activity, not our notification) and blocked
 /// actors. Best-effort: an enqueue failure only logs — the
 /// interaction row is already durable.
+///
+/// `status_id` is `None` for relationship events (follow,
+/// follow_request) which carry no status.
 pub async fn emit_notification_event(
     db: &PgPool,
     dispatcher: &Dispatcher,
     kind: &str,
     from_account_id: i64,
-    status_id: i64,
+    status_id: Option<i64>,
     to_account_id: i64,
 ) {
     let outcome = async {

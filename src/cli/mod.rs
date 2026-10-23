@@ -200,6 +200,9 @@ async fn start_worker(
     // Epic-12 posting jobs (scheduled publish, link previews,
     // scheduled deletion, orphan-media cleanup).
     crate::posts::register_jobs(&mut registry, ap_ctx.as_ref());
+    // Epic-14 social jobs (FollowEvent settle — local work regardless
+    // of the federation gate).
+    crate::social::register_jobs(&mut registry);
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),

@@ -8,11 +8,15 @@
 pub mod account_management;
 pub mod accounts;
 pub mod apps;
+pub mod blocks;
+pub mod follow_requests;
 pub mod instance;
 pub mod interactions;
 pub mod invites;
+pub mod lists;
 pub mod media;
 pub mod polls;
+pub mod relationships;
 pub mod scheduled_statuses;
 pub mod sessions;
 pub mod settings;
@@ -242,6 +246,112 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/pleroma/statuses/{id}/reactions",
             get(interactions::reactions_list),
         )
+        // Social graph (epic 14) — reads are unlayered; writes carry
+        // the `relation` bucket.
+        .route(
+            "/api/v1/accounts/relationships",
+            get(relationships::relationships),
+        )
+        .route(
+            "/api/v1/accounts/{id}/follow",
+            post(relationships::follow)
+                .delete(relationships::unfollow)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/unfollow",
+            post(relationships::unfollow).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/follows",
+            post(relationships::follow_by_uri).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/followers",
+            get(relationships::followers),
+        )
+        .route(
+            "/api/v1/accounts/{id}/following",
+            get(relationships::following),
+        )
+        .route("/api/v1/accounts/{id}/lists", get(lists::account_lists))
+        .route(
+            "/api/v1/accounts/{id}/note",
+            post(relationships::note).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/subscribe",
+            post(relationships::subscribe_account)
+                .delete(relationships::unsubscribe_account)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/unsubscribe",
+            post(relationships::unsubscribe_account)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route("/api/v1/follow_requests", get(follow_requests::list))
+        .route(
+            "/api/v1/follow_requests/{id}/authorize",
+            post(follow_requests::authorize).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/follow_requests/{id}/reject",
+            post(follow_requests::reject).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/follow_requests/{id}",
+            axum::routing::delete(follow_requests::reject)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/block",
+            post(blocks::block)
+                .delete(blocks::unblock)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/unblock",
+            post(blocks::unblock).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/mute",
+            post(blocks::mute)
+                .delete(blocks::unmute)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/unmute",
+            post(blocks::unmute).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route("/api/v1/blocks", get(blocks::blocked))
+        .route("/api/v1/mutes", get(blocks::muted))
+        .route("/api/v1/domain_blocks", get(blocks::domain_blocks))
+        .route(
+            "/api/v1/domain_blocks",
+            post(blocks::block_domain)
+                .delete(blocks::unblock_domain)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route("/api/v1/lists", get(lists::list))
+        .route(
+            "/api/v1/lists",
+            post(lists::create).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route("/api/v1/lists/{id}", get(lists::show))
+        .route(
+            "/api/v1/lists/{id}",
+            axum::routing::put(lists::update)
+                .delete(lists::delete_list)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route("/api/v1/lists/{id}/accounts", get(lists::members))
+        .route(
+            "/api/v1/lists/{id}/accounts",
+            post(lists::add_accounts)
+                .delete(lists::remove_accounts)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
         .route("/api/v1/polls/{id}", get(polls::show))
         .route(
             "/api/v1/polls/{id}/votes",
@@ -336,6 +446,36 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     interactions::pin,
     interactions::unpin,
     interactions::react,
+    relationships::follow,
+    relationships::unfollow,
+    relationships::follow_by_uri,
+    relationships::relationships,
+    relationships::followers,
+    relationships::following,
+    relationships::note,
+    relationships::subscribe_account,
+    relationships::unsubscribe_account,
+    follow_requests::list,
+    follow_requests::authorize,
+    follow_requests::reject,
+    blocks::block,
+    blocks::unblock,
+    blocks::mute,
+    blocks::unmute,
+    blocks::blocked,
+    blocks::muted,
+    blocks::domain_blocks,
+    blocks::block_domain,
+    blocks::unblock_domain,
+    lists::list,
+    lists::create,
+    lists::show,
+    lists::update,
+    lists::delete_list,
+    lists::members,
+    lists::add_accounts,
+    lists::remove_accounts,
+    lists::account_lists,
     interactions::unreact,
     interactions::reactions_list,
     media::upload,

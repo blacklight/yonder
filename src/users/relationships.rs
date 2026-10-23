@@ -4,6 +4,11 @@
 //! epic 14 builds the REST surface, notifications and `Block`
 //! federation on top of it instead of re-implementing the handshake.
 //!
+//! Counters are **not** maintained here: the `follows` triggers from
+//! migration `0016` own `followers_count`/`following_count` for local
+//! accounts, so every writer (this module, pubby's storage adapter,
+//! cascaded deletes) stays honest automatically.
+//!
 //! Outbound follows are *real* ActivityPub: a remote target gets a
 //! `follow_requests` row recording the `Follow` we sent (pubby's inbox
 //! settles it on `Accept`/`Reject` via `on_follow_response`) plus a
@@ -160,7 +165,6 @@ pub async fn follow(
         .bind(opts.notify)
         .execute(ctx.db)
         .await?;
-        bump_counters(ctx.db, follower_id, target_id, 1).await?;
         return Ok(FollowOutcome::Following);
     }
 
@@ -233,9 +237,6 @@ pub async fn unfollow(ctx: Ctx<'_>, follower_id: i64, target_id: i64) -> Result<
     if !removed_follow && !removed_request {
         return Ok(false);
     }
-    if removed_follow {
-        bump_counters(ctx.db, follower_id, target_id, -1).await?;
-    }
 
     let remote =
         sqlx::query_scalar::<_, bool>("SELECT domain IS NOT NULL FROM accounts WHERE id = $1")
@@ -297,28 +298,6 @@ async fn account_row(pool: &PgPool, id: i64) -> Result<Option<AccountRow>> {
         suspended_at: r.get("suspended_at"),
         deleted_at: r.get("deleted_at"),
     }))
-}
-
-/// Best-effort counter maintenance (epic 14 owns the authoritative
-/// recount); `delta` is +1 or −1.
-async fn bump_counters(pool: &PgPool, follower_id: i64, target_id: i64, delta: i64) -> Result<()> {
-    sqlx::query(
-        "UPDATE accounts SET following_count = GREATEST(0, following_count + $2) \
-         WHERE id = $1",
-    )
-    .bind(follower_id)
-    .bind(delta)
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "UPDATE accounts SET followers_count = GREATEST(0, followers_count + $2) \
-         WHERE id = $1",
-    )
-    .bind(target_id)
-    .bind(delta)
-    .execute(pool)
-    .await?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +391,10 @@ async fn fetch_remote_actor(ctx: Ctx<'_>, actor_url: &str) -> Result<i64> {
 // Blocks, mutes, domain blocks — local rows only in this epic.
 // ---------------------------------------------------------------------------
 
-/// Block `target_id` for `account_id` (idempotent).
-pub async fn block(pool: &PgPool, account_id: i64, target_id: i64) -> Result<()> {
-    sqlx::query(
+/// Block `target_id` for `account_id` (idempotent — `false` when the
+/// row already existed, so callers can skip repeat federation).
+pub async fn block(pool: &PgPool, account_id: i64, target_id: i64) -> Result<bool> {
+    let done = sqlx::query(
         "INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2) \
          ON CONFLICT (account_id, target_account_id) DO NOTHING",
     )
@@ -422,35 +402,39 @@ pub async fn block(pool: &PgPool, account_id: i64, target_id: i64) -> Result<()>
     .bind(target_id)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(done.rows_affected() > 0)
 }
 
-/// Remove a block.
-pub async fn unblock(pool: &PgPool, account_id: i64, target_id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM blocks WHERE account_id = $1 AND target_account_id = $2")
+/// Remove a block (`false` when there was nothing to remove).
+pub async fn unblock(pool: &PgPool, account_id: i64, target_id: i64) -> Result<bool> {
+    let done = sqlx::query("DELETE FROM blocks WHERE account_id = $1 AND target_account_id = $2")
         .bind(account_id)
         .bind(target_id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(done.rows_affected() > 0)
 }
 
-/// Mute `target_id` for `account_id` (idempotent).
+/// Mute `target_id` for `account_id` (idempotent). `duration_secs` sets
+/// `expires_at` (Mastodon's `duration` param); `None` is indefinite.
 pub async fn mute(
     pool: &PgPool,
     account_id: i64,
     target_id: i64,
     hide_notifications: bool,
+    duration_secs: Option<i64>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO mutes (account_id, target_account_id, hide_notifications) \
-         VALUES ($1, $2, $3) \
+        "INSERT INTO mutes (account_id, target_account_id, hide_notifications, expires_at) \
+         VALUES ($1, $2, $3, now() + make_interval(secs => $4)) \
          ON CONFLICT (account_id, target_account_id) \
-         DO UPDATE SET hide_notifications = EXCLUDED.hide_notifications",
+         DO UPDATE SET hide_notifications = EXCLUDED.hide_notifications, \
+                       expires_at = EXCLUDED.expires_at",
     )
     .bind(account_id)
     .bind(target_id)
     .bind(hide_notifications)
+    .bind(duration_secs)
     .execute(pool)
     .await?;
     Ok(())

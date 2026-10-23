@@ -38,24 +38,47 @@ pub struct AccountRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// The `accounts`/`users` projection [`load`] and [`load_many`] share.
+const ACCOUNT_COLS: &str = "a.id, a.username, a.domain, a.actor_id, a.url, a.display_name, \
+        a.bio, a.locked, a.bot, a.discoverable, a.avatar_path, \
+        a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
+        a.avatar_blurhash, a.header_blurhash, \
+        a.profile_fields, a.followers_count, a.following_count, \
+        a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id";
+
 /// Load an `accounts` row by primary key. The `users` LEFT JOIN is how
 /// `noindex` gets its value for local accounts; remote rows have no
 /// `users` row and keep the historical `noindex: false`.
 pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<AccountRow>> {
-    let row = sqlx::query(
-        "SELECT a.id, a.username, a.domain, a.actor_id, a.url, a.display_name, \
-                a.bio, a.locked, a.bot, a.discoverable, a.avatar_path, \
-                a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
-                a.avatar_blurhash, a.header_blurhash, \
-                a.profile_fields, a.followers_count, a.following_count, \
-                a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id \
+    let row = sqlx::query(&format!(
+        "SELECT {ACCOUNT_COLS} \
          FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
-         WHERE a.id = $1 AND a.deleted_at IS NULL",
-    )
+         WHERE a.id = $1 AND a.deleted_at IS NULL"
+    ))
     .bind(account_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|r| AccountRow {
+    Ok(row.map(|r| account_row(&r)))
+}
+
+/// Load many `accounts` rows in one query — the listing form of
+/// [`load`]. Result order matches `ids`; missing/deleted ids are
+/// dropped (the caller loses the position).
+pub async fn load_many(pool: &sqlx::PgPool, ids: &[i64]) -> Result<Vec<AccountRow>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ACCOUNT_COLS} \
+         FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
+         WHERE a.id = ANY($1) AND a.deleted_at IS NULL \
+         ORDER BY array_position($1::bigint[], a.id)"
+    ))
+    .bind(ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(account_row).collect())
+}
+
+fn account_row(r: &sqlx::postgres::PgRow) -> AccountRow {
+    AccountRow {
         id: r.get("id"),
         username: r.get("username"),
         domain: r.get("domain"),
@@ -79,7 +102,7 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
         indexable: r.get("indexable"),
         moved_to_account_id: r.get("moved_to_account_id"),
         created_at: r.get("created_at"),
-    }))
+    }
 }
 
 /// Public media URL for a stored key (`avatars/…`, `headers/…`) or the

@@ -111,6 +111,10 @@ pub enum JobKind {
     /// Delete unattached media uploads past the retention window
     /// (epic 12).
     CleanupOrphanMedia,
+    /// Settle an inbound `Follow`'s notification once pubby's dispatch
+    /// has stored the row — emits `follow` or `follow_request`
+    /// depending on which row landed (epic 14).
+    FollowEvent,
 }
 
 impl JobKind {
@@ -135,6 +139,7 @@ impl JobKind {
         JobKind::FetchLinkPreview,
         JobKind::StatusDeletion,
         JobKind::CleanupOrphanMedia,
+        JobKind::FollowEvent,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -159,6 +164,7 @@ impl JobKind {
             JobKind::FetchLinkPreview => "fetch_link_preview",
             JobKind::StatusDeletion => "status_deletion",
             JobKind::CleanupOrphanMedia => "cleanup_orphan_media",
+            JobKind::FollowEvent => "follow_event",
         }
     }
 

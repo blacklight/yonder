@@ -22,6 +22,7 @@ pub mod media;
 pub mod moderation;
 pub mod posts;
 pub mod search;
+pub mod social;
 pub mod users;
 
 pub use error::{Error, Result};

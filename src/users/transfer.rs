@@ -1098,7 +1098,7 @@ async fn apply_row(
             };
             let target = relationships::resolve_account(rel, acct).await?;
             let hide = row.get(1).map(|v| truthy(v)).unwrap_or(true);
-            relationships::mute(db, account_id, target, hide).await?;
+            relationships::mute(db, account_id, target, hide, None).await?;
         }
         Kind::DomainBlocks => {
             let Some(domain) = row.first() else {

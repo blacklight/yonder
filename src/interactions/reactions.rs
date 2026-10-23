@@ -164,7 +164,7 @@ pub async fn react(
             &ctx.dispatcher,
             "emoji_reaction",
             auth.account_id,
-            status.id,
+            Some(status.id),
             status.account_id,
         )
         .await;

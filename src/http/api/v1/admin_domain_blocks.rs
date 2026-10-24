@@ -43,7 +43,7 @@ pub async fn create(
     auth: AuthContext,
     Json(body): Json<BlockBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin:write:domain_blocks")?;
+    require_scope(&state.config(), &auth, "admin:write:domain_blocks")?;
     let domain = crate::moderation::domain::normalize_domain(&body.domain);
     if domain.is_empty() {
         return Err(Error::Validation(format!(
@@ -51,7 +51,7 @@ pub async fn create(
             body.domain
         )));
     }
-    if domain == crate::moderation::domain::normalize_domain(&state.config.instance.domain) {
+    if domain == crate::moderation::domain::normalize_domain(&state.config().instance.domain) {
         return Err(Error::Validation("cannot block your own instance".into()));
     }
     let severity = parse_severity(body.severity.as_deref())?;
@@ -143,7 +143,7 @@ pub async fn list(
     auth: AuthContext,
     Query(q): Query<ListParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin:read:domain_blocks")?;
+    require_scope(&state.config(), &auth, "admin:read:domain_blocks")?;
     let rows = blocks::list(
         &state.db,
         q.max_id,
@@ -180,7 +180,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin:read:domain_blocks")?;
+    require_scope(&state.config(), &auth, "admin:read:domain_blocks")?;
     Ok(Json(entity(&blocks::get(&state.db, id).await?)))
 }
 
@@ -203,7 +203,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(body): Json<PatchBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin:write:domain_blocks")?;
+    require_scope(&state.config(), &auth, "admin:write:domain_blocks")?;
     let existing = blocks::get(&state.db, id).await?;
     check_comments(
         body.private_comment
@@ -281,7 +281,7 @@ pub async fn delete_block(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin:write:domain_blocks")?;
+    require_scope(&state.config(), &auth, "admin:write:domain_blocks")?;
     let mut tx = state.db.begin().await?;
     if !blocks::delete(&mut *tx, id).await? {
         return Err(Error::NotFound("domain block".into()));

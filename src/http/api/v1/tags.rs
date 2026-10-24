@@ -45,7 +45,7 @@ pub async fn show(
         &state.db,
         viewer,
         &name,
-        state.config.timelines.trends_include_remote,
+        state.config().timelines.trends_include_remote,
     )
     .await?
     .ok_or_else(|| Error::NotFound("tag".into()))?;
@@ -71,12 +71,12 @@ pub async fn follow(
     auth: AuthContext,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     let info = tags::follow::follow(
         &state.db,
         auth.account_id,
         &name,
-        state.config.timelines.trends_include_remote,
+        state.config().timelines.trends_include_remote,
     )
     .await?;
     let ctx = crate::posts::PostContext::new(&state);
@@ -100,12 +100,12 @@ pub async fn unfollow(
     auth: AuthContext,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     let info = tags::follow::unfollow(
         &state.db,
         auth.account_id,
         &name,
-        state.config.timelines.trends_include_remote,
+        state.config().timelines.trends_include_remote,
     )
     .await?
     .ok_or_else(|| Error::NotFound("tag".into()))?;
@@ -134,13 +134,13 @@ pub async fn followed_tags(
     uri: Uri,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:follows")?;
+    require_scope(&state.config(), &auth, "read:follows")?;
     let page = paginate::parse(&params);
     let rows = tags::follow::followed(
         &state.db,
         auth.account_id,
         &page,
-        state.config.timelines.trends_include_remote,
+        state.config().timelines.trends_include_remote,
     )
     .await?;
     let ctx = crate::posts::PostContext::new(&state);

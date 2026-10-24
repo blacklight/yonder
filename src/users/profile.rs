@@ -213,7 +213,7 @@ async fn read_text_part(
 }
 
 async fn parse_multipart(state: &Arc<AppState>, mp: &mut Multipart) -> Result<UpdateCredentials> {
-    let max = state.config.media.max_avatar_size;
+    let max = state.config().media.max_avatar_size;
     let mut pairs: HashMap<String, String> = HashMap::new();
     let mut avatar = MediaOp::Unchanged;
     let mut header = MediaOp::Unchanged;
@@ -588,7 +588,7 @@ pub async fn update_profile(
     auth: &AuthContext,
     mut params: UpdateCredentials,
 ) -> Result<()> {
-    let config = &state.config;
+    let config = &state.config();
 
     // Cheap validation first — a trivially-invalid PATCH shouldn't pay
     // for upload processing.

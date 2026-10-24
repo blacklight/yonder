@@ -584,7 +584,7 @@ pub async fn create_device_code(
         .await
         .map_err(|e| GrantError::server(&e.to_string()))?;
 
-    let base = crate::activitypub::federation_base_url(&state.config);
+    let base = crate::activitypub::federation_base_url(&state.config());
     Ok(json!({
         "device_code": device_code,
         "user_code": user_code,

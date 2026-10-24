@@ -33,10 +33,10 @@ pub async fn preferences(
     auth: AuthContext,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     Ok(Json(user_settings.preferences_json(
-        &state.config,
+        &state.config(),
         settings::accept_language(&headers).as_deref(),
     )))
 }
@@ -58,10 +58,10 @@ pub async fn get_settings(
     auth: AuthContext,
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     Ok(Json(user_settings.yonder_json(
-        &state.config,
+        &state.config(),
         settings::accept_language(&headers).as_deref(),
     )))
 }
@@ -131,12 +131,12 @@ pub async fn patch_settings(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let patch = settings::parse_patch(&body)?;
     settings::save(&state.db, &auth, &patch).await?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     Ok(Json(user_settings.yonder_json(
-        &state.config,
+        &state.config(),
         settings::accept_language(&headers).as_deref(),
     )))
 }

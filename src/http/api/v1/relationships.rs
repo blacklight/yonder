@@ -124,9 +124,9 @@ fn query_ids(uri: &Uri) -> Vec<i64> {
 /// `lists`). One emoji-map load serves the whole page via
 /// [`account_mapper::account_entities`].
 pub(super) async fn account_entities(state: &AppState, ids: &[i64]) -> Result<Vec<Value>> {
-    let base = federation_base_url(&state.config);
+    let base = federation_base_url(&state.config());
     let accounts = account_mapper::load_many(&state.db, ids).await?;
-    account_mapper::account_entities(&state.db, &state.config, &base, &accounts).await
+    account_mapper::account_entities(&state.db, &state.config(), &base, &accounts).await
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ pub async fn follow(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     let params = body_params(request).await?;
     let opts = social::FollowOpts {
         show_reblogs: bool_param(&params, "reblogs"),
@@ -166,7 +166,7 @@ pub async fn follow(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -189,14 +189,14 @@ pub async fn unfollow(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     follows::unfollow(&state, auth.account_id, id).await?;
     Ok(Json(
         entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -219,7 +219,7 @@ pub async fn follow_by_uri(
     auth: AuthContext,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     let params = body_params(request).await?;
     let uri = param(&params, "uri").ok_or_else(|| Error::Validation("uri is required".into()))?;
     let target_id = follows::follow_by_uri(&state, auth.account_id, uri).await?;
@@ -243,14 +243,14 @@ pub async fn relationships(
     auth: AuthContext,
     uri: Uri,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:follows")?;
+    require_scope(&state.config(), &auth, "read:follows")?;
     let ids = query_ids(&uri);
     Ok(Json(json!(
         entity::relationships(
             &state.db,
             auth.account_id,
             &ids,
-            state.config.admin.blockers_visible
+            state.config().admin.blockers_visible
         )
         .await?
     )))
@@ -276,7 +276,7 @@ pub async fn followers(
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:follows")?;
+        require_scope(&state.config(), a, "read:follows")?;
     }
     follows::visible_target(&state.db, id).await?;
     let viewer = auth.0.as_ref().map(|a| a.account_id);
@@ -313,7 +313,7 @@ pub async fn following(
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:follows")?;
+        require_scope(&state.config(), a, "read:follows")?;
     }
     follows::visible_target(&state.db, id).await?;
     let viewer = auth.0.as_ref().map(|a| a.account_id);
@@ -350,7 +350,7 @@ pub async fn note(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let params = body_params(request).await?;
     let comment = param(&params, "comment").unwrap_or_default();
     follows::visible_target(&state.db, id).await?;
@@ -360,7 +360,7 @@ pub async fn note(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -384,7 +384,7 @@ pub async fn subscribe_account(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     follows::visible_target(&state.db, id).await?;
     subscribe::subscribe(&state.db, auth.account_id, id).await?;
     Ok(Json(
@@ -392,7 +392,7 @@ pub async fn subscribe_account(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -414,14 +414,14 @@ pub async fn unsubscribe_account(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     subscribe::unsubscribe(&state.db, auth.account_id, id).await?;
     Ok(Json(
         entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))

@@ -87,10 +87,10 @@ async fn test_app_with(mut config: Config, federated: bool) -> Option<Env> {
     let mut state = AppState::new(config, pool, redis_handle);
     if federated {
         let ap = activitypub::build(
-            state.config.as_ref(),
+            state.config().as_ref(),
             &state.db,
             &state.redis,
-            &Dispatcher::new(&state.redis, &state.config.jobs),
+            &Dispatcher::new(&state.redis, &state.config().jobs),
             &state.bus,
         )
         .await
@@ -111,7 +111,7 @@ fn job_ctx(state: &AppState) -> JobContext {
     JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     }
 }
@@ -439,7 +439,7 @@ async fn remote_media_cleanup_age_and_size_paths() {
         (0, i64::MAX as u64, "age", true),
         (3650, u64::MAX, "neither", false),
     ] {
-        let mut config = (*env.state.config).clone();
+        let mut config = (*env.state.config()).clone();
         config.media.remote_cleanup_max_age_days = age_days;
         config.media.remote_cleanup_max_bytes = max_bytes;
         let ctx = JobContext {
@@ -724,7 +724,7 @@ async fn oversize_upload_rejected() {
     };
     let alice = local_account(&env.state.db, "alice").await;
     let err = match yonder::media::store_status_media(
-        &env.state.config,
+        &env.state.config(),
         &env.state.media,
         &env.state.db,
         alice,

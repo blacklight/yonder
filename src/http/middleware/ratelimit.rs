@@ -132,7 +132,7 @@ fn too_many(retry_after_seconds: u64) -> Response {
 /// error caught at router build time, not a runtime 500.
 pub fn layer(state: &Arc<AppState>, bucket: &'static str) -> RateLimitLayer {
     assert!(
-        state.config.rate_limit.bucket(bucket).is_some(),
+        state.config().rate_limit.bucket(bucket).is_some(),
         "unknown rate-limit bucket {bucket}"
     );
     RateLimitLayer {
@@ -190,7 +190,7 @@ where
         let bucket = self.bucket;
 
         Box::pin(async move {
-            let Some(limit) = state.config.rate_limit.bucket(bucket).cloned() else {
+            let Some(limit) = state.config().rate_limit.bucket(bucket).cloned() else {
                 tracing::error!(bucket, "unknown rate-limit bucket");
                 return Ok(
                     crate::Error::Internal(format!("unknown rate-limit bucket {bucket}"))
@@ -209,7 +209,7 @@ where
             let ip = super::client_ip::client_ip(
                 req.headers(),
                 req.extensions(),
-                state.config.server.trusted_proxy_hops,
+                state.config().server.trusted_proxy_hops,
             );
             let check = tokio::time::timeout(
                 CHECK_TIMEOUT,

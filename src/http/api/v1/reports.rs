@@ -41,13 +41,13 @@ pub async fn file(
     auth: AuthContext,
     Json(body): Json<FileReport>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     let comment = body.comment.unwrap_or_default();
     // The DB CHECK caps comments at 8000 — clamp the configured cap
     // so an over-large `max_report_comment` can't turn validation
     // into a database error.
     let max = std::cmp::min(
-        state.config.content.max_report_comment as usize,
+        state.config().content.max_report_comment as usize,
         reports::COMMENT_MAX_CHARS,
     );
     if comment.chars().count() > max {
@@ -178,7 +178,7 @@ pub async fn admin_list(
     auth: AuthContext,
     Query(q): Query<ListParams>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:read")?;
+    require_moderator_scope(&state.config(), &auth, "admin:read")?;
     let rows = reports::list(
         &state.db,
         q.resolved,
@@ -228,7 +228,7 @@ pub async fn admin_show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:read")?;
+    require_moderator_scope(&state.config(), &auth, "admin:read")?;
     let report = reports::get(&state.db, id).await?;
     Ok(Json(reports::entity(&state, &report).await?))
 }
@@ -251,7 +251,7 @@ pub async fn admin_resolve(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:write")?;
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
     let mut tx = state.db.begin().await?;
     let report = reports::resolve(&mut tx, id, auth.account_id).await?;
     crate::moderation::audit::record(
@@ -285,7 +285,7 @@ pub async fn admin_reopen(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:write")?;
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
     let mut tx = state.db.begin().await?;
     let report = reports::reopen(&mut tx, id).await?;
     crate::moderation::audit::record(
@@ -346,7 +346,7 @@ async fn assign_impl(
     Path(id): Path<i64>,
     self_assign: bool,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:write")?;
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
     let assignee = if self_assign {
         Some(auth.account_id)
     } else {

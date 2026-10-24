@@ -230,6 +230,8 @@ async fn start_worker(
 
     // Epic 21 — audit log retention sweep.
     crate::moderation::register_jobs(&mut registry);
+    // Epic 22 — the real `EmailSend` SMTP sender (replaces the stub).
+    crate::admin::register_jobs(&mut registry);
     // Epic-18 media jobs (remote fetch + cleanup sweep).
     crate::media::register_jobs(&mut registry);
     let ctx = jobs::JobContext {

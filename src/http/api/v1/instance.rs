@@ -17,7 +17,7 @@ use crate::{config::RegistrationMode, http::AppState, Error, Result};
     responses((status = 200, description = "Instance information"))
 )]
 pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let config = &state.config;
+    let config = &state.config();
     let row = sqlx::query(
         "SELECT \
             (SELECT count(*) FROM accounts a JOIN users u ON u.account_id = a.id \
@@ -82,7 +82,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
     )
 )]
 pub async fn domain_blocks(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    if !state.config.instance.expose_moderated_instances {
+    if !state.config().instance.expose_moderated_instances {
         return Err(Error::NotFound("domain_blocks".into()));
     }
     let rows = crate::moderation::blocks::list_public(&state.db).await?;

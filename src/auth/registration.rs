@@ -101,7 +101,7 @@ pub async fn register(
             "agreement to the instance rules is required".to_string(),
         ));
     }
-    let config = &state.config;
+    let config = &state.config();
     let reason = params
         .reason
         .as_deref()
@@ -258,7 +258,7 @@ pub async fn register(
     if approved {
         let af = crate::users::auto_follow::AutoFollowCtx {
             db: state.db.clone(),
-            config: state.config.clone(),
+            config: state.config().clone(),
             ap: state.ap.clone(),
         };
         tokio::spawn(async move {
@@ -291,7 +291,7 @@ async fn enqueue_verification_email(state: &AppState, user_id: i64, email: &str)
         EMAIL_VERIFY_TTL_SECONDS,
     )
     .await?;
-    let base = activitypub::federation_base_url(&state.config);
+    let base = activitypub::federation_base_url(&state.config());
     state
         .dispatcher
         .enqueue(

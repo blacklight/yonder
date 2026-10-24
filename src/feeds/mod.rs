@@ -92,10 +92,10 @@ async fn profile_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::account_feed(
         &state.db,
-        &state.config,
+        &state.config(),
         &base,
         &account,
-        state.config.content.max_feed_items as i64,
+        state.config().content.max_feed_items as i64,
     )
     .await?;
     feed.self_url = format!("{base}/users/{}.{}", account.username, format.ext());
@@ -115,10 +115,10 @@ async fn tag_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::tag_feed(
         &state.db,
-        &state.config,
+        &state.config(),
         &base,
         &tag,
-        state.config.content.max_feed_items as i64,
+        state.config().content.max_feed_items as i64,
     )
     .await?;
     feed.self_url = format!("{}.{}", data::tag_url(&base, &tag), format.ext());
@@ -134,7 +134,7 @@ async fn list_feed(
     auth: crate::http::middleware::auth::AuthContext,
     Path(rest): Path<String>,
 ) -> Result<Response> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let Some((id_str, format)) = split_feed_path(&rest) else {
         return Err(Error::NotFound("feed".into()));
     };
@@ -145,10 +145,10 @@ async fn list_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::list_feed(
         &state.db,
-        &state.config,
+        &state.config(),
         &base,
         &list,
-        state.config.content.max_feed_items as i64,
+        state.config().content.max_feed_items as i64,
     )
     .await?;
     feed.self_url = format!("{base}/lists/{}.{}", list.id, format.ext());

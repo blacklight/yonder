@@ -48,7 +48,7 @@ pub async fn create(
     auth: AuthContext,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let key = request
         .headers()
         .get("idempotency-key")
@@ -109,7 +109,7 @@ pub async fn update(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let params = parse_body(request).await?;
     let ctx = PostContext::new(&state);
     let status = posts::create::edit_status(&ctx, &auth, id, &params).await?;
@@ -136,7 +136,7 @@ pub async fn delete_status(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let before = posts::load(&ctx.db, id)
         .await?

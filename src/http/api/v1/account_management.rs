@@ -30,7 +30,7 @@ pub async fn list_aliases(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let aliases = moves::list_aliases(&state.db, auth.account_id).await?;
     Ok(Json(json!({ "aliases": aliases })))
 }
@@ -59,7 +59,7 @@ pub async fn add_alias(
     auth: AuthContext,
     Json(params): Json<AliasParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     moves::add_alias(&state, auth.account_id, &params.acct).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -81,7 +81,7 @@ pub async fn remove_alias(
     auth: AuthContext,
     Json(params): Json<AliasParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     moves::remove_alias(&state, auth.account_id, &params.acct).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -112,7 +112,7 @@ pub async fn move_account(
     auth: AuthContext,
     Json(params): Json<MoveParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     moves::move_to(&state, auth.account_id, &params.acct, &params.password).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -140,7 +140,7 @@ pub async fn cancel_move(
     auth: AuthContext,
     Json(params): Json<PasswordParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     moves::cancel_move(&state, auth.account_id, &params.password).await?;
     Ok(Json(json!({ "ok": true })))
 }
@@ -162,7 +162,7 @@ pub async fn delete_account(
     auth: AuthContext,
     Json(params): Json<PasswordParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let password_hash: Option<String> =
         sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
             .bind(auth.user_id)
@@ -175,7 +175,7 @@ pub async fn delete_account(
         return Err(crate::Error::Forbidden);
     }
     let delay = std::time::Duration::from_secs(
-        state.config.admin.account_deletion_grace_days as u64 * 86_400,
+        state.config().admin.account_deletion_grace_days as u64 * 86_400,
     );
     let id = deletion::schedule_account_deletion(&state, auth.account_id, None, delay).await?;
     Ok(Json(json!({ "deletion_id": id.to_string() })))

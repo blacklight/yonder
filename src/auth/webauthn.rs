@@ -121,7 +121,7 @@ pub async fn begin_registration(state: &AppState, user_id: i64) -> Result<Value>
         .iter()
         .map(|c| c.security_key.cred_id().clone())
         .collect();
-    let rp = relying_party(&state.config)?;
+    let rp = relying_party(&state.config())?;
     let (ccr, skr) = rp
         .start_securitykey_registration(uuid, &username, &display, Some(exclude), None, None)
         .map_err(|e| internal("webauthn registration begin failed", e))?;
@@ -162,7 +162,7 @@ pub async fn finish_registration(
     let Some(skr) = staged else {
         return Err(Error::NotFound("webauthn registration ceremony".into()));
     };
-    let rp = relying_party(&state.config)?;
+    let rp = relying_party(&state.config())?;
     let key = rp
         .finish_securitykey_registration(credential, &skr)
         .map_err(|e| Error::Validation(format!("webauthn registration failed: {e}")))?;
@@ -213,7 +213,7 @@ pub async fn begin_authentication(
         return Err(Error::NotFound("webauthn credentials".into()));
     }
     let keys: Vec<SecurityKey> = credentials.into_iter().map(|c| c.security_key).collect();
-    let rp = relying_party(&state.config)?;
+    let rp = relying_party(&state.config())?;
     let (rcr, ast) = rp
         .start_securitykey_authentication(&keys)
         .map_err(|e| internal("webauthn authentication begin failed", e))?;
@@ -243,7 +243,7 @@ pub async fn finish_authentication(
     let Some(ast) = staged else {
         return Err(Error::NotFound("webauthn authentication ceremony".into()));
     };
-    let rp = relying_party(&state.config)?;
+    let rp = relying_party(&state.config())?;
     let result = match rp.finish_securitykey_authentication(credential, &ast) {
         Ok(result) => result,
         Err(e) => {

@@ -77,7 +77,8 @@ pub async fn list_aliases(pool: &PgPool, account_id: i64) -> Result<Vec<String>>
 /// publish an actor `Update` so the federation-facing document is
 /// live. Idempotent.
 pub async fn add_alias(state: &AppState, account_id: i64, acct: &str) -> Result<()> {
-    let rel = relationships::Ctx::from_state(state);
+    let cfg = state.config();
+    let rel = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     let target_id = relationships::resolve_account(rel, acct).await?;
     if target_id == account_id {
         return Err(Error::Validation("an account cannot alias itself".into()));
@@ -111,7 +112,8 @@ pub async fn remove_alias(state: &AppState, account_id: i64, acct: &str) -> Resu
         {
             Some(u) => u,
             None => {
-                let rel = relationships::Ctx::from_state(state);
+                let cfg = state.config();
+                let rel = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
                 match relationships::resolve_account(rel, acct).await {
                     Ok(id) => {
                         sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
@@ -182,7 +184,8 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
     }
 
     // Resolve + verify the target's alsoKnownAs names this actor.
-    let rel = relationships::Ctx::from_state(state);
+    let cfg = state.config();
+    let rel = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     let target_id = relationships::resolve_account(rel, acct).await?;
     if target_id == account_id {
         return Err(Error::Validation("cannot move to yourself".into()));

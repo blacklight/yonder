@@ -25,7 +25,9 @@ use crate::{Error, Result};
 use super::audit;
 
 /// Mastodon `type` values the action endpoint accepts (plus `limit`
-/// as a `silence` alias and `delete`, admin-only).
+/// as a `silence` alias and `delete`, admin-only), and epic 22's
+/// account-hygiene actions — the `moderation_actions.type` CHECK has
+/// allowed them since migration `0006`.
 pub fn normalize_action_type(ty: &str) -> Option<&'static str> {
     match ty {
         "none" => Some("none"),
@@ -34,6 +36,9 @@ pub fn normalize_action_type(ty: &str) -> Option<&'static str> {
         "silence" | "limit" => Some("silence"),
         "suspend" => Some("suspend"),
         "delete" => Some("delete"),
+        "disable_2fa" => Some("disable_2fa"),
+        "require_password_reset" => Some("require_password_reset"),
+        "verify_email" => Some("verify_email"),
         _ => None,
     }
 }
@@ -53,6 +58,19 @@ async fn admin_set_lock(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Resul
         .execute(&mut **tx)
         .await?;
     Ok(())
+}
+
+/// Resolve a local target's `users.id` — the account-hygiene actions
+/// (epic 22) only apply to local accounts.
+async fn local_user_id(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: i64,
+) -> Result<i64> {
+    sqlx::query_scalar("SELECT id FROM users WHERE account_id = $1")
+        .bind(account_id)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| Error::Validation("action applies to local accounts only".into()))
 }
 
 /// Apply `ty` to `target_id` on behalf of `actor_id` (role
@@ -152,6 +170,34 @@ pub async fn apply(
         "sensitive" => {
             sqlx::query(
                 "UPDATE accounts SET force_sensitive = true, updated_at = now() WHERE id = $1",
+            )
+            .bind(target_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        // Epic 22's account-hygiene actions all apply to `users` rows —
+        // remote accounts have none.
+        "disable_2fa" => {
+            let user_id = local_user_id(&mut tx, target_id).await?;
+            // Owns its transaction (same precedent as `delete` above —
+            // runs before this tx takes a row lock on the target).
+            crate::auth::two_factor::admin_disable_2fa(&state.db, user_id).await?;
+        }
+        "verify_email" => {
+            local_user_id(&mut tx, target_id).await?;
+            sqlx::query(
+                "UPDATE users SET email_verified_at = now(), updated_at = now() \
+                 WHERE account_id = $1 AND email_verified_at IS NULL",
+            )
+            .bind(target_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        "require_password_reset" => {
+            local_user_id(&mut tx, target_id).await?;
+            sqlx::query(
+                "UPDATE users SET require_password_reset = true, updated_at = now() \
+                 WHERE account_id = $1",
             )
             .bind(target_id)
             .execute(&mut *tx)
@@ -333,6 +379,97 @@ pub async fn set_role(state: &AppState, actor_id: i64, target_id: i64, role: &st
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// One-time password-reset link lifetime (epic 22 admin actions).
+const PASSWORD_RESET_TTL_SECONDS: u64 = 2 * 60 * 60;
+
+/// Generate a one-time password-reset link for a local account and
+/// audit the generation. `email` controls the `password_reset` mail:
+/// `"when_enabled"` honors `email.send_password_reset` (the
+/// `EmailSend` job gate does the check), `"always"` passes `force` so
+/// the admin's explicit intent wins. The caller decides what the
+/// response shape is — the URL is returned either way.
+///
+/// The token lives in Redis under the `password-reset` domain, keyed
+/// by its sha256 like every other secret flow (`auth::tokens`); it is
+/// redacted from the audit row. A reset link is a credential, so the
+/// same staff guard as [`apply`] applies: moderators cannot mint links
+/// for admins or moderators.
+pub async fn reset_link(
+    state: &AppState,
+    actor_id: i64,
+    actor_role: &str,
+    target_id: i64,
+    email: &str,
+) -> Result<String> {
+    let row: Option<(i64, String, bool)> = sqlx::query_as(
+        "SELECT u.id, a.role, a.suspended_at IS NOT NULL OR a.deleted_at IS NOT NULL \
+         FROM users u JOIN accounts a ON a.id = u.account_id WHERE u.account_id = $1",
+    )
+    .bind(target_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((user_id, target_role, inactive)) = row else {
+        return Err(Error::Validation(
+            "action applies to local accounts only".into(),
+        ));
+    };
+    if actor_role == "moderator" && matches!(target_role.as_str(), "admin" | "moderator") {
+        return Err(Error::Forbidden);
+    }
+    if inactive {
+        return Err(Error::Validation("account is suspended or deleted".into()));
+    }
+    let token = crate::auth::tokens::random_secret();
+    crate::auth::tokens::set_secret_key(
+        state,
+        "password-reset",
+        &token,
+        &json!(user_id),
+        PASSWORD_RESET_TTL_SECONDS,
+    )
+    .await?;
+    let base = crate::activitypub::federation_base_url(&state.config());
+    let url = format!("{base}/auth/password-reset/{token}");
+
+    let emailed = match email {
+        "when_enabled" => state.config().email.send_password_reset,
+        "always" => true,
+        _ => false,
+    };
+    if emailed {
+        let force = email == "always";
+        state
+            .dispatcher
+            .enqueue(
+                crate::jobs::JobKind::EmailSend,
+                json!({
+                    "kind": "password_reset",
+                    "account_id": target_id,
+                    "token": token,
+                    "url": url,
+                    "force": force,
+                }),
+            )
+            .await?;
+    }
+
+    let action = if email == "always" {
+        "account.email_reset"
+    } else {
+        "account.reset_password"
+    };
+    audit::record(
+        &state.db,
+        Some(actor_id),
+        action,
+        "account",
+        Some(target_id),
+        json!({ "emailed": emailed, "token": "<redacted>" }),
+    )
+    .await?;
+    Ok(url)
 }
 
 /// Mastodon `Admin::Account` entity, minimal: identity + moderation

@@ -37,7 +37,7 @@ pub async fn upload(
     auth: AuthContext,
     mp: Multipart,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:media")?;
+    require_scope(&state.config(), &auth, "write:media")?;
     upload_inner(&state, &auth, mp).await
 }
 
@@ -78,7 +78,7 @@ pub(crate) async fn upload_inner(
         return Err(Error::Validation("file field is required".to_string()));
     };
     let stored = store_status_media(
-        &state.config,
+        &state.config(),
         &state.media,
         &state.db,
         auth.account_id,
@@ -122,7 +122,7 @@ pub async fn update(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:media")?;
+    require_scope(&state.config(), &auth, "write:media")?;
     let ctx = PostContext::new(&state);
     let row = entity::load_media(&ctx, id)
         .await?

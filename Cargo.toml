@@ -10,6 +10,7 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 # axum 0.8, redis 0.27 and thiserror 2 are pinned to match pubby-sdk's
 # dependency versions — types from these crates cross the pubby boundary
 [dependencies]
+arc-swap = "=1.9.2" # pinned: 1.9.3 published <7 days ago at add time
 argon2 = "0.5"
 async-trait = "0.1"
 # S3 media backend. Pinned to a >=7-day-old release; 1.153+
@@ -37,6 +38,18 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
     "gif",
 ] }
+# SMTP transport for the epic-22 `EmailSend` job (replaces the stub).
+lettre = { version = "0.11", default-features = false, features = [
+    "smtp-transport",
+    "builder",
+    "tokio1",
+    "tokio1-rustls",
+    "aws-lc-rs",
+    "rustls-native-certs",
+] }
+# VAPID keypair generation for the admin "generate keys" action (epic
+# 22; push delivery itself lands in a later epic).
+p256 = { version = "0.14", features = ["ecdsa", "arithmetic", "getrandom"] }
 pubby-sdk = { version = "0.6", features = ["axum", "redis", "async"] }
 redis = "0.27"
 rsa = "0.9"

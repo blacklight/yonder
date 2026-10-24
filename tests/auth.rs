@@ -909,10 +909,10 @@ async fn instance_endpoint() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["registrations"]["enabled"], true);
     assert_eq!(body["registrations"]["approval_required"], false);
-    assert_eq!(body["uri"], env.state.config.instance.domain);
+    assert_eq!(body["uri"], env.state.config().instance.domain);
     assert_eq!(
         body["configuration"]["media_attachments"]["image_size_limit"],
-        env.state.config.media.max_upload_size
+        env.state.config().media.max_upload_size
     );
     register_user(&env.app, "kevin", "k@x.com").await;
     let (status, body) = request(&env.app, json_req("GET", "/api/v1/instance", json!({}))).await;

@@ -26,7 +26,7 @@ use crate::{
     )
 )]
 pub async fn list(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:statuses")?;
+    require_scope(&state.config(), &auth, "read:statuses")?;
     let ctx = PostContext::new(&state);
     let rows = scheduled::list(&ctx, auth.account_id).await?;
     let mut out = Vec::with_capacity(rows.len());
@@ -52,7 +52,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:statuses")?;
+    require_scope(&state.config(), &auth, "read:statuses")?;
     let ctx = PostContext::new(&state);
     match scheduled::load(&ctx, id).await? {
         Some(row) if row.account_id == auth.account_id => {
@@ -82,7 +82,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let scheduled_at = body
         .get("scheduled_at")
         .and_then(|v| v.as_str())
@@ -111,7 +111,7 @@ pub async fn cancel(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     scheduled::cancel(&ctx, auth.account_id, id).await?;
     Ok(Json(serde_json::json!({})))

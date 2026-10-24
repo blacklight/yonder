@@ -90,7 +90,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -263,7 +263,7 @@ async fn run_fanout(state: &AppState, status_id: i64) {
     let ctx = JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     };
     TimelineFanOutJob
@@ -276,7 +276,7 @@ async fn run_backfill(state: &AppState, follower: i64, followee: i64) {
     let ctx = JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     };
     TimelineFanOutJob
@@ -998,7 +998,7 @@ async fn redis_outage_falls_back_to_sql() {
         fanout::read_home(
             &env.state.db,
             &env.state.redis,
-            &env.state.config.timelines,
+            &env.state.config().timelines,
             &filters,
             &page,
         ),
@@ -1185,7 +1185,7 @@ async fn existing_index_empty_window_not_repopulated() {
     let rows = fanout::read_home(
         &env.state.db,
         &env.state.redis,
-        &env.state.config.timelines,
+        &env.state.config().timelines,
         &filters,
         &page,
     )
@@ -1238,7 +1238,7 @@ async fn cold_index_repopulates_and_trims() {
     let rows = fanout::read_home(
         &env.state.db,
         &env.state.redis,
-        &env.state.config.timelines,
+        &env.state.config().timelines,
         &filters,
         &page,
     )

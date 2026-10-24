@@ -46,7 +46,7 @@ pub async fn tags_trending(
         .get("limit")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(10)
-        .clamp(1, state.config.timelines.trends_max_limit as i64);
+        .clamp(1, state.config().timelines.trends_max_limit as i64);
     let offset = params
         .get("offset")
         .and_then(|s| s.parse::<i64>().ok())
@@ -54,7 +54,7 @@ pub async fn tags_trending(
         .max(0);
 
     let rows =
-        tags::trends::trending(&state.db, &state.cache, &state.config.timelines, period).await?;
+        tags::trends::trending(&state.db, &state.cache, &state.config().timelines, period).await?;
     let page: Vec<&tags::trends::TrendRow> = rows
         .iter()
         .skip(offset as usize)
@@ -65,7 +65,7 @@ pub async fn tags_trending(
         &state.db,
         &ids,
         7,
-        state.config.timelines.trends_include_remote,
+        state.config().timelines.trends_include_remote,
     )
     .await?;
 

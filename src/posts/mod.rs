@@ -81,7 +81,7 @@ impl PostContext {
             db: state.db.clone(),
             redis: state.redis.clone(),
             dispatcher: state.dispatcher.clone(),
-            config: state.config.clone(),
+            config: state.config().clone(),
             media: state.media.clone(),
             ap: state.ap.clone(),
             bus: state.bus.clone(),

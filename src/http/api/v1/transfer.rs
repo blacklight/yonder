@@ -68,12 +68,12 @@ pub async fn create_export(
     Json(params): Json<ExportParams>,
 ) -> Result<Response> {
     let kind = Kind::parse(&params.kind)?;
-    require_scope(&state.config, &auth, "read:accounts")?;
-    require_scope(&state.config, &auth, kind.read_scope())?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, kind.read_scope())?;
     if kind != Kind::Archive {
         let (name, content_type, bytes) = transfer::export_kind(
             &state.db,
-            &state.config.instance.domain,
+            &state.config().instance.domain,
             auth.account_id,
             kind,
         )
@@ -142,7 +142,7 @@ pub async fn list_exports(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let rows = sqlx::query(
         "SELECT * FROM archive_exports WHERE account_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
@@ -168,7 +168,7 @@ pub async fn get_export(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let row = sqlx::query("SELECT * FROM archive_exports WHERE id = $1 AND account_id = $2")
         .bind(id)
         .bind(auth.account_id)
@@ -196,7 +196,7 @@ pub async fn download_export(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let row = sqlx::query(
         "SELECT state, file_key, expires_at FROM archive_exports \
          WHERE id = $1 AND account_id = $2",
@@ -261,11 +261,11 @@ pub async fn create_import(
     auth: AuthContext,
     mut multipart: Multipart,
 ) -> Result<(StatusCode, Json<Value>)> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let mut kind = None;
     let mut mode = "merge".to_string();
     let mut file: Option<Vec<u8>> = None;
-    let max = state.config.admin.max_import_size;
+    let max = state.config().admin.max_import_size;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -305,7 +305,7 @@ pub async fn create_import(
             kind.as_str()
         )));
     }
-    require_scope(&state.config, &auth, kind.write_scope())?;
+    require_scope(&state.config(), &auth, kind.write_scope())?;
     let bytes = file.ok_or_else(|| Error::Validation("file is required".into()))?;
     // Sniff the format before queueing: a zip for `archive`, anything
     // else must be a plausible text file.
@@ -352,7 +352,7 @@ pub async fn list_imports(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let rows = sqlx::query(
         "SELECT * FROM archive_imports WHERE account_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
@@ -378,7 +378,7 @@ pub async fn get_import(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     let row = sqlx::query("SELECT * FROM archive_imports WHERE id = $1 AND account_id = $2")
         .bind(id)
         .bind(auth.account_id)

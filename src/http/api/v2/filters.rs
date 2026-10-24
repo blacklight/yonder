@@ -239,7 +239,7 @@ fn status_id_from(pairs: &[(String, String)], json: &Value) -> Result<i64> {
     )
 )]
 pub async fn list(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:filters")?;
+    require_scope(&state.config(), &auth, "read:filters")?;
     let filters = model::list(&state.db, auth.account_id).await?;
     let mut out = Vec::with_capacity(filters.len());
     for f in &filters {
@@ -268,7 +268,7 @@ pub async fn create(
     auth: AuthContext,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     let (pairs, json) = body_pairs(request).await?;
     let body = filter_body_from(&pairs, &json)?;
     let keywords: Vec<(String, bool)> = body
@@ -282,10 +282,10 @@ pub async fn create(
             )
         })
         .collect();
-    if keywords.len() as u32 > state.config.content.max_filter_keywords {
+    if keywords.len() as u32 > state.config().content.max_filter_keywords {
         return Err(crate::Error::Validation(format!(
             "at most {} keywords per filter",
-            state.config.content.max_filter_keywords
+            state.config().content.max_filter_keywords
         )));
     }
     // Soft cap: check-then-insert — two racing creates can each
@@ -295,10 +295,10 @@ pub async fn create(
         .bind(auth.account_id)
         .fetch_one(&state.db)
         .await?;
-    if count >= state.config.content.max_filters as i64 {
+    if count >= state.config().content.max_filters as i64 {
         return Err(crate::Error::Validation(format!(
             "at most {} filters per account",
-            state.config.content.max_filters
+            state.config().content.max_filters
         )));
     }
     let row = model::create(
@@ -331,7 +331,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:filters")?;
+    require_scope(&state.config(), &auth, "read:filters")?;
     let row = model::get(&state.db, auth.account_id, id).await?;
     with_children(&state.db, auth.account_id, &row).await
 }
@@ -354,7 +354,7 @@ pub async fn update(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     let (pairs, json) = body_pairs(request).await?;
     let body = filter_body_from(&pairs, &json)?;
     let row = model::update(
@@ -386,7 +386,7 @@ pub async fn delete_filter(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     model::delete(&state.db, auth.account_id, id).await?;
     Ok(Json(Value::Object(Default::default())))
 }
@@ -407,7 +407,7 @@ pub async fn keywords(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:filters")?;
+    require_scope(&state.config(), &auth, "read:filters")?;
     let kws = model::keywords(&state.db, auth.account_id, id).await?;
     Ok(Json(Value::Array(
         kws.iter().map(entity::keyword_entity).collect(),
@@ -433,7 +433,7 @@ pub async fn add_keyword(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     let (pairs, json) = body_pairs(request).await?;
     let body = keyword_attr_from(&pairs, &json)?;
     let row = model::add_keyword(
@@ -442,7 +442,7 @@ pub async fn add_keyword(
         id,
         &body.keyword.unwrap_or_default(),
         body.whole_word.unwrap_or(true),
-        state.config.content.max_filter_keywords,
+        state.config().content.max_filter_keywords,
     )
     .await?;
     Ok(Json(entity::keyword_entity(&row)))
@@ -464,7 +464,7 @@ pub async fn show_keyword(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:filters")?;
+    require_scope(&state.config(), &auth, "read:filters")?;
     let row = model::get_keyword(&state.db, auth.account_id, id).await?;
     Ok(Json(entity::keyword_entity(&row)))
 }
@@ -487,7 +487,7 @@ pub async fn update_keyword(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     let (pairs, json) = body_pairs(request).await?;
     let body = keyword_attr_from(&pairs, &json)?;
     let row = model::update_keyword(
@@ -517,7 +517,7 @@ pub async fn delete_keyword(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     model::delete_keyword(&state.db, auth.account_id, id).await?;
     Ok(Json(Value::Object(Default::default())))
 }
@@ -538,7 +538,7 @@ pub async fn statuses(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:filters")?;
+    require_scope(&state.config(), &auth, "read:filters")?;
     let pins = model::pinned_statuses(&state.db, auth.account_id, id).await?;
     Ok(Json(Value::Array(
         pins.iter()
@@ -565,7 +565,7 @@ pub async fn add_status(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     let (pairs, json) = body_pairs(request).await?;
     let status_id = status_id_from(&pairs, &json)?;
     // The pinned status must exist and be visible to the filter
@@ -597,7 +597,7 @@ pub async fn delete_status(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:filters")?;
+    require_scope(&state.config(), &auth, "write:filters")?;
     model::unpin_status(&state.db, auth.account_id, id).await?;
     Ok(Json(Value::Object(Default::default())))
 }

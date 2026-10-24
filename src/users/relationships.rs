@@ -27,6 +27,11 @@ use crate::{
 /// Everything the relationship writers need — a pool, the effective
 /// config and, when federation is enabled, the AP context used to
 /// publish `Follow`/`Undo` and fetch remote actors.
+///
+/// `config` stays a borrow: `Copy` callers rely on it. With epic 22's
+/// hot-swappable `AppState` config there is no `&'a Config` inside
+/// state — callers bind a snapshot (`let cfg = state.config();`) and
+/// lend it here via [`Ctx::for_parts`].
 #[derive(Clone, Copy)]
 pub struct Ctx<'a> {
     /// PostgreSQL pool.
@@ -40,13 +45,11 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    /// Build a context from HTTP state.
-    pub fn from_state(state: &'a crate::http::AppState) -> Self {
-        Ctx {
-            db: &state.db,
-            config: &state.config,
-            ap: state.ap.as_ref(),
-        }
+    /// Build a context from its parts. HTTP callers snapshot the config
+    /// first (`let config = state.config();`) — `AppState` no longer
+    /// exposes a `&Config` borrow.
+    pub fn for_parts(db: &'a PgPool, config: &'a Config, ap: Option<&'a ApContext>) -> Self {
+        Ctx { db, config, ap }
     }
 
     /// Build a context from a job context and the handler's AP context.

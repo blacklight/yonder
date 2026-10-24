@@ -8,7 +8,11 @@
 pub mod account_management;
 pub mod accounts;
 pub mod admin_actions;
+pub mod admin_audit;
 pub mod admin_domain_blocks;
+pub mod admin_email;
+pub mod admin_relays;
+pub mod admin_settings;
 pub mod apps;
 pub mod blocks;
 pub mod custom_emojis;
@@ -63,7 +67,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/accounts/update_credentials",
             axum::routing::patch(accounts::update_credentials).route_layer(
                 tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.media.max_avatar_size as usize * 2 + 64 * 1024,
+                    state.config().media.max_avatar_size as usize * 2 + 64 * 1024,
                 ),
             ),
         )
@@ -165,7 +169,31 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/admin/accounts/{id}/{verb}",
             post(admin_actions::reverse),
         )
+        // Epic 22 — admin account-hygiene actions (reset links).
+        .route(
+            "/api/v1/admin/accounts/{id}/reset_password",
+            post(admin_actions::reset_password),
+        )
+        .route(
+            "/api/v1/admin/accounts/{id}/email_reset",
+            post(admin_actions::email_reset),
+        )
         .route("/api/v1/admin/accounts/{id}", get(admin_actions::show))
+        // Epic 22 — audit log reader.
+        .route("/api/v1/admin/audit_log", get(admin_audit::list))
+        // Epic 22 — relays (manual accept, no Follow handshake).
+        .route(
+            "/api/v1/admin/relays",
+            post(admin_relays::create).get(admin_relays::list),
+        )
+        .route(
+            "/api/v1/admin/relays/{id}/authorize",
+            post(admin_relays::authorize),
+        )
+        .route(
+            "/api/v1/admin/relays/{id}",
+            axum::routing::delete(admin_relays::remove),
+        )
         // Epic 21 — domain blocks (instance moderation).
         .route(
             "/api/v1/admin/domain_blocks",
@@ -182,6 +210,34 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/yonder/settings",
             get(settings::get_settings).patch(settings::patch_settings),
+        )
+        // Epic 22 — Yonder-specific admin surfaces: config overlays,
+        // frontend selection, VAPID keys, mail templates.
+        .route(
+            "/api/v1/yonder/admin/settings",
+            get(admin_settings::list_settings),
+        )
+        .route(
+            "/api/v1/yonder/admin/settings/{key}",
+            get(admin_settings::show_setting)
+                .put(admin_settings::set_setting)
+                .delete(admin_settings::reset_setting),
+        )
+        .route(
+            "/api/v1/yonder/admin/frontend",
+            get(admin_settings::get_frontend).put(admin_settings::set_frontend),
+        )
+        .route(
+            "/api/v1/yonder/admin/webpush/generate_keys",
+            post(admin_settings::generate_webpush_keys),
+        )
+        .route(
+            "/api/v1/yonder/admin/email_templates/{kind}",
+            get(admin_email::get_template).put(admin_email::put_template),
+        )
+        .route(
+            "/api/v1/yonder/admin/email/test",
+            post(admin_email::send_test),
         )
         // Account management (epic 11).
         .route(
@@ -219,7 +275,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/imports",
             post(transfer::create_import)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.admin.max_import_size as usize + 64 * 1024,
+                    state.config().admin.max_import_size as usize + 64 * 1024,
                 ))
                 .get(transfer::list_imports),
         )
@@ -241,7 +297,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/media",
             axum::routing::post(media::upload)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.media.max_upload_size as usize + 64 * 1024,
+                    state.config().media.max_upload_size as usize + 64 * 1024,
                 ))
                 .route_layer(ratelimit::layer(state, "media")),
         )
@@ -500,7 +556,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/admin/emojis",
             post(emoji_admin::create)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.media.max_emoji_size as usize + 64 * 1024,
+                    state.config().media.max_emoji_size as usize + 64 * 1024,
                 ))
                 .get(emoji_admin::list)
                 .route_layer(ratelimit::layer(state, "media")),
@@ -509,7 +565,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/admin/emojis/import_zip",
             post(emoji_admin::import_zip)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.media.max_emoji_zip_uncompressed as usize + 64 * 1024,
+                    state.config().media.max_emoji_zip_uncompressed as usize + 64 * 1024,
                 ))
                 .route_layer(ratelimit::layer(state, "media")),
         )
@@ -702,6 +758,23 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     admin_actions::reverse,
     admin_actions::set_role,
     admin_actions::show,
+    admin_actions::reset_password,
+    admin_actions::email_reset,
+    admin_audit::list,
+    admin_relays::list,
+    admin_relays::create,
+    admin_relays::authorize,
+    admin_relays::remove,
+    admin_settings::list_settings,
+    admin_settings::show_setting,
+    admin_settings::set_setting,
+    admin_settings::reset_setting,
+    admin_settings::get_frontend,
+    admin_settings::set_frontend,
+    admin_settings::generate_webpush_keys,
+    admin_email::get_template,
+    admin_email::put_template,
+    admin_email::send_test,
     admin_domain_blocks::create,
     admin_domain_blocks::list,
     admin_domain_blocks::show,

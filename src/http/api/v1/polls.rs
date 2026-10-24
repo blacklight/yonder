@@ -64,7 +64,7 @@ pub async fn vote(
     Path(id): Path<i64>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let choices: Vec<i64> = body
         .get("choices")

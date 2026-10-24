@@ -26,8 +26,9 @@ pub async fn block(state: &AppState, caller_id: i64, target_id: i64) -> Result<(
     }
     let changed = relationships::block(&state.db, caller_id, target_id).await?;
 
-    if state.config.admin.unfollow_blocked {
-        let ctx = Ctx::from_state(state);
+    if state.config().admin.unfollow_blocked {
+        let cfg = state.config();
+        let ctx = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
         relationships::unfollow(ctx, caller_id, target_id).await?;
         relationships::unfollow(ctx, target_id, caller_id).await?;
     }

@@ -24,7 +24,8 @@ pub async fn follow(
     target_id: i64,
     opts: FollowOpts,
 ) -> Result<FollowOutcome> {
-    let ctx = Ctx::from_state(state);
+    let cfg = state.config();
+    let ctx = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     let outcome = relationships::follow(ctx, follower_id, target_id, opts).await?;
     let kind = match outcome {
         FollowOutcome::Following => Some("follow"),
@@ -52,7 +53,8 @@ pub async fn follow(
 
 /// Unfollow `target_id`; returns whether a row was removed.
 pub async fn unfollow(state: &AppState, follower_id: i64, target_id: i64) -> Result<bool> {
-    let ctx = Ctx::from_state(state);
+    let cfg = state.config();
+    let ctx = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     relationships::unfollow(ctx, follower_id, target_id).await
 }
 
@@ -60,7 +62,8 @@ pub async fn unfollow(state: &AppState, follower_id: i64, target_id: i64) -> Res
 /// `user@domain` handle, bare local username or actor URL — then
 /// follow. Returns the target's `accounts.id`.
 pub async fn follow_by_uri(state: &AppState, follower_id: i64, uri: &str) -> Result<i64> {
-    let ctx = Ctx::from_state(state);
+    let cfg = state.config();
+    let ctx = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     let target_id = relationships::resolve_account(ctx, uri).await?;
     follow(state, follower_id, target_id, FollowOpts::default()).await?;
     Ok(target_id)

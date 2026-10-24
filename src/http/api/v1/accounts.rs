@@ -104,9 +104,9 @@ async fn credential_account(
         .await?
         .ok_or_else(|| Error::NotFound("account".into()))?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
-    let base_url = crate::activitypub::federation_base_url(&state.config);
+    let base_url = crate::activitypub::federation_base_url(&state.config());
     let mut entity =
-        account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?;
+        account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?;
     entity["source"] = json!({
         "privacy": settings::public_visibility(&user_settings.default_visibility),
         "sensitive": user_settings.default_sensitive,
@@ -114,7 +114,7 @@ async fn credential_account(
             user_settings.default_language.as_deref(),
             user_settings.locale.as_deref(),
             accept_language,
-            &state.config,
+            &state.config(),
         ),
         "note": account.bio.clone().unwrap_or_default(),
         "fields": account_mapper::source_fields(&account.profile_fields),
@@ -123,7 +123,7 @@ async fn credential_account(
     // not inside `source`.
     entity["hide_collections"] = json!(user_settings.hide_network);
     entity["indexable"] = json!(user_settings.indexable);
-    entity["yonder"]["settings"] = user_settings.yonder_json(&state.config, accept_language);
+    entity["yonder"]["settings"] = user_settings.yonder_json(&state.config(), accept_language);
     Ok(Json(entity))
 }
 
@@ -150,7 +150,7 @@ pub async fn update_credentials(
     auth: AuthContext,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let accept_language = settings::accept_language(request.headers());
     let params = profile::parse_request(&state, request).await?;
     profile::update_profile(&state, &auth, params).await?;
@@ -323,9 +323,9 @@ pub async fn get_account(
 ) -> Result<Json<Value>> {
     let account = load_public_account(&state, id).await?;
     maybe_refresh_remote(&state, &account).await;
-    let base_url = crate::activitypub::federation_base_url(&state.config);
+    let base_url = crate::activitypub::federation_base_url(&state.config());
     let mut entity =
-        account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?;
+        account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?;
     let last_status: Option<chrono::NaiveDate> = sqlx::query_scalar(
         "SELECT max(created_at)::date FROM statuses \
          WHERE account_id = $1 AND NOT tombstone",
@@ -370,7 +370,7 @@ pub async fn account_statuses(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:statuses")?;
+        require_scope(&state.config(), a, "read:statuses")?;
     }
     let account = load_public_account(&state, id).await?;
     let scope = TimelineScope::Account {

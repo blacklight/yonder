@@ -20,6 +20,6 @@ use crate::{emoji::entity::public_list, http::AppState, posts::PostContext, Resu
 )]
 pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let ctx = PostContext::new(&state);
-    let rows = public_list(&state.db, &state.config, &ctx.base_url()).await?;
+    let rows = public_list(&state.db, &state.config(), &ctx.base_url()).await?;
     Ok(Json(Value::Array(rows)))
 }

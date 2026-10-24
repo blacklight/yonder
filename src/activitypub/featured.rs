@@ -71,7 +71,7 @@ async fn serve_featured_inner(
     // (`/Alice` vs `/alice`) must share one key so invalidation hits.
     let username = account.get::<String, _>("username");
 
-    if state.config.federation.authorized_fetch {
+    if state.config().federation.authorized_fetch {
         let signer = super::posts::verify_signature(state, ap, &username, headers, uri).await;
         if signer.is_none() {
             return Err(Error::Unauthorized);

@@ -252,7 +252,7 @@ fn attributed_to(object: &Value) -> Option<String> {
 
 /// Whether `parsed` points at this instance's federation host.
 fn is_local_host(state: &AppState, parsed: &url::Url) -> bool {
-    let local_host = url::Url::parse(&federation_base_url(&state.config))
+    let local_host = url::Url::parse(&federation_base_url(&state.config()))
         .ok()
         .and_then(|u| u.host_str().map(str::to_string));
     parsed.host_str() == local_host.as_deref()

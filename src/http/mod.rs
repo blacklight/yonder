@@ -51,8 +51,21 @@ use crate::{
 /// Shared state handed to every route module and middleware.
 #[derive(Clone)]
 pub struct AppState {
-    /// Effective configuration.
-    pub config: Arc<Config>,
+    /// Effective configuration — read snapshots via [`Self::config`].
+    /// Admin-overlay mutations (epic 22) swap a freshly resolved
+    /// `Config` in atomically via [`Self::reload_config`]. Structures
+    /// derived once at startup (the CORS layer, rate-limit layers,
+    /// `MediaStore`, `Dispatcher`, `ApCore`) keep their startup values
+    /// — the admin API marks those keys `requires_restart`.
+    config: Arc<arc_swap::ArcSwap<Config>>,
+    /// The startup-resolved `Config` (defaults → TOML → env), kept so
+    /// [`Self::reload_config`] can re-merge overlays without
+    /// re-reading the filesystem — in-memory adjustments (test
+    /// harnesses, programmatic overrides) survive reloads.
+    base_config: Config,
+    /// Serializes [`Self::reload_config`] so a slower reload cannot
+    /// store an older overlay snapshot after a newer one.
+    reload_lock: Arc<tokio::sync::Mutex<()>>,
     /// Media storage backend (`local`/`s3`) — shared by uploads,
     /// serving and cleanup jobs.
     pub media: crate::media::storage::MediaStore,
@@ -80,7 +93,9 @@ impl AppState {
         AppState {
             cache: RedisCache::new(redis.clone()),
             media,
-            config: Arc::new(config),
+            base_config: config.clone(),
+            reload_lock: Arc::new(tokio::sync::Mutex::new(())),
+            config: Arc::new(arc_swap::ArcSwap::from_pointee(config)),
             db,
             redis,
             dispatcher,
@@ -88,6 +103,38 @@ impl AppState {
             connections: ws::ConnectionRegistry::default(),
             ap: None,
         }
+    }
+
+    /// Snapshot of the effective configuration.
+    ///
+    /// Cheap to call — an `Arc` clone. Callers that re-read per
+    /// request observe overlay changes immediately; callers that
+    /// stash the snapshot (middleware built at startup) do not.
+    pub fn config(&self) -> Arc<Config> {
+        self.config.load_full()
+    }
+
+    /// Resolve `base_config` + `overlays` — the merge
+    /// [`Self::reload_config`] performs. `admin::settings` uses it to
+    /// dry-run a candidate overlay before persisting it.
+    pub fn config_with_overlays(&self, overlays: &[(String, serde_json::Value)]) -> Result<Config> {
+        figment::Figment::new()
+            .merge(figment::providers::Serialized::defaults(
+                serde_json::to_value(&self.base_config).expect("Config is always serializable"),
+            ))
+            .merge(crate::config::overlays::provider(overlays))
+            .extract()
+            .map_err(|e| crate::Error::Config(Box::new(e)))
+    }
+
+    /// Re-resolve `base_config` + `config_overlays` and atomically
+    /// swap the result in. Called after every overlay mutation.
+    pub async fn reload_config(&self) -> Result<()> {
+        let _reload = self.reload_lock.lock().await;
+        let overlays = crate::db::config_overlays::fetch(&self.db).await?;
+        self.config
+            .store(Arc::new(self.config_with_overlays(&overlays)?));
+        Ok(())
     }
 }
 
@@ -126,7 +173,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // `/users/{u}.atom`-style URLs for profiles, tags and lists.
     router = router.merge(crate::feeds::router(&state));
 
-    let router = match cors_layer(&state.config.http) {
+    let router = match cors_layer(&state.config().http) {
         Some(cors) => router.layer(cors),
         None => router,
     };
@@ -225,7 +272,11 @@ pub async fn serve(
     state: Arc<AppState>,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
-    let addr = format!("{}:{}", state.config.server.host, state.config.server.port);
+    let addr = format!(
+        "{}:{}",
+        state.config().server.host,
+        state.config().server.port
+    );
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
     axum::serve(

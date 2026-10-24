@@ -100,7 +100,7 @@ pub async fn serve(state: Arc<AppState>, req: Request) -> Response {
         Err(resp) => return *resp,
     };
     let options = DispatchOptions {
-        authorized_fetch: state.config.federation.authorized_fetch,
+        authorized_fetch: state.config().federation.authorized_fetch,
         document_cache: Some(ap.core.doc_cache.clone()),
         // Pubby's rate limiter stays off — it only ever sees GETs (the
         // POST inboxes are our own routes behind the named bucket).

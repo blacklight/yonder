@@ -47,7 +47,7 @@ pub async fn block(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:blocks")?;
+    require_scope(&state.config(), &auth, "write:blocks")?;
     follows::visible_target(&state.db, id).await?;
     blocks::block(&state, auth.account_id, id).await?;
     Ok(Json(
@@ -55,7 +55,7 @@ pub async fn block(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -78,14 +78,14 @@ pub async fn unblock(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:blocks")?;
+    require_scope(&state.config(), &auth, "write:blocks")?;
     blocks::unblock(&state, auth.account_id, id).await?;
     Ok(Json(
         entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -110,7 +110,7 @@ pub async fn mute(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:mutes")?;
+    require_scope(&state.config(), &auth, "write:mutes")?;
     let params = body_params(request).await?;
     let notifications = super::relationships::bool_param(&params, "notifications").unwrap_or(true);
     // `duration <= 0` (and absent) means indefinite — Mastodon's rule.
@@ -124,7 +124,7 @@ pub async fn mute(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -147,14 +147,14 @@ pub async fn unmute(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:mutes")?;
+    require_scope(&state.config(), &auth, "write:mutes")?;
     blocks::unmute(&state, auth.account_id, id).await?;
     Ok(Json(
         entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -176,7 +176,7 @@ pub async fn blocked(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:blocks")?;
+    require_scope(&state.config(), &auth, "read:blocks")?;
     let page = paginate::parse(&params);
     let rows = blocks::blocked_list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -202,7 +202,7 @@ pub async fn muted(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:mutes")?;
+    require_scope(&state.config(), &auth, "read:mutes")?;
     let page = paginate::parse(&params);
     let rows = blocks::muted_list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -228,7 +228,7 @@ pub async fn domain_blocks(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:blocks")?;
+    require_scope(&state.config(), &auth, "read:blocks")?;
     let page = paginate::parse(&params);
     let rows = blocks::domain_list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -254,7 +254,7 @@ pub async fn block_domain(
     Query(params): Query<HashMap<String, String>>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:blocks")?;
+    require_scope(&state.config(), &auth, "write:blocks")?;
     let domain = domain_param(request, &params).await?;
     blocks::block_domain(&state, auth.account_id, &domain).await?;
     Ok(Json(json!({})))
@@ -276,7 +276,7 @@ pub async fn unblock_domain(
     Query(params): Query<HashMap<String, String>>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:blocks")?;
+    require_scope(&state.config(), &auth, "write:blocks")?;
     let domain = domain_param(request, &params).await?;
     blocks::unblock_domain(&state, auth.account_id, &domain).await?;
     Ok(Json(json!({})))

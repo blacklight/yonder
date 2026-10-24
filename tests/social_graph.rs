@@ -84,7 +84,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -314,7 +314,7 @@ async fn follow_roundtrip_flags_and_unfollow() {
         "POST",
         "/api/v1/follows",
         Some(&bob),
-        Some(json!({"uri": format!("alice@{}", env.state.config.instance.domain)})),
+        Some(json!({"uri": format!("alice@{}", env.state.config().instance.domain)})),
     )
     .await;
     assert_eq!(code, StatusCode::OK, "{acct}");
@@ -864,7 +864,7 @@ async fn inbound_follow_and_block_arms() {
     let ctx = JobContext {
         db: env.state.db.clone(),
         redis: env.state.redis.clone(),
-        config: env.state.config.clone(),
+        config: env.state.config().clone(),
         media: env.state.media.clone(),
     };
     social::jobs::FollowEventJob

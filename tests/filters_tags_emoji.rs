@@ -85,7 +85,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let mut state = AppState::new(config, pool, redis_handle);
     state.ap = Some(
         activitypub::build(
-            state.config.as_ref(),
+            state.config().as_ref(),
             &state.db,
             &state.redis,
             &dispatcher,

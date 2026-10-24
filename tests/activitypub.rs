@@ -476,7 +476,7 @@ async fn test_state() -> Option<(Arc<AppState>, Containers)> {
     let dispatcher = Dispatcher::new(&redis, &config.jobs);
     let mut state = AppState::new(config, pool, redis);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -498,7 +498,7 @@ fn job_ctx(state: &AppState) -> JobContext {
     JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     }
 }

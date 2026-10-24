@@ -48,7 +48,7 @@ pub async fn action(
     Path(id): Path<i64>,
     Json(body): Json<ActionBody>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:write")?;
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
     let ty = actions::normalize_action_type(&body.ty)
         .ok_or_else(|| Error::Validation(format!("unknown action type {:?}", body.ty)))?;
     if ty == "delete" && auth.role != "admin" {
@@ -73,6 +73,25 @@ pub async fn action(
         body.report_id,
     )
     .await?;
+    // The account-status mail honors `send_email_notification`; the
+    // `email.send_account_status` class flag gates at the job.
+    if body.send_email_notification.unwrap_or(false) {
+        if let Err(e) = state
+            .dispatcher
+            .enqueue(
+                crate::jobs::JobKind::EmailSend,
+                json!({
+                    "kind": "account_status",
+                    "account_id": id,
+                    "status": ty,
+                    "reason": reason,
+                }),
+            )
+            .await
+        {
+            tracing::warn!(error = %e, account_id = id, "account-status email enqueue failed");
+        }
+    }
     Ok(Json(actions::admin_account_entity(&state.db, id).await?))
 }
 
@@ -106,7 +125,7 @@ pub async fn reverse(
     auth: AuthContext,
     Path((id, verb)): Path<(i64, String)>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:write")?;
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
     if !matches!(
         verb.as_str(),
         "unsilence" | "unsuspend" | "unsensitive" | "enable"
@@ -139,7 +158,7 @@ pub async fn set_role(
     Path(id): Path<i64>,
     Json(body): Json<RoleBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     actions::set_role(&state, auth.account_id, id, &body.role).await?;
     Ok(Json(actions::admin_account_entity(&state.db, id).await?))
 }
@@ -147,6 +166,69 @@ pub async fn set_role(
 #[derive(Deserialize)]
 pub struct RoleBody {
     pub role: String,
+}
+
+/// `POST /api/v1/admin/accounts/{id}/reset_password` — Yonder
+/// extension (epic 22): generate a one-time reset link, returned in
+/// the response *and* mailed to the user when the
+/// `email.send_password_reset` class flag is on. The token is a
+/// Redis one-time secret (`password-reset` domain, 2 h TTL).
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts/{id}/reset_password",
+    tag = "admin",
+    params(("id" = i64, Path)),
+    responses(
+        (status = 200, description = "`reset_url` for the admin"),
+        (status = 403, description = "Moderator targeting an admin or moderator", body = crate::error::ErrorBody),
+        (status = 404, description = "No such account", body = crate::error::ErrorBody),
+        (status = 422, description = "Remote, suspended or deleted account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
+    if id == auth.account_id {
+        return Err(Error::Validation(
+            "cannot take moderation actions on your own account".into(),
+        ));
+    }
+    let url = actions::reset_link(&state, auth.account_id, &auth.role, id, "when_enabled").await?;
+    Ok(Json(json!({ "reset_url": url })))
+}
+
+/// `POST /api/v1/admin/accounts/{id}/email_reset` — like
+/// `reset_password` but the link is *always* emailed (the admin's
+/// explicit intent bypasses the class flag) and the response only
+/// confirms the send.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts/{id}/email_reset",
+    tag = "admin",
+    params(("id" = i64, Path)),
+    responses(
+        (status = 200, description = "`sent: true`"),
+        (status = 403, description = "Moderator targeting an admin or moderator", body = crate::error::ErrorBody),
+        (status = 404, description = "No such account", body = crate::error::ErrorBody),
+        (status = 422, description = "Remote, suspended or deleted account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn email_reset(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
+    if id == auth.account_id {
+        return Err(Error::Validation(
+            "cannot take moderation actions on your own account".into(),
+        ));
+    }
+    actions::reset_link(&state, auth.account_id, &auth.role, id, "always").await?;
+    Ok(Json(json!({ "sent": true })))
 }
 
 /// `GET /api/v1/admin/accounts/{id}` — the moderation-state view.
@@ -166,7 +248,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_moderator_scope(&state.config, &auth, "admin:read")?;
+    require_moderator_scope(&state.config(), &auth, "admin:read")?;
     let entity = actions::admin_account_entity(&state.db, id).await?;
     Ok(Json(json!(entity)))
 }

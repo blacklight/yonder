@@ -119,13 +119,13 @@ pub async fn home(
     uri: Uri,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:statuses")?;
+    require_scope(&state.config(), &auth, "read:statuses")?;
     let page = paginate::parse(&params);
     let (filters, rules) = filters(&state, Some(&auth), &params, FilterContext::Home).await?;
     let rows = timelines::fanout::read_home(
         &state.db,
         &state.redis,
-        &state.config.timelines,
+        &state.config().timelines,
         &filters,
         &page,
     )
@@ -170,7 +170,7 @@ pub async fn public(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:statuses")?;
+        require_scope(&state.config(), a, "read:statuses")?;
     }
     let scope = if truthy(&params, "local") {
         TimelineScope::Local
@@ -223,7 +223,7 @@ pub async fn list_timeline(
     uri: Uri,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let list = social::lists::get_owned(&state.db, auth.account_id, list_id).await?;
     let scope = TimelineScope::List {
         list_id: list.id,
@@ -272,7 +272,7 @@ pub async fn tag(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:statuses")?;
+        require_scope(&state.config(), a, "read:statuses")?;
     }
     let page = paginate::parse(&params);
     let (filters, rules) = filters(&state, auth.0.as_ref(), &params, FilterContext::Public).await?;

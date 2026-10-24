@@ -23,7 +23,7 @@ use crate::{
 /// Shared renderer — one row → entity.
 fn entity_of(state: &Arc<AppState>, row: &model::EmojiRow) -> Value {
     let ctx = PostContext::new(state);
-    emoji_entity(&state.config, &ctx.base_url(), row)
+    emoji_entity(&state.config(), &ctx.base_url(), row)
 }
 
 /// The per-entry outcome report shared by both import endpoints.
@@ -35,7 +35,7 @@ fn import_report(state: &Arc<AppState>, outcomes: &[import::ImportOutcome]) -> V
         "skipped": outcomes.iter().filter(|o| o.result.is_err()).count(),
         "results": outcomes.iter().map(|o| {
             match &o.result {
-                Ok(row) => json!({ "name": o.name, "ok": true, "emoji": emoji_entity(&state.config, &base, row) }),
+                Ok(row) => json!({ "name": o.name, "ok": true, "emoji": emoji_entity(&state.config(), &base, row) }),
                 Err(msg) => json!({ "name": o.name, "ok": false, "error": msg }),
             }
         }).collect::<Vec<_>>(),
@@ -61,7 +61,7 @@ pub async fn create(
     auth: AuthContext,
     mut mp: Multipart,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let mut file: Option<Vec<u8>> = None;
     let mut shortcode = None;
     let mut pack_id = None;
@@ -101,7 +101,7 @@ pub async fn create(
     let row = model::create_local(
         &state.db,
         &state.media,
-        &state.config,
+        &state.config(),
         &shortcode,
         bytes,
         auth.account_id,
@@ -128,7 +128,7 @@ pub async fn list(
     auth: AuthContext,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let pack_id = params.get("pack_id").and_then(|s| s.parse::<i64>().ok());
     let include_disabled = params
         .get("include_disabled")
@@ -156,7 +156,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     Ok(Json(entity_of(&state, &model::get(&state.db, id).await?)))
 }
 
@@ -182,7 +182,7 @@ pub async fn update(
     Path(id): Path<i64>,
     Json(body): Json<model::EmojiPatch>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let row = model::update(&state.db, id, body).await?;
     Ok(Json(entity_of(&state, &row)))
 }
@@ -204,7 +204,7 @@ pub async fn delete_emoji(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     model::delete(&state.db, &state.media, id).await?;
     Ok(Json(Value::Object(Default::default())))
 }
@@ -226,7 +226,7 @@ pub async fn import_zip(
     auth: AuthContext,
     mut mp: Multipart,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let mut file: Option<Vec<u8>> = None;
     let mut pack_id = None;
     let mut overwrite = false;
@@ -271,7 +271,7 @@ pub async fn import_zip(
     let outcomes = import::import_zip(
         &state.db,
         &state.media,
-        &state.config,
+        &state.config(),
         bytes,
         auth.account_id,
         pack_id,
@@ -306,14 +306,14 @@ pub async fn import_dir(
     auth: AuthContext,
     Json(body): Json<ImportDirBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     if let Some(p) = body.pack_id {
         model::get_pack(&state.db, p).await?;
     }
     let outcomes = import::from_dir(
         &state.db,
         &state.media,
-        &state.config,
+        &state.config(),
         &body.from_dir,
         auth.account_id,
         body.pack_id,
@@ -333,7 +333,7 @@ pub async fn list_packs(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let packs = model::list_packs(&state.db).await?;
     Ok(Json(json!(packs
         .iter()
@@ -367,7 +367,7 @@ pub async fn create_pack(
     auth: AuthContext,
     Json(body): Json<PackBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let p = model::create_pack(&state.db, &body.name).await?;
     Ok(Json(json!({ "id": p.id.to_string(), "name": p.name })))
 }
@@ -390,7 +390,7 @@ pub async fn update_pack(
     Path(id): Path<i64>,
     Json(body): Json<PackBody>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     let p = model::update_pack(&state.db, id, &body.name).await?;
     Ok(Json(json!({ "id": p.id.to_string(), "name": p.name })))
 }
@@ -412,7 +412,7 @@ pub async fn delete_pack(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "admin")?;
+    require_scope(&state.config(), &auth, "admin")?;
     model::delete_pack(&state.db, id).await?;
     Ok(Json(Value::Object(Default::default())))
 }

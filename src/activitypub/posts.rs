@@ -439,7 +439,7 @@ async fn serve_object_inner(
         // 404, never 401 — don't reveal the object exists.
         return Err(Error::NotFound("status".into()));
     }
-    if public_doc && state.config.federation.authorized_fetch && signer.is_none() {
+    if public_doc && state.config().federation.authorized_fetch && signer.is_none() {
         return Err(Error::Unauthorized);
     }
 

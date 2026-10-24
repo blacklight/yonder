@@ -46,8 +46,8 @@ pub async fn create_invite(
     auth: AuthContext,
     Json(params): Json<CreateInviteParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
-    if !invites::may_create(&state.config, &auth.role) {
+    require_scope(&state.config(), &auth, "write:accounts")?;
+    if !invites::may_create(&state.config(), &auth.role) {
         return Err(crate::Error::Forbidden);
     }
     if params.expires_at.is_some() && params.expires_in.is_some() {
@@ -84,7 +84,7 @@ pub async fn list_invites(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:accounts")?;
+    require_scope(&state.config(), &auth, "read:accounts")?;
     Ok(Json(Value::Array(
         invites::list(&state, auth.account_id).await?,
     )))
@@ -107,7 +107,7 @@ pub async fn revoke_invite(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let staff = matches!(auth.role.as_str(), "admin" | "moderator");
     invites::revoke(&state, auth.account_id, staff, id).await?;
     Ok(Json(serde_json::json!({ "ok": true })))

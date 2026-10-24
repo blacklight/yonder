@@ -201,10 +201,16 @@ smtp_port = 587
 # smtp_username = "yonder@example.com"
 # Prefer YONDER_EMAIL__SMTP_PASSWORD.
 # smtp_password = ""
+# With smtp_tls = false, smtp credentials are sent unencrypted; a
+# warning is logged when the transport is built.
 smtp_tls = true
 from_address = "yonder@example.com"
-# Send a welcome email to newly registered users.
+# Per-class send toggles — welcome on signup, address verification,
+# password reset, and moderation account-status notices.
 send_welcome = true
+send_verification = true
+send_password_reset = true
+send_account_status = true
 
 [search]
 # Allow unauthenticated users to search.

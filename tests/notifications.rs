@@ -92,7 +92,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -218,7 +218,7 @@ fn job_ctx(env: &Env) -> JobContext {
     JobContext {
         db: env.state.db.clone(),
         redis: env.state.redis.clone(),
-        config: env.state.config.clone(),
+        config: env.state.config().clone(),
         media: env.state.media.clone(),
     }
 }

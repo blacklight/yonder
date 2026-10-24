@@ -309,7 +309,7 @@ pub async fn fail_pending_login(state: &AppState, mfa_token: &str) -> Result<boo
 pub async fn begin_totp_setup(state: &AppState, user_id: i64) -> Result<Value> {
     // Fail early on misconfiguration — encrypting at confirmation time
     // without the master key would strand the enrollment.
-    totp_aead_key(&state.config)?;
+    totp_aead_key(&state.config())?;
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM two_factor WHERE user_id = $1)")
         .bind(user_id)
         .fetch_one(&state.db)
@@ -331,7 +331,7 @@ pub async fn begin_totp_setup(state: &AppState, user_id: i64) -> Result<Value> {
     let mut secret = [0u8; 20];
     OsRng.fill_bytes(&mut secret);
     let secret_b32 = Secret::from(secret.to_vec()).to_base32();
-    let totp = enrollment_totp_for(&secret, &username, &state.config.instance.domain)?;
+    let totp = enrollment_totp_for(&secret, &username, &state.config().instance.domain)?;
     let otpauth_uri = totp
         .to_url()
         .map_err(|e| Error::Internal(format!("totp url failed: {e}")))?;
@@ -386,7 +386,7 @@ pub async fn confirm_totp(state: &AppState, user_id: i64, code: &str) -> Result<
         ));
     }
 
-    let key = totp_aead_key(&state.config)?;
+    let key = totp_aead_key(&state.config())?;
     let encrypted = encrypt_totp_secret(&key, secret.as_bytes())?;
     let mut tx = state.db.begin().await?;
     sqlx::query(
@@ -416,7 +416,7 @@ pub async fn verify_totp(state: &AppState, user_id: i64, code: &str) -> Result<b
     let Some(stored) = stored else {
         return Ok(false);
     };
-    let secret = match totp_aead_key(&state.config)
+    let secret = match totp_aead_key(&state.config())
         .and_then(|key| decrypt_totp_secret(&key, &stored))
     {
         Ok(secret) => secret,

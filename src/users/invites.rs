@@ -20,7 +20,7 @@ pub fn may_create(config: &Config, role: &str) -> bool {
 fn invite_url(state: &AppState, code: &str) -> String {
     format!(
         "{}/invite/{}",
-        activitypub::federation_base_url(&state.config),
+        activitypub::federation_base_url(&state.config()),
         code
     )
 }

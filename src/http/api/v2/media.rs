@@ -35,7 +35,7 @@ pub async fn upload(
     auth: AuthContext,
     mp: Multipart,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:media")?;
+    require_scope(&state.config(), &auth, "write:media")?;
     crate::http::api::v1::media::upload_inner(&state, &auth, mp).await
 }
 
@@ -55,7 +55,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:statuses")?;
+    require_scope(&state.config(), &auth, "read:statuses")?;
     let ctx = PostContext::new(&state);
     let row = entity::load_media(&ctx, id)
         .await?

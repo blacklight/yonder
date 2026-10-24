@@ -83,7 +83,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -166,8 +166,8 @@ fn ctx(state: &AppState) -> PostContext {
     PostContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        dispatcher: yonder::jobs::Dispatcher::new(&state.redis, &state.config.jobs),
-        config: state.config.clone(),
+        dispatcher: yonder::jobs::Dispatcher::new(&state.redis, &state.config().jobs),
+        config: state.config().clone(),
         media: state.media.clone(),
         ap: state.ap.clone(),
         bus: state.bus.clone(),
@@ -442,7 +442,7 @@ async fn scheduled_status_crud_and_due_guard() {
             &JobContext {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
-                config: env.state.config.clone(),
+                config: env.state.config().clone(),
                 media: env.state.media.clone(),
             },
             &json!({"scheduled_status_id": sid.parse::<i64>().unwrap()}),
@@ -469,7 +469,7 @@ async fn scheduled_status_crud_and_due_guard() {
             &JobContext {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
-                config: env.state.config.clone(),
+                config: env.state.config().clone(),
                 media: env.state.media.clone(),
             },
             &json!({"scheduled_status_id": sid_i}),
@@ -647,7 +647,7 @@ async fn scheduled_deletion_tombstones() {
             &JobContext {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
-                config: env.state.config.clone(),
+                config: env.state.config().clone(),
                 media: env.state.media.clone(),
             },
             &json!({"status_id": id}),
@@ -746,7 +746,7 @@ fn job_ctx(env: &Env) -> JobContext {
     JobContext {
         db: env.state.db.clone(),
         redis: env.state.redis.clone(),
-        config: env.state.config.clone(),
+        config: env.state.config().clone(),
         media: env.state.media.clone(),
     }
 }
@@ -947,7 +947,7 @@ async fn orphan_cleanup_respects_scheduled_reservation() {
             .await
             .unwrap();
     let stored = yonder::media::store_status_media(
-        &env.state.config,
+        &env.state.config(),
         &env.state.media,
         &env.state.db,
         account_id,

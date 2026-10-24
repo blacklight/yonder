@@ -67,8 +67,8 @@ pub struct RawResults {
 /// `search.unauthenticated_enabled`.
 pub fn authorize(state: &AppState, caller: Option<AuthContext>) -> Result<Option<AuthContext>> {
     match &caller {
-        Some(a) => require_scope(&state.config, a, "read:search")?,
-        None if !state.config.search.unauthenticated_enabled => return Err(Error::Unauthorized),
+        Some(a) => require_scope(&state.config(), a, "read:search")?,
+        None if !state.config().search.unauthenticated_enabled => return Err(Error::Unauthorized),
         None => {}
     }
     Ok(caller)
@@ -93,12 +93,12 @@ pub async fn search(
         None => Vec::new(),
     };
     let hide = crate::filters::apply::hide_clause(&rules);
-    let index = index::build_index(&state.config.search);
+    let index = index::build_index(&state.config().search);
     let kind = params::effective_kind(params, params::classify(&params.q));
     let prefix = params::is_prefix_mode(params, &kind);
     let can_resolve = caller.is_some()
         && params.resolve
-        && state.config.search.remote_fetch
+        && state.config().search.remote_fetch
         && state.ap.is_some();
     let wants = |t: SearchType| params.r#type.is_none() || params.r#type == Some(t);
     // Lookups are single-hit: they answer page one only, or every
@@ -210,7 +210,7 @@ pub async fn render(
     let mut accounts = Vec::with_capacity(results.account_ids.len());
     for account in account_mapper::load_many(&state.db, &results.account_ids).await? {
         accounts.push(
-            account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?,
+            account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?,
         );
     }
 

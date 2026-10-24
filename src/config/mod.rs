@@ -585,7 +585,7 @@ impl Default for MediaConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmailConfig {
     /// Outgoing mail server. Unset means email is disabled.
@@ -599,6 +599,13 @@ pub struct EmailConfig {
     pub from_address: String,
     /// Send a welcome email to newly registered users.
     pub send_welcome: bool,
+    /// Send the address-verification email at signup (epic 22).
+    pub send_verification: bool,
+    /// Send password-reset emails (epic 22).
+    pub send_password_reset: bool,
+    /// Email a user when a moderation action changes their account
+    /// status (epic 22).
+    pub send_account_status: bool,
 }
 
 impl Default for EmailConfig {
@@ -611,6 +618,9 @@ impl Default for EmailConfig {
             smtp_tls: true,
             from_address: "yonder@localhost".to_string(),
             send_welcome: true,
+            send_verification: true,
+            send_password_reset: true,
+            send_account_status: true,
         }
     }
 }

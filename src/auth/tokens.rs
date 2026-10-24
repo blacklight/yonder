@@ -74,7 +74,7 @@ pub async fn issue_token_pair(
     let mut tx = state.db.begin().await?;
     let issued = issue_token_pair_conn(
         &mut tx,
-        &state.config,
+        &state.config(),
         application_id,
         user_id,
         scopes,
@@ -162,7 +162,7 @@ pub async fn issue_app_token(
 ) -> Result<IssuedTokens> {
     let access_token = random_secret();
     let access_hash = crate::http::middleware::auth::token_hash(&access_token);
-    let expires_in = state.config.auth.access_token_expiry_minutes * 60;
+    let expires_in = state.config().auth.access_token_expiry_minutes * 60;
     let access_token_id: i64 = sqlx::query_scalar(
         "INSERT INTO oauth_access_tokens \
          (application_id, user_id, token_hash, scopes, expires_at) \
@@ -172,7 +172,7 @@ pub async fn issue_app_token(
     .bind(application_id)
     .bind(&access_hash)
     .bind(scopes)
-    .bind(state.config.auth.access_token_expiry_minutes as i64)
+    .bind(state.config().auth.access_token_expiry_minutes as i64)
     .fetch_one(&state.db)
     .await?;
     Ok(IssuedTokens {
@@ -333,7 +333,7 @@ pub async fn rotate_refresh_token(
     let refresh_token = random_secret();
     let access_hash = crate::http::middleware::auth::token_hash(&access_token);
     let refresh_hash = crate::http::middleware::auth::token_hash(&refresh_token);
-    let expires_in = state.config.auth.access_token_expiry_minutes * 60;
+    let expires_in = state.config().auth.access_token_expiry_minutes * 60;
 
     let new_access_id: i64 = sqlx::query_scalar(
         "INSERT INTO oauth_access_tokens \
@@ -344,7 +344,7 @@ pub async fn rotate_refresh_token(
     .bind(user_id)
     .bind(&access_hash)
     .bind(&scopes)
-    .bind(state.config.auth.access_token_expiry_minutes as i64)
+    .bind(state.config().auth.access_token_expiry_minutes as i64)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| GrantError::server(&e.to_string()))?;
@@ -354,7 +354,7 @@ pub async fn rotate_refresh_token(
     )
     .bind(new_access_id)
     .bind(&refresh_hash)
-    .bind(state.config.auth.refresh_token_expiry_days as i64)
+    .bind(state.config().auth.refresh_token_expiry_days as i64)
     .execute(&mut *tx)
     .await
     .map_err(|e| GrantError::server(&e.to_string()))?;

@@ -305,7 +305,7 @@ pub async fn refresh_blocked(state: &AppState) -> Result<()> {
     let Some(ap) = state.ap.as_ref() else {
         return Ok(());
     };
-    let list = crate::activitypub::moderation::blocked_domains(&state.db, &state.config).await?;
+    let list = crate::activitypub::moderation::blocked_domains(&state.db, &state.config()).await?;
     *ap.core.blocked.write().unwrap_or_else(|e| e.into_inner()) = list;
     crate::activitypub::actors::invalidate_handlers(&ap.handlers, None);
     Ok(())

@@ -235,7 +235,7 @@ pub async fn entity(state: &AppState, report: &ReportRow) -> Result<Value> {
         async move {
             match crate::users::account::load(&state.db, id).await? {
                 Some(a) => {
-                    crate::users::account::account_entity(&state.db, &state.config, &base_url, &a)
+                    crate::users::account::account_entity(&state.db, &state.config(), &base_url, &a)
                         .await
                 }
                 None => Ok(json!(null)),

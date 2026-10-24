@@ -36,7 +36,7 @@ pub async fn list(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let page = paginate::parse(&params);
     let rows = lists::list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|l| l.id).collect();
@@ -61,7 +61,7 @@ pub async fn create(
     auth: AuthContext,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:lists")?;
+    require_scope(&state.config(), &auth, "write:lists")?;
     let params = body_params(request).await?;
     let title =
         param(&params, "title").ok_or_else(|| Error::Validation("title is required".into()))?;
@@ -88,7 +88,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let list = lists::get_owned(&state.db, auth.account_id, id).await?;
     Ok(Json(list.entity()))
 }
@@ -112,7 +112,7 @@ pub async fn update(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:lists")?;
+    require_scope(&state.config(), &auth, "write:lists")?;
     let params = body_params(request).await?;
     let list = lists::update(
         &state.db,
@@ -144,7 +144,7 @@ pub async fn delete_list(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:lists")?;
+    require_scope(&state.config(), &auth, "write:lists")?;
     if !lists::delete(&state.db, auth.account_id, id).await? {
         return Err(Error::NotFound("list".into()));
     }
@@ -170,7 +170,7 @@ pub async fn members(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let page = paginate::parse(&params);
     let rows = lists::members(&state.db, auth.account_id, id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -199,7 +199,7 @@ pub async fn add_accounts(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:lists")?;
+    require_scope(&state.config(), &auth, "write:lists")?;
     let params = body_params(request).await?;
     let ids = id_list(&params, "account_ids")?;
     lists::add_accounts(&state.db, auth.account_id, id, &ids).await?;
@@ -224,7 +224,7 @@ pub async fn remove_accounts(
     Path(id): Path<i64>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:lists")?;
+    require_scope(&state.config(), &auth, "write:lists")?;
     let params = body_params(request).await?;
     let ids = id_list(&params, "account_ids")?;
     lists::remove_accounts(&state.db, auth.account_id, id, &ids).await?;
@@ -248,7 +248,7 @@ pub async fn account_lists(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:lists")?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let rows = lists::containing(&state.db, auth.account_id, id).await?;
     Ok(Json(json!(rows
         .iter()

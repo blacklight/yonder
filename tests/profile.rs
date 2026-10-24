@@ -76,7 +76,7 @@ async fn test_app(mut config: Config) -> Option<Env> {
     let dispatcher = Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -109,7 +109,7 @@ fn job_ctx(state: &AppState) -> JobContext {
     JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     }
 }
@@ -460,7 +460,7 @@ async fn upload_rejects_bombs_oversize_and_strips_exif() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Over the byte cap → 422 with a size error.
-    let big = vec![0u8; (env.state.config.media.max_avatar_size + 1) as usize];
+    let big = vec![0u8; (env.state.config().media.max_avatar_size + 1) as usize];
     let (status, _) = request(
         &env.app,
         authed(

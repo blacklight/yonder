@@ -29,7 +29,7 @@ use crate::{
     )
 )]
 pub async fn status(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read")?;
+    require_scope(&state.config(), &auth, "read")?;
     Ok(Json(two_factor::status(&state, auth.user_id).await?))
 }
 
@@ -53,7 +53,7 @@ pub async fn totp_setup(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     Ok(Json(
         two_factor::begin_totp_setup(&state, auth.user_id).await?,
     ))
@@ -85,7 +85,7 @@ pub async fn totp_confirm(
     auth: AuthContext,
     Json(params): Json<TotpConfirmParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     let codes = two_factor::confirm_totp(&state, auth.user_id, &params.code).await?;
     Ok(Json(json!({ "backup_codes": codes })))
 }
@@ -115,7 +115,7 @@ pub async fn totp_delete(
     auth: AuthContext,
     Json(params): Json<PasswordParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     two_factor::require_password(&state.db, auth.user_id, &params.password).await?;
     if !two_factor::disable_totp(&state, auth.user_id).await? {
         return Err(Error::NotFound("TOTP enrollment".into()));
@@ -142,7 +142,7 @@ pub async fn backup_codes(
     auth: AuthContext,
     Json(params): Json<PasswordParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     two_factor::require_password(&state.db, auth.user_id, &params.password).await?;
     let codes = two_factor::regenerate_backup_codes(&state, auth.user_id).await?;
     Ok(Json(json!({ "backup_codes": codes })))
@@ -164,7 +164,7 @@ pub async fn webauthn_register_begin(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     Ok(Json(
         webauthn::begin_registration(&state, auth.user_id).await?,
     ))
@@ -198,7 +198,7 @@ pub async fn webauthn_register(
     auth: AuthContext,
     Json(params): Json<WebauthnRegisterParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     let credential: webauthn_rs::prelude::RegisterPublicKeyCredential =
         serde_json::from_value(params.credential)
             .map_err(|e| Error::Validation(format!("malformed credential: {e}")))?;
@@ -222,7 +222,7 @@ pub async fn webauthn_credentials(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read")?;
+    require_scope(&state.config(), &auth, "read")?;
     Ok(Json(Value::Array(
         webauthn::list_credentials(&state.db, auth.user_id).await?,
     )))
@@ -253,7 +253,7 @@ pub async fn webauthn_rename(
     axum::extract::Path(id): axum::extract::Path<i64>,
     Json(params): Json<CredentialRenameParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     if !webauthn::rename_credential(&state.db, auth.user_id, id, &params.name).await? {
         return Err(Error::NotFound("credential".into()));
     }
@@ -281,7 +281,7 @@ pub async fn webauthn_delete(
     axum::extract::Path(id): axum::extract::Path<i64>,
     Json(params): Json<PasswordParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     two_factor::require_password(&state.db, auth.user_id, &params.password).await?;
     if !two_factor::disable_webauthn_credential(&state, auth.user_id, id).await? {
         return Err(Error::NotFound("credential".into()));
@@ -317,7 +317,7 @@ pub async fn disable(
     auth: AuthContext,
     Json(params): Json<DisableParams>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write")?;
+    require_scope(&state.config(), &auth, "write")?;
     two_factor::require_password(&state.db, auth.user_id, &params.password).await?;
     two_factor::disable_all(
         &state,

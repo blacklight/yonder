@@ -18,7 +18,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v2/media",
             post(media::upload)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
-                    state.config.media.max_upload_size as usize + 64 * 1024,
+                    state.config().media.max_upload_size as usize + 64 * 1024,
                 ))
                 .route_layer(ratelimit::layer(state, "media")),
         )

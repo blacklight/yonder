@@ -128,7 +128,7 @@ pub async fn list(
     uri: Uri,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:notifications")?;
+    require_scope(&state.config(), &auth, "read:notifications")?;
     let (types, exclude) = type_filters(&uri)?;
     let page = paginate::parse(&params);
     let rules = crate::filters::rules::load_active(
@@ -173,7 +173,7 @@ pub async fn show(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:notifications")?;
+    require_scope(&state.config(), &auth, "read:notifications")?;
     let row = notifications::get(&state.db, auth.account_id, id)
         .await?
         .ok_or_else(|| Error::NotFound("notification".into()))?;
@@ -209,7 +209,7 @@ pub async fn show(
     )
 )]
 pub async fn clear(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:notifications")?;
+    require_scope(&state.config(), &auth, "write:notifications")?;
     notifications::clear(&state.db, auth.account_id).await?;
     publish_count(&state, auth.user_id, auth.account_id).await;
     Ok(Json(json!({})))
@@ -233,7 +233,7 @@ pub async fn dismiss(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:notifications")?;
+    require_scope(&state.config(), &auth, "write:notifications")?;
     if !notifications::dismiss(&state.db, auth.account_id, id).await? {
         return Err(Error::NotFound("notification".into()));
     }
@@ -257,7 +257,7 @@ pub async fn unread_count(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "read:notifications")?;
+    require_scope(&state.config(), &auth, "read:notifications")?;
     let rules = crate::filters::rules::load_active(
         &state.db,
         auth.account_id,

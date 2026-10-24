@@ -82,7 +82,7 @@ impl axum::extract::FromRequestParts<std::sync::Arc<crate::http::AppState>> for 
         Ok(ClientIp(client_ip(
             &parts.headers,
             &parts.extensions,
-            state.config.server.trusted_proxy_hops,
+            state.config().server.trusted_proxy_hops,
         )))
     }
 }

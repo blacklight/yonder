@@ -37,7 +37,7 @@ pub async fn list(
     Query(params): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:follows")?;
+    require_scope(&state.config(), &auth, "read:follows")?;
     let page = paginate::parse(&params);
     let rows = requests::list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -65,14 +65,14 @@ pub async fn authorize(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     requests::authorize(&state, auth.account_id, id).await?;
     Ok(Json(
         crate::social::entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))
@@ -96,14 +96,14 @@ pub async fn reject(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:follows")?;
+    require_scope(&state.config(), &auth, "write:follows")?;
     requests::reject(&state, auth.account_id, id).await?;
     Ok(Json(
         crate::social::entity::relationship(
             &state.db,
             auth.account_id,
             id,
-            state.config.admin.blockers_visible,
+            state.config().admin.blockers_visible,
         )
         .await?,
     ))

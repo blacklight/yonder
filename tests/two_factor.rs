@@ -655,7 +655,7 @@ fn soft_token() -> WebauthnAuthenticator<SoftToken> {
 
 fn rp_origin(env: &Env) -> Url {
     Url::parse(&yonder::activitypub::federation_base_url(
-        env.state.config.as_ref(),
+        env.state.config().as_ref(),
     ))
     .unwrap()
 }

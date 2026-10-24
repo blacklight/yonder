@@ -64,7 +64,7 @@ pub async fn favourite(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:favourites")?;
+    require_scope(&state.config(), &auth, "write:favourites")?;
     let ctx = PostContext::new(&state);
     let status = favourite::favourite(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -86,7 +86,7 @@ pub async fn unfavourite(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:favourites")?;
+    require_scope(&state.config(), &auth, "write:favourites")?;
     let ctx = PostContext::new(&state);
     let status = favourite::unfavourite(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -108,7 +108,7 @@ pub async fn favourites_list(
     Query(params): Query<HashMap<String, String>>,
     uri: axum::http::Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:favourites")?;
+    require_scope(&state.config(), &auth, "read:favourites")?;
     let ctx = PostContext::new(&state);
     let page = paginate::parse(&params);
     let rows = favourite::list(&ctx, auth.account_id, &page).await?;
@@ -143,7 +143,7 @@ pub async fn favourited_by(
     // Anonymous viewers may list likers of public statuses, matching
     // `reblogged_by` and Mastodon; `load_visible` applies `can_see`.
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:statuses")?;
+        require_scope(&state.config(), a, "read:statuses")?;
     }
     let ctx = PostContext::new(&state);
     let viewer = auth.0.as_ref().map(|a| a.account_id);
@@ -183,7 +183,7 @@ pub async fn reblog(
     Query(params): Query<HashMap<String, String>>,
     request: Request,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let visibility = reblog_visibility(&params, request).await?;
     let status = boost::reblog(&ctx, &auth, id, visibility.as_deref()).await?;
@@ -240,7 +240,7 @@ pub async fn unreblog(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let status = boost::unreblog(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -266,7 +266,7 @@ pub async fn reblogged_by(
     uri: axum::http::Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
     if let Some(a) = &auth.0 {
-        require_scope(&state.config, a, "read:statuses")?;
+        require_scope(&state.config(), a, "read:statuses")?;
     }
     let ctx = PostContext::new(&state);
     let viewer = auth.0.as_ref().map(|a| a.account_id);
@@ -301,7 +301,7 @@ pub async fn bookmark(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:bookmarks")?;
+    require_scope(&state.config(), &auth, "write:bookmarks")?;
     let ctx = PostContext::new(&state);
     let status = bookmark::bookmark(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -323,7 +323,7 @@ pub async fn unbookmark(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:bookmarks")?;
+    require_scope(&state.config(), &auth, "write:bookmarks")?;
     let ctx = PostContext::new(&state);
     let status = bookmark::unbookmark(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -345,7 +345,7 @@ pub async fn bookmarks_list(
     Query(params): Query<HashMap<String, String>>,
     uri: axum::http::Uri,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    require_scope(&state.config, &auth, "read:bookmarks")?;
+    require_scope(&state.config(), &auth, "read:bookmarks")?;
     let ctx = PostContext::new(&state);
     let page = paginate::parse(&params);
     let rows = bookmark::list(&ctx, auth.account_id, &page).await?;
@@ -381,7 +381,7 @@ pub async fn pin(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let ctx = PostContext::new(&state);
     let status = pins::pin(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -403,7 +403,7 @@ pub async fn unpin(
     auth: AuthContext,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:accounts")?;
+    require_scope(&state.config(), &auth, "write:accounts")?;
     let ctx = PostContext::new(&state);
     let status = pins::unpin(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -433,7 +433,7 @@ pub async fn react(
     auth: AuthContext,
     Path((id, emoji)): Path<(i64, String)>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let status = reactions::react(&ctx, &auth, id, &emoji).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -458,7 +458,7 @@ pub async fn unreact(
     auth: AuthContext,
     Path((id, emoji)): Path<(i64, String)>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config, &auth, "write:statuses")?;
+    require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
     let status = reactions::unreact(&ctx, &auth, id, &emoji).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))

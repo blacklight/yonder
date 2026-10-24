@@ -87,7 +87,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     let dispatcher = yonder::jobs::Dispatcher::new(&redis_handle, &config.jobs);
     let mut state = AppState::new(config, pool, redis_handle);
     let ap = activitypub::build(
-        state.config.as_ref(),
+        state.config().as_ref(),
         &state.db,
         &state.redis,
         &dispatcher,
@@ -110,7 +110,7 @@ fn job_ctx(state: &AppState) -> JobContext {
     JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
-        config: state.config.clone(),
+        config: state.config().clone(),
         media: state.media.clone(),
     }
 }
@@ -443,7 +443,7 @@ async fn auto_follow_runs_after_activation() {
     // Remote entries in auto_followed_by are skipped — we cannot make
     // a remote actor follow anyone.
     let remote = seed_remote(&env.state, "https://remote.example/users/r").await;
-    let mut config2 = env.state.config.as_ref().clone();
+    let mut config2 = env.state.config().as_ref().clone();
     config2.admin.auto_followed_by = vec!["r@remote.example".into()];
     let ctx = auto_follow::AutoFollowCtx {
         db: env.state.db.clone(),
@@ -1226,7 +1226,8 @@ async fn local_follow_primitive_publishes_real_activities() {
     let me = account_id(&env.state, "me").await;
     let remote = seed_remote(&env.state, "https://remote.example/users/them").await;
 
-    let rel = relationships::Ctx::from_state(&env.state);
+    let cfg = env.state.config();
+    let rel = relationships::Ctx::for_parts(&env.state.db, &cfg, env.state.ap.as_ref());
     let outcome = relationships::follow(rel, me, remote, relationships::FollowOpts::default())
         .await
         .unwrap();

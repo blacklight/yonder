@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -16,49 +16,25 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = sqlx::PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     for bucket in [
         &mut config.rate_limit.authentication,
@@ -96,12 +72,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     );
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 async fn register(app: &Router, username: &str, email: &str) -> String {
@@ -238,6 +209,7 @@ fn png() -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_crud_and_home_hide() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -376,6 +348,7 @@ async fn filter_crud_and_home_hide() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn warn_filter_attaches_filtered_attr() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -426,6 +399,7 @@ async fn warn_filter_attaches_filtered_attr() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tag_lookup_follow_and_home_delivery() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -490,6 +464,7 @@ async fn tag_lookup_follow_and_home_delivery() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn trends_tags_period_and_threshold() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -540,6 +515,7 @@ async fn trends_tags_period_and_threshold() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_upload_list_and_render() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -633,6 +609,7 @@ async fn emoji_zip_and_dir_import() {
     std::fs::create_dir_all(import_root.join("pack1")).unwrap();
     std::fs::write(import_root.join("pack1/dir_one.png"), png()).unwrap();
     config.admin.emoji_import_dir = Some(import_root.to_string_lossy().to_string());
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -718,6 +695,7 @@ async fn emoji_zip_and_dir_import() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn notification_hide_list_and_show() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -771,6 +749,7 @@ async fn notification_hide_list_and_show() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_form_encoded_create() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -807,6 +786,7 @@ async fn filter_form_encoded_create() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_status_pin_requires_visibility() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -885,6 +865,7 @@ async fn filter_status_pin_requires_visibility() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_zip_caps_and_safe_overwrite() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -981,6 +962,7 @@ async fn emoji_zip_caps_and_safe_overwrite() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_patch_clears_nullable_fields() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1081,6 +1063,7 @@ async fn emoji_patch_clears_nullable_fields() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_zip_reports_skipped_and_refused_entries() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1146,6 +1129,7 @@ async fn emoji_zip_reports_skipped_and_refused_entries() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_form_groups_keywords_by_index() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1189,6 +1173,7 @@ async fn filter_form_groups_keywords_by_index() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_malformed_json_is_400() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1210,6 +1195,7 @@ async fn filter_malformed_json_is_400() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn notification_hide_excluded_from_unread_count() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1265,6 +1251,7 @@ async fn notification_hide_excluded_from_unread_count() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn trends_offset_pages_within_ceiling() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

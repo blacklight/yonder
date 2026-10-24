@@ -7,7 +7,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -15,54 +15,29 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit, RegistrationMode},
-    db,
     http::{build_router, AppState},
     jobs::{JobContext, JobHandler},
     users::{auto_follow, deletion, moves, relationships, transfer},
 };
 
-const BASE: &str = "http://127.0.0.1:4000";
+use crate::harness;
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+const BASE: &str = "http://127.0.0.1:4000";
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     // Rate-limit buckets are tiny by default — lift them for the suite.
     config.rate_limit.authentication = RateLimit {
@@ -98,12 +73,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     state.ap = Some(ap);
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 fn job_ctx(state: &AppState) -> JobContext {
@@ -211,6 +181,7 @@ async fn seed_remote(state: &AppState, actor_id: &str) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invites_crud_check_and_registration_gate() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -286,6 +257,7 @@ async fn invites_crud_check_and_registration_gate() {
 async fn closed_registration_needs_a_valid_invite() {
     let mut config = Config::default();
     config.auth.registration_mode = RegistrationMode::Closed;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -371,6 +343,7 @@ async fn closed_registration_needs_a_valid_invite() {
 async fn approval_required_invite_auto_approves() {
     let mut config = Config::default();
     config.auth.registration_mode = RegistrationMode::ApprovalRequired;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -409,6 +382,7 @@ async fn auto_follow_runs_after_activation() {
     let mut config = Config::default();
     config.admin.auto_follow_accounts = vec!["staffer".into()];
     config.admin.auto_followed_by = vec!["greeter".into()];
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -469,6 +443,7 @@ async fn auto_follow_runs_after_activation() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn self_delete_schedules_revokes_and_tombstones() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -587,6 +562,7 @@ async fn self_delete_schedules_revokes_and_tombstones() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delayed_deletion_cancels_via_admin_path() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -679,6 +655,7 @@ async fn delayed_deletion_cancels_via_admin_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn outbound_move_redirects_and_migrates_followers() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -809,6 +786,7 @@ async fn outbound_move_redirects_and_migrates_followers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbound_move_verifies_alias_then_migrates() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -905,6 +883,7 @@ async fn inbound_move_verifies_alias_then_migrates() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inline_export_and_archive_round_trip() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1067,6 +1046,7 @@ async fn inline_export_and_archive_round_trip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_applies_rows_and_posts_keep_source_ids() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1219,6 +1199,7 @@ async fn import_applies_rows_and_posts_keep_source_ids() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_follow_primitive_publishes_real_activities() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1304,6 +1285,7 @@ fn count_rows_sniffs_header_and_limit() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_overwrite_removes_absent_entries() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

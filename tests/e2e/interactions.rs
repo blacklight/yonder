@@ -7,7 +7,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -15,55 +15,30 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     interactions,
     jobs::{JobContext, JobHandler},
 };
 
+use crate::harness;
+
 const BASE: &str = "http://127.0.0.1:4000";
 const PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
-
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
         period_seconds: 60,
@@ -97,8 +72,6 @@ async fn test_env(mut config: Config) -> Option<Env> {
     Some(Env {
         app: build_router(state.clone()),
         state,
-        _pg: pg,
-        _redis: redis,
     })
 }
 
@@ -200,6 +173,7 @@ fn activity(ty: &str, actor: &str, object: Value) -> (pubby_sdk::Activity, Value
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn favourite_roundtrip_and_undo() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -282,6 +256,7 @@ async fn favourite_roundtrip_and_undo() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boost_roundtrip_visibility_and_undo() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -367,6 +342,7 @@ async fn boost_roundtrip_visibility_and_undo() {
 /// second time (a concurrent boost's count would be stolen).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unreblog_stale_row_keeps_counter() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -421,6 +397,7 @@ async fn unreblog_stale_row_keeps_counter() {
 /// and the query string (Mastodon clients use all three).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reblog_visibility_from_body_and_query() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -490,6 +467,7 @@ async fn reblog_visibility_from_body_and_query() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bookmark_roundtrip_silent() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -536,6 +514,7 @@ async fn bookmark_roundtrip_silent() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quote_roundtrip() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -600,6 +579,7 @@ async fn quote_roundtrip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_reactions_roundtrip() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -679,6 +659,7 @@ async fn emoji_reactions_roundtrip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pin_roundtrip_and_cap() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -769,6 +750,7 @@ async fn pin_roundtrip_and_cap() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbound_like_announce_emojireact() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -870,6 +852,7 @@ async fn inbound_like_announce_emojireact() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbound_quote_materializes() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -983,6 +966,7 @@ async fn inbound_quote_materializes() {
 /// nesting level, not recurse without bound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn quote_cycle_renders_bounded() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1042,6 +1026,7 @@ async fn quote_cycle_renders_bounded() {
 /// shares the immediate path's quote tail).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn scheduled_quote_publishes_with_wiring() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1100,6 +1085,7 @@ async fn scheduled_quote_publishes_with_wiring() {
 /// unfavourite publishes an `Undo` wrapping exactly that Like id.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_favourite_undo_like_payload() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1177,6 +1163,7 @@ async fn remote_favourite_undo_like_payload() {
 /// the next cursor returns the remainder.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn favourites_list_pagination() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

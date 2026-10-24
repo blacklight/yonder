@@ -6,7 +6,6 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -14,52 +13,28 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::Config,
-    db,
     http::{build_router, AppState},
 };
+
+use crate::harness;
 
 const BASE: &str = "http://127.0.0.1:4000";
 const PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
-
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     // High ceilings — the per-bucket tests need requests to pass.
     let rl = yonder::config::RateLimit {
         limit: 10_000,
@@ -94,8 +69,6 @@ async fn test_env(mut config: Config) -> Option<Env> {
     Some(Env {
         app: build_router(state.clone()),
         state,
-        _pg: pg,
-        _redis: redis,
     })
 }
 
@@ -287,6 +260,7 @@ fn names(body: &Value, key: &str) -> Vec<String> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn categorized_results_and_type_filter() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -348,6 +322,7 @@ async fn categorized_results_and_type_filter() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pagination_offset_and_limit() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -378,6 +353,7 @@ async fn pagination_offset_and_limit() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn status_search_scoped_by_account_id() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -416,6 +392,7 @@ async fn status_search_scoped_by_account_id() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn visibility_rules_for_anonymous_and_followers() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -489,6 +466,7 @@ async fn visibility_rules_for_anonymous_and_followers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn author_opt_out_hides_posts_from_others() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -523,6 +501,7 @@ async fn author_opt_out_hides_posts_from_others() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocked_suspended_and_undiscoverable_are_excluded() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -589,6 +568,7 @@ async fn blocked_suspended_and_undiscoverable_are_excluded() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn discoverability_opt_outs_and_exceptions() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -672,6 +652,7 @@ async fn discoverability_opt_outs_and_exceptions() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn following_param_restricts_accounts() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -709,6 +690,7 @@ async fn following_param_restricts_accounts() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn autocomplete_prefix_matching() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -762,6 +744,7 @@ async fn autocomplete_prefix_matching() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn anonymous_search_gate() {
     // Enabled (default): anonymous search works.
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -800,6 +783,7 @@ async fn anonymous_search_gate() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn url_lookup_finds_local_status_and_account() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -841,6 +825,7 @@ async fn url_lookup_finds_local_status_and_account() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fqn_lookup_miss_is_negatively_cached() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -903,6 +888,7 @@ async fn fqn_lookup_miss_is_negatively_cached() {
 async fn remote_fetch_disabled_gates_lookup() {
     let mut config = Config::default();
     config.search.remote_fetch = false;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -927,6 +913,7 @@ async fn remote_fetch_disabled_gates_lookup() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_url_fetch_is_negatively_cached() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -955,6 +942,7 @@ async fn failed_url_fetch_is_negatively_cached() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn url_lookup_respects_blocks_and_offset() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1013,6 +1001,7 @@ async fn url_lookup_respects_blocks_and_offset() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_status_text_search_and_url_lookup() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1069,6 +1058,7 @@ async fn remote_status_text_search_and_url_lookup() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_fetch_materializes_trusted_objects() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

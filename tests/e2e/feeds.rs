@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -18,49 +18,25 @@ use axum::{
 use quick_xml::{events::Event, Reader};
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = sqlx::PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
@@ -91,12 +67,7 @@ async fn test_env(mut config: Config) -> Option<Env> {
     );
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 async fn register(app: &Router, username: &str, email: &str) -> String {
@@ -214,6 +185,7 @@ fn assert_well_formed(xml: &str) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_feed_atom_and_rss() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -281,6 +253,7 @@ async fn profile_feed_atom_and_rss() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_feed_lookup_and_404s() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -314,6 +287,7 @@ async fn profile_feed_lookup_and_404s() {
 async fn profile_feed_max_items() {
     let mut config = Config::default();
     config.content.max_feed_items = 2;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -342,6 +316,7 @@ async fn profile_feed_max_items() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn hashtag_feed_public_only_and_empty() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -398,6 +373,7 @@ async fn hashtag_feed_public_only_and_empty() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_feed_keeps_replies_and_drops_direct() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -437,6 +413,7 @@ async fn feed_bucket_rate_limits() {
         period_seconds: 60,
         authenticated_limit: None,
     };
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -498,6 +475,7 @@ async fn add_list_member(app: &Router, token: &str, list_id: i64, account: i64) 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_feed_auth_and_content() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

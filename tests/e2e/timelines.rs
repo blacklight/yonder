@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -17,53 +17,36 @@ use axum::{
 };
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     jobs::{JobContext, JobHandler},
     timelines::{self, fanout, jobs::TimelineFanOutJob},
 };
 
-const BASE: &str = "http://127.0.0.1:4000";
+use crate::harness;
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+const BASE: &str = "http://127.0.0.1:4000";
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    redis: testcontainers::ContainerAsync<Redis>,
 }
 
-async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
+async fn test_env(config: Config) -> Option<Env> {
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let mut config = config;
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
+    Some(build_env(config, pool, redis_handle).await)
+}
 
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+/// Config tweaks + `AppState`/AP wiring shared by `test_env` and the
+/// outage test that brings its own killable Redis.
+async fn build_env(mut config: Config, pool: PgPool, redis_handle: yonder::cache::Redis) -> Env {
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
         period_seconds: 60,
@@ -100,12 +83,10 @@ async fn test_env(mut config: Config) -> Option<Env> {
     .unwrap();
     state.ap = Some(ap);
     let state = Arc::new(state);
-    Some(Env {
+    Env {
         app: build_router(state.clone()),
         state,
-        _pg: pg,
-        redis,
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,6 +272,7 @@ async fn run_backfill(state: &AppState, follower: i64, followee: i64) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn home_shows_own_and_followed_newest_first() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -323,6 +305,7 @@ async fn home_shows_own_and_followed_newest_first() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn home_paginates_with_link_headers() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -374,6 +357,7 @@ async fn home_paginates_with_link_headers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn home_hides_boosts_when_show_reblogs_off() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -428,6 +412,7 @@ async fn home_hides_boosts_when_show_reblogs_off() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_local_and_federated_scopes() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -471,6 +456,7 @@ async fn public_local_and_federated_scopes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn moderation_filters_apply_to_viewer_and_scope() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -570,6 +556,7 @@ async fn moderation_filters_apply_to_viewer_and_scope() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn filter_languages_hides_posts() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -603,6 +590,7 @@ async fn filter_languages_hides_posts() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_timeline_membership_policy_and_ownership() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -677,6 +665,7 @@ async fn list_timeline_membership_policy_and_ownership() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exclusive_list_removes_member_from_home() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -723,6 +712,7 @@ async fn exclusive_list_removes_member_from_home() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tag_timeline_matches_public_only() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -762,6 +752,7 @@ async fn tag_timeline_matches_public_only() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fanout_populates_index_and_trims() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -816,6 +807,7 @@ async fn fanout_populates_index_and_trims() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cold_index_falls_back_to_sql_and_repopulates() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -853,6 +845,7 @@ async fn cold_index_falls_back_to_sql_and_repopulates() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backfill_on_follow_seeds_index() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -884,6 +877,7 @@ async fn backfill_on_follow_seeds_index() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn streaming_receives_update_and_delete() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -946,6 +940,7 @@ async fn timeline_rate_limit_bucket() {
         period_seconds: 60,
         authenticated_limit: None,
     };
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -972,9 +967,21 @@ async fn timeline_rate_limit_bucket() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn redis_outage_falls_back_to_sql() {
-    let Some(env) = test_env(Config::default()).await else {
+    // A dedicated Redis we can kill mid-test — the shared container
+    // must stay up for everyone else.
+    let _permit = harness::acquire().await;
+    let Some(infra) = harness::infra().await else {
         return;
     };
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let mut config = Config::default();
+    let Some((redis_handle, kill_switch)) =
+        harness::dedicated_redis(&mut config.redis, &slug).await
+    else {
+        return;
+    };
+    let env = build_env(config, pool, redis_handle).await;
     let alice = register(&env.app, "alice", "a@x.com").await;
     let alice_id = account_id(&env.state.db, "alice").await;
     let s = post(&env.app, &alice, json!({"status": "durable"}))
@@ -983,7 +990,7 @@ async fn redis_outage_falls_back_to_sql() {
         .unwrap();
 
     // Kill Redis — read_home must degrade to the SQL page, not 5xx.
-    drop(env.redis);
+    drop(kill_switch);
     let filters = timelines::Filters {
         viewer: Some(alice_id),
         ..Default::default()
@@ -1018,6 +1025,7 @@ async fn redis_outage_falls_back_to_sql() {
 /// unmentioned follower's `user` stream.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn direct_status_streams_only_to_recipients() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1106,6 +1114,7 @@ async fn direct_status_streams_only_to_recipients() {
 /// notification isn't, unless gated on "new row").
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_create_redelivery_does_not_restream() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1146,6 +1155,7 @@ async fn remote_create_redelivery_does_not_restream() {
 /// a rebuild would pull in statuses whose fan-out never ran.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn existing_index_empty_window_not_repopulated() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1202,6 +1212,7 @@ async fn existing_index_empty_window_not_repopulated() {
 async fn cold_index_repopulates_and_trims() {
     let mut config = Config::default();
     config.timelines.home_max_entries = 5;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };

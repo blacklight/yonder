@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -16,50 +16,26 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     jobs::{Dispatcher, JobContext, JobHandler},
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_app(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = sqlx::PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
@@ -87,12 +63,7 @@ async fn test_app(mut config: Config) -> Option<Env> {
     state.ap = Some(ap);
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 fn base_config() -> Config {
@@ -233,6 +204,7 @@ const PATCH: &str = "/api/v1/accounts/update_credentials";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_credentials_json_persists_and_returns_account() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -277,6 +249,7 @@ async fn update_credentials_json_persists_and_returns_account() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_credentials_form_and_empty_clears() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -311,6 +284,7 @@ async fn update_credentials_form_and_empty_clears() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_credentials_validation_errors() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -441,6 +415,7 @@ async fn fetch_media(env: &Env, url: &str) -> Vec<u8> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn upload_rejects_bombs_oversize_and_strips_exif() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -492,6 +467,7 @@ async fn upload_rejects_bombs_oversize_and_strips_exif() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn avatar_upload_stores_serves_and_clears() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -552,6 +528,7 @@ async fn avatar_upload_stores_serves_and_clears() {
 /// The job re-checks the row's reference before deleting.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn avatar_replace_and_clear_delete_stale_object() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -687,6 +664,7 @@ async fn run_verify_job(env: &Env, account_id: i64) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rel_me_verification_marks_matching_link() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -749,6 +727,7 @@ async fn rel_me_verification_marks_matching_link() {
 /// URL clears it, and a transient fetch failure preserves the stamp.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rel_me_stamp_lifecycle() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -843,6 +822,7 @@ async fn rel_me_stamp_lifecycle() {
 async fn rel_me_private_target_not_fetched() {
     let mut config = base_config();
     config.federation.allow_private_targets = false;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -879,6 +859,7 @@ async fn rel_me_private_target_not_fetched() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_change_publishes_actor_update() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };

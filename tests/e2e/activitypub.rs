@@ -7,7 +7,6 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -19,39 +18,21 @@ use pubby_sdk::{
 use redis::AsyncCommands;
 use serde_json::{json, Map, Value};
 use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::redis::{Redis as RedisImage, REDIS_PORT};
 use tower::ServiceExt;
 use yonder::activitypub::storage::PgActivityPubStorage;
 use yonder::activitypub::{self, actors};
-use yonder::cache::{self, Redis};
-use yonder::config::{Config, RedisConfig};
-use yonder::db;
+use yonder::cache::Redis;
+use yonder::config::Config;
 use yonder::http::AppState;
 use yonder::jobs::{Dispatcher, JobContext, JobHandler};
 
+use crate::harness;
+
 const BASE: &str = "http://127.0.0.1:4000";
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
-
-async fn test_pool() -> Option<(PgPool, testcontainers::ContainerAsync<Postgres>)> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres container");
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPool::connect(&url).await.unwrap();
-    db::migrate::run(&pool).await.unwrap();
-    Some((pool, container))
+async fn test_pool() -> Option<PgPool> {
+    let infra = harness::infra().await?;
+    Some(harness::provision_db(infra, &harness::test_slug()).await)
 }
 
 /// Seed a provisioned local actor named `username` and return it.
@@ -90,7 +71,8 @@ async fn seed_remote(pool: &PgPool, actor_id: &str, username: &str) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn migration_0009_adds_federation_columns() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let has_key: bool = sqlx::query_scalar(
@@ -121,7 +103,8 @@ async fn migration_0009_adds_federation_columns() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provision_local_actor_sets_identity_and_key() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let actor = seed_actor(&pool, "alice").await;
@@ -147,7 +130,8 @@ async fn provision_local_actor_sets_identity_and_key() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_follower_roundtrip_and_scoping() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -186,7 +170,8 @@ async fn storage_follower_roundtrip_and_scoping() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_get_following_returns_accepted_outbound() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -215,7 +200,8 @@ async fn storage_get_following_returns_accepted_outbound() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_follow_request_lifecycle() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -253,7 +239,8 @@ async fn storage_follow_request_lifecycle() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_activities_scoping() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -284,7 +271,8 @@ async fn storage_activities_scoping() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_interactions_and_mentions() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -329,7 +317,8 @@ async fn storage_interactions_and_mentions() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn storage_actor_cache_and_quote_authorizations() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let storage = PgActivityPubStorage::new(pool.clone());
@@ -359,7 +348,8 @@ async fn storage_actor_cache_and_quote_authorizations() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ensure_instance_actor_is_idempotent() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let first = actors::ensure_instance_actor(&pool, BASE).await.unwrap();
@@ -371,7 +361,8 @@ async fn ensure_instance_actor_is_idempotent() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actor_doc_advertises_per_actor_endpoints() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -401,7 +392,8 @@ async fn actor_doc_advertises_per_actor_endpoints() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn moderation_domain_block_merge() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('evil.example', 'suspend')")
@@ -431,45 +423,15 @@ async fn moderation_domain_block_merge() {
 
 // ---------- Route / worker / on_activity coverage ----------
 
-struct Containers {
-    _pg: ContainerAsync<Postgres>,
-    _redis: ContainerAsync<RedisImage>,
-}
-
-/// Postgres + Redis containers, migrated schema, a built `ApContext`
-/// and the full `AppState` — the pieces the route and job tests need.
-async fn test_state() -> Option<(Arc<AppState>, Containers)> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres container");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let rc = RedisImage::default()
-        .with_tag("7-alpine")
-        .start()
-        .await
-        .expect("redis container");
-    let redis_port = rc.get_host_port_ipv4(REDIS_PORT).await.unwrap();
-    let redis = cache::connect(&RedisConfig {
-        url: format!("redis://127.0.0.1:{redis_port}/0"),
-        ..Default::default()
-    })
-    .await
-    .unwrap();
-
+/// Fresh per-test database + Redis namespace on the shared
+/// containers, a built `ApContext` and the full `AppState` — the
+/// pieces the route and job tests need.
+async fn test_state() -> Option<Arc<AppState>> {
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
     let mut config = Config::default();
+    let redis = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     config.federation.enabled = true;
     config.federation.base_url = Some(BASE.to_string());
     config.federation.allow_private_targets = true;
@@ -485,13 +447,7 @@ async fn test_state() -> Option<(Arc<AppState>, Containers)> {
     .await
     .unwrap();
     state.ap = Some(ap);
-    Some((
-        Arc::new(state),
-        Containers {
-            _pg: pg,
-            _redis: rc,
-        },
-    ))
+    Some(Arc::new(state))
 }
 
 fn job_ctx(state: &AppState) -> JobContext {
@@ -530,7 +486,8 @@ async fn stream_len(redis: &Redis, queue: &str) -> usize {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbox_route_validates_dedupes_and_blocks() {
-    let Some((state, _containers)) = test_state().await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
         return;
     };
     let app = ap_router(&state);
@@ -625,7 +582,8 @@ async fn inbox_route_validates_dedupes_and_blocks() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn incoming_signature_failure_releases_dedupe_row() {
-    let Some((state, _containers)) = test_state().await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
         return;
     };
     let alice = seed_actor(&state.db, "alice").await;
@@ -673,7 +631,8 @@ async fn incoming_signature_failure_releases_dedupe_row() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_flag_reports_resolvable_objects() {
-    let Some((state, _c)) = test_state().await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
         return;
     };
     let pool = &state.db;
@@ -740,7 +699,8 @@ async fn handle_flag_reports_resolvable_objects() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_move_enqueues_verification_and_writes_nothing() {
-    let Some((state, _c)) = test_state().await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
         return;
     };
     let alice = seed_actor(&state.db, "alice").await;
@@ -809,7 +769,8 @@ async fn handle_move_enqueues_verification_and_writes_nothing() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn store_unhandled_records_interaction() {
-    let Some((pool, _c)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
@@ -838,7 +799,8 @@ async fn store_unhandled_records_interaction() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delivery_sweep_requeues_only_stale_pending() {
-    let Some((state, _containers)) = test_state().await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
         return;
     };
     sqlx::query(

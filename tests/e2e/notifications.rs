@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     body::Body,
@@ -18,54 +18,30 @@ use axum::{
 use redis::AsyncCommands;
 use serde_json::{json, Value};
 use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, ws::StreamEvent, AppState},
     jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
     notifications::{self, fanout::NotificationFanoutJob},
 };
 
-const BASE: &str = "http://127.0.0.1:4000";
+use crate::harness;
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+const BASE: &str = "http://127.0.0.1:4000";
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     for bucket in [
         &mut config.rate_limit.authentication,
         &mut config.rate_limit.account_creation,
@@ -105,8 +81,6 @@ async fn test_env(mut config: Config) -> Option<Env> {
     Some(Env {
         app: build_router(state.clone()),
         state,
-        _pg: pg,
-        _redis: redis,
     })
 }
 
@@ -350,6 +324,7 @@ async fn collect(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn favourite_reblog_quote_generate_notifications() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -403,6 +378,7 @@ async fn favourite_reblog_quote_generate_notifications() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn follow_and_follow_request_notify() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -465,6 +441,7 @@ async fn follow_and_follow_request_notify() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mention_and_status_notifications() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -503,6 +480,7 @@ async fn mention_and_status_notifications() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bookmark_and_self_interaction_never_notify() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -538,6 +516,7 @@ async fn bookmark_and_self_interaction_never_notify() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_interaction_payload_shape() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -572,6 +551,7 @@ async fn remote_interaction_payload_shape() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dedupe_collapses_repeats() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -609,6 +589,7 @@ async fn dedupe_collapses_repeats() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocks_suppress_in_both_directions() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -665,6 +646,7 @@ async fn blocks_suppress_in_both_directions() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mute_with_hide_notifications_suppresses() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -735,6 +717,7 @@ async fn mute_with_hide_notifications_suppresses() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn domain_block_and_stranger_filter_suppress() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -820,6 +803,7 @@ async fn domain_block_and_stranger_filter_suppress() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_report_notifies_staff_only() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -873,6 +857,7 @@ async fn admin_report_notifies_staff_only() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn endpoints_list_filters_paginate_clear_dismiss() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1067,6 +1052,7 @@ async fn endpoints_list_filters_paginate_clear_dismiss() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn websocket_push_via_redis_relay() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1130,6 +1116,7 @@ async fn websocket_push_via_redis_relay() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn clear_publishes_zero_count() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -1182,6 +1169,7 @@ async fn clear_publishes_zero_count() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn email_job_follows_user_settings() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

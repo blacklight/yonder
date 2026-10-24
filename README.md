@@ -46,9 +46,25 @@ yonder migrate --revert 3   # roll back to version 3 (exclusive)
 ```
 
 Migrations are additive and forward-only; destructive changes live in
-clearly-named migrations. The DB-backed integration tests spin up a
-Postgres container via testcontainers and are skipped when no container
-runtime is reachable.
+clearly-named migrations.
+
+## Tests
+
+The DB/Redis-backed integration tests live in `tests/e2e/` — a single
+`e2e` target so libtest runs every suite in parallel against one shared
+Postgres+Redis container pair. Each test gets its own
+`yonder_t_<test>` database and `yonder_t:<test>` `key_prefix` (see
+`tests/e2e/harness.rs`), so `cargo test --test e2e` is all that's
+needed; tests are skipped when no container runtime is reachable.
+
+- Concurrency is capped at 3/4 of available cores to leave headroom —
+  override with `YONDER_TEST_WORKERS` (or `-- --test-threads`).
+- The `yonder-test-pg17`/`yonder-test-redis7` containers are *reused*
+  across runs (created once, re-attached after). `docker rm -f` them
+  to start clean; a config-hash label auto-recreates them when the
+  harness options change.
+- `YONDER_TEST_PG_URL` / `YONDER_TEST_REDIS_URL` point at externally
+  provisioned services instead (CI service containers, docker-compose).
 
 ## Redis & background jobs
 

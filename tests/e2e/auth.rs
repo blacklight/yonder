@@ -6,7 +6,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -14,50 +14,24 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    cache,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_app(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     // Rate-limit buckets are tiny by default — lift them for the suite.
     config.rate_limit.authentication = RateLimit {
@@ -69,12 +43,7 @@ async fn test_app(mut config: Config) -> Option<Env> {
 
     let state = Arc::new(AppState::new(config, pool, redis_handle));
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 async fn request(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
@@ -189,6 +158,7 @@ async fn create_app(
 
 #[tokio::test]
 async fn register_login_verify_credentials_flow() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -259,6 +229,7 @@ async fn register_login_verify_credentials_flow() {
 
 #[tokio::test]
 async fn registration_validation_and_modes() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -388,6 +359,7 @@ async fn registration_validation_and_modes() {
 
 #[tokio::test]
 async fn oauth_apps_authorization_code_and_revocation() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -618,6 +590,7 @@ async fn oauth_apps_authorization_code_and_revocation() {
 
 #[tokio::test]
 async fn sessions_and_user_tokens() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -740,6 +713,7 @@ async fn email_verification_flow() {
     let mut config = base_config();
     config.email.smtp_host = Some("smtp.example.com".into());
     config.email.from_address = "noreply@example.com".into();
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -812,6 +786,7 @@ async fn email_verification_flow() {
 
 #[tokio::test]
 async fn device_flow() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -902,6 +877,7 @@ async fn device_flow() {
 
 #[tokio::test]
 async fn instance_endpoint() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };

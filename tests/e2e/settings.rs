@@ -8,7 +8,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -16,50 +16,26 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     jobs::Dispatcher,
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     _state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_app(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = sqlx::PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
@@ -87,12 +63,7 @@ async fn test_app(mut config: Config) -> Option<Env> {
     state.ap = Some(ap);
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        _state: state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, _state: state })
 }
 
 fn base_config() -> Config {
@@ -238,6 +209,7 @@ const PREFS: &str = "/api/v1/preferences";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fresh_account_reports_bootstrap_defaults() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -297,6 +269,7 @@ async fn fresh_account_reports_bootstrap_defaults() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_credentials_native_settings_all_transports() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -377,6 +350,7 @@ async fn update_credentials_native_settings_all_transports() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn yonder_settings_set_read_unset() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -487,6 +461,7 @@ async fn yonder_settings_set_read_unset() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_validation_errors() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -549,6 +524,7 @@ async fn settings_validation_errors() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn settings_do_not_leak_between_users() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -579,6 +555,7 @@ async fn settings_do_not_leak_between_users() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_direct_default_visibility_renders_private() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -602,6 +579,7 @@ async fn legacy_direct_default_visibility_renders_private() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn update_credentials_settings_are_atomic() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -640,6 +618,7 @@ async fn update_credentials_settings_are_atomic() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn effective_language_resolution() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -700,6 +679,7 @@ async fn effective_language_resolution() {
 async fn instance_fallback_locale_applies() {
     let mut config = base_config();
     config.i18n.fallback_locale = "it".to_string();
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -726,6 +706,7 @@ async fn instance_fallback_locale_applies() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn registration_validates_locale() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };

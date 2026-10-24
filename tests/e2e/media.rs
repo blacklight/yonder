@@ -5,32 +5,25 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::{body::Body, http::Request, Router};
 use serde_json::json;
 use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     jobs::{Dispatcher, JobContext, JobHandler},
     media::jobs::*,
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_app(config: Config) -> Option<Env> {
@@ -46,28 +39,10 @@ async fn test_app_federated(mut config: Config) -> Option<Env> {
 }
 
 async fn test_app_with(mut config: Config, federated: bool) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pool = sqlx::PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-        pg.get_host_port_ipv4(5432).await.unwrap()
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-    let redis = Redis::default().start().await.expect("redis");
-    config.redis.url = format!(
-        "redis://127.0.0.1:{}",
-        redis.get_host_port_ipv4(6379).await.unwrap()
-    );
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     config.media.local_path = std::env::temp_dir()
         .join(format!("yonder-media-{}", uuid::Uuid::new_v4()))
         .to_string_lossy()
@@ -99,12 +74,7 @@ async fn test_app_with(mut config: Config, federated: bool) -> Option<Env> {
     }
     let state = Arc::new(state);
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 fn job_ctx(state: &AppState) -> JobContext {
@@ -203,6 +173,7 @@ async fn counted_origin() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_store_roundtrip_and_serve() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(Config::default()).await else {
         return;
     };
@@ -253,6 +224,7 @@ async fn remote_media_fetch_caches() {
     use std::sync::atomic::Ordering;
     let mut config = Config::default();
     config.media.fetch_remote_media = true;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -316,6 +288,7 @@ async fn remote_media_cleanup_protects_boosts_and_quotes() {
     let mut config = Config::default();
     config.media.remote_cleanup_max_age_days = 0; // everything is "old"
     config.media.remote_cleanup_max_bytes = 0;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -431,6 +404,7 @@ async fn remote_media_cleanup_age_and_size_paths() {
     // paying for fresh containers. The "neither" case also pins the
     // `u64 → i64` ceiling clamp: an out-of-range
     // `remote_cleanup_max_bytes` must saturate, never wrap negative.
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(Config::default()).await else {
         return;
     };
@@ -523,6 +497,7 @@ async fn get_json(app: &Router, uri: &str) -> (axum::http::StatusCode, serde_jso
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn account_entity_and_statuses_tab() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(Config::default()).await else {
         return;
     };
@@ -719,6 +694,7 @@ async fn account_entity_and_statuses_tab() {
 async fn oversize_upload_rejected() {
     let mut config = Config::default();
     config.media.max_upload_size = 64;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -813,7 +789,7 @@ async fn assert_s3_roundtrip(env: &Env) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s3_store_roundtrip_minio() {
     use testcontainers_modules::minio::MinIO;
-    if !docker_available() {
+    if !harness::docker_available() {
         eprintln!("skipping: no container runtime reachable");
         return;
     }
@@ -855,6 +831,7 @@ async fn s3_store_roundtrip_minio() {
         }
     }
 
+    let _permit = harness::acquire().await;
     let Some(env) = s3_env(&s3_endpoint).await else {
         return;
     };
@@ -961,6 +938,7 @@ mod fake_s3 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn s3_store_roundtrip_against_stub() {
     let s3_endpoint = fake_s3::serve().await;
+    let _permit = harness::acquire().await;
     let Some(env) = s3_env(&s3_endpoint).await else {
         return;
     };
@@ -1058,6 +1036,7 @@ async fn default_queue_jobs(env: &Env) -> Vec<serde_json::Value> {
 /// reads inside the throttle window must not pile up duplicates.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_profile_refresh_enqueue_is_throttled() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app_federated(Config::default()).await else {
         return;
     };
@@ -1079,6 +1058,7 @@ async fn remote_profile_refresh_enqueue_is_throttled() {
 /// served to an accepted follower and withheld from a non-follower.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn followers_only_status_visible_to_follower() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(Config::default()).await else {
         return;
     };
@@ -1127,6 +1107,7 @@ async fn followers_only_status_visible_to_follower() {
 async fn ingest_media_enqueue_skips_cached_rows() {
     let mut config = Config::default();
     config.media.fetch_remote_media = true;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app_federated(config).await else {
         return;
     };
@@ -1168,6 +1149,7 @@ async fn ingest_media_enqueue_skips_cached_rows() {
 /// object is deleted rather than orphaned in the backend.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn persist_remote_media_loser_object_is_deleted() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(Config::default()).await else {
         return;
     };
@@ -1295,6 +1277,7 @@ async fn persist_remote_media_loser_object_is_deleted() {
 /// which fails the enqueue while Redis itself stays up.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_profile_refresh_flag_cleared_on_enqueue_failure() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app_federated(Config::default()).await else {
         return;
     };

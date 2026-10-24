@@ -5,51 +5,27 @@
 //! Skipped (with a message, never silently green) when no
 //! Docker-compatible container runtime is reachable.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
-use testcontainers_modules::redis::{Redis as RedisImage, REDIS_PORT};
 use tokio_cron_scheduler::JobScheduler;
-use yonder::cache::{self, Redis, RedisCache};
+use yonder::cache::{Redis, RedisCache};
 use yonder::config::{Config, JobsConfig, RedisConfig};
 use yonder::jobs::{
     self, queue, Dispatcher, JobContext, JobEnvelope, JobHandler, JobKind, Queue, Registry,
 };
 use yonder::Error;
 
-/// Heuristic check for a reachable container runtime: either
-/// `DOCKER_HOST` is set or the default socket exists.
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
-/// Start a fresh Redis container and return (handle, container). Each
-/// test gets its own container, so tests are fully isolated.
-async fn test_redis() -> Option<(Redis, ContainerAsync<RedisImage>)> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable (set DOCKER_HOST or expose /var/run/docker.sock)");
-        return None;
-    }
-    let container = RedisImage::default()
-        .with_tag("7-alpine")
-        .start()
-        .await
-        .expect("failed to start redis container");
-    let port = container
-        .get_host_port_ipv4(REDIS_PORT)
-        .await
-        .expect("failed to resolve container port");
-    let config = RedisConfig {
-        url: format!("redis://127.0.0.1:{port}/0"),
-        ..Default::default()
-    };
-    let redis = cache::connect(&config).await.expect("failed to connect");
-    Some((redis, container))
+/// Per-test namespace on the shared Redis — see `harness`.
+async fn test_redis() -> Option<Redis> {
+    let infra = harness::infra().await?;
+    let mut config = RedisConfig::default();
+    Some(harness::scoped_redis(infra, &mut config, &harness::test_slug()).await)
 }
 
 /// JobContext with a lazy (never-connected) Postgres pool — stub
@@ -157,7 +133,8 @@ fn worker_for(
 
 #[tokio::test]
 async fn cache_round_trip() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let cache = RedisCache::new(redis);
@@ -186,13 +163,12 @@ async fn cache_round_trip() {
     }
     assert_eq!(cache.delete_pattern("user:*").await.unwrap(), 3);
     assert_eq!(cache.get("user:0").await.unwrap(), None);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn cache_single_flight() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let cache = RedisCache::new(redis);
@@ -219,13 +195,12 @@ async fn cache_single_flight() {
         assert_eq!(result.unwrap().unwrap(), 42);
     }
     assert_eq!(renders.load(Ordering::SeqCst), 1);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn enqueue_execute_ack() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -257,13 +232,12 @@ async fn enqueue_execute_ack() {
 
     // Awaiting shutdown before checking the PEL keeps this deterministic.
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn failing_job_retries_then_dead_letters() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -304,13 +278,12 @@ async fn failing_job_retries_then_dead_letters() {
     assert_eq!(dead[0].attempts, 2);
     assert!(dead[0].last_error.as_deref().unwrap().contains("boom"));
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn delayed_job_fires() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -349,13 +322,12 @@ async fn delayed_job_fires() {
     cancel.cancel();
     handle.await.unwrap().unwrap();
     assert!(start.elapsed() >= Duration::from_millis(800));
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn cron_job_fires() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -384,13 +356,12 @@ async fn cron_job_fires() {
     cancel.cancel();
     handle.await.unwrap().unwrap();
     scheduler.shutdown().await.unwrap();
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn restart_survives() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -422,8 +393,6 @@ async fn restart_survives() {
     );
     cancel.cancel();
     handle.await.unwrap().unwrap();
-
-    container.stop().await.unwrap();
 }
 
 struct PanicOnceHandler(Arc<AtomicUsize>);
@@ -440,7 +409,8 @@ impl JobHandler for PanicOnceHandler {
 
 #[tokio::test]
 async fn backlog_beyond_maxlen_is_not_dropped() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -479,13 +449,12 @@ async fn backlog_beyond_maxlen_is_not_dropped() {
     cancel.cancel();
     handle.await.unwrap().unwrap();
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn panicking_handler_fails_the_job_and_the_worker_survives() {
-    let Some((redis, container)) = test_redis().await else {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
         return;
     };
     let counter = Arc::new(AtomicUsize::new(0));
@@ -522,6 +491,4 @@ async fn panicking_handler_fails_the_job_and_the_worker_survives() {
     handle.await.unwrap().unwrap();
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
     assert!(dead_entries(&redis, Queue::Default).await.is_empty());
-
-    container.stop().await.unwrap();
 }

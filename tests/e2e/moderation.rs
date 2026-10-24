@@ -7,7 +7,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -17,55 +17,30 @@ use axum::{
 use pubby_sdk::Activity;
 use redis::AsyncCommands;
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use yonder::{
-    activitypub, cache,
+    activitypub,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
     jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
     moderation::audit::AuditLogCleanupJob,
     notifications::fanout::NotificationFanoutJob,
 };
 
-const BASE: &str = "http://127.0.0.1:4000";
+use crate::harness;
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+const BASE: &str = "http://127.0.0.1:4000";
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_env(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     for bucket in [
         &mut config.rate_limit.authentication,
         &mut config.rate_limit.account_creation,
@@ -105,8 +80,6 @@ async fn test_env(mut config: Config) -> Option<Env> {
     Some(Env {
         app: build_router(state.clone()),
         state,
-        _pg: pg,
-        _redis: redis,
     })
 }
 
@@ -253,6 +226,7 @@ async fn audit_count(env: &Env, action: &str) -> i64 {
 
 #[tokio::test]
 async fn report_filing_notifies_and_lists() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -318,6 +292,7 @@ async fn report_filing_notifies_and_lists() {
 
 #[tokio::test]
 async fn report_resolve_reopen_assign_and_audit() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -407,6 +382,7 @@ async fn report_resolve_reopen_assign_and_audit() {
 
 #[tokio::test]
 async fn silence_and_suspend_effects() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -475,6 +451,7 @@ async fn silence_and_suspend_effects() {
 
 #[tokio::test]
 async fn delete_is_admin_only_and_role_guard() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -537,6 +514,7 @@ async fn delete_is_admin_only_and_role_guard() {
 
 #[tokio::test]
 async fn domain_block_crud_and_public_listing() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -660,6 +638,7 @@ async fn domain_block_crud_and_public_listing() {
 async fn public_listing_gated_by_config() {
     let mut config = Config::default();
     config.instance.expose_moderated_instances = false;
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(config).await else {
         return;
     };
@@ -676,6 +655,7 @@ async fn public_listing_gated_by_config() {
 
 #[tokio::test]
 async fn action_guards_staff_and_self() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -731,6 +711,7 @@ async fn action_guards_staff_and_self() {
 
 #[tokio::test]
 async fn disable_freezes_and_enable_restores() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -788,6 +769,7 @@ async fn disable_freezes_and_enable_restores() {
 
 #[tokio::test]
 async fn inbound_flag_respects_reject_reports() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -846,6 +828,7 @@ async fn inbound_flag_respects_reject_reports() {
 
 #[tokio::test]
 async fn audit_cleanup_prunes_old_rows() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -872,6 +855,7 @@ async fn audit_cleanup_prunes_old_rows() {
 
 #[tokio::test]
 async fn reversals_follow_the_staff_guard() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };
@@ -936,6 +920,7 @@ async fn reversals_follow_the_staff_guard() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forwarded_flag_is_signed_by_instance_actor() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
     };

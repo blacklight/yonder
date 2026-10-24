@@ -7,7 +7,7 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 
 use axum::{
     body::Body,
@@ -15,52 +15,26 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::{postgres::Postgres, redis::Redis};
 use tower::ServiceExt;
 use webauthn_authenticator_rs::{softtoken::SoftToken, WebauthnAuthenticator};
 use webauthn_rs::prelude::{CreationChallengeResponse, RequestChallengeResponse, Url};
 use yonder::{
-    cache,
     config::{Config, RateLimit},
-    db,
     http::{build_router, AppState},
 };
 
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
 struct Env {
     app: Router,
     state: Arc<AppState>,
-    _pg: testcontainers::ContainerAsync<Postgres>,
-    _redis: testcontainers::ContainerAsync<Redis>,
 }
 
 async fn test_app(mut config: Config) -> Option<Env> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let pg_port = pg.get_host_port_ipv4(5432).await.unwrap();
-    let pool = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .unwrap();
-    db::migrate::run(&pool).await.unwrap();
-
-    let redis = Redis::default().start().await.expect("redis");
-    let redis_port = redis.get_host_port_ipv4(6379).await.unwrap();
-    config.redis.url = format!("redis://127.0.0.1:{redis_port}");
-    let redis_handle = cache::connect(&config.redis).await.unwrap();
+    let infra = harness::infra().await?;
+    let slug = harness::test_slug();
+    let pool = harness::provision_db(infra, &slug).await;
+    let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
 
     config.rate_limit.authentication = RateLimit {
         limit: 10_000,
@@ -71,12 +45,7 @@ async fn test_app(mut config: Config) -> Option<Env> {
 
     let state = Arc::new(AppState::new(config, pool, redis_handle));
     let app = build_router(state.clone());
-    Some(Env {
-        app,
-        state,
-        _pg: pg,
-        _redis: redis,
-    })
+    Some(Env { app, state })
 }
 
 fn base_config() -> Config {
@@ -303,6 +272,7 @@ async fn enroll_totp(env: &Env, username: &str, email: &str) -> (String, String,
 
 #[tokio::test]
 async fn totp_lifecycle_and_login_gating() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -421,6 +391,7 @@ async fn totp_lifecycle_and_login_gating() {
 
 #[tokio::test]
 async fn pending_login_attempt_budget() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -464,6 +435,7 @@ async fn pending_login_attempt_budget() {
 
 #[tokio::test]
 async fn backup_code_lifecycle() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -596,6 +568,7 @@ async fn backup_code_lifecycle() {
 async fn totp_setup_requires_secret_key() {
     let mut config = base_config();
     config.auth.secret_key = None;
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(config).await else {
         return;
     };
@@ -613,6 +586,7 @@ async fn totp_setup_requires_secret_key() {
 
 #[tokio::test]
 async fn secret_is_encrypted_at_rest() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -708,6 +682,7 @@ async fn mfa_login(env: &Env, email: &str) -> String {
 
 #[tokio::test]
 async fn webauthn_register_assert_login_remove() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -883,6 +858,7 @@ async fn webauthn_register_assert_login_remove() {
 
 #[tokio::test]
 async fn webauthn_last_method_clears_backup_codes() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -937,6 +913,7 @@ async fn webauthn_last_method_clears_backup_codes() {
 
 #[tokio::test]
 async fn webauthn_duplicate_credential_conflict() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -987,6 +964,7 @@ async fn webauthn_duplicate_credential_conflict() {
 
 #[tokio::test]
 async fn user_without_2fa_is_unaffected() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1012,6 +990,7 @@ async fn user_without_2fa_is_unaffected() {
 
 #[tokio::test]
 async fn webauthn_register_validates_name() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1086,6 +1065,7 @@ async fn webauthn_register_validates_name() {
 
 #[tokio::test]
 async fn webauthn_assert_begin_edge_cases() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1129,6 +1109,7 @@ async fn webauthn_assert_begin_edge_cases() {
 
 #[tokio::test]
 async fn totp_setup_conflict_and_delete_404() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1181,6 +1162,7 @@ async fn totp_setup_conflict_and_delete_404() {
 
 #[tokio::test]
 async fn disable_all_semantics() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1281,6 +1263,7 @@ async fn disable_all_semantics() {
 
 #[tokio::test]
 async fn disable_all_drops_backup_codes() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1307,6 +1290,7 @@ async fn disable_all_drops_backup_codes() {
 
 #[tokio::test]
 async fn admin_disable_2fa_primitive() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };
@@ -1331,6 +1315,7 @@ async fn admin_disable_2fa_primitive() {
 
 #[tokio::test]
 async fn totp_status_endpoint() {
+    let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
         return;
     };

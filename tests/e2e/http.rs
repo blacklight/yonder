@@ -6,7 +6,6 @@
 //! Docker-compatible container runtime is reachable.
 
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,72 +13,25 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use sqlx::PgPool;
-use testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::redis::{Redis as RedisImage, REDIS_PORT};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
-use yonder::cache;
-use yonder::config::{Config, RateLimit, RedisConfig};
-use yonder::db;
+use yonder::config::{Config, RateLimit};
 use yonder::http::{self, middleware::auth::token_hash, middleware::ratelimit, AppState};
 use yonder::Error;
 
-/// Heuristic check for a reachable container runtime: either
-/// `DOCKER_HOST` is set or the default socket exists.
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
-struct Containers {
-    _pg: ContainerAsync<Postgres>,
-    _redis: ContainerAsync<RedisImage>,
-}
-
-/// App state over fresh Postgres + Redis containers, with migrations
-/// applied. `tweak` adjusts the config before the state is built.
-async fn test_state(tweak: impl FnOnce(&mut Config)) -> Option<(Arc<AppState>, Containers)> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable (set DOCKER_HOST or expose /var/run/docker.sock)");
-        return None;
-    }
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
-    let pg_port = pg.get_host_port_ipv4(5432).await.expect("postgres port");
-    let db = PgPool::connect(&format!(
-        "postgres://postgres:postgres@127.0.0.1:{pg_port}/postgres"
-    ))
-    .await
-    .expect("failed to connect to postgres");
-    db::migrate::run(&db).await.expect("migrations failed");
-
-    let rc = RedisImage::default()
-        .with_tag("7-alpine")
-        .start()
-        .await
-        .expect("failed to start redis container");
-    let redis_port = rc.get_host_port_ipv4(REDIS_PORT).await.expect("redis port");
-    let redis = cache::connect(&RedisConfig {
-        url: format!("redis://127.0.0.1:{redis_port}/0"),
-        ..Default::default()
-    })
-    .await
-    .expect("failed to connect to redis");
-
+/// App state over a fresh per-test database + Redis namespace on the
+/// shared containers. `tweak` adjusts the config before the state is
+/// built.
+async fn test_state(tweak: impl FnOnce(&mut Config)) -> Option<Arc<AppState>> {
+    let infra = harness::infra().await?;
     let mut config = Config::default();
     tweak(&mut config);
-    let state = Arc::new(AppState::new(config, db, redis));
-    Some((
-        state,
-        Containers {
-            _pg: pg,
-            _redis: rc,
-        },
-    ))
+    let slug = harness::test_slug();
+    let db = harness::provision_db(infra, &slug).await;
+    let redis = harness::scoped_redis(infra, &mut config.redis, &slug).await;
+    Some(Arc::new(AppState::new(config, db, redis)))
 }
 
 /// Insert account + user + a valid access token; returns the bearer
@@ -121,7 +73,8 @@ async fn body_json(resp: axum::response::Response) -> Value {
 
 #[tokio::test]
 async fn healthz_and_openapi_served() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = http::build_router(state);
@@ -147,7 +100,8 @@ async fn healthz_and_openapi_served() {
 
 #[tokio::test]
 async fn invalid_bearer_rejected_with_mastodon_shape() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = http::build_router(state.clone());
@@ -204,7 +158,8 @@ async fn invalid_bearer_rejected_with_mastodon_shape() {
 
 #[tokio::test]
 async fn cors_preflight_obeys_origin_policy() {
-    let Some((state, _containers)) = test_state(|c| {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
         c.http.cors_enabled = true;
         c.http.cors_origins = vec!["https://app.example.com".to_string()];
     })
@@ -248,7 +203,8 @@ async fn cors_preflight_obeys_origin_policy() {
 
 #[tokio::test]
 async fn cors_disabled_by_default() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = http::build_router(state);
@@ -272,7 +228,8 @@ async fn cors_disabled_by_default() {
 
 #[tokio::test]
 async fn rate_limit_fires_with_retry_after() {
-    let Some((state, _containers)) = test_state(|c| {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
         c.rate_limit.search = RateLimit {
             limit: 2,
             period_seconds: 60,
@@ -309,7 +266,8 @@ async fn rate_limit_fires_with_retry_after() {
 
 #[tokio::test]
 async fn rate_limit_authenticated_override() {
-    let Some((state, _containers)) = test_state(|c| {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
         c.rate_limit.status = RateLimit {
             limit: 1,
             period_seconds: 60,
@@ -370,7 +328,8 @@ async fn error_mapping_is_mastodon_shaped() {
     async fn internal() -> Result<&'static str, Error> {
         Err(Error::Internal("postgres://user:secret@host".to_string()))
     }
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = axum::Router::new()
@@ -407,7 +366,8 @@ async fn serve_ephemeral(state: Arc<AppState>) -> SocketAddr {
 
 #[tokio::test]
 async fn websocket_echoes_heartbeat_and_streams() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let addr = serve_ephemeral(state.clone()).await;
@@ -478,7 +438,8 @@ async fn websocket_echoes_heartbeat_and_streams() {
 
 #[tokio::test]
 async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let token = seed_token(&state).await;
@@ -524,7 +485,8 @@ async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
 
 #[tokio::test]
 async fn websocket_pre_subscribes_via_query_and_folds_params() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let token = seed_token(&state).await;
@@ -586,7 +548,8 @@ async fn websocket_pre_subscribes_via_query_and_folds_params() {
 
 #[tokio::test]
 async fn database_outage_is_500_not_401() {
-    let Some((state, _containers)) = test_state(|_| {}).await else {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let token = seed_token(&state).await;

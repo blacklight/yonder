@@ -7,44 +7,22 @@
 
 #![allow(clippy::result_large_err)]
 
-use std::path::Path;
-
 use sqlx::{PgPool, Row};
-use testcontainers::{runners::AsyncRunner, ImageExt};
-use testcontainers_modules::postgres::Postgres;
 use yonder::config::Config;
 use yonder::db;
 
-/// Heuristic check for a reachable container runtime: either `DOCKER_HOST`
-/// is set or the default socket exists.
-fn docker_available() -> bool {
-    std::env::var_os("DOCKER_HOST").is_some() || Path::new("/var/run/docker.sock").exists()
-}
+use crate::harness;
 
-/// Start a fresh Postgres container and return (pool, container). Each test
-/// gets its own container, so tests are fully isolated.
-async fn test_pool() -> Option<(PgPool, testcontainers::ContainerAsync<Postgres>)> {
-    if !docker_available() {
-        eprintln!("skipping: no container runtime reachable (set DOCKER_HOST or expose /var/run/docker.sock)");
-        return None;
-    }
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("failed to start postgres container");
-    let port = container
-        .get_host_port_ipv4(5432)
-        .await
-        .expect("failed to resolve container port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
-    let pool = PgPool::connect(&url).await.expect("failed to connect");
-    Some((pool, container))
+/// Fresh per-test database on the shared Postgres — see `harness`.
+async fn test_pool() -> Option<PgPool> {
+    let infra = harness::infra().await?;
+    Some(harness::provision_db(infra, &harness::test_slug()).await)
 }
 
 #[tokio::test]
 async fn migrations_apply_idempotently() {
-    let Some((pool, container)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
 
@@ -55,13 +33,12 @@ async fn migrations_apply_idempotently() {
     db::migrate::run(&pool).await.unwrap();
     let after_second = db::migrate::applied_versions(&pool).await.unwrap();
     assert_eq!(after_first, after_second);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn down_migrations_revert_cleanly() {
-    let Some((pool, container)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
 
@@ -91,15 +68,14 @@ async fn down_migrations_revert_cleanly() {
         db::migrate::applied_versions(&pool).await.unwrap(),
         (1..=21).collect::<Vec<i64>>()
     );
-
-    container.stop().await.unwrap();
 }
 
 /// The PROMPT's acceptance smoke test: a fresh schema accepts a user, a
 /// status, a follow, a like and a notification with referential integrity.
 #[tokio::test]
 async fn smoke_test_referential_integrity() {
-    let Some((pool, container)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     db::migrate::run(&pool).await.unwrap();
@@ -179,15 +155,14 @@ async fn smoke_test_referential_integrity() {
     .await
     .unwrap_err();
     assert!(matches!(missing, sqlx::Error::Database(_)));
-
-    container.stop().await.unwrap();
 }
 
 /// `config_overlays` rows flow through the epic-01 read path into the
 /// effective configuration.
 #[tokio::test]
 async fn config_overlays_round_trip() {
-    let Some((pool, container)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     db::migrate::run(&pool).await.unwrap();
@@ -211,13 +186,12 @@ async fn config_overlays_round_trip() {
     let config = Config::with_overlays(None, &overlays).unwrap();
     assert_eq!(config.instance.name, "Overridden");
     assert_eq!(config.server.port, 4567);
-
-    container.stop().await.unwrap();
 }
 
 #[tokio::test]
 async fn check_constraints_enforced() {
-    let Some((pool, container)) = test_pool().await else {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
         return;
     };
     db::migrate::run(&pool).await.unwrap();
@@ -262,6 +236,4 @@ async fn check_constraints_enforced() {
         .await
         .unwrap_err();
     assert!(matches!(error, sqlx::Error::Database(_)));
-
-    container.stop().await.unwrap();
 }

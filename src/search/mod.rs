@@ -184,10 +184,11 @@ pub async fn render(
 
     let mut accounts = Vec::with_capacity(results.account_ids.len());
     for account in account_mapper::load_many(&state.db, &results.account_ids).await? {
-        let mut entity = account_mapper::to_account(&account, &base_url);
+        let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
         // `to_account`'s CONTRACT: callers fill `moved` themselves.
         entity["moved"] =
-            crate::users::moves::moved_account_json(&state.db, &account, &base_url).await;
+            crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
+                .await;
         accounts.push(entity);
     }
 

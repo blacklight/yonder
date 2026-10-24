@@ -9,10 +9,13 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 
 # axum 0.8, redis 0.27 and thiserror 2 are pinned to match pubby-sdk's
 # dependency versions — types from these crates cross the pubby boundary
-# in the epic-06 federation integration.
 [dependencies]
 argon2 = "0.5"
 async-trait = "0.1"
+# S3 media backend. Pinned to a >=7-day-old release; 1.153+
+# postdates the cutoff. `cargo update -p aws-sdk-s3 --precise` pins the
+# lockfile to it.
+aws-sdk-s3 = "1.152.0"
 axum = { version = "0.8", features = ["ws", "multipart"] }
 base64 = "0.22"
 bb8 = "0.8"
@@ -76,7 +79,7 @@ ammonia = "4.2.4"
 base64 = "0.22"
 figment = { version = "0.10", features = ["env", "toml", "test"] }
 testcontainers = "0.24"
-testcontainers-modules = { version = "0.12", features = ["postgres", "redis"] }
+testcontainers-modules = { version = "0.12", features = ["postgres", "redis", "minio"] }
 tokio-tungstenite = "0.29"
 tower = "0.5.3"
 webauthn-authenticator-rs = { version = "0.5.5", features = ["softtoken"] }

@@ -126,7 +126,7 @@ pub(super) async fn account_entities(state: &AppState, ids: &[i64]) -> Result<Ve
     Ok(account_mapper::load_many(&state.db, ids)
         .await?
         .iter()
-        .map(|a| account_mapper::to_account(a, &base))
+        .map(|a| account_mapper::to_account(a, &base, &state.config))
         .collect())
 }
 

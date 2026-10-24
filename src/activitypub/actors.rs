@@ -270,7 +270,12 @@ pub async fn ensure_instance_actor(pool: &PgPool, base_url: &str) -> Result<Loca
 /// Build the [`ActorConfig`] for a local actor. Per-actor endpoint paths
 /// (the 0.6.0 `*_path` fields) put inbox/outbox/followers/following
 /// under the actor instead of the instance-wide `/ap/*` defaults.
-fn actor_config(base_url: &str, actor: &LocalActor, actor_path: &str) -> ActorConfig {
+fn actor_config(
+    config: &crate::config::Config,
+    base_url: &str,
+    actor: &LocalActor,
+    actor_path: &str,
+) -> ActorConfig {
     let username = &actor.username;
     let mut cfg = ActorConfig::new(base_url);
     cfg.username = username.clone();
@@ -292,7 +297,7 @@ fn actor_config(base_url: &str, actor: &LocalActor, actor_path: &str) -> ActorCo
             actor
                 .avatar_path
                 .as_ref()
-                .map(|k| crate::media::public_url(base_url, k))
+                .map(|k| crate::media::public_url(config, base_url, k))
         })
         .unwrap_or_default();
     cfg.actor_path = actor_path.to_string();
@@ -366,6 +371,7 @@ pub fn handler_options(
 /// account has no key material yet (unprovisioned rows).
 pub fn handler_for(
     storage: Arc<dyn pubby_sdk::ActivityPubStorage>,
+    config: &crate::config::Config,
     base_url: &str,
     actor: &LocalActor,
     actor_path: &str,
@@ -379,7 +385,7 @@ pub fn handler_for(
         .map_err(|e| crate::Error::Validation(format!("invalid actor key: {e}")))?;
     let handler = ActivityPubHandler::new(
         storage,
-        actor_config(base_url, actor, actor_path),
+        actor_config(config, base_url, actor, actor_path),
         private_key,
         options,
     )
@@ -410,6 +416,7 @@ pub fn make_resolver(core: Arc<super::ApCore>, cache: HandlerCache) -> ActorReso
         super::bind_follow_response(&mut options, &core, &actor.actor_id);
         let handler = handler_for(
             core.storage_trait(),
+            &core.config,
             &core.base_url,
             &actor,
             &actor_path(&username),

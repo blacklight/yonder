@@ -163,6 +163,12 @@ local_path = "./media"
 # s3_access_key = ""
 # s3_secret_key = ""
 # s3_region = "us-east-1"
+# Path-style bucket addressing (required by MinIO and most
+# S3-compatible stores).
+s3_force_path_style = true
+# Optional public/CDN base URL media links point at directly. Unset:
+# media is proxied through GET /media/{key}.
+# s3_public_base_url = "https://cdn.example.com"
 # Maximum upload size in bytes (default: 50 MiB).
 max_upload_size = 52428800
 # Maximum avatar/banner upload size in bytes (default: 2 MiB).

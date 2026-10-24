@@ -88,19 +88,26 @@ pub async fn media_for_scheduled(ctx: &PostContext, scheduled_id: i64) -> Result
 }
 
 /// The public URL for a stored attachment (local key or remote URL).
-pub fn media_url(base_url: &str, row: &MediaRow) -> Option<String> {
-    row.remote_url.clone().or_else(|| {
-        row.file_path
-            .as_ref()
-            .map(|k| media::public_url(base_url, k))
-    })
+pub fn media_url(config: &crate::config::Config, base_url: &str, row: &MediaRow) -> Option<String> {
+    let local = row
+        .file_path
+        .as_ref()
+        .map(|k| media::public_url(config, base_url, k));
+    let remote = row.remote_url.clone();
+    // Remote-media caching on → the local copy wins; off → the remote
+    // URL is served directly.
+    if config.media.fetch_remote_media {
+        local.or(remote)
+    } else {
+        remote.or(local)
+    }
 }
 
 /// The Mastodon MediaAttachment entity: `url`/`preview_url` resolve
 /// the stored key to a public URL; `meta` carries dimensions and the
 /// `focus` point when set.
-pub fn media_entity(base_url: &str, row: &MediaRow) -> Value {
-    let url = media_url(base_url, row);
+pub fn media_entity(config: &crate::config::Config, base_url: &str, row: &MediaRow) -> Value {
+    let url = media_url(config, base_url, row);
     let mut meta = json!({});
     if let (Some(w), Some(h)) = (row.width, row.height) {
         meta["original"] = json!({
@@ -202,7 +209,7 @@ async fn card_entity(ctx: &PostContext, status_id: i64, base_url: &str) -> Resul
                 "author_url": r.get::<String, _>("author_url"),
                 "provider_name": r.get::<String, _>("provider_name"),
                 "provider_url": r.get::<String, _>("provider_url"),
-                "image": image.map(|k| media::public_url(base_url, &k)),
+                "image": image.map(|k| media::public_url(&ctx.config, base_url, &k)),
                 "blurhash": Value::Null,
             })
         }
@@ -235,14 +242,14 @@ pub(crate) async fn status_entity_inner(
     let account = account_mapper::load(&ctx.db, status.account_id)
         .await?
         .ok_or_else(|| crate::Error::NotFound("account".into()))?;
-    let mut account_json = account_mapper::to_account(&account, &base_url);
+    let mut account_json = account_mapper::to_account(&account, &base_url, &ctx.config);
     account_json["moved"] =
-        crate::users::moves::moved_account_json(&ctx.db, &account, &base_url).await;
+        crate::users::moves::moved_account_json(&ctx.db, &account, &base_url, &ctx.config).await;
 
     let media_rows = media_for_status(ctx, status.id).await?;
     let media_json: Vec<Value> = media_rows
         .iter()
-        .map(|m| media_entity(&base_url, m))
+        .map(|m| media_entity(&ctx.config, &base_url, m))
         .collect();
     let poll_json = match status.poll_id {
         Some(poll_id) => polls::entity(ctx, poll_id, viewer).await?,
@@ -349,7 +356,7 @@ pub async fn scheduled_status_entity(ctx: &PostContext, row: &ScheduledRow) -> R
     let media_json: Vec<Value> = media_for_scheduled(ctx, row.id)
         .await?
         .iter()
-        .map(|m| media_entity(&base_url, m))
+        .map(|m| media_entity(&ctx.config, &base_url, m))
         .collect();
     Ok(json!({
         "id": row.id.to_string(),

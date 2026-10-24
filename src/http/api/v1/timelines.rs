@@ -31,7 +31,7 @@ use crate::{
 };
 
 /// Mastodon's loose booleans — `true`/`1` count, everything else doesn't.
-fn truthy(params: &HashMap<String, String>, key: &str) -> bool {
+pub(crate) fn truthy(params: &HashMap<String, String>, key: &str) -> bool {
     params.get(key).is_some_and(|v| v == "true" || v == "1")
 }
 
@@ -54,6 +54,7 @@ async fn filters(
         viewer: auth.map(|a| a.account_id),
         hidden_languages,
         only_media: truthy(params, "only_media"),
+        ..Default::default()
     })
 }
 

@@ -19,7 +19,6 @@ use crate::{
     auth::scopes::require_scope,
     http::{middleware::auth::AuthContext, AppState},
     jobs::JobKind,
-    media::storage,
     users::transfer::{self, Kind},
     Error, Result,
 };
@@ -231,7 +230,7 @@ pub async fn download_export(
     let Some(key) = key else {
         return Err(Error::NotFound("export".into()));
     };
-    let bytes = storage::read_bytes(&state.config, &key).await?;
+    let bytes = state.media.get(&key).await?;
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,
@@ -319,7 +318,7 @@ pub async fn create_import(
     // `total` counts data rows only — headers excluded.
     let total = transfer::count_rows(kind, &bytes)?;
     let key = format!("imports/{}/{}", auth.account_id, uuid::Uuid::new_v4());
-    storage::write_bytes(&state.config, &key, &bytes).await?;
+    state.media.put(&key, &bytes, "application/zip").await?;
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO archive_imports (account_id, kind, mode, file_key, total) \
          VALUES ($1, $2, $3, $4, $5) RETURNING id",

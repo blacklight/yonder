@@ -382,6 +382,17 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/invites/check/{code}",
             get(invites::check_invite).route_layer(ratelimit::layer(state, "account_creation")),
         )
+        // Profile pages (epic 18) — public reads registered after the
+        // `authentication` layer so they count solely against the
+        // `timeline` read bucket, like the timeline endpoints below.
+        .route(
+            "/api/v1/accounts/{id}",
+            get(accounts::get_account).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/accounts/{id}/statuses",
+            get(accounts::account_statuses).route_layer(ratelimit::layer(state, "timeline")),
+        )
         // Timelines (epic 15) — registered after the `authentication`
         // layer so reads count solely against the `timeline` bucket.
         .route(
@@ -427,6 +438,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     accounts::verify_credentials,
     accounts::update_credentials,
     accounts::verify_email,
+    accounts::get_account,
+    accounts::account_statuses,
     apps::create_app,
     apps::verify_credentials,
     apps::authorized_applications,

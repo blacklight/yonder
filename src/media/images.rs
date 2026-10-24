@@ -216,10 +216,11 @@ pub(crate) fn process_image(bytes: &[u8], strip_exif: bool, label: &str) -> Resu
 }
 
 /// Validate, process and persist an upload; returns the storage key
-/// and metadata. Files land under `media.local_path` at
-/// `{kind_dir}/{account_id}/{uuid}.{ext}`.
+/// and metadata. Files land under `media.local_path` (local backend)
+/// or the S3 bucket at `{kind_dir}/{account_id}/{uuid}.{ext}`.
 pub async fn store_profile_image(
     config: &Config,
+    store: &crate::media::storage::MediaStore,
     kind: MediaKind,
     account_id: i64,
     bytes: Vec<u8>,
@@ -245,11 +246,7 @@ pub async fn store_profile_image(
         uuid::Uuid::new_v4(),
         seed.ext
     );
-    let path = std::path::Path::new(&config.media.local_path).join(&key);
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    tokio::fs::write(&path, &bytes).await?;
+    store.put(&key, &bytes, &content_type).await?;
     Ok(StoredImage {
         key,
         content_type,

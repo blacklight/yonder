@@ -28,6 +28,7 @@ pub fn post_ctx_for_core(core: &ApCore) -> PostContext {
         db: core.db.clone(),
         redis: core.redis.clone(),
         config: core.config.clone(),
+        media: crate::media::storage::MediaStore::from_config(&core.config),
     };
     let mut ctx = PostContext::from_job(&job, None);
     ctx.bus = core.bus.clone();

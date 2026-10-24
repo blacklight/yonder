@@ -227,10 +227,13 @@ async fn start_worker(
     crate::timelines::register_jobs(&mut registry);
     // Epic-16 notifications (fan-out + email enqueue).
     crate::notifications::register_jobs(&mut registry);
+    // Epic-18 media jobs (remote fetch + cleanup sweep).
+    crate::media::register_jobs(&mut registry);
     let ctx = jobs::JobContext {
         db: pool,
         redis: redis.clone(),
         config: Arc::new(config.clone()),
+        media: crate::media::storage::MediaStore::from_config(config),
     };
     let scheduler = jobs::scheduler::start(config, &dispatcher).await?;
     let worker = jobs::worker::Worker::new(

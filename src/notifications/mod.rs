@@ -260,7 +260,7 @@ pub async fn entity(ctx: &PostContext, row: &NotificationRow) -> Result<Value> {
     let base_url = ctx.base_url();
     let account = crate::users::account::load(&ctx.db, row.from_account_id)
         .await?
-        .map(|a| crate::users::account::to_account(&a, &base_url))
+        .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
         .unwrap_or(Value::Null);
     let mut out = json!({
         "id": row.id.to_string(),
@@ -308,13 +308,13 @@ async fn report_entity(ctx: &PostContext, report_id: i64) -> Result<Value> {
     let base_url = ctx.base_url();
     let target = crate::users::account::load(&ctx.db, report.get("target_account_id"))
         .await?
-        .map(|a| crate::users::account::to_account(&a, &base_url))
+        .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
         .unwrap_or(Value::Null);
     let assigned: Option<i64> = report.get("assigned_account_id");
     let assigned = match assigned {
         Some(id) => crate::users::account::load(&ctx.db, id)
             .await?
-            .map(|a| crate::users::account::to_account(&a, &base_url))
+            .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
             .unwrap_or(Value::Null),
         None => Value::Null,
     };

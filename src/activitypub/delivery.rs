@@ -172,7 +172,7 @@ pub async fn publish_actor_update(ctx: &ApContext, username: &str) -> Result<Val
         let banner = actor.banner_remote_url.or_else(|| {
             actor
                 .banner_path
-                .map(|k| crate::media::public_url(&ctx.core.base_url, &k))
+                .map(|k| crate::media::public_url(&ctx.core.config, &ctx.core.base_url, &k))
         });
         if let Some(url) = banner {
             doc["image"] = json!({ "type": "Image", "url": url });

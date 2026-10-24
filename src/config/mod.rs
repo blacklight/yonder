@@ -483,6 +483,12 @@ pub struct MediaConfig {
     pub s3_access_key: Option<String>,
     pub s3_secret_key: Option<String>,
     pub s3_region: Option<String>,
+    /// Path-style bucket addressing — MinIO and most S3-compatible
+    /// stores need it (`true`); AWS S3 accepts either.
+    pub s3_force_path_style: bool,
+    /// Optional public/CDN base URL media is linked from directly.
+    /// When unset, media is proxied through `GET /media/{key}`.
+    pub s3_public_base_url: Option<String>,
     /// Maximum upload size in bytes (default: 50 MiB).
     pub max_upload_size: u64,
     /// Maximum avatar/banner upload size in bytes (default: 2 MiB).
@@ -520,6 +526,8 @@ impl Default for MediaConfig {
             s3_access_key: None,
             s3_secret_key: None,
             s3_region: None,
+            s3_force_path_style: true,
+            s3_public_base_url: None,
             max_upload_size: 50 * 1024 * 1024,
             max_avatar_size: 2 * 1024 * 1024,
             fetch_remote_media: false,

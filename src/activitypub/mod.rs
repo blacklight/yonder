@@ -164,6 +164,7 @@ pub async fn build(
     bind_follow_response(&mut instance_options, &core, &instance_actor.actor_id);
     let instance = actors::handler_for(
         core.storage_trait(),
+        config,
         &base_url,
         &instance_actor,
         "/ap/actor",

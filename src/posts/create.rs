@@ -934,7 +934,7 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
             .await?;
     for (media_id, key) in &media {
         if let Some(key) = key {
-            if let Err(e) = crate::media::storage::delete_key(&ctx.config, key).await {
+            if let Err(e) = ctx.media.delete(key).await {
                 tracing::warn!(key, error = %e, "media object delete failed; detaching row");
                 sqlx::query("UPDATE media_attachments SET status_id = NULL WHERE id = $1")
                     .bind(media_id)

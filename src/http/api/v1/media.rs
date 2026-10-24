@@ -79,6 +79,7 @@ pub(crate) async fn upload_inner(
     };
     let stored = store_status_media(
         &state.config,
+        &state.media,
         &state.db,
         auth.account_id,
         bytes,
@@ -93,7 +94,11 @@ pub(crate) async fn upload_inner(
     let row = entity::load_media(&ctx, stored.id)
         .await?
         .ok_or_else(|| Error::Internal("media missing after store".to_string()))?;
-    Ok(Json(entity::media_entity(&ctx.base_url(), &row)))
+    Ok(Json(entity::media_entity(
+        &ctx.config,
+        &ctx.base_url(),
+        &row,
+    )))
 }
 
 /// `PUT /api/v1/media/{id}` — update `description`/`focus` (owner
@@ -190,7 +195,11 @@ pub async fn update(
     let row = entity::load_media(&ctx, id)
         .await?
         .ok_or_else(|| Error::Internal("media missing after update".to_string()))?;
-    Ok(Json(entity::media_entity(&ctx.base_url(), &row)))
+    Ok(Json(entity::media_entity(
+        &ctx.config,
+        &ctx.base_url(),
+        &row,
+    )))
 }
 
 /// OpenAPI shape of the media update body.

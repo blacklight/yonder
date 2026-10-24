@@ -532,7 +532,7 @@ fn validate_fields(config: &Config, inputs: &[FieldInput]) -> Result<()> {
 /// Render and stamp the submitted fields into the stored shape,
 /// preserving `verified_at` for entries whose `name`+`value_raw` pair
 /// survives anywhere in the previous list — a reorder shouldn't cost a
-/// field its stamp (review W6). Assumes [`validate_fields`] already ran.
+/// field its stamp. Assumes [`validate_fields`] already ran.
 fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> Result<Vec<Value>> {
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -572,6 +572,13 @@ fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> 
 // ---------------------------------------------------------------------------
 // update_credentials
 // ---------------------------------------------------------------------------
+
+/// How long a replaced/cleared profile image stays in the store after
+/// the row stops referencing it. Avatar/header URLs are served
+/// `immutable` for a year and remote servers re-fetch them only after
+/// the actor `Update` lands, so an immediate delete would 404 the old
+/// URL for late consumers; a day comfortably covers delivery retries.
+const STALE_PROFILE_IMAGE_GRACE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Apply a normalized PATCH to the account row under a row lock, then
 /// fire the post-commit effects: the actor `Update` fan-out and a
@@ -622,20 +629,34 @@ pub async fn update_profile(
         MediaOp::Unchanged => None,
         MediaOp::Clear => Some(None),
         MediaOp::Set(bytes) => Some(Some(
-            media::store_profile_image(config, MediaKind::Avatar, auth.account_id, bytes).await?,
+            media::store_profile_image(
+                config,
+                &state.media,
+                MediaKind::Avatar,
+                auth.account_id,
+                bytes,
+            )
+            .await?,
         )),
     };
     let header = match params.header {
         MediaOp::Unchanged => None,
         MediaOp::Clear => Some(None),
         MediaOp::Set(bytes) => Some(Some(
-            media::store_profile_image(config, MediaKind::Header, auth.account_id, bytes).await?,
+            media::store_profile_image(
+                config,
+                &state.media,
+                MediaKind::Header,
+                auth.account_id,
+                bytes,
+            )
+            .await?,
         )),
     };
 
     // Row lock: PATCH and the verify sweep both rewrite
     // `profile_fields` — the lock keeps either writer from losing the
-    // other's update (review C3).
+    // other's update.
     let mut tx = state.db.begin().await?;
     let row = sqlx::query(
         "SELECT username, display_name, bio, avatar_path, banner_path, \
@@ -713,10 +734,12 @@ pub async fn update_profile(
         )
     };
 
+    let old_avatar_path: Option<String> = row.get("avatar_path");
+    let old_banner_path: Option<String> = row.get("banner_path");
     let avatar_path = avatar
         .as_ref()
         .map(|op| op.as_ref().map(|s| s.key.clone()))
-        .unwrap_or_else(|| row.get::<Option<String>, _>("avatar_path"));
+        .unwrap_or_else(|| old_avatar_path.clone());
     let avatar_blurhash = avatar
         .as_ref()
         .map(|op| op.as_ref().map(|s| s.blurhash.clone()))
@@ -724,7 +747,7 @@ pub async fn update_profile(
     let banner_path = header
         .as_ref()
         .map(|op| op.as_ref().map(|s| s.key.clone()))
-        .unwrap_or_else(|| row.get::<Option<String>, _>("banner_path"));
+        .unwrap_or_else(|| old_banner_path.clone());
     let header_blurhash = header
         .as_ref()
         .map(|op| op.as_ref().map(|s| s.blurhash.clone()))
@@ -736,8 +759,8 @@ pub async fn update_profile(
     let changed = display_name != row.get::<Option<String>, _>("display_name")
         || bio != row.get::<Option<String>, _>("bio")
         || fields != row.get::<Value, _>("profile_fields")
-        || avatar_path != row.get::<Option<String>, _>("avatar_path")
-        || banner_path != row.get::<Option<String>, _>("banner_path")
+        || avatar_path != old_avatar_path
+        || banner_path != old_banner_path
         || locked != row.get::<bool, _>("locked")
         || bot != row.get::<bool, _>("bot")
         || discoverable != row.get::<bool, _>("discoverable");
@@ -802,6 +825,39 @@ pub async fn update_profile(
             .await?;
     }
     tx.commit().await?;
+
+    // A replaced or cleared profile image is unreferenced the moment
+    // the row moves to the new key — but its URL was served with a
+    // year-long `immutable` cache and remote servers may not have
+    // processed the actor `Update` yet, so the delete is deferred by a
+    // grace delay (the job re-checks the reference before removing).
+    // No sweep covers `avatars/`/`headers/`, so without the enqueue
+    // the object leaks. Best-effort: a failed enqueue leaves an
+    // orphan — warn and carry on. The prefix guard keeps a
+    // legacy/foreign path shape out of the job's reach.
+    for (old, new) in [
+        (old_avatar_path, &avatar_path),
+        (old_banner_path, &banner_path),
+    ] {
+        let Some(old) = old else { continue };
+        if new.as_deref() == Some(old.as_str()) {
+            continue;
+        }
+        if !old.starts_with("avatars/") && !old.starts_with("headers/") {
+            continue;
+        }
+        if let Err(e) = state
+            .dispatcher
+            .enqueue_delayed(
+                JobKind::DeleteMediaObject,
+                json!({ "key": old }),
+                STALE_PROFILE_IMAGE_GRACE,
+            )
+            .await
+        {
+            tracing::warn!(key = %old, error = %e, "stale profile image delete enqueue failed");
+        }
+    }
 
     if changed {
         if let Some(ap) = &state.ap {
@@ -918,7 +974,8 @@ fn fetch_verdict(client: &HttpClient, page_url: &str, targets: &[String]) -> Ver
 /// I/O lives here; PATCH never fetches.
 pub struct VerifyProfileLinksJob;
 
-/// In-flight fetch bound per job run (review C2).
+/// In-flight fetch bound per job run — one runaway sweep must not
+/// fan out unbounded concurrent fetches.
 const VERIFY_CONCURRENCY: usize = 4;
 
 #[async_trait::async_trait]
@@ -1004,7 +1061,7 @@ async fn verify_account(
         return Ok(());
     }
 
-    // Bounded parallel fetches (review C2) — pubby's client is sync.
+    // Bounded parallel fetches — pubby's client is sync.
     let verdicts: HashMap<String, Verdict> = futures_util::stream::iter(urls)
         .map(|url| {
             let client = client.clone();
@@ -1022,7 +1079,7 @@ async fn verify_account(
         .collect()
         .await;
 
-    // Guarded write-back (review C3): re-read under FOR UPDATE and only
+    // Guarded write-back: re-read under FOR UPDATE and only
     // touch entries still carrying the (name, raw) pair that was
     // fetched — a concurrent edit can't get a stale stamp.
     let mut tx = ctx.db.begin().await?;

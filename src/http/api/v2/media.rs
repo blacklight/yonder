@@ -63,5 +63,9 @@ pub async fn show(
     if row.account_id != auth.account_id {
         return Err(Error::NotFound("media".into()));
     }
-    Ok(Json(entity::media_entity(&ctx.base_url(), &row)))
+    Ok(Json(entity::media_entity(
+        &ctx.config,
+        &ctx.base_url(),
+        &row,
+    )))
 }

@@ -389,7 +389,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         }
     }
     // Media attachments — remote_url rows only while
-    // `media.fetch_remote_media` is off (epic 18 owns caching). On
+    // `media.fetch_remote_media` is off (the fetch runs after
+    // `tx.commit()` when it is on). On
     // Update, rows the object no longer names are dropped so stale
     // attachments don't linger.
     let mut remote_urls: Vec<String> = Vec::new();
@@ -468,6 +469,14 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     }
     tx.commit().await?;
 
+    // Epic 18: remote-media caching — post-commit so the rows the
+    // job will read are visible. A queue failure must not fail the
+    // committed ingest: rows keep `remote_url`, and the next ingest
+    // (or a re-run of the same activity) re-enqueues.
+    if let Err(e) = enqueue_remote_media_fetches(core, status_id).await {
+        tracing::warn!(status_id, error = %e, "remote media fetch enqueue failed");
+    }
+
     // Late-arriving quoted posts back-fill pending quotes — the
     // counter bump applies to *this* status only (it is the quoted
     // target); the pending quoters point at it via quote_uri.
@@ -485,6 +494,35 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .execute(&core.db)
     .await?;
     Ok(is_new)
+}
+
+/// Epic 18: remote-media caching. With `media.fetch_remote_media`
+/// on, every attachment row still pointing at the remote gets a
+/// `RemoteMediaFetch` job — including on re-ingest, which
+/// re-downloads whatever the cleanup sweep evicted. Rows already
+/// carrying `file_path` are skipped by the predicate, so a re-ingest
+/// of a cached status enqueues nothing. `pub` so the ingest-dedup
+/// predicate is directly testable.
+pub async fn enqueue_remote_media_fetches(core: &ApCore, status_id: i64) -> Result<()> {
+    if !core.config.media.fetch_remote_media {
+        return Ok(());
+    }
+    let pending: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM media_attachments \
+         WHERE status_id = $1 AND remote_url IS NOT NULL AND file_path IS NULL",
+    )
+    .bind(status_id)
+    .fetch_all(&core.db)
+    .await?;
+    for media_id in pending {
+        core.dispatcher
+            .enqueue(
+                crate::jobs::JobKind::RemoteMediaFetch,
+                serde_json::json!({ "media_id": media_id }),
+            )
+            .await?;
+    }
+    Ok(())
 }
 
 /// `status_mentions` account lookup for a Mention `href`.

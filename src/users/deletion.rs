@@ -409,10 +409,8 @@ pub async fn purge_account(
         sqlx::query(stmt).bind(account_id).execute(&ctx.db).await?;
     }
 
-    // Media bytes (local backend; no-op for S3 until epic 18).
-    if let Err(e) =
-        crate::media::storage::delete_account_files(ctx.config.as_ref(), account_id).await
-    {
+    // Media bytes — the store routes to the configured backend.
+    if let Err(e) = crate::media::storage::delete_account_files(&ctx.media, account_id).await {
         tracing::warn!(account_id, error = %e, "account media cleanup failed");
     }
 

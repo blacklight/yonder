@@ -378,6 +378,7 @@ async fn actor_doc_advertises_per_actor_endpoints() {
     let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
     let handler = actors::handler_for(
         storage,
+        &Config::default(),
         BASE,
         &alice,
         &actors::actor_path("alice"),
@@ -498,6 +499,7 @@ fn job_ctx(state: &AppState) -> JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
         config: state.config.clone(),
+        media: state.media.clone(),
     }
 }
 

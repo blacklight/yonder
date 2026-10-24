@@ -26,7 +26,6 @@ use sqlx::{PgPool, Row};
 use crate::{
     activitypub::{self, ApContext},
     jobs::{JobContext, JobHandler, JobKind},
-    media::storage,
     users::relationships::{self, Ctx, FollowOpts},
     Error, Result,
 };
@@ -406,7 +405,7 @@ impl JobHandler for ExportJob {
         match build_archive(ctx, self.ap.as_ref(), account_id).await {
             Ok(bytes) => {
                 let key = format!("exports/{account_id}/{}.zip", uuid::Uuid::new_v4());
-                storage::write_bytes(&ctx.config, &key, &bytes).await?;
+                ctx.media.put(&key, &bytes, "application/zip").await?;
                 sqlx::query(
                     "UPDATE archive_exports SET state = 'done', file_key = $2, file_size = $3, \
                      completed_at = now(), expires_at = now() + $4::int * interval '1 day' \
@@ -578,7 +577,7 @@ async fn build_archive(
     if let Some((avatar, banner)) = image_paths {
         for (key, name) in [(avatar, "avatar"), (banner, "header")] {
             if let Some(key) = key {
-                if let Ok(bytes) = storage::read_bytes(&ctx.config, &key).await {
+                if let Ok(bytes) = ctx.media.get(&key).await {
                     let ext = key.rsplit('.').next().unwrap_or("png");
                     members.push((format!("{name}.{ext}"), bytes));
                 }
@@ -594,7 +593,7 @@ async fn build_archive(
     .fetch_all(db)
     .await?;
     for key in media {
-        if let Ok(bytes) = storage::read_bytes(&ctx.config, &key).await {
+        if let Ok(bytes) = ctx.media.get(&key).await {
             let name = key.rsplit('/').next().unwrap_or("file").to_string();
             members.push((format!("media_attachments/files/{name}"), bytes));
         }
@@ -642,7 +641,7 @@ impl JobHandler for ExportCleanupJob {
         .fetch_all(&ctx.db)
         .await?;
         for key in keys.into_iter().flatten() {
-            if let Err(e) = storage::delete_key(&ctx.config, &key).await {
+            if let Err(e) = ctx.media.delete(&key).await {
                 tracing::warn!(error = %e, "export file cleanup failed");
             }
         }
@@ -665,7 +664,7 @@ impl JobHandler for ExportCleanupJob {
         .fetch_all(&ctx.db)
         .await?;
         for key in stuck_imports.into_iter().flatten() {
-            if let Err(e) = storage::delete_key(&ctx.config, &key).await {
+            if let Err(e) = ctx.media.delete(&key).await {
                 tracing::warn!(error = %e, "stuck-import file cleanup failed");
             }
         }
@@ -791,7 +790,7 @@ impl JobHandler for ImportJob {
             }
         };
 
-        let bytes = match storage::read_bytes(&ctx.config, &file_key).await {
+        let bytes = match ctx.media.get(&file_key).await {
             Ok(b) => b,
             Err(e) => {
                 return fail_import(ctx, import_id, &file_key, &e.to_string()).await;
@@ -847,7 +846,7 @@ async fn fail_import(ctx: &JobContext, import_id: i64, file_key: &str, error: &s
     .bind(error)
     .execute(&ctx.db)
     .await?;
-    if let Err(e) = storage::delete_key(&ctx.config, file_key).await {
+    if let Err(e) = ctx.media.delete(file_key).await {
         tracing::warn!(import_id, error = %e, "failed-import file cleanup failed");
     }
     Ok(())
@@ -859,7 +858,7 @@ async fn finish_import(ctx: &JobContext, import_id: i64, file_key: &str) -> Resu
         .bind(import_id)
         .execute(&ctx.db)
         .await?;
-    if let Err(e) = storage::delete_key(&ctx.config, file_key).await {
+    if let Err(e) = ctx.media.delete(file_key).await {
         tracing::warn!(import_id, error = %e, "import file cleanup failed");
     }
     Ok(())

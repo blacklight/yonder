@@ -47,11 +47,19 @@ pub enum Queue {
     Federation,
     /// High-volume per-item jobs.
     Bulk,
+    /// Scheduled cleanup sweeps — kept off `bulk` so a long-running
+    /// cleanup can't starve per-item fan-out work.
+    Cleanup,
 }
 
 impl Queue {
     /// Every queue the worker drains.
-    pub const ALL: &'static [Queue] = &[Queue::Default, Queue::Federation, Queue::Bulk];
+    pub const ALL: &'static [Queue] = &[
+        Queue::Default,
+        Queue::Federation,
+        Queue::Bulk,
+        Queue::Cleanup,
+    ];
 
     /// Stream suffix: `default` / `federation` / `bulk`.
     pub fn as_str(&self) -> &'static str {
@@ -59,6 +67,7 @@ impl Queue {
             Queue::Default => "default",
             Queue::Federation => "federation",
             Queue::Bulk => "bulk",
+            Queue::Cleanup => "cleanup",
         }
     }
 }
@@ -118,6 +127,10 @@ pub enum JobKind {
     /// Fan a status out to follower home feeds, or backfill one
     /// follower's feed from a new followee (epic 15).
     TimelineFanOut,
+    /// Delete one stored object once nothing references it — enqueued
+    /// delayed for replaced/cleared profile images so the old URL
+    /// survives the actor-`Update` propagation window (epic 18).
+    DeleteMediaObject,
 }
 
 impl JobKind {
@@ -144,6 +157,7 @@ impl JobKind {
         JobKind::CleanupOrphanMedia,
         JobKind::FollowEvent,
         JobKind::TimelineFanOut,
+        JobKind::DeleteMediaObject,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -170,6 +184,7 @@ impl JobKind {
             JobKind::CleanupOrphanMedia => "cleanup_orphan_media",
             JobKind::FollowEvent => "follow_event",
             JobKind::TimelineFanOut => "timeline_fan_out",
+            JobKind::DeleteMediaObject => "delete_media_object",
         }
     }
 
@@ -181,14 +196,15 @@ impl JobKind {
             | JobKind::FederationDeliverySweep => Queue::Federation,
             JobKind::Import
             | JobKind::Export
-            | JobKind::CleanupRemoteActivities
-            | JobKind::CleanupRemoteMedia
             | JobKind::VerifyProfileLinks
-            | JobKind::AccountDeletion
             | JobKind::MigrateFollowers
+            | JobKind::StatusDeletion => Queue::Bulk,
+            JobKind::CleanupRemoteActivities
+            | JobKind::CleanupRemoteMedia
+            | JobKind::AccountDeletion
             | JobKind::ExportCleanup
-            | JobKind::StatusDeletion
-            | JobKind::CleanupOrphanMedia => Queue::Bulk,
+            | JobKind::CleanupOrphanMedia
+            | JobKind::DeleteMediaObject => Queue::Cleanup,
             _ => Queue::Default,
         }
     }
@@ -244,6 +260,8 @@ pub struct JobContext {
     pub redis: Redis,
     /// Effective configuration.
     pub config: Arc<Config>,
+    /// Media storage backend — media fetch/cleanup jobs go through it.
+    pub media: crate::media::storage::MediaStore,
 }
 
 /// Handler for one [`JobKind`]. Implementations must be idempotent —
@@ -352,8 +370,9 @@ mod tests {
         assert_eq!(JobKind::FederationDelivery.queue(), Queue::Federation);
         assert_eq!(JobKind::EmailSend.queue(), Queue::Default);
         assert_eq!(JobKind::NotificationFanout.queue(), Queue::Default);
-        assert_eq!(JobKind::CleanupRemoteActivities.queue(), Queue::Bulk);
+        assert_eq!(JobKind::CleanupRemoteActivities.queue(), Queue::Cleanup);
         assert_eq!(JobKind::Export.queue(), Queue::Bulk);
+        assert_eq!(JobKind::CleanupRemoteMedia.queue(), Queue::Cleanup);
     }
 
     #[test]

@@ -110,6 +110,7 @@ fn job_ctx(state: &AppState) -> JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
         config: state.config.clone(),
+        media: state.media.clone(),
     }
 }
 
@@ -543,6 +544,112 @@ async fn avatar_upload_stores_serves_and_clears() {
     )
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Replacing or clearing a profile image defers deletion of the stale
+/// object to a `DeleteMediaObject` job — the old URL stays alive while
+/// the actor `Update` propagates (serving is `immutable` for a year).
+/// The job re-checks the row's reference before deleting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn avatar_replace_and_clear_delete_stale_object() {
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let token = token_for(&env.app, "erin").await;
+    let png = png_bytes();
+
+    let (status, body) = request(
+        &env.app,
+        authed(
+            multipart_patch(PATCH, &[], Some(("avatar", "a.png", &png))),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let first = body["avatar"].as_str().unwrap().to_string();
+    let first_key = first.trim_start_matches("http://127.0.0.1:4000/media/");
+
+    // Replace — the old object survives the grace window but a delayed
+    // `delete_media_object` envelope is parked for it.
+    let (status, body) = request(
+        &env.app,
+        authed(
+            multipart_patch(PATCH, &[], Some(("avatar", "b.png", &png))),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let second = body["avatar"].as_str().unwrap().to_string();
+    assert_ne!(first, second);
+    let second_key = second.trim_start_matches("http://127.0.0.1:4000/media/");
+    assert!(
+        env.state.media.get(first_key).await.is_ok(),
+        "replaced avatar {first_key} must survive the grace delay"
+    );
+    assert!(env.state.media.get(second_key).await.is_ok());
+    let delayed: Vec<String> = redis::cmd("ZRANGE")
+        .arg(env.state.redis.key("jobs:delayed"))
+        .arg(0)
+        .arg(-1)
+        .query_async(
+            &mut env
+                .state
+                .redis
+                .client()
+                .get_multiplexed_async_connection()
+                .await
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let deletes: Vec<Value> = delayed
+        .iter()
+        .filter_map(|m| serde_json::from_str::<Value>(m).ok())
+        .filter(|e| e["kind"] == "delete_media_object")
+        .collect();
+    assert_eq!(deletes.len(), 1, "{delayed:?}");
+    assert_eq!(deletes[0]["payload"]["key"], first_key);
+
+    // The job deletes the object once nothing references it — and
+    // leaves the current key alone.
+    yonder::media::jobs::DeleteMediaObjectJob
+        .run(&job_ctx(&env.state), &json!({ "key": first_key }))
+        .await
+        .unwrap();
+    assert!(
+        env.state.media.get(first_key).await.is_err(),
+        "replaced avatar {first_key} must be deleted"
+    );
+    yonder::media::jobs::DeleteMediaObjectJob
+        .run(&job_ctx(&env.state), &json!({ "key": second_key }))
+        .await
+        .unwrap();
+    assert!(
+        env.state.media.get(second_key).await.is_ok(),
+        "still-referenced key must survive the delete job"
+    );
+
+    // Clear — the second object is queued for deletion too.
+    let (status, body) = request(
+        &env.app,
+        authed(
+            multipart_patch(PATCH, &[], Some(("avatar", "", &[]))),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["avatar"], "");
+    yonder::media::jobs::DeleteMediaObjectJob
+        .run(&job_ctx(&env.state), &json!({ "key": second_key }))
+        .await
+        .unwrap();
+    assert!(
+        env.state.media.get(second_key).await.is_err(),
+        "cleared avatar {second_key} must be deleted"
+    );
 }
 
 /// Serve `body` on `127.0.0.1:0` — the rel="me" fixture page.

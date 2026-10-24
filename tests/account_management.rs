@@ -111,6 +111,7 @@ fn job_ctx(state: &AppState) -> JobContext {
         db: state.db.clone(),
         redis: state.redis.clone(),
         config: state.config.clone(),
+        media: state.media.clone(),
     }
 }
 
@@ -1078,7 +1079,9 @@ async fn import_applies_rows_and_posts_keep_source_ids() {
     // endpoint would, then driven through the job.
     let csv = b"Account address,Show boosts,Notify on new posts,Languages\noldfriend@localhost,true,false,\n".to_vec();
     let key = format!("imports/{importer}/test.csv");
-    yonder::media::storage::write_bytes(&env.state.config, &key, &csv)
+    env.state
+        .media
+        .put(&key, &csv, "application/octet-stream")
         .await
         .unwrap();
     let import_id: i64 = sqlx::query_scalar(
@@ -1109,9 +1112,7 @@ async fn import_applies_rows_and_posts_keep_source_ids() {
     assert!(done);
     assert!(following);
     // The upload is gone once the import finishes.
-    assert!(yonder::media::storage::read_bytes(&env.state.config, &key)
-        .await
-        .is_err());
+    assert!(env.state.media.get(&key).await.is_err());
 
     // An archive with one outbox Create preserves the source id and
     // timestamp, mints a local URI and federates nothing.
@@ -1141,7 +1142,9 @@ async fn import_applies_rows_and_posts_keep_source_ids() {
     }
     let zip_bytes = zip_buf.into_inner();
     let zkey = format!("imports/{importer}/archive.zip");
-    yonder::media::storage::write_bytes(&env.state.config, &zkey, &zip_bytes)
+    env.state
+        .media
+        .put(&zkey, &zip_bytes, "application/zip")
         .await
         .unwrap();
     let import_id: i64 = sqlx::query_scalar(
@@ -1185,7 +1188,9 @@ async fn import_applies_rows_and_posts_keep_source_ids() {
 
     // Re-importing the same archive is a no-op (dedupe on original_id).
     let zkey2 = format!("imports/{importer}/archive2.zip");
-    yonder::media::storage::write_bytes(&env.state.config, &zkey2, &zip_bytes)
+    env.state
+        .media
+        .put(&zkey2, &zip_bytes, "application/zip")
         .await
         .unwrap();
     let import_id2: i64 = sqlx::query_scalar(
@@ -1320,7 +1325,9 @@ async fn import_overwrite_removes_absent_entries() {
     // from the file are unfollowed.
     let csv = b"kept@localhost,true,false,\n".to_vec();
     let key = format!("imports/{importer}/overwrite.csv");
-    yonder::media::storage::write_bytes(&env.state.config, &key, &csv)
+    env.state
+        .media
+        .put(&key, &csv, "application/octet-stream")
         .await
         .unwrap();
     let import_id: i64 = sqlx::query_scalar(

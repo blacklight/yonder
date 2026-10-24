@@ -33,12 +33,13 @@ pub async fn moved_account_json(
     pool: &PgPool,
     account: &crate::users::account::AccountRow,
     base_url: &str,
+    config: &crate::config::Config,
 ) -> Value {
     let Some(target_id) = account.moved_to_account_id else {
         return Value::Null;
     };
     match crate::users::account::load(pool, target_id).await {
-        Ok(Some(target)) => crate::users::account::to_account(&target, base_url),
+        Ok(Some(target)) => crate::users::account::to_account(&target, base_url, config),
         _ => Value::Null,
     }
 }

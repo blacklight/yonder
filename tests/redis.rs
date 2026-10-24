@@ -62,6 +62,7 @@ fn test_ctx(redis: &Redis) -> JobContext {
         db,
         redis: redis.clone(),
         config: Arc::new(Config::default()),
+        media: yonder::media::storage::MediaStore::from_config(&Config::default()),
     }
 }
 

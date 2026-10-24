@@ -290,9 +290,8 @@ async fn fetch_image(
         uuid::Uuid::new_v4(),
         ext
     );
-    crate::media::storage::write_bytes(&ctx.config, &key, &response.body)
-        .await
-        .ok()?;
+    let ct = crate::media::images::content_type_for_key(&key).unwrap_or("application/octet-stream");
+    ctx.media.put(&key, &response.body, ct).await.ok()?;
     Some(key)
 }
 

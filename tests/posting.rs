@@ -119,13 +119,12 @@ async fn register(app: &Router, username: &str, email: &str) -> String {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = serde_json::from_slice(
-        &axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let body: Value = serde_json::from_slice(&body).unwrap();
     body["access_token"].as_str().unwrap().to_string()
 }
 
@@ -169,6 +168,7 @@ fn ctx(state: &AppState) -> PostContext {
         redis: state.redis.clone(),
         dispatcher: yonder::jobs::Dispatcher::new(&state.redis, &state.config.jobs),
         config: state.config.clone(),
+        media: state.media.clone(),
         ap: state.ap.clone(),
         bus: state.bus.clone(),
     }
@@ -443,6 +443,7 @@ async fn scheduled_status_crud_and_due_guard() {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
                 config: env.state.config.clone(),
+                media: env.state.media.clone(),
             },
             &json!({"scheduled_status_id": sid.parse::<i64>().unwrap()}),
         )
@@ -469,6 +470,7 @@ async fn scheduled_status_crud_and_due_guard() {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
                 config: env.state.config.clone(),
+                media: env.state.media.clone(),
             },
             &json!({"scheduled_status_id": sid_i}),
         )
@@ -646,6 +648,7 @@ async fn scheduled_deletion_tombstones() {
                 db: env.state.db.clone(),
                 redis: env.state.redis.clone(),
                 config: env.state.config.clone(),
+                media: env.state.media.clone(),
             },
             &json!({"status_id": id}),
         )
@@ -744,6 +747,7 @@ fn job_ctx(env: &Env) -> JobContext {
         db: env.state.db.clone(),
         redis: env.state.redis.clone(),
         config: env.state.config.clone(),
+        media: env.state.media.clone(),
     }
 }
 
@@ -944,6 +948,7 @@ async fn orphan_cleanup_respects_scheduled_reservation() {
             .unwrap();
     let stored = yonder::media::store_status_media(
         &env.state.config,
+        &env.state.media,
         &env.state.db,
         account_id,
         png_bytes(),

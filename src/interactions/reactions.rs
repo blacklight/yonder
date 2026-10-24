@@ -330,7 +330,10 @@ pub async fn reaction_summary(
             if let Some((remote_url, image_path)) = url {
                 entry["url"] = remote_url
                     .filter(|u| !u.is_empty())
-                    .or_else(|| image_path.map(|k| crate::media::public_url(&ctx.base_url(), &k)))
+                    .or_else(|| {
+                        image_path
+                            .map(|k| crate::media::public_url(&ctx.config, &ctx.base_url(), &k))
+                    })
                     .map(Value::String)
                     .unwrap_or(Value::Null);
             }

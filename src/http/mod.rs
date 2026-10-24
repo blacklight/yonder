@@ -53,6 +53,9 @@ use crate::{
 pub struct AppState {
     /// Effective configuration.
     pub config: Arc<Config>,
+    /// Media storage backend (`local`/`s3`) — shared by uploads,
+    /// serving and cleanup jobs.
+    pub media: crate::media::storage::MediaStore,
     /// PostgreSQL pool.
     pub db: PgPool,
     /// Redis handle (pool + key namespace).
@@ -73,8 +76,10 @@ impl AppState {
     /// Assemble shared state from the resolved config and pools.
     pub fn new(config: Config, db: PgPool, redis: Redis) -> Self {
         let dispatcher = Dispatcher::new(&redis, &config.jobs);
+        let media = crate::media::storage::MediaStore::from_config(&config);
         AppState {
             cache: RedisCache::new(redis.clone()),
+            media,
             config: Arc::new(config),
             db,
             redis,
@@ -113,12 +118,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         router = router.merge(crate::activitypub::router(&state));
     }
 
-    if matches!(
-        state.config.media.backend,
-        crate::config::MediaBackend::Local
-    ) {
-        router = router.merge(crate::media::storage::router());
-    }
+    // Media is served for every backend — on S3 the route proxies the
+    // bucket so the `/{base}/media/{key}` URL shape holds either way.
+    router = router.merge(crate::media::storage::router());
 
     let router = match cors_layer(&state.config.http) {
         Some(cors) => router.layer(cors),

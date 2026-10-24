@@ -40,7 +40,7 @@ async fn account_entities(ctx: &PostContext, ids: &[i64]) -> Result<Vec<Value>> 
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         if let Some(account) = account_mapper::load(&ctx.db, *id).await? {
-            out.push(account_mapper::to_account(&account, &base));
+            out.push(account_mapper::to_account(&account, &base, &ctx.config));
         }
     }
     Ok(out)

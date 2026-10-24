@@ -32,6 +32,13 @@ but comment/XMP extension blocks are *not* stripped (known gap). A
 blurhash of the first frame lands in `avatar_blurhash`/`header_blurhash`
 and surfaces under the account entity's `yonder` extension object.
 
+Replacing or clearing an image does **not** delete the old object
+immediately: a `DeleteMediaObject` job removes it after a 24 h grace
+delay, because the old URL is served `immutable` for a year and remote
+servers keep re-fetching it until they process the actor `Update`
+(see `docs/media.md` — the URL still 404s for caches that outlive the
+grace window).
+
 ## Profile fields & `rel="me"`
 
 `accounts.profile_fields` is a JSONB array of
@@ -74,3 +81,24 @@ Two upstream pubby follow-ups: `ActorConfig.header_url`/`Actor.image`
 (so the served document carries the banner), and
 `HttpResponse.headers` (so `Link: <…>; rel="me"` response headers can
 count as verification, as Mastodon allows).
+
+## Profile reads (epic 18)
+
+| Method | Path | Auth | Notes |
+|---|---|---|---|
+| GET | `/api/v1/accounts/{id}` | optional | Full Account entity: `avatar`/`header`, `acct`, counters, verified `fields`, `created_at`, `last_status_at` (latest non-tombstone status date), `locked`/`bot`, `moved` |
+| GET | `/api/v1/accounts/{id}/statuses` | optional | Profile tabs: `pinned`, `only_media`, `exclude_replies` (self-replies stay), `exclude_reblogs`; `max_id`/`min_id`/`since_id`/`limit` pagination with `Link` headers (`pinned` returns the whole pin set, unpaginated) |
+
+Missing, deleted and suspended accounts all return 404; moved accounts
+return 200 with `moved`. Remote accounts serve stored counters
+(best-effort) and enqueue a `RemoteActorFetch` when `actor_cache` is
+stale (>24h) — a stale remote never blocks the read, and repeat reads
+are throttled to one enqueue per actor per five minutes. The
+account-statuses scope applies the viewer's visibility rules
+(blocks/mutes/domain blocks, follower-gated posts for followers);
+anonymous viewers see only `public`/`unlisted`. Two noted behaviors:
+`pinned` composes with the other filters (`pinned&only_media` returns
+only pinned statuses that carry media), and `last_status_at` counts
+every non-tombstone status including `direct` — Mastodon's
+account-level semantics. Remote-media caching and cleanup rules are in
+`docs/media.md`.

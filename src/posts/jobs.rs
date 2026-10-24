@@ -98,7 +98,7 @@ impl JobHandler for CleanupOrphanMediaJob {
         .await?;
         for (id, file_path) in rows {
             if let Some(key) = &file_path {
-                if let Err(e) = crate::media::storage::delete_key(&ctx.config, key).await {
+                if let Err(e) = ctx.media.delete(key).await {
                     tracing::warn!(key, error = %e, "orphan media object delete failed");
                 }
             }

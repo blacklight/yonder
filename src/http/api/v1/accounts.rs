@@ -1,10 +1,13 @@
 //! `/api/v1/accounts` — registration (Mastodon `POST /api/v1/accounts`),
-//! `verify_credentials`, and the `verify_email` token endpoint.
+//! `verify_credentials`, the profile-page reads (`GET /{id}`,
+//! `GET /{id}/statuses` — epic 18), and the `verify_email` token
+//! endpoint.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
-    extract::{Request, State},
+    extract::{Path, Query, Request, State},
     http::{HeaderMap, Uri},
     Json,
 };
@@ -14,9 +17,10 @@ use serde_json::{json, Value};
 use crate::{
     auth::{registration, scopes::require_scope, tokens},
     http::{
-        middleware::auth::{bearer_token, AuthContext},
-        AppState,
+        middleware::auth::{bearer_token, AuthContext, MaybeAuth},
+        paginate, AppState,
     },
+    timelines::{Filters, TimelineScope},
     users::{account as account_mapper, profile, settings},
     Error, Result,
 };
@@ -101,9 +105,11 @@ async fn credential_account(
         .ok_or_else(|| Error::NotFound("account".into()))?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     let base_url = crate::activitypub::federation_base_url(&state.config);
-    let mut entity = account_mapper::to_account(&account, &base_url);
+    let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
     // `moved` is a nested Account (one level deep, never recursive).
-    entity["moved"] = crate::users::moves::moved_account_json(&state.db, &account, &base_url).await;
+    entity["moved"] =
+        crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
+            .await;
     entity["source"] = json!({
         "privacy": settings::public_visibility(&user_settings.default_visibility),
         "sensitive": user_settings.default_sensitive,
@@ -178,4 +184,239 @@ pub async fn verify_email(
         return Err(Error::Validation("invalid or expired token".into()));
     }
     Ok(Json(json!({ "verified": true })))
+}
+
+// ---------------------------------------------------------------------------
+// Profile pages (epic 18)
+// ---------------------------------------------------------------------------
+
+/// Actor rows older than this get a background `RemoteActorFetch`
+/// enqueue — the stored row is served meanwhile (best-effort
+/// freshness, matching the rest of the codebase's eventual
+/// consistency for remote data).
+const REMOTE_REFRESH_AFTER_SECONDS: i64 = 24 * 60 * 60;
+
+/// One `RemoteActorFetch` enqueue per stale actor per this window —
+/// the flag covers the pending fetch so a burst of reads on a hot
+/// stale profile can't flood the queue (the job is idempotent; the
+/// dedup is queue pressure, not correctness). Matches the
+/// `enqueue_verification` NX-flag convention.
+const REFRESH_ENQUEUE_THROTTLE_SECONDS: usize = 300;
+
+/// Load the profile's account row and apply the public-read rules:
+/// missing, deleted and suspended accounts all read as 404.
+async fn load_public_account(state: &AppState, id: i64) -> Result<account_mapper::AccountRow> {
+    let account = account_mapper::load(&state.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("account".into()))?;
+    if account.suspended_at.is_some() {
+        return Err(Error::NotFound("account".into()));
+    }
+    Ok(account)
+}
+
+/// For remote accounts, enqueue a `RemoteActorFetch` when the
+/// `actor_cache` row is stale or absent. Never fails the read — a
+/// federation hiccup shouldn't 5xx a profile page.
+async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::AccountRow) {
+    if account.domain.is_none() || state.ap.is_none() {
+        return;
+    }
+    let fresh: Option<chrono::DateTime<chrono::Utc>> =
+        match sqlx::query_scalar("SELECT fetched_at FROM actor_cache WHERE actor_id = $1")
+            .bind(&account.actor_id)
+            .fetch_optional(&state.db)
+            .await
+        {
+            Ok(fresh) => fresh,
+            // A failed lookup maps to "stale" — the benign direction
+            // (worst case an extra refresh job) — but the error must
+            // not be swallowed silently.
+            Err(e) => {
+                tracing::warn!(
+                    actor_id = %account.actor_id,
+                    error = %e,
+                    "actor_cache lookup failed — treating as stale"
+                );
+                None
+            }
+        };
+    let stale = fresh
+        .map(|t| (chrono::Utc::now() - t).num_seconds() > REMOTE_REFRESH_AFTER_SECONDS)
+        .unwrap_or(true);
+    if !stale || !claim_refresh_slot(state, &account.actor_id).await {
+        return;
+    }
+    if let Err(e) = state
+        .dispatcher
+        .enqueue(
+            crate::jobs::JobKind::RemoteActorFetch,
+            json!({ "actor_url": account.actor_id }),
+        )
+        .await
+    {
+        tracing::warn!(actor_id = %account.actor_id, error = %e, "remote actor refresh enqueue failed");
+        // The enqueue never landed — release the flag so the next
+        // read retries instead of waiting out the throttle TTL.
+        clear_refresh_slot(state, &account.actor_id).await;
+    }
+}
+
+/// Claim the throttle flag for `actor_id`: `true` when this caller
+/// owns the slot and should enqueue; `false` when another recent read
+/// holds it or Redis is unavailable — the dispatcher lives on the
+/// same Redis, so a down pool means the enqueue would fail anyway.
+async fn claim_refresh_slot(state: &AppState, actor_id: &str) -> bool {
+    let flag = state.redis.key(&format!("actor-refresh:{actor_id}"));
+    let mut conn = match state.redis.conn().await {
+        Ok(conn) => conn,
+        Err(e) => {
+            tracing::warn!(
+                actor_id,
+                error = %e,
+                "redis unavailable — skipping remote actor refresh"
+            );
+            return false;
+        }
+    };
+    match redis::cmd("SET")
+        .arg(&flag)
+        .arg("1")
+        .arg("NX")
+        .arg("EX")
+        .arg(REFRESH_ENQUEUE_THROTTLE_SECONDS)
+        .query_async::<Option<String>>(&mut *conn)
+        .await
+    {
+        Ok(claimed) => claimed.is_some(),
+        Err(e) => {
+            tracing::warn!(actor_id, error = %e, "remote actor refresh throttle check failed");
+            false
+        }
+    }
+}
+
+/// Release the throttle flag — used after a failed enqueue so the next
+/// read retries instead of waiting out the TTL. Best-effort.
+async fn clear_refresh_slot(state: &AppState, actor_id: &str) {
+    let flag = state.redis.key(&format!("actor-refresh:{actor_id}"));
+    let Ok(mut conn) = state.redis.conn().await else {
+        return;
+    };
+    let _: redis::RedisResult<()> = redis::cmd("DEL").arg(&flag).query_async(&mut *conn).await;
+}
+
+/// `GET /api/v1/accounts/{id}` — the public Account entity behind the
+/// profile page header (avatar, banner, counters, verified fields,
+/// joined date, `locked`/`bot`, `moved`).
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/{id}",
+    tag = "accounts",
+    params(("id" = String, Path, description = "Account id")),
+    responses(
+        (status = 200, description = "The account"),
+        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn get_account(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    _auth: MaybeAuth,
+) -> Result<Json<Value>> {
+    let account = load_public_account(&state, id).await?;
+    maybe_refresh_remote(&state, &account).await;
+    let base_url = crate::activitypub::federation_base_url(&state.config);
+    let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
+    entity["moved"] =
+        crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
+            .await;
+    let last_status: Option<chrono::NaiveDate> = sqlx::query_scalar(
+        "SELECT max(created_at)::date FROM statuses \
+         WHERE account_id = $1 AND NOT tombstone",
+    )
+    .bind(account.id)
+    .fetch_one(&state.db)
+    .await?;
+    entity["last_status_at"] = last_status
+        .map(|d| json!(d.to_string()))
+        .unwrap_or(Value::Null);
+    Ok(Json(entity))
+}
+
+/// `GET /api/v1/accounts/{id}/statuses` — the profile's content tabs:
+/// posts (with `exclude_replies`/`exclude_reblogs` flags), media
+/// (`only_media=true`) and the pinned list (`pinned=true`).
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/{id}/statuses",
+    tag = "accounts",
+    params(
+        ("id" = String, Path, description = "Account id"),
+        ("only_media" = Option<bool>, Query, description = "Only statuses with media"),
+        ("exclude_replies" = Option<bool>, Query, description = "Hide replies (self-replies stay)"),
+        ("exclude_reblogs" = Option<bool>, Query, description = "Hide boosts"),
+        ("pinned" = Option<bool>, Query, description = "Only pinned statuses"),
+        ("max_id" = Option<String>, Query, description = "Return statuses older than this id"),
+        ("min_id" = Option<String>, Query, description = "Return statuses immediately newer than this id"),
+        ("since_id" = Option<String>, Query, description = "Alias of min_id"),
+        ("limit" = Option<i64>, Query, description = "Page size (1-40, default 20)")
+    ),
+    responses(
+        (status = 200, description = "Page of statuses, newest first (Link header carries cursors)"),
+        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn account_statuses(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    auth: MaybeAuth,
+    uri: Uri,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<(HeaderMap, Json<Value>)> {
+    if let Some(a) = &auth.0 {
+        require_scope(&state.config, a, "read:statuses")?;
+    }
+    let account = load_public_account(&state, id).await?;
+    let scope = TimelineScope::Account {
+        account_id: account.id,
+    };
+    let filters = Filters {
+        viewer: auth.0.as_ref().map(|a| a.account_id),
+        only_media: super::timelines::truthy(&params, "only_media"),
+        exclude_replies: super::timelines::truthy(&params, "exclude_replies"),
+        exclude_reblogs: super::timelines::truthy(&params, "exclude_reblogs"),
+        ..Default::default()
+    };
+    let page = paginate::parse(&params);
+    let pinned = super::timelines::truthy(&params, "pinned");
+    let rows = if pinned {
+        // Pin order is `status_pins.idx`, not status id — resolve the
+        // ids first, then re-validate visibility through the shared
+        // WHERE so a pinned followers-only post still hides from
+        // strangers. The pin set is capped (`max_pinned_posts`), so
+        // Mastodon returns it as one list: no LIMIT, no Link cursors.
+        let ids: Vec<i64> = sqlx::query_scalar(
+            "SELECT status_id FROM status_pins WHERE account_id = $1 ORDER BY idx, status_id",
+        )
+        .bind(account.id)
+        .fetch_all(&state.db)
+        .await?;
+        crate::timelines::query::fetch_by_ids(&state.db, &scope, &filters, &ids).await?
+    } else {
+        crate::timelines::query::fetch(&state.db, &scope, &filters, &page).await?
+    };
+    let ctx = crate::posts::PostContext::new(&state);
+    let viewer = auth.0.as_ref().map(|a| a.account_id);
+    let mut out = Vec::with_capacity(rows.len());
+    for row in &rows {
+        out.push(crate::posts::entity::status_entity(&ctx, row, viewer).await?);
+    }
+    let headers = if pinned {
+        HeaderMap::new()
+    } else {
+        let cursors = crate::timelines::query::cursors(&rows);
+        paginate::headers(&uri, &params, &cursors, page.limit)
+    };
+    Ok((headers, Json(json!(out))))
 }

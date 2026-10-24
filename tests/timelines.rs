@@ -129,13 +129,12 @@ async fn register(app: &Router, username: &str, email: &str) -> String {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = serde_json::from_slice(
-        &axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap(),
-    )
-    .unwrap();
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let body: Value = serde_json::from_slice(&body).unwrap();
     body["access_token"].as_str().unwrap().to_string()
 }
 
@@ -265,6 +264,7 @@ async fn run_fanout(state: &AppState, status_id: i64) {
         db: state.db.clone(),
         redis: state.redis.clone(),
         config: state.config.clone(),
+        media: state.media.clone(),
     };
     TimelineFanOutJob
         .run(&ctx, &json!({ "status_id": status_id }))
@@ -277,6 +277,7 @@ async fn run_backfill(state: &AppState, follower: i64, followee: i64) {
         db: state.db.clone(),
         redis: state.redis.clone(),
         config: state.config.clone(),
+        media: state.media.clone(),
     };
     TimelineFanOutJob
         .run(&ctx, &json!({ "backfill_for": follower, "of": followee }))

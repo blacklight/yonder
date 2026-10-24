@@ -33,6 +33,8 @@ pub struct AccountRow {
     /// `users.indexable` for local accounts (`None` for remote rows,
     /// which have no `users` row).
     pub indexable: Option<bool>,
+    /// Instance suspension — suspended accounts 404 on public reads.
+    pub suspended_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Move target — the `moved` entity renders it nested.
     pub moved_to_account_id: Option<i64>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -44,7 +46,7 @@ const ACCOUNT_COLS: &str = "a.id, a.username, a.domain, a.actor_id, a.url, a.dis
         a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
         a.avatar_blurhash, a.header_blurhash, \
         a.profile_fields, a.followers_count, a.following_count, \
-        a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id";
+        a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id, a.suspended_at";
 
 /// Load an `accounts` row by primary key. The `users` LEFT JOIN is how
 /// `noindex` gets its value for local accounts; remote rows have no
@@ -101,6 +103,7 @@ fn account_row(r: &sqlx::postgres::PgRow) -> AccountRow {
         statuses_count: r.get("statuses_count"),
         indexable: r.get("indexable"),
         moved_to_account_id: r.get("moved_to_account_id"),
+        suspended_at: r.get("suspended_at"),
         created_at: r.get("created_at"),
     }
 }
@@ -108,15 +111,23 @@ fn account_row(r: &sqlx::postgres::PgRow) -> AccountRow {
 /// Public media URL for a stored key (`avatars/…`, `headers/…`) or the
 /// remote URL — the remote value wins for remote rows (which never
 /// carry a local key).
-fn media_url(base_url: &str, local_key: &Option<String>, remote: &Option<String>) -> String {
-    remote
-        .clone()
-        .or_else(|| {
-            local_key
-                .as_ref()
-                .map(|k| crate::media::public_url(base_url, k))
-        })
-        .unwrap_or_default()
+fn media_url(
+    config: &crate::config::Config,
+    base_url: &str,
+    local_key: &Option<String>,
+    remote: &Option<String>,
+) -> String {
+    let local = local_key
+        .as_ref()
+        .map(|k| crate::media::public_url(config, base_url, k));
+    let remote = remote.clone();
+    // With remote-media caching on, a locally cached copy wins; off,
+    // the remote URL is served directly.
+    if config.media.fetch_remote_media {
+        local.or(remote).unwrap_or_default()
+    } else {
+        remote.or(local).unwrap_or_default()
+    }
 }
 
 /// `profile_fields` → the public REST `fields` projection
@@ -163,7 +174,7 @@ pub fn source_fields(profile_fields: &Value) -> Vec<Value> {
 /// the public federation base (media keys render to absolute URLs
 /// against it). `source` (privacy etc.) is added by the caller for
 /// own-account responses.
-pub fn to_account(account: &AccountRow, base_url: &str) -> Value {
+pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::Config) -> Value {
     let acct = match &account.domain {
         Some(domain) => format!("{}@{domain}", account.username),
         None => account.username.clone(),
@@ -182,10 +193,10 @@ pub fn to_account(account: &AccountRow, base_url: &str) -> Value {
         "note": note,
         "url": account.url.clone().unwrap_or_else(|| account.actor_id.clone()),
         "uri": account.actor_id,
-        "avatar": media_url(base_url, &account.avatar_path, &account.avatar_remote_url),
-        "avatar_static": media_url(base_url, &account.avatar_path, &account.avatar_remote_url),
-        "header": media_url(base_url, &account.banner_path, &account.banner_remote_url),
-        "header_static": media_url(base_url, &account.banner_path, &account.banner_remote_url),
+        "avatar": media_url(config, base_url, &account.avatar_path, &account.avatar_remote_url),
+        "avatar_static": media_url(config, base_url, &account.avatar_path, &account.avatar_remote_url),
+        "header": media_url(config, base_url, &account.banner_path, &account.banner_remote_url),
+        "header_static": media_url(config, base_url, &account.banner_path, &account.banner_remote_url),
         "locked": account.locked,
         "bot": account.bot,
         "group": false,

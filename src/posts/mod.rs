@@ -62,6 +62,8 @@ pub struct PostContext {
     pub dispatcher: Dispatcher,
     /// Effective configuration.
     pub config: Arc<Config>,
+    /// Media storage backend (`AppState`'s on request paths).
+    pub media: crate::media::storage::MediaStore,
     /// ActivityPub context — `None` when federation is disabled, in
     /// which case posting works without AP fan-out.
     pub ap: Option<ApContext>,
@@ -80,6 +82,7 @@ impl PostContext {
             redis: state.redis.clone(),
             dispatcher: state.dispatcher.clone(),
             config: state.config.clone(),
+            media: state.media.clone(),
             ap: state.ap.clone(),
             bus: state.bus.clone(),
         }
@@ -92,6 +95,7 @@ impl PostContext {
             redis: ctx.redis.clone(),
             dispatcher: crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs),
             config: ctx.config.clone(),
+            media: ctx.media.clone(),
             ap,
             bus: Default::default(),
         }

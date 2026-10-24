@@ -48,7 +48,7 @@ pub fn content_type_for_ext(ext: &str) -> Option<&'static str> {
 
 /// `(kind, ext)` sniffed from magic bytes, or `None`. Common container
 /// signatures only — anything else falls back to the declared MIME.
-fn sniff_raw(bytes: &[u8]) -> Option<(&'static str, &'static str, &'static str)> {
+pub(crate) fn sniff_media(bytes: &[u8]) -> Option<(&'static str, &'static str, &'static str)> {
     let head = bytes.get(..16).unwrap_or(bytes);
     let is = |sig: &[u8], at: usize| head.get(at..at + sig.len()) == Some(sig);
     if is(b"ftyp", 4) {
@@ -84,7 +84,7 @@ fn sniff_raw(bytes: &[u8]) -> Option<(&'static str, &'static str, &'static str)>
 
 /// Map a declared `audio/*`/`video/*` MIME to `(ext, mime, kind)` —
 /// unknown subtypes get a per-top-level fallback extension.
-fn for_declared(mime: &str) -> Option<(String, String, &'static str)> {
+pub(crate) fn for_declared(mime: &str) -> Option<(String, String, &'static str)> {
     let mime = mime.split(';').next().unwrap_or("").trim();
     if let Some(&(ext, m, k)) = RAW_TYPES.iter().find(|(_, m, _)| *m == mime) {
         return Some((ext.to_string(), m.to_string(), k));
@@ -175,6 +175,7 @@ pub fn parse_focus(value: Option<&str>) -> Result<Option<(f32, f32)>> {
 /// `processed = false` — no transcoding this epic.
 pub async fn store_status_media(
     config: &Config,
+    store: &super::storage::MediaStore,
     db: &sqlx::PgPool,
     account_id: i64,
     bytes: Vec<u8>,
@@ -236,7 +237,7 @@ pub async fn store_status_media(
                 stripped,
             )
         } else {
-            let (ext, mime, kind) = sniff_raw(&bytes)
+            let (ext, mime, kind) = sniff_media(&bytes)
                 .map(|(e, m, k)| (e.to_string(), m.to_string(), k))
                 .or_else(|| meta.declared_content_type.as_deref().and_then(for_declared))
                 .ok_or_else(|| {
@@ -256,7 +257,7 @@ pub async fn store_status_media(
         };
 
     let key = format!("{PREFIX}/{account_id}/{}.{}", uuid::Uuid::new_v4(), ext);
-    super::storage::write_bytes(config, &key, &stored).await?;
+    store.put(&key, &stored, &content_type).await?;
 
     let size = stored.len() as i64;
     let id = match sqlx::query_scalar::<_, i64>(
@@ -284,7 +285,7 @@ pub async fn store_status_media(
         Ok(id) => id,
         Err(e) => {
             // Best-effort cleanup of the written object.
-            let _ = super::storage::delete_key(config, &key).await;
+            let _ = store.delete(&key).await;
             return Err(Error::Database(e));
         }
     };
@@ -311,10 +312,10 @@ mod tests {
 
     #[test]
     fn isobmff_brands_classify() {
-        assert_eq!(sniff_raw(&bmff(b"M4V ")).unwrap().2, "video");
-        assert_eq!(sniff_raw(&bmff(b"M4A ")).unwrap().2, "audio");
-        assert_eq!(sniff_raw(&bmff(b"isom")).unwrap().2, "video");
-        assert_eq!(sniff_raw(&bmff(b"qt  ")).unwrap().0, "mov");
+        assert_eq!(sniff_media(&bmff(b"M4V ")).unwrap().2, "video");
+        assert_eq!(sniff_media(&bmff(b"M4A ")).unwrap().2, "audio");
+        assert_eq!(sniff_media(&bmff(b"isom")).unwrap().2, "video");
+        assert_eq!(sniff_media(&bmff(b"qt  ")).unwrap().0, "mov");
     }
 
     #[test]

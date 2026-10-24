@@ -51,6 +51,14 @@ pub enum TimelineScope {
         /// Mastodon's `?local=true` — restrict to local authors.
         local_only: bool,
     },
+    /// One account's statuses — the profile page's posts/media tabs
+    /// (epic 18). `Filters` carries `exclude_replies`/`exclude_reblogs`/
+    /// `only_media`; `Filters::viewer` is whoever is looking, not the
+    /// profile owner.
+    Account {
+        /// `accounts.id` of the profile.
+        account_id: i64,
+    },
 }
 
 impl TimelineScope {
@@ -74,6 +82,7 @@ impl TimelineScope {
                     format!("tag:{}", name.to_lowercase())
                 }
             }
+            TimelineScope::Account { account_id } => format!("account:{account_id}"),
         }
     }
 }

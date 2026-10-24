@@ -38,6 +38,12 @@ pub struct Filters {
     pub hidden_languages: Vec<String>,
     /// Mastodon's `?only_media=` — only statuses with attachments.
     pub only_media: bool,
+    /// Mastodon's `?exclude_replies=` on the account tab — replies are
+    /// hidden, except the author's own threads (self-replies stay).
+    pub exclude_replies: bool,
+    /// Mastodon's `?exclude_reblogs=` on the account tab — boost rows
+    /// (`reblog_of_id IS NOT NULL`) are hidden.
+    pub exclude_reblogs: bool,
 }
 
 /// A finished predicate: clause(s) joined by `AND` plus the binds to
@@ -100,7 +106,10 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     );
     if matches!(
         scope,
-        TimelineScope::Local | TimelineScope::Federated { .. } | TimelineScope::Tag { .. }
+        TimelineScope::Local
+            | TimelineScope::Federated { .. }
+            | TimelineScope::Tag { .. }
+            | TimelineScope::Account { .. }
     ) {
         b.clause(
             "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
@@ -118,6 +127,12 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     if filters.only_media {
         b.clause("EXISTS (SELECT 1 FROM media_attachments ma WHERE ma.status_id = s.id)");
     }
+    if filters.exclude_replies {
+        b.clause("(s.in_reply_to_id IS NULL OR s.in_reply_to_account_id = s.account_id)");
+    }
+    if filters.exclude_reblogs {
+        b.clause("s.reblog_of_id IS NULL");
+    }
 
     // Viewer-scoped timelines can't resolve without $1 — emit an
     // empty match rather than a misbound clause.
@@ -125,7 +140,7 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     {
         b.clause("FALSE");
     } else {
-        scope_clauses(&mut b, scope);
+        scope_clauses(&mut b, scope, filters);
     }
     Where {
         sql: b.clauses.join(" AND "),
@@ -133,7 +148,7 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     }
 }
 
-fn scope_clauses(b: &mut Builder, scope: &TimelineScope) {
+fn scope_clauses(b: &mut Builder, scope: &TimelineScope, filters: &Filters) {
     match scope {
         TimelineScope::Local => {
             b.clause("a.domain IS NULL");
@@ -161,6 +176,28 @@ fn scope_clauses(b: &mut Builder, scope: &TimelineScope) {
             list_id,
             replies_policy,
         } => list_clauses(b, *list_id, *replies_policy),
+        TimelineScope::Account { account_id } => account_clauses(b, *account_id, filters),
+    }
+}
+
+/// The profile-page tab: the account's own statuses, gated on the
+/// viewer. Anonymous viewers see `public`/`unlisted` only; the owner
+/// sees everything but `direct`; followers also see the
+/// follower-gated visibilities.
+fn account_clauses(b: &mut Builder, account_id: i64, filters: &Filters) {
+    let ap = b.param(Bind::I64(account_id));
+    b.clause(format!("s.account_id = {ap}"));
+    if filters.viewer.is_some() {
+        b.clause(
+            "(s.visibility IN ('public', 'unlisted') \
+             OR (s.account_id = $1 AND s.visibility <> 'direct') \
+             OR (s.visibility IN ('followers_only', 'private') \
+                 AND EXISTS (SELECT 1 FROM follows f \
+                             WHERE f.account_id = $1 \
+                               AND f.target_account_id = s.account_id)))",
+        );
+    } else {
+        b.clause("s.visibility IN ('public', 'unlisted')");
     }
 }
 
@@ -240,6 +277,8 @@ mod tests {
                 viewer,
                 hidden_languages: Vec::new(),
                 only_media: false,
+                exclude_replies: false,
+                exclude_reblogs: false,
             },
         )
     }
@@ -339,6 +378,8 @@ mod tests {
                 viewer: None,
                 hidden_languages: vec!["fr".into(), "de".into()],
                 only_media: true,
+                exclude_replies: false,
+                exclude_reblogs: false,
             },
         );
         assert!(w.sql.contains("s.language = ANY($1)"));

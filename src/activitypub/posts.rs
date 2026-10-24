@@ -95,7 +95,7 @@ async fn attachments(ctx: &PostContext, status: &StatusRow) -> Result<Vec<Value>
     Ok(media
         .iter()
         .filter_map(|m| {
-            let url = posts::entity::media_url(&base, m)?;
+            let url = posts::entity::media_url(&ctx.config, &base, m)?;
             let doc_type = match m.kind.as_str() {
                 "image" => "Image",
                 "video" => "Video",

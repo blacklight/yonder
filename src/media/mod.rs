@@ -14,8 +14,10 @@
 
 pub mod attachments;
 pub mod images;
+pub mod jobs;
 pub mod storage;
 
 pub use attachments::store_status_media;
 pub use images::{store_profile_image, MediaKind, StoredImage};
+pub use jobs::register_jobs;
 pub use storage::public_url;

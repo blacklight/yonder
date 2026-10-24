@@ -12,8 +12,9 @@ audit log.
   `content.max_report_comment`, default 2000), `category`
   (`spam|violation|legal|other`), `forward`.
 - `forward=true` on a remote target sends a `Flag` activity to the
-  target's instance. Only reports propagate — blocks and suspensions
-  are never federated.
+  target's instance, attributed to and signed by the instance actor —
+  the reporter's identity is not disclosed. Only reports propagate —
+  blocks and suspensions are never federated.
 - Inbound `Flag` activities create `reports` rows with the remote
   actor as reporter; domains with `reject_reports` (or `suspend`)
   are dropped.
@@ -53,9 +54,13 @@ returns the moderation-state view (`suspended`, `limited`, `disabled`,
 `force_sensitive`).
 
 Guards: nobody can act on their own account; moderators can't act on
-staff targets (admins or other moderators); `suspend`/`disable`/
-`delete` refuse the last active local admin; and a domain block on the
-instance's own domain is rejected.
+staff targets (admins or other moderators) — applies to the reversal
+verbs too, so a moderator can't undo an admin's action on staff;
+`suspend`/`disable`/`delete` refuse the last active local admin; and
+a domain block on the instance's own domain is rejected. Guard checks
+and the mutations they gate run under a shared transaction-scoped
+advisory lock, so concurrent requests can't both pass a last-admin or
+staff check.
 
 ## Instance domain blocks
 

@@ -38,6 +38,23 @@ pub fn normalize_action_type(ty: &str) -> Option<&'static str> {
     }
 }
 
+/// Transaction-scoped advisory lock key serializing every mutation
+/// that evaluates the set of active local admins (`apply` for
+/// suspend/disable/delete of an admin, `set_role` demotions). All
+/// guard reads — the target's role/suspension and the active-admin
+/// count — run *after* taking this lock, so two concurrent requests
+/// can't both pass a check that assumes the other hasn't landed.
+/// Arbitrary constant; only has to agree across callers.
+const ADMIN_SET_LOCK: i64 = 0x596F_6E64_6572; // "Yonder"
+
+async fn admin_set_lock(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(ADMIN_SET_LOCK)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
 /// Apply `ty` to `target_id` on behalf of `actor_id` (role
 /// `actor_role`).
 ///
@@ -46,6 +63,11 @@ pub fn normalize_action_type(ty: &str) -> Option<&'static str> {
 /// `sensitive` → `force_sensitive`; `none` → warning only;
 /// `delete` → the shared account-deletion pipeline (immediate purge).
 /// `report_id` links the action back to a report (marked resolved).
+///
+/// The guard reads (target role/suspension, active-admin count) run
+/// inside the transaction under [`admin_set_lock`]; the flag change,
+/// `moderation_actions` row, linked-report resolution and audit row
+/// all commit atomically with them.
 pub async fn apply(
     state: &AppState,
     actor_id: i64,
@@ -55,11 +77,13 @@ pub async fn apply(
     reason: &str,
     report_id: Option<i64>,
 ) -> Result<()> {
+    let mut tx = state.db.begin().await?;
+    admin_set_lock(&mut tx).await?;
     let target = sqlx::query(
         "SELECT role, suspended_at, domain FROM accounts WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(target_id)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| Error::NotFound("account".into()))?;
     let target_role: String = target.get("role");
@@ -87,7 +111,7 @@ pub async fn apply(
                AND suspended_at IS NULL AND id <> $1",
         )
         .bind(target_id)
-        .fetch_one(&state.db)
+        .fetch_one(&mut *tx)
         .await?;
         if active_admins == 0 {
             return Err(Error::Conflict(format!(
@@ -99,8 +123,11 @@ pub async fn apply(
     if ty == "delete" {
         // Immediate purge; `requested_by` records the admin. The
         // pipeline suspends + revokes itself and enqueues the job —
-        // it owns its own transaction, so it runs before the
-        // bookkeeping tx below.
+        // it owns its own transaction, so a failure of our
+        // bookkeeping below can't undo it (the action/audit rows
+        // would be missing). It runs here — inside the advisory-lock
+        // window, after the guards — but before our tx takes any row
+        // lock on the target, so the two transactions can't deadlock.
         crate::users::deletion::schedule_account_deletion(
             state,
             target_id,
@@ -110,7 +137,6 @@ pub async fn apply(
         .await?;
     }
 
-    let mut tx = state.db.begin().await?;
     match ty {
         "silence" => {
             sqlx::query(
@@ -174,8 +200,15 @@ pub async fn apply(
 /// Reversal verbs: `unsilence`/`unsuspend`/`unsensitive`/`enable`
 /// lift the corresponding flag. Access is NOT restored — revoked
 /// tokens are gone for good; the account must re-login (same rule
-/// Mastodon applies on unsuspend).
-pub async fn reverse(state: &AppState, actor_id: i64, target_id: i64, verb: &str) -> Result<()> {
+/// Mastodon applies on unsuspend). The staff-target guard matches
+/// `apply`: moderators can't undo an admin's action on staff.
+pub async fn reverse(
+    state: &AppState,
+    actor_id: i64,
+    actor_role: &str,
+    target_id: i64,
+    verb: &str,
+) -> Result<()> {
     let (set, action) = match verb {
         "unsilence" => ("limited_at = NULL", "account.unsilence"),
         "unsuspend" => ("suspended_at = NULL", "account.unsuspend"),
@@ -184,6 +217,17 @@ pub async fn reverse(state: &AppState, actor_id: i64, target_id: i64, verb: &str
         _ => return Err(Error::Validation(format!("unknown reversal {verb:?}"))),
     };
     let mut tx = state.db.begin().await?;
+    let target_role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM accounts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(target_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(target_role) = target_role else {
+        return Err(Error::NotFound("account".into()));
+    };
+    if actor_role == "moderator" && matches!(target_role.as_str(), "admin" | "moderator") {
+        return Err(Error::Forbidden);
+    }
     sqlx::query(&format!(
         "UPDATE accounts SET {set}, updated_at = now() WHERE id = $1"
     ))
@@ -241,6 +285,10 @@ pub async fn set_role(state: &AppState, actor_id: i64, target_id: i64, role: &st
         return Err(Error::Validation(format!("invalid role {role:?}")));
     }
     let mut tx = state.db.begin().await?;
+    // Same lock `apply` takes: role changes and staff-affecting
+    // actions serialize so concurrent requests can't both pass a
+    // last-admin check.
+    admin_set_lock(&mut tx).await?;
     let target = sqlx::query(
         "SELECT role, suspended_at FROM accounts \
          WHERE id = $1 AND domain IS NULL AND deleted_at IS NULL FOR UPDATE",

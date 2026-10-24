@@ -85,7 +85,7 @@ pub async fn file(
         tracing::warn!(error = %e, report_id = report.id, "admin.report fan-out failed");
     }
     if forward {
-        forward_flag(&state, &report).await;
+        forward_flag(&state, &report, &status_ids).await;
     }
     Ok(Json(reports::entity(&state, &report).await?))
 }
@@ -105,20 +105,14 @@ pub struct FileReport {
 
 /// Forward the report as a `Flag` to the target's instance. Only
 /// when the target is remote and federation is up — local targets
-/// have nowhere to forward to. Best-effort: a publish failure is
-/// logged, the report is already stored.
-async fn forward_flag(state: &Arc<AppState>, report: &reports::ReportRow) {
+/// have nowhere to forward to. The activity is attributed to and
+/// signed by the *instance actor*: the remote learns the instance
+/// reported its user, not which local user filed it. `status_ids`
+/// carries every reported status (one `reports` row each) so the
+/// `Flag`'s `object` lists them all. Best-effort: a publish failure
+/// is logged, the report is already stored.
+async fn forward_flag(state: &Arc<AppState>, report: &reports::ReportRow, status_ids: &[i64]) {
     let Some(ap) = state.ap.as_ref() else {
-        return;
-    };
-    let reporter: Option<(String, String)> =
-        sqlx::query_as("SELECT username, actor_id FROM accounts WHERE id = $1 AND domain IS NULL")
-            .bind(report.account_id)
-            .fetch_optional(&state.db)
-            .await
-            .ok()
-            .flatten();
-    let Some((username, actor_id)) = reporter else {
         return;
     };
     let target_actor: Option<String> =
@@ -131,19 +125,21 @@ async fn forward_flag(state: &Arc<AppState>, report: &reports::ReportRow) {
     let Some(target_actor) = target_actor else {
         return;
     };
+    let actor_id = crate::activitypub::actors::actor_id(
+        &ap.core.base_url,
+        crate::activitypub::actors::INSTANCE_USERNAME,
+    );
     let mut objects = vec![target_actor.clone()];
-    if let Some(status_id) = report.status_id {
-        if let Some(uri) = sqlx::query_scalar::<_, String>(
-            "SELECT uri FROM statuses WHERE id = $1 AND uri IS NOT NULL",
-        )
-        .bind(status_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        {
-            objects.push(uri);
-        }
+    if !status_ids.is_empty() {
+        objects.extend(
+            sqlx::query_scalar::<_, String>(
+                "SELECT uri FROM statuses WHERE id = ANY($1) AND uri IS NOT NULL",
+            )
+            .bind(status_ids)
+            .fetch_all(&state.db)
+            .await
+            .unwrap_or_default(),
+        );
     }
     let flag = json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -154,7 +150,13 @@ async fn forward_flag(state: &Arc<AppState>, report: &reports::ReportRow) {
         "content": report.comment,
         "to": [target_actor],
     });
-    if let Err(e) = crate::activitypub::delivery::publish(ap, &username, &flag).await {
+    if let Err(e) = crate::activitypub::delivery::publish(
+        ap,
+        crate::activitypub::actors::INSTANCE_USERNAME,
+        &flag,
+    )
+    .await
+    {
         tracing::warn!(error = %e, report_id = report.id, "report forwarding (Flag) failed");
     }
 }

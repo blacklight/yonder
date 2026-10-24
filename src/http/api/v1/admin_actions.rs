@@ -113,7 +113,7 @@ pub async fn reverse(
     ) {
         return Err(Error::NotFound("route".into()));
     }
-    actions::reverse(&state, auth.account_id, id, &verb).await?;
+    actions::reverse(&state, auth.account_id, &auth.role, id, &verb).await?;
     Ok(Json(actions::admin_account_entity(&state.db, id).await?))
 }
 

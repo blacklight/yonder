@@ -869,3 +869,154 @@ async fn audit_cleanup_prunes_old_rows() {
         .unwrap();
     assert_eq!(remaining, vec!["fresh".to_string()]);
 }
+
+#[tokio::test]
+async fn reversals_follow_the_staff_guard() {
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let admin = register(&env.app, "root", "root@x.test").await;
+    let mod_ = register(&env.app, "mod", "mod@x.test").await;
+    let _mod2 = register(&env.app, "mod2", "mod2@x.test").await;
+    make_role(&env, "root", "admin").await;
+    make_role(&env, "mod", "moderator").await;
+    make_role(&env, "mod2", "moderator").await;
+    let mod2_id = account_id(&env, "mod2").await;
+
+    // An admin suspends a fellow-staff account…
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/admin/accounts/{mod2_id}/action"),
+        Some(&admin),
+        Some(json!({ "type": "suspend" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // …and a moderator cannot undo it.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/admin/accounts/{mod2_id}/unsuspend"),
+        Some(&mod_),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "moderator reversing staff action"
+    );
+
+    // An admin can.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/admin/accounts/{mod2_id}/unsuspend"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["suspended"], false);
+
+    // Reversing a nonexistent account is a 404, not an audit row.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/accounts/999999/unsuspend",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(audit_count(&env, "account.unsuspend").await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn forwarded_flag_is_signed_by_instance_actor() {
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "alice@x.test").await;
+
+    // A remote target account + one of its statuses to report.
+    let target_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('remote.example', 'bad', 'https://remote.example/users/bad', \
+                 'https://remote.example/users/bad', 'https://remote.example/inbox') \
+         RETURNING id",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let status_id: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (account_id, uri, content) \
+         VALUES ($1, 'https://remote.example/statuses/1', 'spam post') RETURNING id",
+    )
+    .bind(target_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    // The fan-out resolves the addressee's inbox through the actor
+    // cache — seed it so no HTTP fetch is needed.
+    sqlx::query(
+        "INSERT INTO actor_cache (actor_id, actor_data) VALUES (\
+         'https://remote.example/users/bad', \
+         '{\"id\":\"https://remote.example/users/bad\",\"type\":\"Person\",\
+           \"inbox\":\"https://remote.example/inbox\"}')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/reports",
+        Some(&alice),
+        Some(json!({
+            "account_id": target_id,
+            "status_ids": [status_id],
+            "comment": "spam",
+            "forward": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The published Flag is attributed to the instance actor — the
+    // reporter's identity stays local — and lists every reported
+    // object.
+    let flag: Value =
+        sqlx::query_scalar("SELECT object FROM activities WHERE type = 'Flag' AND local")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    let instance_actor = format!("{BASE}/ap/users/yonder.instance");
+    assert_eq!(flag["actor"].as_str().unwrap(), instance_actor);
+    let objects: Vec<&str> = flag["object"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(
+        objects.contains(&"https://remote.example/users/bad"),
+        "{flag}"
+    );
+    assert!(
+        objects.contains(&"https://remote.example/statuses/1"),
+        "{flag}"
+    );
+
+    // A delivery row for the remote inbox was enqueued.
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM deliveries WHERE inbox_url = 'https://remote.example/inbox'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 1);
+}

@@ -74,6 +74,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation"] }
 pulldown-cmark = "0.13.5"
 ammonia = "4.2.4"
+quick-xml = "0.42"
 
 [dev-dependencies]
 base64 = "0.22"

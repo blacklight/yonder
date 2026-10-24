@@ -112,7 +112,7 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
   owns issuance). The streaming endpoint shares the same resolution.
 - **Rate limiting** — `ratelimit::layer(&state, "<bucket>")` applied
   with `.route_layer()`. Buckets are the `rate_limit.*` config keys
-  (`search`, `timeline`, `account_creation`, `relation`, `status`,
+  (`search`, `feed`, `timeline`, `account_creation`, `relation`, `status`,
   `authentication`, `federation_inbox`); authenticated requests use
   `authenticated_limit` when set and a separate `u:{id}` identity.
   Rejects with 429 + `Retry-After`.
@@ -136,6 +136,17 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
    module's `ApiDoc` `paths(...)` — `openapi::document()` merges it.
 4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
    maps to a configured bucket.
+
+### RSS & Atom feeds
+
+Outside `/api`: `/users/{username}.atom|.rss` (local accounts, public
+posts only), `/tags/{tag}.atom|.rss` (public tagged posts) and
+`/lists/{id}.atom|.rss` (list owner only, `read:lists`, Bearer or
+`?access_token=`). Generated server-side with quick-xml, capped at
+`content.max_feed_items` (default 50, max 200), rate-limited on the
+`feed` bucket. `feeds::discovery_links()` emits the `<link
+rel="alternate">` tags the frontend will inject into pages.
+`docs/feeds.md` has the full contract.
 
 ## Federation (ActivityPub)
 

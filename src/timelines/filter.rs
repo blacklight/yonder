@@ -44,6 +44,10 @@ pub struct Filters {
     /// Mastodon's `?exclude_reblogs=` on the account tab — boost rows
     /// (`reblog_of_id IS NOT NULL`) are hidden.
     pub exclude_reblogs: bool,
+    /// Feed-only restriction (epic 19): `public` posts exclusively,
+    /// tightening scopes that would otherwise admit `unlisted` — e.g.
+    /// the anonymous `Account` scope on profile feeds.
+    pub public_only: bool,
 }
 
 /// A finished predicate: clause(s) joined by `AND` plus the binds to
@@ -132,6 +136,9 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     }
     if filters.exclude_reblogs {
         b.clause("s.reblog_of_id IS NULL");
+    }
+    if filters.public_only {
+        b.clause("s.visibility = 'public'");
     }
 
     // Viewer-scoped timelines can't resolve without $1 — emit an
@@ -279,8 +286,24 @@ mod tests {
                 only_media: false,
                 exclude_replies: false,
                 exclude_reblogs: false,
+                public_only: false,
             },
         )
+    }
+
+    #[test]
+    fn public_only_adds_visibility_clause() {
+        let scope = TimelineScope::Account { account_id: 3 };
+        let open = build_where(&scope, &Filters::default());
+        assert!(!open.sql.contains("s.visibility = 'public'"));
+        let strict = build_where(
+            &scope,
+            &Filters {
+                public_only: true,
+                ..Default::default()
+            },
+        );
+        assert!(strict.sql.contains("s.visibility = 'public'"));
     }
 
     #[test]
@@ -380,6 +403,7 @@ mod tests {
                 only_media: true,
                 exclude_replies: false,
                 exclude_reblogs: false,
+                public_only: false,
             },
         );
         assert!(w.sql.contains("s.language = ANY($1)"));

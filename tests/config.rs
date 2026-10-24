@@ -206,6 +206,21 @@ fn i18n_fallback_locale() {
 }
 
 #[test]
+fn max_feed_items_bounds() {
+    for (value, valid) in [
+        (0u32, false),
+        (1, true),
+        (50, true),
+        (200, true),
+        (201, false),
+    ] {
+        let mut config = Config::default();
+        config.content.max_feed_items = value;
+        assert_eq!(config.validate().is_ok(), valid, "max_feed_items={value}");
+    }
+}
+
+#[test]
 fn timelines_limits_must_be_positive() {
     for mutate in [
         (|c: &mut Config| c.timelines.home_max_entries = 0) as fn(&mut Config),

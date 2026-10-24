@@ -122,6 +122,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // bucket so the `/{base}/media/{key}` URL shape holds either way.
     router = router.merge(crate::media::storage::router());
 
+    // RSS/Atom feeds are outside `/api` too — Mastodon-shaped
+    // `/users/{u}.atom`-style URLs for profiles, tags and lists.
+    router = router.merge(crate::feeds::router(&state));
+
     let router = match cors_layer(&state.config.http) {
         Some(cors) => router.layer(cors),
         None => router,

@@ -114,6 +114,7 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         for name in [
             "search",
+            "feed",
             "timeline",
             "account_creation",
             "relation",
@@ -144,6 +145,11 @@ impl Config {
         if self.jobs.poll_interval_ms == 0 {
             return Err(crate::Error::Validation(
                 "jobs.poll_interval_ms must be > 0".to_string(),
+            ));
+        }
+        if !(1..=200).contains(&self.content.max_feed_items) {
+            return Err(crate::Error::Validation(
+                "content.max_feed_items must be in 1..=200".to_string(),
             ));
         }
         if self.timelines.home_max_entries == 0
@@ -636,6 +642,9 @@ impl Default for RateLimit {
 #[serde(default)]
 pub struct RateLimitConfig {
     pub search: RateLimit,
+    /// RSS/Atom feed endpoints (`/users/*.atom|.rss`, `/tags/*`,
+    /// `/lists/*`).
+    pub feed: RateLimit,
     pub timeline: RateLimit,
     pub account_creation: RateLimit,
     /// Follow/unfollow requests.
@@ -650,12 +659,13 @@ pub struct RateLimitConfig {
 }
 
 impl RateLimitConfig {
-    /// Look up a named bucket (`"search"`, `"timeline"`,
+    /// Look up a named bucket (`"search"`, `"feed"`, `"timeline"`,
     /// `"account_creation"`, `"relation"`, `"status"`, `"media"`,
     /// `"authentication"`, `"federation_inbox"`).
     pub fn bucket(&self, name: &str) -> Option<&RateLimit> {
         match name {
             "search" => Some(&self.search),
+            "feed" => Some(&self.feed),
             "timeline" => Some(&self.timeline),
             "account_creation" => Some(&self.account_creation),
             "relation" => Some(&self.relation),
@@ -673,6 +683,11 @@ impl Default for RateLimitConfig {
         Self {
             search: RateLimit {
                 limit: 20,
+                period_seconds: 60,
+                authenticated_limit: None,
+            },
+            feed: RateLimit {
+                limit: 30,
                 period_seconds: 60,
                 authenticated_limit: None,
             },

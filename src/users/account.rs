@@ -63,6 +63,25 @@ pub async fn load(pool: &sqlx::PgPool, account_id: i64) -> Result<Option<Account
     Ok(row.map(|r| account_row(&r)))
 }
 
+/// Load a local `accounts` row by username (case-insensitive, matching
+/// the actor-lookup rule). Suspended and deleted accounts resolve to
+/// `None` — callers serving them would leak their tombstone state.
+pub async fn load_local_by_username(
+    pool: &sqlx::PgPool,
+    username: &str,
+) -> Result<Option<AccountRow>> {
+    let row = sqlx::query(&format!(
+        "SELECT {ACCOUNT_COLS} \
+         FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
+         WHERE lower(a.username) = $1 AND a.domain IS NULL \
+           AND a.suspended_at IS NULL AND a.deleted_at IS NULL"
+    ))
+    .bind(username.to_lowercase())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| account_row(&r)))
+}
+
 /// Load many `accounts` rows in one query — the listing form of
 /// [`load`]. Result order matches `ids`; missing/deleted ids are
 /// dropped (the caller loses the position).

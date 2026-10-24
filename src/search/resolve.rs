@@ -41,7 +41,7 @@ pub enum ResolvedHit {
 async fn domain_suspended(db: &PgPool, domain: &str) -> Result<bool> {
     sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM domain_blocks \
-         WHERE domain = $1 AND action = 'suspend')",
+         WHERE domain = $1 AND severity = 'suspend')",
     )
     .bind(domain.to_lowercase())
     .fetch_one(db)

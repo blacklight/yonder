@@ -65,11 +65,13 @@ pub struct ApCore {
     /// Public AP base URL (`federation.base_url` or
     /// `https://{instance.domain}`).
     pub base_url: String,
-    /// Snapshot of suspended domains (config ∪ `domain_blocks`,
-    /// `action='suspend'`). Rebuilt per process — moderation changes
-    /// take effect on restart; epic 21 can re-resolve handlers to
-    /// apply earlier.
-    pub blocked: Vec<String>,
+    /// Suspended domains (`domain_blocks`, `severity='suspend'`) as
+    /// pubby's `blocked_instances` needs them — a `Vec` snapshot, so
+    /// handlers built before a block lands keep the old list until
+    /// [`crate::moderation::blocks::refresh_blocked`] re-reads the
+    /// table and invalidates the handler cache. SQL-facing reads
+    /// (inbox edge, timelines, search) are live and don't need it.
+    pub blocked: std::sync::RwLock<Vec<String>>,
 }
 
 impl ApCore {
@@ -95,11 +97,16 @@ pub struct ApContext {
 /// `on_activity`/`on_follow_response`/`on_interaction_received`
 /// callbacks and the queued `DeliverFn` seam.
 pub fn per_user_handler_options(core: &Arc<ApCore>) -> HandlerOptions {
-    let mut options =
-        actors::handler_options(&core.config, &core.doc_cache, core.blocked.clone(), None);
+    let blocked = core
+        .blocked
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut options = actors::handler_options(&core.config, &core.doc_cache, blocked, None);
     options.deliver = Some(delivery::deliver_fn(core));
     options.on_activity = Some(incoming::on_activity_fn(core));
     options.on_interaction_received = Some(incoming::on_interaction_fn(core));
+    options.follow_policy = Some(crate::moderation::blocks::silenced_follow_policy(core));
     options
 }
 
@@ -156,7 +163,7 @@ pub async fn build(
         redis: redis.clone(),
         bus: bus.clone(),
         base_url: base_url.clone(),
-        blocked: moderation::blocked_domains(pool, config).await?,
+        blocked: std::sync::RwLock::new(moderation::blocked_domains(pool, config).await?),
     });
 
     let instance_actor = actors::ensure_instance_actor(pool, &base_url).await?;

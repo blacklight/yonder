@@ -19,11 +19,11 @@ pub fn actor_domain(url: &str) -> Option<String> {
         .and_then(|u| u.host_str().map(|h| h.to_lowercase()))
 }
 
-/// Suspended domains from `domain_blocks` (`action='suspend'`).
+/// Suspended domains from `domain_blocks` (`severity='suspend'`).
 /// `config` is accepted for symmetry with future config-level lists —
 /// there is no `federation.blocked_instances` key today.
 pub async fn blocked_domains(pool: &PgPool, _config: &Config) -> Result<Vec<String>> {
-    sqlx::query_scalar::<_, String>("SELECT domain FROM domain_blocks WHERE action = 'suspend'")
+    sqlx::query_scalar::<_, String>("SELECT domain FROM domain_blocks WHERE severity = 'suspend'")
         .fetch_all(pool)
         .await
         .map_err(Into::into)
@@ -33,7 +33,7 @@ pub async fn blocked_domains(pool: &PgPool, _config: &Config) -> Result<Vec<Stri
 /// activity so new blocks take effect without a restart.
 pub async fn is_blocked(pool: &PgPool, domain: &str) -> Result<bool> {
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM domain_blocks WHERE domain = $1 AND action = 'suspend')",
+        "SELECT EXISTS(SELECT 1 FROM domain_blocks WHERE domain = $1 AND severity = 'suspend')",
     )
     .bind(domain.to_lowercase())
     .fetch_one(pool)

@@ -144,7 +144,14 @@ pub async fn validate(
             config,
         )),
     };
-    let sensitive = params.sensitive.unwrap_or(user_settings.default_sensitive);
+    // `force_sensitive` (moderation `sensitive` action) overrides both
+    // the caller's flag and the account default.
+    let force_sensitive: bool =
+        sqlx::query_scalar("SELECT force_sensitive FROM accounts WHERE id = $1")
+            .bind(auth.account_id)
+            .fetch_one(&ctx.db)
+            .await?;
+    let sensitive = force_sensitive || params.sensitive.unwrap_or(user_settings.default_sensitive);
     let spoiler_text = params.spoiler_text.clone().filter(|s| !s.trim().is_empty());
     if let Some(s) = &spoiler_text {
         if s.chars().count() > SPOILER_MAX {

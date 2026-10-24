@@ -75,6 +75,10 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.admin.export_cleanup_schedule.as_deref(),
             JobKind::ExportCleanup,
         ),
+        (
+            config.admin.audit_log_sweep_schedule.as_deref(),
+            JobKind::AuditLogCleanup,
+        ),
         // Epic-12 posting sweeps.
         (
             config.content.scheduled_status_sweep_schedule.as_deref(),

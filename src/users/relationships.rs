@@ -153,7 +153,14 @@ pub async fn follow(
     }
 
     let local_target = target.domain.is_none();
-    if local_target && !target.locked {
+    // A limited (silenced) follower's follow lands as a request even
+    // when the local target is unlocked — Mastodon's silence rule.
+    let limited: bool =
+        sqlx::query_scalar("SELECT limited_at IS NOT NULL FROM accounts WHERE id = $1")
+            .bind(follower_id)
+            .fetch_one(ctx.db)
+            .await?;
+    if local_target && !target.locked && !limited {
         sqlx::query(
             "INSERT INTO follows (account_id, target_account_id, show_reblogs, notify) \
              VALUES ($1, $2, COALESCE($3, true), COALESCE($4, false)) \

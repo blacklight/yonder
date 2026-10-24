@@ -168,7 +168,8 @@ async fn password_grant(
     let row = sqlx::query(
         "SELECT u.id, u.password_hash, a.suspended_at \
          FROM users u JOIN accounts a ON a.id = u.account_id \
-         WHERE (lower(u.email) = lower($1) OR (lower(a.username) = lower($1) AND a.domain IS NULL))",
+         WHERE (lower(u.email) = lower($1) OR (lower(a.username) = lower($1) AND a.domain IS NULL)) \
+           AND a.disabled_at IS NULL",
     )
     .bind(username.trim())
     .fetch_optional(&state.db)

@@ -131,6 +131,9 @@ pub enum JobKind {
     /// delayed for replaced/cleared profile images so the old URL
     /// survives the actor-`Update` propagation window (epic 18).
     DeleteMediaObject,
+    /// Prune `audit_log` entries past `admin.audit_log_retention_days`
+    /// (epic 21, `admin.audit_log_sweep_schedule`).
+    AuditLogCleanup,
 }
 
 impl JobKind {
@@ -185,6 +188,7 @@ impl JobKind {
             JobKind::FollowEvent => "follow_event",
             JobKind::TimelineFanOut => "timeline_fan_out",
             JobKind::DeleteMediaObject => "delete_media_object",
+            JobKind::AuditLogCleanup => "audit_log_cleanup",
         }
     }
 
@@ -204,6 +208,7 @@ impl JobKind {
             | JobKind::AccountDeletion
             | JobKind::ExportCleanup
             | JobKind::CleanupOrphanMedia
+            | JobKind::AuditLogCleanup
             | JobKind::DeleteMediaObject => Queue::Cleanup,
             _ => Queue::Default,
         }

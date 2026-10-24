@@ -83,13 +83,14 @@ pub async fn load_local_by_username(
 }
 
 /// Load many `accounts` rows in one query — the listing form of
-/// [`load`]. Result order matches `ids`; missing/deleted ids are
-/// dropped (the caller loses the position).
+/// [`load`]. Result order matches `ids`; missing/deleted/suspended
+/// ids are dropped (the caller loses the position). Admin surfaces
+/// needing suspended rows query `accounts` directly.
 pub async fn load_many(pool: &sqlx::PgPool, ids: &[i64]) -> Result<Vec<AccountRow>> {
     let rows = sqlx::query(&format!(
         "SELECT {ACCOUNT_COLS} \
          FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
-         WHERE a.id = ANY($1) AND a.deleted_at IS NULL \
+         WHERE a.id = ANY($1) AND a.deleted_at IS NULL AND a.suspended_at IS NULL \
          ORDER BY array_position($1::bigint[], a.id)"
     ))
     .bind(ids)

@@ -156,6 +156,29 @@ impl JobHandler for RemoteMediaFetchJob {
             return Ok(());
         };
 
+        // Epic 21 defense-in-depth: a `reject_media` block that landed
+        // after enqueue still stops the fetch (the enqueue path checks
+        // too, but rows enqueued before the block would get through).
+        // The policy applies to the *author's* domain — the media URL
+        // host may be a CDN that isn't itself blocked.
+        let author_domain: Option<String> = sqlx::query_scalar(
+            "SELECT a.domain FROM media_attachments m \
+             JOIN accounts a ON a.id = m.account_id WHERE m.id = $1",
+        )
+        .bind(media_id)
+        .fetch_optional(&ctx.db)
+        .await?
+        .flatten();
+        if let Some(domain) = author_domain {
+            if crate::moderation::blocks::rejects_media(&ctx.db, &domain)
+                .await
+                .unwrap_or(false)
+            {
+                tracing::info!(media_id, domain, "remote media fetch skipped: reject_media");
+                return Ok(());
+            }
+        }
+
         let timeout = std::time::Duration::from_secs(ctx.config.federation.request_timeout_seconds);
         let allow_private = ctx.config.federation.allow_private_targets;
         let url = remote_url.clone();

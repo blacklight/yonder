@@ -341,6 +341,9 @@ auto_followed_by = []
 default_frontend = "yonder"
 # Days to retain moderation audit log entries.
 audit_log_retention_days = 365
+# 5-field cron deleting audit log entries past the retention window.
+# Set to "" to disable.
+audit_log_sweep_schedule = "0 4 * * *"
 # Days a self-service account deletion waits before the federated
 # Delete + purge run. 0 deletes immediately; a non-zero grace keeps the
 # account deactivated until the delay expires (admin-cancelable).

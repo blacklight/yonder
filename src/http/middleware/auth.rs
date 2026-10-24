@@ -96,7 +96,8 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
          WHERE t.token_hash = $1
            AND t.revoked_at IS NULL
            AND (t.expires_at IS NULL OR t.expires_at > now())
-           AND a.suspended_at IS NULL",
+           AND a.suspended_at IS NULL
+           AND a.disabled_at IS NULL",
     )
     .bind(token_hash(token))
     .fetch_optional(&state.db)

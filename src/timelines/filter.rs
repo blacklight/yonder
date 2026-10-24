@@ -146,13 +146,13 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
         b.clause(visibility::DOMAIN_BLOCKS_EXCLUSION);
     }
 
-    // Instance moderation (epic 21 writes `domain_blocks`; reads can
-    // honour it today): suspended domains vanish everywhere; limited
-    // or timeline-removed domains only vanish from the public scopes
-    // — followers keep seeing them in home.
+    // Instance moderation: suspended domains vanish everywhere;
+    // silenced domains only vanish from the public scopes — followers
+    // keep seeing them in home. Limited *accounts* (account-level
+    // silence, `a.limited_at`) follow the same public-scope rule.
     b.clause(
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-         WHERE idb.domain = a.domain AND idb.action = 'suspend')",
+         WHERE idb.domain = a.domain AND idb.severity = 'suspend')",
     );
     if matches!(
         scope,
@@ -163,9 +163,9 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     ) {
         b.clause(
             "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-             WHERE idb.domain = a.domain \
-               AND idb.action IN ('limit', 'remove_from_timeline'))",
+             WHERE idb.domain = a.domain AND idb.severity = 'silence')",
         );
+        b.clause("a.limited_at IS NULL");
     }
 
     if !filters.hidden_languages.is_empty() {
@@ -383,7 +383,7 @@ mod tests {
         assert!(w.sql.contains("status_mentions sm"));
         assert!(w.sql.contains("l.exclusive"));
         assert!(w.sql.contains("in_reply_to_account_id"));
-        assert!(w.sql.contains("idb.action = 'suspend'"));
+        assert!(w.sql.contains("idb.severity = 'suspend'"));
         assert!(!w.sql.contains("'remove_from_timeline'"));
     }
 
@@ -399,7 +399,8 @@ mod tests {
         ] {
             let w = where_for(&scope, None);
             assert!(w.sql.contains("s.visibility = 'public'"), "{scope:?}");
-            assert!(w.sql.contains("'remove_from_timeline'"), "{scope:?}");
+            assert!(w.sql.contains("idb.severity = 'silence'"), "{scope:?}");
+            assert!(w.sql.contains("a.limited_at IS NULL"), "{scope:?}");
             // No viewer → no block/mute fragments and no binds.
             assert!(w.binds.is_empty() || matches!(scope, TimelineScope::Tag { .. }));
         }

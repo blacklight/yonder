@@ -20,7 +20,7 @@ fn base_clauses(viewer: Option<i64>, binds: &mut Vec<Bind>) -> Vec<String> {
         format!("({})", visibility::VISIBLE),
         // Suspended instance domains vanish everywhere.
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-         WHERE idb.domain = a.domain AND idb.action = 'suspend')"
+         WHERE idb.domain = a.domain AND idb.severity = 'suspend')"
             .to_string(),
     ];
     if let Some(v) = viewer {

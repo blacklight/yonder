@@ -232,6 +232,26 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
         let activity: Value = row.get("object");
         let actor_id: String = row.get("actor_id");
 
+        // Delivery-time moderation check: a domain suspended after the
+        // ledger row landed must not receive traffic. `failed`, not
+        // retried — a suspension lifted later only affects new rows.
+        if let Some(domain) = super::moderation::actor_domain(&inbox_url) {
+            if crate::moderation::blocks::is_suspended(&ctx.db, &domain)
+                .await
+                .unwrap_or(false)
+            {
+                sqlx::query(
+                    "UPDATE deliveries SET state = 'failed', attempts = attempts + 1, \
+                     last_error = 'domain is suspended', updated_at = now() WHERE id = $1",
+                )
+                .bind(delivery_id)
+                .execute(&ctx.db)
+                .await?;
+                tracing::info!(domain, inbox = %inbox_url, "delivery skipped: domain suspended");
+                return Ok(());
+            }
+        }
+
         let pem: Option<String> = sqlx::query_scalar(
             "SELECT private_key_pem FROM accounts WHERE actor_id = $1 AND domain IS NULL",
         )

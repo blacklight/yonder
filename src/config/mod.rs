@@ -945,6 +945,10 @@ pub struct AdminConfig {
     pub default_frontend: String,
     /// Days to retain moderation audit log entries.
     pub audit_log_retention_days: u32,
+    /// Cron expression for the `audit_log` retention sweep — deletes
+    /// entries older than `audit_log_retention_days`. Set to `""` to
+    /// disable.
+    pub audit_log_sweep_schedule: Option<String>,
     /// Grace period between a self-service account-deletion request and
     /// the federated `Delete` + purge. `0` (Mastodon's behavior) deletes
     /// immediately; during a non-zero grace the account stays
@@ -973,6 +977,7 @@ impl Default for AdminConfig {
             auto_followed_by: Vec::new(),
             default_frontend: "yonder".to_string(),
             audit_log_retention_days: 365,
+            audit_log_sweep_schedule: Some("0 4 * * *".to_string()),
             account_deletion_grace_days: 0,
             account_deletion_sweep_schedule: Some("*/15 * * * *".to_string()),
             export_cleanup_schedule: Some("0 3 * * *".to_string()),

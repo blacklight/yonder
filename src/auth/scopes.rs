@@ -126,13 +126,32 @@ pub fn requires_email_verification(config: &Config) -> bool {
 /// instance requires verification. `admin` additionally needs the
 /// `admin` role. Epics 12+ call this on every protected route.
 pub fn require_scope(config: &Config, auth: &AuthContext, required: &str) -> Result<()> {
+    check_scope(config, auth, required, &["admin"])
+}
+
+/// [`require_scope`] variant for the epic-21 moderation surface:
+/// `admin:*` scopes admit the `moderator` role as well as `admin`.
+/// Admin-only surfaces (domain blocks, role changes, emoji admin)
+/// keep using `require_scope`, which demands `role == "admin"`.
+pub fn require_moderator_scope(config: &Config, auth: &AuthContext, required: &str) -> Result<()> {
+    check_scope(config, auth, required, &["admin", "moderator"])
+}
+
+/// Shared scope + eligibility check. `admin:*` scopes additionally
+/// require the account's role to be one of `staff_roles`.
+fn check_scope(
+    config: &Config,
+    auth: &AuthContext,
+    required: &str,
+    staff_roles: &[&str],
+) -> Result<()> {
     let scopes = ScopeSet::parse(&auth.scopes)
         .map_err(|e| Error::Validation(format!("token has invalid scopes: {e}")))?;
     if !scopes.covers(required) {
         return Err(Error::Forbidden);
     }
     let base = required.split(':').next().unwrap_or_default();
-    if base == "admin" && auth.role != "admin" {
+    if base == "admin" && !staff_roles.contains(&auth.role.as_str()) {
         return Err(Error::Forbidden);
     }
     if !is_read_scope(required) {

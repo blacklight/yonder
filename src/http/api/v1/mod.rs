@@ -7,6 +7,8 @@
 
 pub mod account_management;
 pub mod accounts;
+pub mod admin_actions;
+pub mod admin_domain_blocks;
 pub mod apps;
 pub mod blocks;
 pub mod custom_emojis;
@@ -20,6 +22,7 @@ pub mod media;
 pub mod notifications;
 pub mod polls;
 pub mod relationships;
+pub mod reports;
 pub mod scheduled_statuses;
 pub mod search;
 pub mod sessions;
@@ -123,6 +126,57 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             axum::routing::delete(two_factor::webauthn_delete),
         )
         .route("/api/v1/instance", get(instance::instance))
+        // Epic 21 — public moderated-instances listing.
+        .route(
+            "/api/v1/instance/domain_blocks",
+            get(instance::domain_blocks),
+        )
+        // Epic 21 — user report filing.
+        .route("/api/v1/reports", post(reports::file))
+        // Epic 21 — moderator report queue.
+        .route("/api/v1/admin/reports", get(reports::admin_list))
+        .route("/api/v1/admin/reports/{id}", get(reports::admin_show))
+        .route(
+            "/api/v1/admin/reports/{id}/resolve",
+            post(reports::admin_resolve),
+        )
+        .route(
+            "/api/v1/admin/reports/{id}/reopen",
+            post(reports::admin_reopen),
+        )
+        .route(
+            "/api/v1/admin/reports/{id}/assign_to_self",
+            post(reports::admin_assign_self),
+        )
+        .route(
+            "/api/v1/admin/reports/{id}/unassign",
+            post(reports::admin_unassign),
+        )
+        // Epic 21 — account actions, reversals, roles, state.
+        .route(
+            "/api/v1/admin/accounts/{id}/action",
+            post(admin_actions::action),
+        )
+        .route(
+            "/api/v1/admin/accounts/{id}/role",
+            post(admin_actions::set_role),
+        )
+        .route(
+            "/api/v1/admin/accounts/{id}/{verb}",
+            post(admin_actions::reverse),
+        )
+        .route("/api/v1/admin/accounts/{id}", get(admin_actions::show))
+        // Epic 21 — domain blocks (instance moderation).
+        .route(
+            "/api/v1/admin/domain_blocks",
+            post(admin_domain_blocks::create).get(admin_domain_blocks::list),
+        )
+        .route(
+            "/api/v1/admin/domain_blocks/{id}",
+            get(admin_domain_blocks::show)
+                .patch(admin_domain_blocks::update)
+                .delete(admin_domain_blocks::delete_block),
+        )
         // User settings (epic 10).
         .route("/api/v1/preferences", get(settings::preferences))
         .route(
@@ -532,6 +586,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     two_factor::webauthn_delete,
     two_factor::disable,
     instance::instance,
+    instance::domain_blocks,
     settings::preferences,
     settings::get_settings,
     settings::patch_settings,
@@ -635,6 +690,22 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     emoji_admin::create_pack,
     emoji_admin::list_packs,
     emoji_admin::update_pack,
-    emoji_admin::delete_pack
+    emoji_admin::delete_pack,
+    reports::file,
+    reports::admin_list,
+    reports::admin_show,
+    reports::admin_resolve,
+    reports::admin_reopen,
+    reports::admin_assign_self,
+    reports::admin_unassign,
+    admin_actions::action,
+    admin_actions::reverse,
+    admin_actions::set_role,
+    admin_actions::show,
+    admin_domain_blocks::create,
+    admin_domain_blocks::list,
+    admin_domain_blocks::show,
+    admin_domain_blocks::update,
+    admin_domain_blocks::delete_block
 ))]
 pub struct ApiDoc;

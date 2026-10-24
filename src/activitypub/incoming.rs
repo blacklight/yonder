@@ -21,7 +21,6 @@ use std::sync::Arc;
 use pubby_sdk::handlers::inbox::{OnActivityReceived, OnInteractionReceived};
 use pubby_sdk::{Activity, ActivityDisposition, ActivityPubStorage, Interaction, InteractionType};
 use serde_json::{json, Value};
-use sqlx::PgPool;
 
 use crate::jobs::{JobContext, JobHandler, JobKind};
 use crate::Result;
@@ -182,7 +181,7 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
         }
         let outcome = match activity.activity_type.as_str() {
             "Move" => sync_block(handle_move(&core, activity, raw)),
-            "Flag" => sync_block(handle_flag(&core.db, activity, raw)),
+            "Flag" => sync_block(handle_flag(&core, activity, raw)),
             "Add" | "Remove" => sync_block(store_unhandled(&core.storage, activity, raw)),
             _ => return Ok(ActivityDisposition::PassThrough),
         };
@@ -250,23 +249,38 @@ pub async fn handle_move(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -
     Ok(())
 }
 
-/// `reports.comment` CHECK limit (migration 0006).
-const REPORT_COMMENT_MAX_CHARS: usize = 8000;
-
 /// `Flag` — one `reports` row per resolvable object URL, reporter =
 /// the remote actor. An object resolves to an existing
 /// `accounts.actor_id` (→ `target_account_id`) or an existing
 /// `statuses.uri` (→ the status's author + `status_id`); anything else
 /// is skipped — objects are usually status URIs and fabricating
-/// `accounts` rows for them would pollute the table.
-pub async fn handle_flag(db: &PgPool, activity: &Activity, raw: &Value) -> Result<()> {
+/// `accounts` rows for them would pollute the table. The reporter's
+/// domain policy applies: `reject_reports` (or a full `suspend`)
+/// drops the Flag silently. Admins/mods are notified per row.
+pub async fn handle_flag(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -> Result<()> {
+    let db = &core.db;
+    if let Some(domain) = super::moderation::actor_domain(&activity.actor) {
+        if crate::moderation::blocks::rejects_reports(db, &domain)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, domain, "reject_reports check failed; accepting");
+                false
+            })
+        {
+            tracing::info!(domain, "dropping inbound Flag: reject_reports");
+            return Ok(());
+        }
+    }
     let comment: String = raw
         .get("content")
         .or_else(|| raw.get("summary"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .chars()
-        .take(REPORT_COMMENT_MAX_CHARS)
+        .take(std::cmp::min(
+            core.config.content.max_report_comment as usize,
+            crate::moderation::reports::COMMENT_MAX_CHARS,
+        ))
         .collect();
     sqlx::query(
         "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
@@ -303,17 +317,27 @@ pub async fn handle_flag(db: &PgPool, activity: &Activity, raw: &Value) -> Resul
                 }
             },
         };
-        sqlx::query(
+        let report_id: Option<i64> = sqlx::query_scalar(
             "INSERT INTO reports (account_id, target_account_id, status_id, category, comment) \
              SELECT ra.id, $2, $3, 'other', $4 \
-             FROM accounts ra WHERE ra.actor_id = $1",
+             FROM accounts ra WHERE ra.actor_id = $1 \
+             RETURNING id",
         )
         .bind(&activity.actor)
         .bind(target_account_id)
         .bind(status_id)
         .bind(&comment)
-        .execute(db)
+        .fetch_optional(db)
         .await?;
+        if let Some(report_id) = report_id {
+            // Best-effort — a notification failure must not drop the
+            // stored report.
+            if let Err(e) =
+                crate::notifications::notify_report(db, &core.dispatcher, report_id).await
+            {
+                tracing::warn!(error = %e, report_id, "admin.report fan-out failed");
+            }
+        }
     }
     Ok(())
 }

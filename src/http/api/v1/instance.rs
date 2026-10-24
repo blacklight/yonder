@@ -7,7 +7,7 @@ use axum::{extract::State, Json};
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use crate::{config::RegistrationMode, http::AppState, Result};
+use crate::{config::RegistrationMode, http::AppState, Error, Result};
 
 /// `GET /api/v1/instance` — public, `MaybeAuth`-eligible.
 #[utoipa::path(
@@ -66,4 +66,32 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         "contact_account": Value::Null,
         "rules": config.instance.rules,
     })))
+}
+
+/// `GET /api/v1/instance/domain_blocks` — the public
+/// moderated-instances listing (Mastodon-compatible): domain,
+/// severity, `public_comment`; `obfuscate` masks the domain. Gated
+/// by `instance.expose_moderated_instances` — off means 404.
+#[utoipa::path(
+    get,
+    path = "/api/v1/instance/domain_blocks",
+    tag = "instance",
+    responses(
+        (status = 200, description = "Array of public DomainBlock"),
+        (status = 404, description = "Listing disabled", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn domain_blocks(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    if !state.config.instance.expose_moderated_instances {
+        return Err(Error::NotFound("domain_blocks".into()));
+    }
+    let rows = crate::moderation::blocks::list_public(&state.db).await?;
+    Ok(Json(json!(rows
+        .iter()
+        .map(|b| json!({
+            "domain": b.domain,
+            "severity": b.severity.as_str(),
+            "comment": b.public_comment,
+        }))
+        .collect::<Vec<_>>())))
 }

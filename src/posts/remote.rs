@@ -543,6 +543,23 @@ pub async fn enqueue_remote_media_fetches(core: &ApCore, status_id: i64) -> Resu
     if !core.config.media.fetch_remote_media {
         return Ok(());
     }
+    // Epic 21: `reject_media` (or suspended) domains keep no remote
+    // bytes — skip the fetch jobs entirely.
+    let author_domain: Option<String> = sqlx::query_scalar(
+        "SELECT a.domain FROM statuses s JOIN accounts a ON a.id = s.account_id \
+         WHERE s.id = $1",
+    )
+    .bind(status_id)
+    .fetch_one(&core.db)
+    .await?;
+    if let Some(domain) = author_domain {
+        if crate::moderation::blocks::rejects_media(&core.db, &domain)
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+    }
     let pending: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM media_attachments \
          WHERE status_id = $1 AND remote_url IS NOT NULL AND file_path IS NULL",

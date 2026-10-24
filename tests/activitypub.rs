@@ -404,11 +404,11 @@ async fn moderation_domain_block_merge() {
     let Some((pool, _c)) = test_pool().await else {
         return;
     };
-    sqlx::query("INSERT INTO domain_blocks (domain, action) VALUES ('evil.example', 'suspend')")
+    sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('evil.example', 'suspend')")
         .execute(&pool)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO domain_blocks (domain, action) VALUES ('quiet.example', 'limit')")
+    sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('quiet.example', 'silence')")
         .execute(&pool)
         .await
         .unwrap();
@@ -535,7 +535,7 @@ async fn inbox_route_validates_dedupes_and_blocks() {
     };
     let app = ap_router(&state);
     let alice = seed_actor(&state.db, "alice").await;
-    sqlx::query("INSERT INTO domain_blocks (domain, action) VALUES ('evil.example', 'suspend')")
+    sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('evil.example', 'suspend')")
         .execute(&state.db)
         .await
         .unwrap();
@@ -673,17 +673,18 @@ async fn incoming_signature_failure_releases_dedupe_row() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_flag_reports_resolvable_objects() {
-    let Some((pool, _c)) = test_pool().await else {
+    let Some((state, _c)) = test_state().await else {
         return;
     };
-    let alice = seed_actor(&pool, "alice").await;
+    let pool = &state.db;
+    let alice = seed_actor(pool, "alice").await;
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, uri, content) \
          SELECT id, $2, 'a post' FROM accounts WHERE id = $1 RETURNING id",
     )
     .bind(alice.id)
     .bind(format!("{}/statuses/1", alice.actor_id))
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await
     .unwrap();
     let status_uri = format!("{}/statuses/1", alice.actor_id);
@@ -693,7 +694,7 @@ async fn handle_flag_reports_resolvable_objects() {
         "type": "Flag",
         "id": "https://remote.example/activities/flag1",
         "actor": reporter,
-        "content": "spam ".repeat(2000), // 10k chars → truncated to 8000
+        "content": "spam ".repeat(2000), // 10k chars → truncated to the config cap (2000)
         "object": [
             alice.actor_id,                  // account → target_account_id
             status_uri,                      // status → status_id + author
@@ -701,7 +702,8 @@ async fn handle_flag_reports_resolvable_objects() {
         ],
     });
     let activity = Activity::from_json(&raw);
-    activitypub::incoming::handle_flag(&pool, &activity, &raw)
+    let core = state.ap.as_ref().unwrap().core.clone();
+    activitypub::incoming::handle_flag(&core, &activity, &raw)
         .await
         .unwrap();
 
@@ -711,17 +713,17 @@ async fn handle_flag_reports_resolvable_objects() {
         "SELECT target_account_id, status_id, char_length(comment)::bigint \
          FROM reports ORDER BY status_id IS NOT NULL",
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await
     .unwrap();
     assert_eq!(reports.len(), 2);
-    assert_eq!(reports[0], (alice.id, None, 8000));
-    assert_eq!(reports[1], (alice.id, Some(status_id), 8000));
+    assert_eq!(reports[0], (alice.id, None, 2000));
+    assert_eq!(reports[1], (alice.id, Some(status_id), 2000));
 
     let fabricated: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)")
             .bind("https://remote.example/o/404")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await
             .unwrap();
     assert!(!fabricated, "status URI must not become an accounts row");
@@ -730,7 +732,7 @@ async fn handle_flag_reports_resolvable_objects() {
     let reporter_row: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)")
             .bind(reporter)
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await
             .unwrap();
     assert!(reporter_row);

@@ -60,7 +60,8 @@ pub struct TrendRow {
 
 /// Anonymous-visible usage window shared by ranking and history:
 /// public, non-tombstone, non-boost statuses, excluding suspended and
-/// limited/timeline-removed domains (same rule the public scopes use).
+/// silenced domains and limited accounts (same rule the public
+/// scopes use).
 /// `include_remote = false` additionally restricts to local authors.
 fn base_from(include_remote: bool) -> String {
     let remote_clause = if include_remote {
@@ -76,7 +77,8 @@ fn base_from(include_remote: bool) -> String {
            AND s.reblog_of_id IS NULL{remote_clause} \
            AND NOT EXISTS (SELECT 1 FROM domain_blocks idb \
                            WHERE idb.domain = a.domain \
-                             AND idb.action IN ('suspend', 'limit', 'remove_from_timeline'))"
+                             AND idb.severity IN ('suspend', 'silence')) \
+           AND a.limited_at IS NULL"
     )
 }
 

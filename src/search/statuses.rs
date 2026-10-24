@@ -48,14 +48,13 @@ pub(crate) fn base_clauses(
         "NOT s.tombstone".to_string(),
         format!("({})", visibility::VISIBLE),
         // Instance moderation: suspended domains vanish everywhere;
-        // limited/timeline-removed domains are hidden in search just
-        // like in the public scopes (filter.rs treats them alike).
+        // silenced domains are hidden in search just like in the
+        // public scopes (filter.rs treats them alike).
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-         WHERE idb.domain = a.domain AND idb.action = 'suspend')"
+         WHERE idb.domain = a.domain AND idb.severity = 'suspend')"
             .to_string(),
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-         WHERE idb.domain = a.domain \
-           AND idb.action IN ('limit', 'remove_from_timeline'))"
+         WHERE idb.domain = a.domain AND idb.severity = 'silence')"
             .to_string(),
         visibility_clause(viewer),
     ];

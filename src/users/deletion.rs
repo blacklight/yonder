@@ -21,6 +21,49 @@ use crate::{
 /// Rows a single sweep run claims and purges.
 const SWEEP_BATCH: i64 = 50;
 
+/// Revoke every access path for `account_id`: OAuth access and
+/// refresh tokens, interactive sessions and app authorizations.
+/// Runs inside `tx` so callers compose it atomically with the state
+/// change motivating it (suspension, freeze, scheduled deletion).
+/// Shared with epic 21's moderation actions — the auth middleware
+/// rejects disabled/suspended accounts anyway, but revoked rows make
+/// the revocation durable rather than check-dependent.
+pub async fn revoke_access(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: i64,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE oauth_access_tokens SET revoked_at = now() \
+         WHERE revoked_at IS NULL AND user_id = (SELECT id FROM users WHERE account_id = $1)",
+    )
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "UPDATE oauth_refresh_tokens SET revoked_at = now() \
+         WHERE revoked_at IS NULL AND access_token_id IN ( \
+             SELECT t.id FROM oauth_access_tokens t \
+             JOIN users u ON u.id = t.user_id WHERE u.account_id = $1)",
+    )
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE account_id = $1)",
+    )
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oauth_authorizations WHERE user_id = \
+         (SELECT id FROM users WHERE account_id = $1)",
+    )
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Schedule `account_id` for deletion: deactivate the account now
 /// (suspend + revoke every token/session), then record the due time.
 /// `delay == 0` enqueues the purge immediately; otherwise the cron
@@ -113,35 +156,7 @@ pub async fn schedule_account_deletion(
         .bind(account_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query(
-        "UPDATE oauth_access_tokens SET revoked_at = now() \
-         WHERE revoked_at IS NULL AND user_id = (SELECT id FROM users WHERE account_id = $1)",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "UPDATE oauth_refresh_tokens SET revoked_at = now() \
-         WHERE revoked_at IS NULL AND access_token_id IN ( \
-             SELECT t.id FROM oauth_access_tokens t \
-             JOIN users u ON u.id = t.user_id WHERE u.account_id = $1)",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE account_id = $1)",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query(
-        "DELETE FROM oauth_authorizations WHERE user_id = \
-         (SELECT id FROM users WHERE account_id = $1)",
-    )
-    .bind(account_id)
-    .execute(&mut *tx)
-    .await?;
+    revoke_access(&mut tx, account_id).await?;
     tx.commit().await?;
 
     if delay.is_zero() {

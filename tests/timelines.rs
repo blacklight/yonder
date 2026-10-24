@@ -541,7 +541,7 @@ async fn moderation_filters_apply_to_viewer_and_scope() {
     // Instance domain blocks (suspend) remove remote authors everywhere.
     let remote = insert_remote_account(&env.state.db, "spammer", "spam.example").await;
     let spam = insert_remote_status(&env.state.db, remote, "spam", "public").await;
-    sqlx::query("INSERT INTO domain_blocks (domain, action) VALUES ('spam.example','suspend')")
+    sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('spam.example','suspend')")
         .execute(&env.state.db)
         .await
         .unwrap();

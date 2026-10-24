@@ -227,6 +227,9 @@ async fn start_worker(
     crate::timelines::register_jobs(&mut registry);
     // Epic-16 notifications (fan-out + email enqueue).
     crate::notifications::register_jobs(&mut registry);
+
+    // Epic 21 — audit log retention sweep.
+    crate::moderation::register_jobs(&mut registry);
     // Epic-18 media jobs (remote fetch + cleanup sweep).
     crate::media::register_jobs(&mut registry);
     let ctx = jobs::JobContext {

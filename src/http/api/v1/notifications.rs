@@ -72,11 +72,24 @@ fn type_filters(uri: &Uri) -> Result<(Vec<NotificationType>, Vec<NotificationTyp
 }
 
 /// Publish the recipient's current unread count to the live
-/// `user:notification` stream (Yonder extension event).
+/// `user:notification` stream (Yonder extension event). Hidden rows
+/// are excluded when the caller's rules load — a load failure just
+/// counts them, since the number carries no filtered content.
 async fn publish_count(state: &AppState, user_id: i64, account_id: i64) {
-    let count = notifications::unread_count(&state.db, account_id)
-        .await
-        .unwrap_or(0);
+    let rules = crate::filters::rules::load_active(
+        &state.db,
+        account_id,
+        crate::filters::FilterContext::Notifications,
+    )
+    .await
+    .unwrap_or_default();
+    let count = notifications::unread_count(
+        &state.db,
+        account_id,
+        crate::filters::apply::hide_clause(&rules).as_ref(),
+    )
+    .await
+    .unwrap_or(0);
     notifications::publish_live(
         &state.redis,
         &format!("user:notification:{user_id}"),
@@ -118,13 +131,27 @@ pub async fn list(
     require_scope(&state.config, &auth, "read:notifications")?;
     let (types, exclude) = type_filters(&uri)?;
     let page = paginate::parse(&params);
-    let rows = notifications::list(&state.db, auth.account_id, &types, &exclude, &page).await?;
+    let rules = crate::filters::rules::load_active(
+        &state.db,
+        auth.account_id,
+        crate::filters::FilterContext::Notifications,
+    )
+    .await?;
+    let rows = notifications::list(
+        &state.db,
+        auth.account_id,
+        &types,
+        &exclude,
+        &page,
+        crate::filters::apply::hide_clause(&rules).as_ref(),
+    )
+    .await?;
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     let ctx = PostContext::new(&state);
     let mut out = Vec::with_capacity(rows.len());
     for row in &rows {
-        out.push(notifications::entity(&ctx, row).await?);
+        out.push(notifications::entity(&ctx, row, &rules).await?);
     }
     Ok((headers, Json(Value::Array(out))))
 }
@@ -151,7 +178,22 @@ pub async fn show(
         .await?
         .ok_or_else(|| Error::NotFound("notification".into()))?;
     let ctx = PostContext::new(&state);
-    Ok(Json(notifications::entity(&ctx, &row).await?))
+    let rules = crate::filters::rules::load_active(
+        &state.db,
+        auth.account_id,
+        crate::filters::FilterContext::Notifications,
+    )
+    .await?;
+    if notifications::hidden(
+        &state.db,
+        &row,
+        crate::filters::apply::hide_clause(&rules).as_ref(),
+    )
+    .await?
+    {
+        return Err(Error::NotFound("notification".into()));
+    }
+    Ok(Json(notifications::entity(&ctx, &row, &rules).await?))
 }
 
 /// `POST /api/v1/notifications/clear` — delete all of the caller's
@@ -216,6 +258,17 @@ pub async fn unread_count(
     auth: AuthContext,
 ) -> Result<Json<Value>> {
     require_scope(&state.config, &auth, "read:notifications")?;
-    let count = notifications::unread_count(&state.db, auth.account_id).await?;
+    let rules = crate::filters::rules::load_active(
+        &state.db,
+        auth.account_id,
+        crate::filters::FilterContext::Notifications,
+    )
+    .await?;
+    let count = notifications::unread_count(
+        &state.db,
+        auth.account_id,
+        crate::filters::apply::hide_clause(&rules).as_ref(),
+    )
+    .await?;
     Ok(Json(json!({ "count": count })))
 }

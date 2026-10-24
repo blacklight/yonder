@@ -1,6 +1,7 @@
 //! `/api/v2` — Mastodon API v2 endpoints (added by feature epics,
 //! e.g. `/api/v2/instance` in epic 06/22).
 
+pub mod filters;
 pub mod media;
 pub mod search;
 
@@ -26,9 +27,65 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v2/search",
             axum::routing::get(search::search_v2).route_layer(ratelimit::layer(state, "search")),
         )
+        // Epic 20 — server-side filters. Reads unlayered like other
+        // account reads; writes carry the `relation` bucket.
+        .route(
+            "/api/v2/filters",
+            axum::routing::get(filters::list)
+                .post(filters::create)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v2/filters/{id}",
+            axum::routing::get(filters::show)
+                .put(filters::update)
+                .delete(filters::delete_filter)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v2/filters/{id}/keywords",
+            axum::routing::get(filters::keywords)
+                .post(filters::add_keyword)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v2/filters/keywords/{id}",
+            axum::routing::get(filters::show_keyword)
+                .put(filters::update_keyword)
+                .delete(filters::delete_keyword)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v2/filters/{id}/statuses",
+            axum::routing::get(filters::statuses)
+                .post(filters::add_status)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v2/filters/statuses/{id}",
+            axum::routing::delete(filters::delete_status)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
 }
 
 /// OpenAPI fragment merged into the root document.
 #[derive(utoipa::OpenApi)]
-#[openapi(paths(media::upload, media::show, search::search_v2))]
+#[openapi(paths(
+    media::upload,
+    media::show,
+    search::search_v2,
+    filters::list,
+    filters::create,
+    filters::show,
+    filters::update,
+    filters::delete_filter,
+    filters::keywords,
+    filters::add_keyword,
+    filters::show_keyword,
+    filters::update_keyword,
+    filters::delete_keyword,
+    filters::statuses,
+    filters::add_status,
+    filters::delete_status
+))]
 pub struct ApiDoc;

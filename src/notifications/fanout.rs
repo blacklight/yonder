@@ -213,25 +213,62 @@ async fn push_live(ctx: &JobContext, id: i64, ev: &Target) {
         .unwrap_or_default();
     let Some(uid) = uid else { return };
     let post_ctx = PostContext::from_job(ctx, None);
-    if let Ok(Some(row)) = super::get(&ctx.db, ev.to, id).await {
-        match super::entity(&post_ctx, &row).await {
-            Ok(entity) => {
-                super::publish_live(
-                    &ctx.redis,
-                    &format!("user:notification:{uid}"),
-                    "notification",
-                    &entity,
-                )
-                .await;
-                super::publish_live(&ctx.redis, &format!("user:{uid}"), "notification", &entity)
-                    .await;
-            }
+    // Fail closed: a rule-load error skips the entity publish rather
+    // than pushing an unfiltered notification (the row is durable —
+    // the next list/show reflects it). The unread-count update below
+    // carries no filtered content, so it still goes out.
+    let rules = match crate::filters::rules::load_active(
+        &ctx.db,
+        ev.to,
+        crate::filters::FilterContext::Notifications,
+    )
+    .await
+    {
+        Ok(rules) => Some(rules),
+        Err(e) => {
+            tracing::warn!(notification_id = id, error = %e, "filter rules load failed");
+            None
+        }
+    };
+    let hide = rules
+        .as_ref()
+        .and_then(|r| crate::filters::apply::hide_clause(r));
+    if let (Some(rules), Ok(Some(row))) = (&rules, super::get(&ctx.db, ev.to, id).await) {
+        let hidden = match super::hidden(&ctx.db, &row, hide.as_ref()).await {
+            Ok(h) => h,
             Err(e) => {
-                tracing::warn!(notification_id = id, error = %e, "notification render failed")
+                tracing::warn!(notification_id = id, error = %e, "hide check failed");
+                true
+            }
+        };
+        if !hidden {
+            match super::entity(&post_ctx, &row, rules).await {
+                Ok(entity) => {
+                    super::publish_live(
+                        &ctx.redis,
+                        &format!("user:notification:{uid}"),
+                        "notification",
+                        &entity,
+                    )
+                    .await;
+                    super::publish_live(
+                        &ctx.redis,
+                        &format!("user:{uid}"),
+                        "notification",
+                        &entity,
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    tracing::warn!(notification_id = id, error = %e, "notification render failed")
+                }
             }
         }
     }
-    let count = super::unread_count(&ctx.db, ev.to).await.unwrap_or(0);
+    // Hidden rows are excluded from the badge too (when rules loaded).
+    let count = super::unread_count(&ctx.db, ev.to, hide.as_ref())
+        .await
+        .unwrap_or(0);
     super::publish_live(
         &ctx.redis,
         &format!("user:notification:{uid}"),

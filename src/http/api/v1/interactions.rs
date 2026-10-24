@@ -34,16 +34,13 @@ async fn status_json(
     entity::status_entity(ctx, status, Some(viewer)).await
 }
 
-/// Account entities for a list of account ids (order preserved).
+/// Account entities for a list of account ids (order preserved;
+/// missing/deleted ids are dropped). One emoji-map load serves the
+/// whole page via [`account_mapper::account_entities`].
 async fn account_entities(ctx: &PostContext, ids: &[i64]) -> Result<Vec<Value>> {
     let base = ctx.base_url();
-    let mut out = Vec::with_capacity(ids.len());
-    for id in ids {
-        if let Some(account) = account_mapper::load(&ctx.db, *id).await? {
-            out.push(account_mapper::to_account(&account, &base, &ctx.config));
-        }
-    }
-    Ok(out)
+    let accounts = account_mapper::load_many(&ctx.db, ids).await?;
+    account_mapper::account_entities(&ctx.db, &ctx.config, &base, &accounts).await
 }
 
 // ---------------------------------------------------------------------------

@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::scopes::require_scope,
+    filters::{self as content_filters, FilterContext, Rule},
     http::{
         middleware::auth::{AuthContext, MaybeAuth},
         paginate, AppState,
@@ -35,13 +36,15 @@ pub(crate) fn truthy(params: &HashMap<String, String>, key: &str) -> bool {
     params.get(key).is_some_and(|v| v == "true" || v == "1")
 }
 
-/// `Filters` for the resolved viewer — anonymous requests carry no
-/// `filter_languages` (there is no user to read them from).
+/// `Filters` plus the viewer's active content-filter rules for one
+/// context — anonymous requests carry neither `filter_languages` nor
+/// content filters (there is no user to read them from).
 async fn filters(
     state: &AppState,
     auth: Option<&AuthContext>,
     params: &HashMap<String, String>,
-) -> Result<Filters> {
+    context: FilterContext,
+) -> Result<(Filters, Vec<Rule>)> {
     let hidden_languages = match auth {
         Some(a) => {
             user_settings::load(&state.db, a.user_id)
@@ -50,20 +53,30 @@ async fn filters(
         }
         None => Vec::new(),
     };
-    Ok(Filters {
-        viewer: auth.map(|a| a.account_id),
-        hidden_languages,
-        only_media: truthy(params, "only_media"),
-        ..Default::default()
-    })
+    let rules = match auth {
+        Some(a) => content_filters::rules::load_active(&state.db, a.account_id, context).await?,
+        None => Vec::new(),
+    };
+    Ok((
+        Filters {
+            viewer: auth.map(|a| a.account_id),
+            hidden_languages,
+            only_media: truthy(params, "only_media"),
+            hide: content_filters::apply::hide_clause(&rules),
+            ..Default::default()
+        },
+        rules,
+    ))
 }
 
-/// Render rows to Status entities and attach the pagination `Link`
-/// header — the shared tail of every handler.
+/// Render rows to Status entities, attach the epic-20 `filtered`
+/// attribute for matching `warn`/`blur` rules, and emit the pagination
+/// `Link` header — the shared tail of every handler.
 async fn render(
     state: &AppState,
     rows: Vec<StatusRow>,
     viewer: Option<i64>,
+    rules: &[Rule],
     uri: &Uri,
     params: &HashMap<String, String>,
     limit: i64,
@@ -73,6 +86,7 @@ async fn render(
     for row in &rows {
         out.push(posts::entity::status_entity(&ctx, row, viewer).await?);
     }
+    content_filters::apply::attach_filtered(&state.db, rules, &rows, &mut out).await?;
     let cursors = timelines::query::cursors(&rows);
     let headers = paginate::headers(uri, params, &cursors, limit);
     Ok((headers, Json(json!(out))))
@@ -107,7 +121,7 @@ pub async fn home(
 ) -> Result<(HeaderMap, Json<Value>)> {
     require_scope(&state.config, &auth, "read:statuses")?;
     let page = paginate::parse(&params);
-    let filters = filters(&state, Some(&auth), &params).await?;
+    let (filters, rules) = filters(&state, Some(&auth), &params, FilterContext::Home).await?;
     let rows = timelines::fanout::read_home(
         &state.db,
         &state.redis,
@@ -120,6 +134,7 @@ pub async fn home(
         &state,
         rows,
         Some(auth.account_id),
+        &rules,
         &uri,
         &params,
         page.limit,
@@ -165,12 +180,13 @@ pub async fn public(
         }
     };
     let page = paginate::parse(&params);
-    let filters = filters(&state, auth.0.as_ref(), &params).await?;
+    let (filters, rules) = filters(&state, auth.0.as_ref(), &params, FilterContext::Public).await?;
     let rows = timelines::query::fetch(&state.db, &scope, &filters, &page).await?;
     render(
         &state,
         rows,
         auth.0.as_ref().map(|a| a.account_id),
+        &rules,
         &uri,
         &params,
         page.limit,
@@ -214,12 +230,13 @@ pub async fn list_timeline(
         replies_policy: RepliesPolicy::parse(&list.replies_policy),
     };
     let page = paginate::parse(&params);
-    let filters = filters(&state, Some(&auth), &params).await?;
+    let (filters, rules) = filters(&state, Some(&auth), &params, FilterContext::Home).await?;
     let rows = timelines::query::fetch(&state.db, &scope, &filters, &page).await?;
     render(
         &state,
         rows,
         Some(auth.account_id),
+        &rules,
         &uri,
         &params,
         page.limit,
@@ -258,7 +275,7 @@ pub async fn tag(
         require_scope(&state.config, a, "read:statuses")?;
     }
     let page = paginate::parse(&params);
-    let filters = filters(&state, auth.0.as_ref(), &params).await?;
+    let (filters, rules) = filters(&state, auth.0.as_ref(), &params, FilterContext::Public).await?;
     let scope = TimelineScope::Tag {
         name: hashtag,
         local_only: truthy(&params, "local"),
@@ -268,6 +285,7 @@ pub async fn tag(
         &state,
         rows,
         auth.0.as_ref().map(|a| a.account_id),
+        &rules,
         &uri,
         &params,
         page.limit,

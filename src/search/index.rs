@@ -28,16 +28,19 @@ pub trait SearchIndex: Send + Sync {
         params: &SearchParams,
         kind: &QueryKind,
     ) -> Result<Vec<i64>>;
-    /// Status page, newest-first.
+    /// Status page, newest-first. `hide` carries the viewer's epic-20
+    /// public-context rules (anonymous callers pass `None`).
     async fn search_statuses(
         &self,
         db: &PgPool,
         viewer: Option<i64>,
         params: &SearchParams,
         kind: &QueryKind,
+        hide: Option<&crate::timelines::filter::HideClause>,
     ) -> Result<Vec<StatusRow>>;
     /// Tag page for `tag` — exact match, or prefix when `prefix` is
     /// set (autocomplete).
+    #[allow(clippy::too_many_arguments)]
     async fn search_hashtags(
         &self,
         db: &PgPool,
@@ -46,6 +49,7 @@ pub trait SearchIndex: Send + Sync {
         prefix: bool,
         limit: i64,
         offset: i64,
+        hide: Option<&crate::timelines::filter::HideClause>,
     ) -> Result<Vec<TagHit>>;
     /// (Re)index a status — no-op for Postgres.
     async fn index_status(&self, status_id: i64) -> Result<()>;
@@ -78,8 +82,9 @@ impl SearchIndex for PostgresIndex {
         viewer: Option<i64>,
         params: &SearchParams,
         kind: &QueryKind,
+        hide: Option<&crate::timelines::filter::HideClause>,
     ) -> Result<Vec<StatusRow>> {
-        statuses::search(db, viewer, params, kind).await
+        statuses::search(db, viewer, params, kind, hide).await
     }
 
     async fn search_hashtags(
@@ -90,8 +95,9 @@ impl SearchIndex for PostgresIndex {
         prefix: bool,
         limit: i64,
         offset: i64,
+        hide: Option<&crate::timelines::filter::HideClause>,
     ) -> Result<Vec<TagHit>> {
-        hashtags::search(db, viewer, tag, prefix, limit, offset).await
+        hashtags::search(db, viewer, tag, prefix, limit, offset, hide).await
     }
 
     async fn index_status(&self, _status_id: i64) -> Result<()> {

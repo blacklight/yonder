@@ -92,6 +92,7 @@ async fn profile_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::account_feed(
         &state.db,
+        &state.config,
         &base,
         &account,
         state.config.content.max_feed_items as i64,
@@ -114,6 +115,7 @@ async fn tag_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::tag_feed(
         &state.db,
+        &state.config,
         &base,
         &tag,
         state.config.content.max_feed_items as i64,
@@ -143,6 +145,7 @@ async fn list_feed(
     let base = PostContext::new(&state).base_url();
     let mut feed = data::list_feed(
         &state.db,
+        &state.config,
         &base,
         &list,
         state.config.content.max_feed_items as i64,

@@ -9,6 +9,8 @@ pub mod account_management;
 pub mod accounts;
 pub mod apps;
 pub mod blocks;
+pub mod custom_emojis;
+pub mod emoji_admin;
 pub mod follow_requests;
 pub mod instance;
 pub mod interactions;
@@ -23,9 +25,11 @@ pub mod search;
 pub mod sessions;
 pub mod settings;
 pub mod statuses;
+pub mod tags;
 pub mod timelines;
 pub mod tokens;
 pub mod transfer;
+pub mod trends;
 pub mod two_factor;
 
 use std::sync::Arc;
@@ -411,6 +415,73 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/timelines/tag/{hashtag}",
             get(timelines::tag).route_layer(ratelimit::layer(state, "timeline")),
         )
+        // Epic 20 — hashtags and trends (timeline read bucket / relation writes).
+        .route(
+            "/api/v1/tags/{name}",
+            get(tags::show).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/tags/{name}/follow",
+            post(tags::follow).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/tags/{name}/unfollow",
+            post(tags::unfollow).route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/followed_tags",
+            get(tags::followed_tags).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/trends/tags",
+            get(trends::tags_trending).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        // Epic 20 — custom emoji. Public catalogue on the timeline
+        // bucket; admin surface on `media` (upload-shaped writes).
+        .route(
+            "/api/v1/custom_emojis",
+            get(custom_emojis::list).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/admin/emojis",
+            post(emoji_admin::create)
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config.media.max_emoji_size as usize + 64 * 1024,
+                ))
+                .get(emoji_admin::list)
+                .route_layer(ratelimit::layer(state, "media")),
+        )
+        .route(
+            "/api/v1/admin/emojis/import_zip",
+            post(emoji_admin::import_zip)
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config.media.max_emoji_zip_uncompressed as usize + 64 * 1024,
+                ))
+                .route_layer(ratelimit::layer(state, "media")),
+        )
+        .route(
+            "/api/v1/admin/emojis/import_dir",
+            post(emoji_admin::import_dir).route_layer(ratelimit::layer(state, "media")),
+        )
+        .route(
+            "/api/v1/admin/emojis/{id}",
+            get(emoji_admin::show)
+                .patch(emoji_admin::update)
+                .delete(emoji_admin::delete_emoji)
+                .route_layer(ratelimit::layer(state, "media")),
+        )
+        .route(
+            "/api/v1/admin/emoji_packs",
+            post(emoji_admin::create_pack)
+                .get(emoji_admin::list_packs)
+                .route_layer(ratelimit::layer(state, "media")),
+        )
+        .route(
+            "/api/v1/admin/emoji_packs/{id}",
+            axum::routing::patch(emoji_admin::update_pack)
+                .delete(emoji_admin::delete_pack)
+                .route_layer(ratelimit::layer(state, "media")),
+        )
         // Epic 16 — notifications (no rate-limit bucket; Mastodon
         // doesn't throttle these).
         .route("/api/v1/notifications", get(notifications::list))
@@ -547,6 +618,23 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     scheduled_statuses::show,
     scheduled_statuses::update,
     scheduled_statuses::cancel,
-    search::search_v1
+    search::search_v1,
+    tags::show,
+    tags::follow,
+    tags::unfollow,
+    tags::followed_tags,
+    trends::tags_trending,
+    custom_emojis::list,
+    emoji_admin::create,
+    emoji_admin::list,
+    emoji_admin::show,
+    emoji_admin::update,
+    emoji_admin::delete_emoji,
+    emoji_admin::import_zip,
+    emoji_admin::import_dir,
+    emoji_admin::create_pack,
+    emoji_admin::list_packs,
+    emoji_admin::update_pack,
+    emoji_admin::delete_pack
 ))]
 pub struct ApiDoc;

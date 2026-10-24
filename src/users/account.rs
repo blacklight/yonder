@@ -243,3 +243,82 @@ pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::
         },
     })
 }
+
+/// The texts that can hold a `:code:` for one account — bio,
+/// display name and each profile field's name/value. Deliberately
+/// NOT the serialized `profile_fields` JSON: its `"name":`
+/// punctuation would defeat [`EmojiMap::for_author_texts`]'s
+/// short-circuit on every account.
+pub(crate) fn emoji_texts(account: &AccountRow) -> Vec<&str> {
+    let mut texts: Vec<&str> = vec![
+        account.bio.as_deref().unwrap_or_default(),
+        account.display_name.as_deref().unwrap_or_default(),
+    ];
+    if let Some(fields) = account.profile_fields.as_array() {
+        for f in fields {
+            for key in ["name", "value", "value_raw"] {
+                if let Some(v) = f.get(key).and_then(Value::as_str) {
+                    texts.push(v);
+                }
+            }
+        }
+    }
+    texts
+}
+
+/// The full Account entity every API surface should emit:
+/// `to_account` + the nested `moved` target + the epic-20 emoji
+/// pass (`note`/`fields` `<img>` substitution and the `emojis`
+/// array, domain-scoped). `to_account` alone leaves `:code:`
+/// unrendered and `moved` unset — prefer this.
+pub async fn account_entity(
+    db: &sqlx::PgPool,
+    config: &crate::config::Config,
+    base_url: &str,
+    account: &AccountRow,
+) -> Result<Value> {
+    Ok(
+        account_entities(db, config, base_url, std::slice::from_ref(account))
+            .await?
+            .into_iter()
+            .next()
+            .expect("one entity per account"),
+    )
+}
+
+/// `account_entity` for a page of accounts: the emoji map is loaded
+/// once per distinct author domain (the common case is one local
+/// map for the whole page) and only when some account's text could
+/// hold a `:code:` — a 40-account list issues at most one
+/// `custom_emojis` read instead of one per entity.
+pub async fn account_entities(
+    db: &sqlx::PgPool,
+    config: &crate::config::Config,
+    base_url: &str,
+    accounts: &[AccountRow],
+) -> Result<Vec<Value>> {
+    use crate::emoji::render::{apply_account_with_map, has_shortcode_candidate, EmojiMap};
+    let mut maps: std::collections::HashMap<Option<String>, EmojiMap> =
+        std::collections::HashMap::new();
+    let mut out = Vec::with_capacity(accounts.len());
+    for account in accounts {
+        let mut entity = to_account(account, base_url, config);
+        entity["moved"] =
+            crate::users::moves::moved_account_json(db, account, base_url, config).await;
+        if emoji_texts(account)
+            .iter()
+            .any(|t| has_shortcode_candidate(t))
+        {
+            let key = account.domain.clone();
+            if !maps.contains_key(&key) {
+                maps.insert(
+                    key.clone(),
+                    EmojiMap::for_author(db, config, base_url, key.as_deref()).await?,
+                );
+            }
+            apply_account_with_map(&mut entity, &maps[&key]);
+        }
+        out.push(entity);
+    }
+    Ok(out)
+}

@@ -152,7 +152,7 @@ async fn upsert_remote_account(
     let following_count = count("followingCount");
     let statuses_count = count("statusesCount");
 
-    sqlx::query_scalar::<_, i64>(
+    let result = sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO accounts (
             domain, username, actor_id, url, inbox, shared_inbox,
@@ -180,7 +180,7 @@ async fn upsert_remote_account(
         RETURNING id
         "#,
     )
-    .bind(domain)
+    .bind(&domain)
     .bind(username)
     .bind(actor_id)
     .bind(url)
@@ -200,7 +200,39 @@ async fn upsert_remote_account(
     .fetch_one(pool)
     .await
     .map(Some)
-    .map_err(db_err)
+    .map_err(db_err);
+    // Epic 20 — actor-level `Emoji` tags (bio/display-name emoji)
+    // recorded best-effort, same as status-level tags in
+    // `posts::remote`. Never fails the upsert.
+    if result.as_ref().map(|o| o.is_some()).unwrap_or(false) {
+        if let Some(domain) = domain {
+            for tag in actor_data
+                .get("tag")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                if tag.get("type").and_then(|t| t.as_str()) != Some("Emoji") {
+                    continue;
+                }
+                let name = tag.get("name").and_then(|v| v.as_str());
+                let url = tag
+                    .get("icon")
+                    .and_then(|i| i.get("url"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| tag.get("icon").and_then(|v| v.as_str()));
+                if let (Some(name), Some(url)) = (name, url) {
+                    let code = name.trim_matches(':');
+                    if let Err(e) =
+                        crate::emoji::model::upsert_remote(pool, code, &domain, url).await
+                    {
+                        tracing::warn!(code, domain, error = %e, "actor emoji upsert failed");
+                    }
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Resolve the target account for a follower/request record: the local

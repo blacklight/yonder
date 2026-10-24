@@ -107,8 +107,11 @@ async fn local_follower_ids(db: &PgPool, author_id: i64, batch_size: i64) -> Res
 }
 
 /// The fan-out writer: `ZADD` the status into every local follower's
-/// home index, trimming each to `home_max_entries`. Idempotent —
-/// re-adding a member is a no-op.
+/// home index plus the index of each tag follower (epic 20 — followed
+/// hashtags land in home), trimming each to `home_max_entries`.
+/// Idempotent — re-adding a member is a no-op. Tag-follower ZADDs are
+/// bounded by `fanout_batch_size`; readers beyond the batch see the
+/// post through the SQL top-up instead.
 pub async fn add(
     db: &PgPool,
     redis: &Redis,
@@ -116,7 +119,22 @@ pub async fn add(
     status_id: i64,
     author_id: i64,
 ) -> Result<()> {
-    let followers = local_follower_ids(db, author_id, config.fanout_batch_size as i64).await?;
+    let mut followers = local_follower_ids(db, author_id, config.fanout_batch_size as i64).await?;
+    // Epic-20 tag followers: local accounts following any tag on this
+    // status. Bounded — a viral tag never blows the job up.
+    let tag_followers: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT tf.account_id FROM status_tags st \
+         JOIN statuses s ON s.id = st.status_id \
+         JOIN tag_follows tf ON tf.tag_id = st.tag_id \
+         JOIN accounts a ON a.id = tf.account_id \
+         WHERE st.status_id = $1 AND a.domain IS NULL \
+           AND s.visibility = 'public' LIMIT $2",
+    )
+    .bind(status_id)
+    .bind(config.fanout_batch_size as i64)
+    .fetch_all(db)
+    .await?;
+    followers.extend(tag_followers);
     let mut conn = redis.conn().await?;
     let trim_stop = -(config.home_max_entries.max(1) as isize) - 1;
     for chunk in followers.chunks(config.fanout_batch_size.max(1) as usize) {

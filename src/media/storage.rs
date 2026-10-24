@@ -348,8 +348,9 @@ pub fn router() -> Router<Arc<AppState>> {
 /// prefix with the right shape and names a known extension.
 ///
 /// Prefixes and their segment counts (below the prefix):
-/// `avatars`, `headers`, `media_attachments` → `{prefix}/{account}/{file}`
-/// (two segments); `previews` → `{prefix}/{file}` (one).
+/// `avatars`, `headers`, `media_attachments`, `emoji` →
+/// `{prefix}/{account}/{file}` (two segments); `previews` →
+/// `{prefix}/{file}` (one).
 fn valid_key(key: &str) -> bool {
     if key.starts_with('/') || key.ends_with('/') {
         return false;
@@ -362,7 +363,7 @@ fn valid_key(key: &str) -> bool {
         return false;
     };
     let expected = match prefix {
-        "avatars" | "headers" | "media_attachments" => 3,
+        "avatars" | "headers" | "media_attachments" | "emoji" => 3,
         "previews" => 2,
         _ => return false,
     };

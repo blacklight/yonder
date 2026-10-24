@@ -137,6 +137,37 @@ fragment in their module's `ApiDoc` — no changes to core wiring.
 4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
    maps to a configured bucket.
 
+### Content filters
+
+Mastodon **v2** server-side filters: `GET/POST /api/v2/filters` with
+`keywords` and `statuses` sub-resources, owner-scoped (foreign ids
+404). `context[]` ⊆ `home notifications public thread account`;
+`filter_action` ∈ `warn hide blur`. `hide` rules splice a `NOT (…)`
+clause into the shared timeline predicate (home/list, public/tag,
+account statuses, search, notification embeds); `warn`/`blur` attach
+the `filtered` attribute instead. Expired filters never apply. See
+`docs/filters.md`.
+
+### Hashtags & trends
+
+`GET /api/v1/tags/{name}` (case-insensitive, 7-day `history`),
+`POST /api/v1/tags/{name}/follow|unfollow`, `GET
+/api/v1/followed_tags` — followed tags land posts in the home feed
+(SQL clause + Redis fan-out to tag followers). `GET
+/api/v1/trends/tags?period=day|week|month` ranks recent usage with a
+distinct-author floor and a Redis TTL cache (`timelines.trends_*`
+config; `period` is a Yonder extension).
+
+### Custom emoji
+
+`GET /api/v1/custom_emojis` (anonymous) plus an admin surface under
+`/api/v1/admin/emojis*` + `/api/v1/admin/emoji_packs*` (upload, patch,
+delete, zip/filesystem import, packs) — admin role + `admin` scope.
+`:shortcode:` renders at read time in status content/spoilers and
+account `note`/`fields`/`display_name`, domain-scoped for remote
+content; inbound `Emoji` AP tags are recorded, outbound posts emit
+them. See `docs/emoji.md`.
+
 ### RSS & Atom feeds
 
 Outside `/api`: `/users/{username}.atom|.rss` (local accounts, public

@@ -39,7 +39,26 @@ pub async fn moved_account_json(
         return Value::Null;
     };
     match crate::users::account::load(pool, target_id).await {
-        Ok(Some(target)) => crate::users::account::to_account(&target, base_url, config),
+        Ok(Some(target)) => {
+            // One level only — emoji pass but no recursive `moved`.
+            let mut entity = crate::users::account::to_account(&target, base_url, config);
+            let texts = crate::users::account::emoji_texts(&target);
+            match crate::emoji::render::EmojiMap::for_author_texts(
+                pool,
+                config,
+                base_url,
+                target.domain.as_deref(),
+                &texts,
+            )
+            .await
+            {
+                Ok(map) => crate::emoji::render::apply_account_with_map(&mut entity, &map),
+                Err(e) => {
+                    tracing::warn!(account_id = target.id, error = %e, "moved-account emoji map failed")
+                }
+            }
+            entity
+        }
         _ => Value::Null,
     }
 }

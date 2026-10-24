@@ -45,6 +45,9 @@ pub enum Error {
     #[error("forbidden")]
     Forbidden,
 
+    #[error("bad request: {0}")]
+    BadRequest(String),
+
     #[error("validation error: {0}")]
     Validation(String),
 
@@ -84,6 +87,7 @@ impl Error {
     /// HTTP status code this error maps to once it crosses the API boundary.
     pub fn status_code(&self) -> StatusCode {
         match self {
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             // Mastodon reports validation failures as 422.
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -110,6 +114,7 @@ impl Error {
             Self::NotFound(_)
             | Self::Unauthorized
             | Self::Forbidden
+            | Self::BadRequest(_)
             | Self::Validation(_)
             | Self::Conflict(_)
             | Self::RateLimited(_) => self.to_string().into(),
@@ -129,6 +134,7 @@ impl Error {
             Self::NotFound(_) => "not_found",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
+            Self::BadRequest(_) => "bad_request",
             Self::Validation(_) => "validation",
             Self::Conflict(_) => "conflict",
             Self::RateLimited(_) => "rate_limited",

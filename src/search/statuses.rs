@@ -36,7 +36,11 @@ pub(crate) fn visibility_clause(viewer: Option<i64>) -> String {
 /// The WHERE parts every status-scoped search query shares: live
 /// author, no tombstones, moderation exclusions, caller visibility.
 /// `pub(crate)` — `hashtags` composes the same set.
-pub(crate) fn base_clauses(viewer: Option<i64>, binds: &mut Vec<Bind>) -> Vec<String> {
+pub(crate) fn base_clauses(
+    viewer: Option<i64>,
+    binds: &mut Vec<Bind>,
+    hide: Option<&crate::timelines::filter::HideClause>,
+) -> Vec<String> {
     if let Some(v) = viewer {
         binds.push(Bind::I64(v)); // $1 — the *viewer* convention
     }
@@ -60,6 +64,11 @@ pub(crate) fn base_clauses(viewer: Option<i64>, binds: &mut Vec<Bind>) -> Vec<St
         clauses.push(visibility::MUTES_EXCLUSION.to_string());
         clauses.push(visibility::DOMAIN_BLOCKS_EXCLUSION.to_string());
     }
+    if let Some(hide) = hide {
+        let (sql, hb) = hide.numbered(binds.len());
+        binds.extend(hb);
+        clauses.push(sql);
+    }
     clauses
 }
 
@@ -72,6 +81,7 @@ pub async fn search(
     viewer: Option<i64>,
     params: &SearchParams,
     kind: &QueryKind,
+    hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Vec<StatusRow>> {
     let QueryKind::Text(text) = kind else {
         return Ok(Vec::new());
@@ -88,7 +98,7 @@ pub async fn search(
     }
 
     let mut binds: Vec<Bind> = Vec::new();
-    let mut clauses = base_clauses(viewer, &mut binds);
+    let mut clauses = base_clauses(viewer, &mut binds, hide);
     let mut alloc = |b: Bind| {
         binds.push(b);
         format!("${}", binds.len())
@@ -135,9 +145,10 @@ pub(crate) async fn visible_row(
     db: &PgPool,
     viewer: Option<i64>,
     status_id: i64,
+    hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Option<StatusRow>> {
     let mut binds: Vec<Bind> = Vec::new();
-    let mut clauses = base_clauses(viewer, &mut binds);
+    let mut clauses = base_clauses(viewer, &mut binds, hide);
     binds.push(Bind::I64(status_id));
     clauses.push(format!("s.id = ${}", binds.len()));
     let sql = format!(

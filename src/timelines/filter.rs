@@ -14,7 +14,7 @@ use crate::social::visibility;
 use super::scope::{RepliesPolicy, TimelineScope};
 
 /// A query bind parameter, in `$n` order.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Bind {
     /// BIGINT.
     I64(i64),
@@ -48,6 +48,52 @@ pub struct Filters {
     /// tightening scopes that would otherwise admit `unlisted` — e.g.
     /// the anonymous `Account` scope on profile feeds.
     pub public_only: bool,
+    /// Server-side `hide` filters (epic 20): the viewer's compiled
+    /// `NOT (…)` predicate for one context. `None` when the viewer has
+    /// no active hide rules — the common case, zero extra SQL.
+    pub hide: Option<HideClause>,
+}
+
+/// A precompiled `hide` predicate piece for epic-20 filters: clause
+/// text with `@{k}@` placeholders plus the binds to apply. Lives here
+/// (not in `filters::apply`) because `apply` already depends on this
+/// module for [`Bind`].
+#[derive(Debug, Clone)]
+pub struct HideClause {
+    /// `NOT (…)` — always wrapped so it ands cleanly.
+    pub sql: String,
+    /// Binds for the clause, in `@{k}@` order (relative — the caller
+    /// renumbers after its own binds).
+    pub binds: Vec<Bind>,
+}
+
+impl HideClause {
+    /// The raw `m1 OR m2 OR …` expression inside `sql`'s `NOT (…)`
+    /// wrapper — for callers embedding the match in a larger
+    /// predicate (e.g. a `NOT EXISTS` over one status).
+    pub fn inner_sql(&self) -> &str {
+        self.sql
+            .strip_prefix("NOT (")
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(&self.sql)
+    }
+
+    /// Renumber every `@{k}@` placeholder to the absolute `$offset+k`
+    /// and hand back the clause + binds to append.
+    pub fn numbered(&self, offset: usize) -> (String, Vec<Bind>) {
+        let (inner, binds) = self.numbered_inner(offset);
+        (format!("NOT ({inner})"), binds)
+    }
+
+    /// [`numbered`] over [`inner_sql`](Self::inner_sql) — the
+    /// unwrapped match expression with absolute placeholders.
+    pub fn numbered_inner(&self, offset: usize) -> (String, Vec<Bind>) {
+        let mut sql = self.inner_sql().to_string();
+        for i in 0..self.binds.len() {
+            sql = sql.replace(&format!("@{}@", i + 1), &format!("${}", offset + i + 1));
+        }
+        (sql, self.binds.clone())
+    }
 }
 
 /// A finished predicate: clause(s) joined by `AND` plus the binds to
@@ -140,6 +186,13 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     if filters.public_only {
         b.clause("s.visibility = 'public'");
     }
+    if let Some(hide) = &filters.hide {
+        let (sql, binds) = hide.numbered(b.binds.len());
+        for bind in binds {
+            b.binds.push(bind);
+        }
+        b.clause(sql);
+    }
 
     // Viewer-scoped timelines can't resolve without $1 — emit an
     // empty match rather than a misbound clause.
@@ -209,11 +262,16 @@ fn account_clauses(b: &mut Builder, account_id: i64, filters: &Filters) {
 }
 
 fn home_clauses(b: &mut Builder) {
-    // Audience: own statuses plus followed authors' — this join
-    // doubles as the followers_only gate.
+    // Audience: own statuses plus followed authors' (the join doubles
+    // as the followers_only gate) plus public posts carrying a tag the
+    // viewer follows (epic 20 — followed hashtags land in home).
     b.clause(
         "(s.account_id = $1 OR EXISTS (SELECT 1 FROM follows f \
-         WHERE f.account_id = $1 AND f.target_account_id = s.account_id))",
+         WHERE f.account_id = $1 AND f.target_account_id = s.account_id) \
+         OR EXISTS (SELECT 1 FROM status_tags st \
+                    JOIN tag_follows tf ON tf.tag_id = st.tag_id \
+                    WHERE st.status_id = s.id AND tf.account_id = $1 \
+                      AND s.visibility = 'public'))",
     );
     // `direct` needs a mention; the rest pass through the author gate.
     b.clause(
@@ -287,6 +345,7 @@ mod tests {
                 exclude_replies: false,
                 exclude_reblogs: false,
                 public_only: false,
+                hide: None,
             },
         )
     }
@@ -404,6 +463,7 @@ mod tests {
                 exclude_replies: false,
                 exclude_reblogs: false,
                 public_only: false,
+                hide: None,
             },
         );
         assert!(w.sql.contains("s.language = ANY($1)"));

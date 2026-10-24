@@ -11,8 +11,10 @@ pub mod cache;
 pub mod cli;
 pub mod config;
 pub mod db;
+pub mod emoji;
 pub mod error;
 pub mod feeds;
+pub mod filters;
 pub mod http;
 pub mod i18n;
 pub mod interactions;
@@ -24,6 +26,7 @@ pub mod notifications;
 pub mod posts;
 pub mod search;
 pub mod social;
+pub mod tags;
 pub mod timelines;
 pub mod users;
 

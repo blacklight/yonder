@@ -105,11 +105,8 @@ async fn credential_account(
         .ok_or_else(|| Error::NotFound("account".into()))?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     let base_url = crate::activitypub::federation_base_url(&state.config);
-    let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
-    // `moved` is a nested Account (one level deep, never recursive).
-    entity["moved"] =
-        crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
-            .await;
+    let mut entity =
+        account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?;
     entity["source"] = json!({
         "privacy": settings::public_visibility(&user_settings.default_visibility),
         "sensitive": user_settings.default_sensitive,
@@ -327,10 +324,8 @@ pub async fn get_account(
     let account = load_public_account(&state, id).await?;
     maybe_refresh_remote(&state, &account).await;
     let base_url = crate::activitypub::federation_base_url(&state.config);
-    let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
-    entity["moved"] =
-        crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
-            .await;
+    let mut entity =
+        account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?;
     let last_status: Option<chrono::NaiveDate> = sqlx::query_scalar(
         "SELECT max(created_at)::date FROM statuses \
          WHERE account_id = $1 AND NOT tombstone",
@@ -381,11 +376,20 @@ pub async fn account_statuses(
     let scope = TimelineScope::Account {
         account_id: account.id,
     };
+    let viewer = auth.0.as_ref().map(|a| a.account_id);
+    let rules = match viewer {
+        Some(v) => {
+            crate::filters::rules::load_active(&state.db, v, crate::filters::FilterContext::Account)
+                .await?
+        }
+        None => Vec::new(),
+    };
     let filters = Filters {
-        viewer: auth.0.as_ref().map(|a| a.account_id),
+        viewer,
         only_media: super::timelines::truthy(&params, "only_media"),
         exclude_replies: super::timelines::truthy(&params, "exclude_replies"),
         exclude_reblogs: super::timelines::truthy(&params, "exclude_reblogs"),
+        hide: crate::filters::apply::hide_clause(&rules),
         ..Default::default()
     };
     let page = paginate::parse(&params);
@@ -407,11 +411,11 @@ pub async fn account_statuses(
         crate::timelines::query::fetch(&state.db, &scope, &filters, &page).await?
     };
     let ctx = crate::posts::PostContext::new(&state);
-    let viewer = auth.0.as_ref().map(|a| a.account_id);
     let mut out = Vec::with_capacity(rows.len());
     for row in &rows {
         out.push(crate::posts::entity::status_entity(&ctx, row, viewer).await?);
     }
+    crate::filters::apply::attach_filtered(&state.db, &rules, &rows, &mut out).await?;
     let headers = if pinned {
         HeaderMap::new()
     } else {

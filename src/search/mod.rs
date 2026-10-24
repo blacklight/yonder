@@ -54,6 +54,9 @@ pub(crate) fn like_pattern(q: &str, prefix: bool) -> String {
 /// Unrendered results — the HTTP layer picks the v1/v2 shape.
 #[derive(Default)]
 pub struct RawResults {
+    /// The viewer's Public-context filter rules — loaded once in
+    /// [`search`] and reused by [`render`] for `filtered` attributes.
+    pub rules: Vec<crate::filters::Rule>,
     pub account_ids: Vec<i64>,
     pub statuses: Vec<StatusRow>,
     pub tags: Vec<TagHit>,
@@ -82,6 +85,14 @@ pub async fn search(
     params: &SearchParams,
 ) -> Result<RawResults> {
     let viewer = caller.map(|a| a.account_id);
+    let rules = match viewer {
+        Some(v) => {
+            crate::filters::rules::load_active(&state.db, v, crate::filters::FilterContext::Public)
+                .await?
+        }
+        None => Vec::new(),
+    };
+    let hide = crate::filters::apply::hide_clause(&rules);
     let index = index::build_index(&state.config.search);
     let kind = params::effective_kind(params, params::classify(&params.q));
     let prefix = params::is_prefix_mode(params, &kind);
@@ -94,7 +105,10 @@ pub async fn search(
     // page would repeat the same entity.
     let first_page = params.offset == 0;
 
-    let mut out = RawResults::default();
+    let mut out = RawResults {
+        rules,
+        ..Default::default()
+    };
     match &kind {
         QueryKind::Fqn { username, domain } => {
             if wants(SearchType::Accounts) {
@@ -127,7 +141,9 @@ pub async fn search(
                     }
                 }
                 Some(ResolvedHit::Status(id)) if wants(SearchType::Statuses) => {
-                    if let Some(row) = statuses::visible_row(&state.db, viewer, id).await? {
+                    if let Some(row) =
+                        statuses::visible_row(&state.db, viewer, id, hide.as_ref()).await?
+                    {
                         out.statuses.push(row);
                     }
                 }
@@ -137,7 +153,15 @@ pub async fn search(
         QueryKind::Hashtag(tag) => {
             if wants(SearchType::Hashtags) {
                 out.tags = index
-                    .search_hashtags(&state.db, viewer, tag, prefix, params.limit, params.offset)
+                    .search_hashtags(
+                        &state.db,
+                        viewer,
+                        tag,
+                        prefix,
+                        params.limit,
+                        params.offset,
+                        hide.as_ref(),
+                    )
                     .await?;
             }
         }
@@ -149,7 +173,7 @@ pub async fn search(
             }
             if wants(SearchType::Statuses) {
                 out.statuses = index
-                    .search_statuses(&state.db, viewer, params, &kind)
+                    .search_statuses(&state.db, viewer, params, &kind, hide.as_ref())
                     .await?;
             }
             if wants(SearchType::Hashtags) {
@@ -163,6 +187,7 @@ pub async fn search(
                         prefix,
                         params.limit,
                         params.offset,
+                        hide.as_ref(),
                     )
                     .await?;
             }
@@ -184,18 +209,22 @@ pub async fn render(
 
     let mut accounts = Vec::with_capacity(results.account_ids.len());
     for account in account_mapper::load_many(&state.db, &results.account_ids).await? {
-        let mut entity = account_mapper::to_account(&account, &base_url, &state.config);
-        // `to_account`'s CONTRACT: callers fill `moved` themselves.
-        entity["moved"] =
-            crate::users::moves::moved_account_json(&state.db, &account, &base_url, &state.config)
-                .await;
-        accounts.push(entity);
+        accounts.push(
+            account_mapper::account_entity(&state.db, &state.config, &base_url, &account).await?,
+        );
     }
 
     let mut statuses = Vec::with_capacity(results.statuses.len());
     for status in &results.statuses {
         statuses.push(posts::entity::status_entity(&ctx, status, viewer).await?);
     }
+    crate::filters::apply::attach_filtered(
+        &state.db,
+        &results.rules,
+        &results.statuses,
+        &mut statuses,
+    )
+    .await?;
 
     let hashtags: Vec<Value> = results
         .tags
@@ -204,7 +233,17 @@ pub async fn render(
             if v1 {
                 json!(t.name)
             } else {
-                hashtags::tag_entity(&base_url, t)
+                let mut v = crate::tags::entity::tag_json(
+                    &base_url,
+                    &crate::tags::TagInfo {
+                        id: t.tag_id,
+                        name: t.name.clone(),
+                        following: t.following,
+                        history: Vec::new(),
+                    },
+                );
+                v["yonder"] = json!({ "statuses_count": t.statuses_count });
+                v
             }
         })
         .collect();

@@ -2,7 +2,6 @@
 //! Prefix mode powers autocomplete (`type=hashtags`); plain text
 //! searches match exactly.
 
-use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
 use crate::timelines::filter::Bind;
@@ -15,6 +14,8 @@ use super::statuses::base_clauses;
 /// One matching tag with its visible-status count.
 #[derive(Debug)]
 pub struct TagHit {
+    /// `tags.id` — the Tag entity carries it.
+    pub tag_id: i64,
     pub name: String,
     /// Lifetime count of statuses carrying the tag that the caller
     /// may see — a yonder extension (`yonder.statuses_count`).
@@ -34,9 +35,10 @@ pub async fn search(
     prefix: bool,
     limit: i64,
     offset: i64,
+    hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Vec<TagHit>> {
     let mut binds: Vec<Bind> = Vec::new();
-    let mut clauses = base_clauses(viewer, &mut binds);
+    let mut clauses = base_clauses(viewer, &mut binds, hide);
     let mut alloc = |b: Bind| {
         binds.push(b);
         format!("${}", binds.len())
@@ -60,7 +62,7 @@ pub async fn search(
     let limit_p = alloc(Bind::I64(limit));
     let offset_p = alloc(Bind::I64(offset));
     let sql = format!(
-        "SELECT t.name, COUNT(DISTINCT s.id) AS statuses_count, {following} \
+        "SELECT t.id AS tag_id, t.name, COUNT(DISTINCT s.id) AS statuses_count, {following} \
          FROM tags t \
          JOIN status_tags st ON st.tag_id = t.id \
          JOIN statuses s ON s.id = st.status_id \
@@ -76,23 +78,10 @@ pub async fn search(
     Ok(rows
         .iter()
         .map(|r| TagHit {
+            tag_id: r.get("tag_id"),
             name: r.get("name"),
             statuses_count: r.get("statuses_count"),
             following: r.get("following"),
         })
         .collect())
-}
-
-/// The Mastodon Tag entity (v2). `history` stays empty — trending is
-/// epic 20. `yonder.statuses_count` carries the lifetime count.
-pub fn tag_entity(base_url: &str, hit: &TagHit) -> Value {
-    json!({
-        "name": hit.name,
-        "url": format!("{}/tags/{}", base_url, hit.name),
-        "history": [],
-        "following": hit.following,
-        "yonder": {
-            "statuses_count": hit.statuses_count,
-        },
-    })
 }

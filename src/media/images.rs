@@ -28,6 +28,11 @@ pub enum MediaKind {
     Avatar,
     /// `accounts.banner_path` — stored under `headers/`.
     Header,
+    /// `custom_emojis.image_path` — stored under `emoji/`. The key
+    /// keeps the uploader's account segment for namespacing, but the
+    /// row is instance-owned: `delete_account_files` intentionally
+    /// does not list the `emoji` prefix.
+    Emoji,
 }
 
 impl MediaKind {
@@ -37,6 +42,7 @@ impl MediaKind {
         match self {
             MediaKind::Avatar => "avatars",
             MediaKind::Header => "headers",
+            MediaKind::Emoji => "emoji",
         }
     }
 
@@ -45,6 +51,7 @@ impl MediaKind {
         match self {
             MediaKind::Avatar => "avatar",
             MediaKind::Header => "header",
+            MediaKind::Emoji => "emoji",
         }
     }
 }
@@ -111,9 +118,14 @@ fn process(
         ))
     })?;
     let (width, height) = (decoded.width(), decoded.height());
-    let rgba = decoded.to_rgba8();
-    let blurhash = blurhash::encode(4, 3, width, height, rgba.as_raw())
-        .map_err(|e| Error::Internal(format!("blurhash encode failed: {e}")))?;
+    // Emoji don't need a blurhash placeholder — skip the encode.
+    let blurhash = if kind == MediaKind::Emoji {
+        String::new()
+    } else {
+        let rgba = decoded.to_rgba8();
+        blurhash::encode(4, 3, width, height, rgba.as_raw())
+            .map_err(|e| Error::Internal(format!("blurhash encode failed: {e}")))?
+    };
 
     // GIF passthrough preserves animation; everything else is
     // re-encoded when EXIF stripping is on (the encoders write no
@@ -225,7 +237,10 @@ pub async fn store_profile_image(
     account_id: i64,
     bytes: Vec<u8>,
 ) -> Result<StoredImage> {
-    let max = config.media.max_avatar_size;
+    let max = match kind {
+        MediaKind::Emoji => config.media.max_emoji_size,
+        _ => config.media.max_avatar_size,
+    };
     if bytes.len() as u64 > max {
         return Err(Error::Validation(format!(
             "{} is too large ({} bytes, at most {})",

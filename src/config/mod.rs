@@ -152,6 +152,36 @@ impl Config {
                 "content.max_feed_items must be in 1..=200".to_string(),
             ));
         }
+        if !(1..=1000).contains(&self.content.max_filter_keywords) {
+            return Err(crate::Error::Validation(
+                "content.max_filter_keywords must be in 1..=1000".to_string(),
+            ));
+        }
+        if !(1..=5000).contains(&self.content.max_filters) {
+            return Err(crate::Error::Validation(
+                "content.max_filters must be in 1..=5000".to_string(),
+            ));
+        }
+        if !(1..=100).contains(&self.timelines.trends_max_limit) {
+            return Err(crate::Error::Validation(
+                "timelines.trends_max_limit must be in 1..=100".to_string(),
+            ));
+        }
+        if self.timelines.trends_cache_seconds > 86400 {
+            return Err(crate::Error::Validation(
+                "timelines.trends_cache_seconds must be <= 86400".to_string(),
+            ));
+        }
+        if !(1024..=10_485_760).contains(&self.media.max_emoji_size) {
+            return Err(crate::Error::Validation(
+                "media.max_emoji_size must be in 1024..=10485760".to_string(),
+            ));
+        }
+        if !(1_048_576..=1_073_741_824).contains(&self.media.max_emoji_zip_uncompressed) {
+            return Err(crate::Error::Validation(
+                "media.max_emoji_zip_uncompressed must be in 1048576..=1073741824".to_string(),
+            ));
+        }
         if self.timelines.home_max_entries == 0
             || self.timelines.fanout_batch_size == 0
             || self.timelines.rebuild_page_size == 0
@@ -511,6 +541,11 @@ pub struct MediaConfig {
     pub remote_cleanup_max_age_days: u32,
     /// Strip EXIF metadata from uploaded media.
     pub strip_exif: bool,
+    /// Maximum custom-emoji file size in bytes (default: 256 KiB).
+    pub max_emoji_size: u64,
+    /// Cumulative uncompressed-size cap for emoji zip imports
+    /// (default: 50 MiB) — the zip-bomb bound.
+    pub max_emoji_zip_uncompressed: u64,
     /// Maximum media attachments per post.
     pub max_attachments_per_post: u32,
     /// Unattached uploads older than this are deleted by the orphan
@@ -541,6 +576,8 @@ impl Default for MediaConfig {
             remote_cleanup_max_bytes: 10 * 1024 * 1024 * 1024,
             remote_cleanup_max_age_days: 7,
             strip_exif: true,
+            max_emoji_size: 256 * 1024,
+            max_emoji_zip_uncompressed: 50 * 1024 * 1024,
             max_attachments_per_post: 4,
             orphan_retention_days: 7,
             orphan_cleanup_schedule: Some("30 3 * * *".to_string()),
@@ -792,6 +829,11 @@ pub struct ContentConfig {
     pub max_report_comment: u32,
     /// Maximum number of items in RSS/Atom feeds.
     pub max_feed_items: u32,
+    /// Maximum number of keywords per filter (epic 20).
+    pub max_filter_keywords: u32,
+    /// Maximum number of filters per account (epic 20) — the `hide`
+    /// clause cost scales with it on every filtered read.
+    pub max_filters: u32,
     /// Maximum number of pinned posts per account.
     pub max_pinned_posts: u32,
     /// URL schemes accepted in posts, profile fields and link preview fetches.
@@ -829,6 +871,8 @@ impl Default for ContentConfig {
             max_registration_message_length: 5000,
             max_report_comment: 2000,
             max_feed_items: 50,
+            max_filter_keywords: 100,
+            max_filters: 100,
             max_pinned_posts: 5,
             valid_url_schemes: vec!["http".to_string(), "https".to_string()],
             translation_backend: TranslationBackend::GoogleWeb,
@@ -856,6 +900,16 @@ pub struct TimelinesConfig {
     /// Statuses pulled per round-trip when a home feed is rebuilt
     /// from Postgres (cache miss or cold start).
     pub rebuild_page_size: u32,
+    /// Whether trending hashtags count remote (federated) statuses in
+    /// addition to local ones.
+    pub trends_include_remote: bool,
+    /// Redis TTL for the trending-tags result cache (seconds).
+    pub trends_cache_seconds: u64,
+    /// Upper bound on `GET /api/v1/trends/tags?limit=`.
+    pub trends_max_limit: u32,
+    /// Minimum distinct accounts that must have used a tag for it to
+    /// trend (keeps single-user spam off the list).
+    pub trends_min_accounts: u32,
 }
 
 impl Default for TimelinesConfig {
@@ -864,6 +918,10 @@ impl Default for TimelinesConfig {
             home_max_entries: 800,
             fanout_batch_size: 500,
             rebuild_page_size: 400,
+            trends_include_remote: true,
+            trends_cache_seconds: 300,
+            trends_max_limit: 20,
+            trends_min_accounts: 2,
         }
     }
 }
@@ -900,6 +958,10 @@ pub struct AdminConfig {
     pub export_cleanup_schedule: Option<String>,
     /// Multipart size cap for `/api/v1/yonder/imports` uploads (bytes).
     pub max_import_size: u64,
+    /// Root directory for admin filesystem emoji imports
+    /// (`POST /api/v1/yonder/emoji/import_path`). Unset disables the
+    /// endpoint — paths are canonicalized and must stay inside it.
+    pub emoji_import_dir: Option<String>,
 }
 
 impl Default for AdminConfig {
@@ -915,6 +977,7 @@ impl Default for AdminConfig {
             account_deletion_sweep_schedule: Some("*/15 * * * *".to_string()),
             export_cleanup_schedule: Some("0 3 * * *".to_string()),
             max_import_size: 50 * 1024 * 1024,
+            emoji_import_dir: None,
         }
     }
 }

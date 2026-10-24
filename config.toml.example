@@ -173,6 +173,10 @@ s3_force_path_style = true
 max_upload_size = 52428800
 # Maximum avatar/banner upload size in bytes (default: 2 MiB).
 max_avatar_size = 2097152
+# Maximum custom-emoji file size in bytes (default: 256 KiB).
+max_emoji_size = 262144
+# Cumulative uncompressed cap for emoji zip imports (bytes, default 50 MiB).
+max_emoji_zip_uncompressed = 52428800
 # Fetch and cache remote media attachments instead of serving them
 # from the remote instance.
 fetch_remote_media = false
@@ -278,6 +282,10 @@ max_registration_message_length = 5000
 max_report_comment = 2000
 # Maximum number of items in RSS/Atom feeds.
 max_feed_items = 50
+# Maximum filters per account (default: 100).
+max_filters = 100
+# Maximum keywords per filter (default: 100).
+max_filter_keywords = 100
 # Maximum number of pinned posts per account.
 max_pinned_posts = 5
 # URL schemes accepted in posts, profile fields and link preview fetches.
@@ -311,6 +319,14 @@ fanout_batch_size = 500
 # Statuses pulled per round-trip when a home feed is rebuilt from
 # Postgres (cache miss or cold start).
 rebuild_page_size = 400
+# Include remote authors' tags in trends/history (default: true).
+trends_include_remote = true
+# Seconds the trending-tags ranking is cached in Redis (0 = no cache).
+trends_cache_seconds = 300
+# `limit` cap on /api/v1/trends/tags (default: 20).
+trends_max_limit = 20
+# Minimum distinct authors for a tag to trend (default: 2; 0 disables).
+trends_min_accounts = 2
 
 [admin]
 # Remove follow relationships in both directions on user block.
@@ -336,3 +352,6 @@ account_deletion_sweep_schedule = "*/15 * * * *"
 export_cleanup_schedule = "0 3 * * *"
 # Multipart size cap for account-archive import uploads (bytes).
 max_import_size = 52428800
+# Server-side directory emoji imports are read from; unset disables
+# POST /api/v1/admin/emojis/import_dir.
+# emoji_import_dir = "/var/lib/yonder/emoji-import"

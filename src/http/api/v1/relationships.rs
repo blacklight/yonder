@@ -120,14 +120,13 @@ fn query_ids(uri: &Uri) -> Vec<i64> {
 }
 
 /// Account entities for a list of ids (order preserved) — shared by
-/// the social listing handlers (`blocks`, `follow_requests`, `lists`).
+/// the social listing handlers (`blocks`, `follow_requests`,
+/// `lists`). One emoji-map load serves the whole page via
+/// [`account_mapper::account_entities`].
 pub(super) async fn account_entities(state: &AppState, ids: &[i64]) -> Result<Vec<Value>> {
     let base = federation_base_url(&state.config);
-    Ok(account_mapper::load_many(&state.db, ids)
-        .await?
-        .iter()
-        .map(|a| account_mapper::to_account(a, &base, &state.config))
-        .collect())
+    let accounts = account_mapper::load_many(&state.db, ids).await?;
+    account_mapper::account_entities(&state.db, &state.config, &base, &accounts).await
 }
 
 // ---------------------------------------------------------------------------

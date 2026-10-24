@@ -246,6 +246,24 @@ pub(crate) async fn status_entity_inner(
     account_json["moved"] =
         crate::users::moves::moved_account_json(&ctx.db, &account, &base_url, &ctx.config).await;
 
+    // Epic 20 — one domain-scoped emoji map shared by the author
+    // entity, the content and the `emojis` array: remote authors
+    // resolve `:code:` against their own domain's recorded emoji.
+    // Skip the query entirely when no text could carry a shortcode.
+    let mut texts: Vec<&str> = vec![
+        status.content.as_str(),
+        status.spoiler_text.as_deref().unwrap_or_default(),
+    ];
+    texts.extend(account_mapper::emoji_texts(&account));
+    let emoji_map = crate::emoji::render::EmojiMap::for_author_texts(
+        &ctx.db,
+        &ctx.config,
+        &base_url,
+        account.domain.as_deref(),
+        &texts,
+    )
+    .await?;
+    crate::emoji::render::apply_account_with_map(&mut account_json, &emoji_map);
     let media_rows = media_for_status(ctx, status.id).await?;
     let media_json: Vec<Value> = media_rows
         .iter()
@@ -285,8 +303,11 @@ pub(crate) async fn status_entity_inner(
         }
         _ => (
             Value::Null,
-            Value::String(content),
-            Value::String(status.spoiler_text.clone().unwrap_or_default()),
+            Value::String(crate::emoji::render::substitute(&content, &emoji_map)),
+            Value::String(crate::emoji::render::substitute(
+                &status.spoiler_text.clone().unwrap_or_default(),
+                &emoji_map,
+            )),
             media_json,
             poll_json,
         ),
@@ -306,7 +327,11 @@ pub(crate) async fn status_entity_inner(
         "media_attachments": media_json,
         "mentions": mention_entities(ctx, status.id).await?,
         "tags": tag_entities(ctx, status.id, &base_url).await?,
-        "emojis": [],
+        "emojis": emoji_map.entities_in(&format!(
+            "{} {}",
+            status.content,
+            status.spoiler_text.clone().unwrap_or_default()
+        )),
         "card": card_entity(ctx, status.id, &base_url).await?,
         "poll": poll_json,
         "application": Value::Null,

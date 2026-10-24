@@ -197,37 +197,111 @@ pub async fn list(
     types: &[NotificationType],
     exclude_types: &[NotificationType],
     page: &Page,
+    hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Vec<NotificationRow>> {
     let include: Vec<&str> = types.iter().map(NotificationType::as_str).collect();
     let exclude: Vec<&str> = exclude_types.iter().map(NotificationType::as_str).collect();
-    sqlx::query(&format!(
-        "SELECT {NOTIFICATION_COLS} FROM notifications \
+    // Epic-20 hide rules apply to the *embedded* status. Notifications
+    // without one (follows, admin, reports) always survive.
+    let mut hide_sql = String::new();
+    let mut hide_binds = Vec::new();
+    if let Some(hide) = hide {
+        let (inner, hb) = hide.numbered_inner(6);
+        hide_binds = hb;
+        hide_sql = format!(
+            " AND (status_id IS NULL OR NOT EXISTS (SELECT 1 FROM statuses s \
+             WHERE s.id = notifications.status_id AND ({inner})))"
+        );
+    }
+    let sql = format!(
+        "SELECT {} FROM notifications \
          WHERE account_id = $1 \
            AND ($2::bigint IS NULL OR id < $2) \
            AND ($3::bigint IS NULL OR id > $3) \
            AND (cardinality($4) = 0 OR type = ANY($4)) \
-           AND (cardinality($5) = 0 OR type <> ALL($5)) \
-         ORDER BY id DESC LIMIT $6"
-    ))
-    .bind(account_id)
-    .bind(page.max_id)
-    .bind(page.since_id)
-    .bind(&include)
-    .bind(&exclude)
-    .bind(page.limit)
-    .fetch_all(db)
-    .await
-    .map(|rows| rows.iter().map(row_to_notification).collect())
-    .map_err(Into::into)
+           AND (cardinality($5) = 0 OR type <> ALL($5)){} \
+         ORDER BY id DESC LIMIT $6",
+        NOTIFICATION_COLS, hide_sql
+    );
+    let mut q = sqlx::query(&sql)
+        .bind(account_id)
+        .bind(page.max_id)
+        .bind(page.since_id)
+        .bind(&include)
+        .bind(&exclude)
+        .bind(page.limit);
+    for b in &hide_binds {
+        q = match b {
+            crate::timelines::filter::Bind::I64(v) => q.bind(*v),
+            crate::timelines::filter::Bind::I64s(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Text(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Texts(v) => q.bind(v.clone()),
+        };
+    }
+    q.fetch_all(db)
+        .await
+        .map(|rows| rows.iter().map(row_to_notification).collect())
+        .map_err(Into::into)
+}
+
+/// Does the notification's embedded status match a `hide` rule —
+/// the single-row mirror of [`list`]'s `NOT EXISTS` predicate?
+/// `false` when the row has no status or no `hide` clause (the
+/// common case, zero extra SQL).
+pub async fn hidden(
+    db: &PgPool,
+    row: &NotificationRow,
+    hide: Option<&crate::timelines::filter::HideClause>,
+) -> Result<bool> {
+    let (Some(status_id), Some(hide)) = (row.status_id, hide) else {
+        return Ok(false);
+    };
+    let (inner, binds) = hide.numbered_inner(1);
+    let sql = format!("SELECT EXISTS (SELECT 1 FROM statuses s WHERE s.id = $1 AND ({inner}))");
+    let mut q = sqlx::query_scalar::<_, bool>(&sql).bind(status_id);
+    for b in &binds {
+        q = match b {
+            crate::timelines::filter::Bind::I64(v) => q.bind(*v),
+            crate::timelines::filter::Bind::I64s(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Text(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Texts(v) => q.bind(v.clone()),
+        };
+    }
+    q.fetch_one(db).await.map_err(Into::into)
 }
 
 /// Unread rows for the unread-count endpoint and live badge updates.
-pub async fn unread_count(db: &PgPool, account_id: i64) -> Result<i64> {
-    sqlx::query_scalar("SELECT COUNT(*) FROM notifications WHERE account_id = $1 AND NOT read")
-        .bind(account_id)
-        .fetch_one(db)
-        .await
-        .map_err(Into::into)
+/// `hide` (the same clause [`list`] applies) excludes rows whose
+/// status a `hide` rule would strip — the badge then matches the
+/// list the client will render.
+pub async fn unread_count(
+    db: &PgPool,
+    account_id: i64,
+    hide: Option<&crate::timelines::filter::HideClause>,
+) -> Result<i64> {
+    let mut sql =
+        String::from("SELECT COUNT(*) FROM notifications n WHERE n.account_id = $1 AND NOT n.read");
+    let binds = match hide {
+        Some(h) => {
+            let (inner, binds) = h.numbered_inner(1);
+            sql.push_str(&format!(
+                " AND NOT EXISTS (SELECT 1 FROM statuses s \
+                 WHERE s.id = n.status_id AND ({inner}))"
+            ));
+            binds
+        }
+        None => Vec::new(),
+    };
+    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(account_id);
+    for b in &binds {
+        q = match b {
+            crate::timelines::filter::Bind::I64(v) => q.bind(*v),
+            crate::timelines::filter::Bind::I64s(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Text(v) => q.bind(v.clone()),
+            crate::timelines::filter::Bind::Texts(v) => q.bind(v.clone()),
+        };
+    }
+    q.fetch_one(db).await.map_err(Into::into)
 }
 
 /// Delete every notification owned by `account_id`.
@@ -256,12 +330,21 @@ pub async fn dismiss(db: &PgPool, account_id: i64, id: i64) -> Result<bool> {
 /// objects degrade to absent/`null` fields rather than failing the
 /// render — a deleted status or purged actor should not 500 a
 /// notifications page.
-pub async fn entity(ctx: &PostContext, row: &NotificationRow) -> Result<Value> {
+pub async fn entity(
+    ctx: &PostContext,
+    row: &NotificationRow,
+    rules: &[crate::filters::Rule],
+) -> Result<Value> {
     let base_url = ctx.base_url();
-    let account = crate::users::account::load(&ctx.db, row.from_account_id)
-        .await?
-        .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
-        .unwrap_or(Value::Null);
+    let account = match crate::users::account::load(&ctx.db, row.from_account_id).await? {
+        Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "notification account render failed");
+                Value::Null
+            }),
+        None => Value::Null,
+    };
     let mut out = json!({
         "id": row.id.to_string(),
         "type": row.kind.as_str(),
@@ -281,7 +364,22 @@ pub async fn entity(ctx: &PostContext, row: &NotificationRow) -> Result<Value> {
                     tracing::warn!(status_id, error = %e, "notification status render failed");
                     Value::Null
                 });
-                out["status"] = rendered;
+                if rendered.is_object() {
+                    let mut entities = vec![rendered];
+                    crate::filters::apply::attach_filtered(
+                        &ctx.db,
+                        rules,
+                        std::slice::from_ref(&status),
+                        &mut entities,
+                    )
+                    .await
+                    .unwrap_or_else(
+                        |e| tracing::warn!(status_id, error = %e, "filtered attach failed"),
+                    );
+                    out["status"] = entities.into_iter().next().unwrap_or(Value::Null);
+                } else {
+                    out["status"] = rendered;
+                }
             }
         }
     }
@@ -306,16 +404,21 @@ async fn report_entity(ctx: &PostContext, report_id: i64) -> Result<Value> {
         return Ok(Value::Null);
     };
     let base_url = ctx.base_url();
-    let target = crate::users::account::load(&ctx.db, report.get("target_account_id"))
-        .await?
-        .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
-        .unwrap_or(Value::Null);
+    let target = match crate::users::account::load(&ctx.db, report.get("target_account_id")).await?
+    {
+        Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
+            .await
+            .unwrap_or(Value::Null),
+        None => Value::Null,
+    };
     let assigned: Option<i64> = report.get("assigned_account_id");
     let assigned = match assigned {
-        Some(id) => crate::users::account::load(&ctx.db, id)
-            .await?
-            .map(|a| crate::users::account::to_account(&a, &base_url, &ctx.config))
-            .unwrap_or(Value::Null),
+        Some(id) => match crate::users::account::load(&ctx.db, id).await? {
+            Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
+                .await
+                .unwrap_or(Value::Null),
+            None => Value::Null,
+        },
         None => Value::Null,
     };
     let status_id: Option<i64> = report.get("status_id");

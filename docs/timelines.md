@@ -18,6 +18,23 @@ max 40) and `only_media`; all emit Mastodon `Link` headers
 (`rel="next"` = `max_id`, `rel="prev"` = `min_id`) and are rate-limited
 under the `timeline` bucket.
 
+## Followed tags & content filters (epic 20)
+
+- **Followed hashtags** (`POST /api/v1/tags/{name}/follow`): home
+  admits `public` statuses tagged with a followed tag via an `EXISTS
+  status_tags ⋈ tag_follows` clause in `home_clauses`, and fan-out
+  ZADDs tagged posts into tag followers' home indexes (bounded by
+  `fanout_batch_size`; the SQL top-up covers the rest).
+- **Content filters**: `Filters::hide` carries the viewer's compiled
+  `hide` predicate (`filters::apply::hide_clause`) for the context in
+  play — `Home` for home/list, `Public` for public/tag, `Account` for
+  `accounts/{id}/statuses`. `warn`/`blur` rules surface as the
+  `filtered` attribute via `filters::apply::attach_filtered`.
+- **Trends**: `GET /api/v1/trends/tags?period=day|week|month`
+  (`tags::trends`) counts anonymous-visible tag usage in the window,
+  floored at `timelines.trends_min_accounts` and cached for
+  `timelines.trends_cache_seconds`.
+
 ## Read path
 
 One predicate builder (`src/timelines/filter.rs`) shapes every scope.

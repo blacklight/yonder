@@ -352,7 +352,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             }
         }
     }
-    // Hashtags → tags/status_tags.
+    // Hashtags → tags/status_tags; remote `Emoji` tags are
+    // collected for post-commit recording — emoji must never fail
+    // or poison the ingest transaction (epic 20).
+    let mut remote_emoji: Vec<(String, String)> = Vec::new();
     sqlx::query("DELETE FROM status_tags WHERE status_id = $1")
         .bind(status_id)
         .execute(&mut *tx)
@@ -363,6 +366,17 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .into_iter()
         .flatten()
     {
+        if tag.get("type").and_then(|t| t.as_str()) == Some("Emoji") {
+            let name = tag.get("name").and_then(|v| v.as_str());
+            let icon = tag
+                .get("icon")
+                .and_then(|i| i.get("url"))
+                .and_then(|v| v.as_str())
+                .or_else(|| tag.get("icon").and_then(|v| v.as_str()));
+            if let (Some(name), Some(url)) = (name, icon) {
+                remote_emoji.push((name.trim_matches(':').to_string(), url.to_string()));
+            }
+        }
         if tag.get("type").and_then(|t| t.as_str()) == Some("Hashtag") {
             if let Some(name) = tag
                 .get("name")
@@ -468,6 +482,28 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         }
     }
     tx.commit().await?;
+
+    // Epic 20 — record remote `Emoji` tags post-commit, on the pool:
+    // a bad row here must never abort ingest (the status is durable).
+    if !remote_emoji.is_empty() {
+        let domain: Option<String> =
+            sqlx::query_scalar("SELECT domain FROM accounts WHERE id = $1")
+                .bind(account_id)
+                .fetch_optional(&core.db)
+                .await
+                .ok()
+                .flatten()
+                .flatten();
+        if let Some(domain) = domain {
+            for (code, url) in &remote_emoji {
+                if let Err(e) =
+                    crate::emoji::model::upsert_remote(&core.db, code, &domain, url).await
+                {
+                    tracing::warn!(code, domain, error = %e, "remote emoji upsert failed");
+                }
+            }
+        }
+    }
 
     // Epic 18: remote-media caching — post-commit so the rows the
     // job will read are visible. A queue failure must not fail the

@@ -232,3 +232,29 @@ fn timelines_limits_must_be_positive() {
         assert!(config.validate().is_err());
     }
 }
+
+#[test]
+fn filter_trends_and_emoji_bounds() {
+    for (mutate, valid) in [
+        (
+            (|c: &mut Config| c.content.max_filter_keywords = 0) as fn(&mut Config),
+            false,
+        ),
+        (|c| c.content.max_filter_keywords = 100, true),
+        (|c| c.timelines.trends_max_limit = 0, false),
+        (|c| c.timelines.trends_max_limit = 20, true),
+        (|c| c.timelines.trends_cache_seconds = 86401, false),
+        (|c| c.timelines.trends_cache_seconds = 300, true),
+        (|c| c.media.max_emoji_size = 512, false),
+        (|c| c.media.max_emoji_size = 256 * 1024, true),
+        (|c| c.media.max_emoji_zip_uncompressed = 1024, false),
+        (
+            |c| c.media.max_emoji_zip_uncompressed = 50 * 1024 * 1024,
+            true,
+        ),
+    ] {
+        let mut config = Config::default();
+        mutate(&mut config);
+        assert_eq!(config.validate().is_ok(), valid);
+    }
+}

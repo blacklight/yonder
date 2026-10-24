@@ -34,6 +34,7 @@ const TITLE_MAX_CHARS: usize = 100;
 /// row has no content of its own.
 pub async fn account_feed(
     db: &PgPool,
+    config: &crate::config::Config,
     base_url: &str,
     account: &AccountRow,
     max_items: i64,
@@ -43,7 +44,7 @@ pub async fn account_feed(
     };
     let rows = fetch(db, &scope, public_filters(), max_items).await?;
     let url = format!("{base_url}/@{}", account.username);
-    let entries = items(db, &rows).await?;
+    let entries = items(db, config, base_url, &rows).await?;
     Ok(Feed {
         id: url.clone(),
         title: account
@@ -62,14 +63,20 @@ pub async fn account_feed(
 
 /// The latest public posts carrying `tag` (case-insensitive). An unknown
 /// tag is a valid empty feed, not an error.
-pub async fn tag_feed(db: &PgPool, base_url: &str, tag: &str, max_items: i64) -> Result<Feed> {
+pub async fn tag_feed(
+    db: &PgPool,
+    config: &crate::config::Config,
+    base_url: &str,
+    tag: &str,
+    max_items: i64,
+) -> Result<Feed> {
     let scope = TimelineScope::Tag {
         name: tag.to_lowercase(),
         local_only: false,
     };
     let rows = fetch(db, &scope, public_filters(), max_items).await?;
     let url = tag_url(base_url, tag);
-    let entries = items(db, &rows).await?;
+    let entries = items(db, config, base_url, &rows).await?;
     Ok(Feed {
         id: url.clone(),
         title: format!("#{tag}"),
@@ -95,6 +102,7 @@ pub fn tag_url(base_url: &str, tag: &str) -> String {
 /// excluded — a boost row has no content of its own.
 pub async fn list_feed(
     db: &PgPool,
+    config: &crate::config::Config,
     base_url: &str,
     list: &ListRow,
     max_items: i64,
@@ -110,7 +118,7 @@ pub async fn list_feed(
     };
     let rows = fetch(db, &scope, filters, max_items).await?;
     let url = format!("{base_url}/lists/{}", list.id);
-    let entries = items(db, &rows).await?;
+    let entries = items(db, config, base_url, &rows).await?;
     Ok(Feed {
         id: url.clone(),
         title: list.title.clone(),
@@ -147,7 +155,14 @@ async fn fetch(
 }
 
 /// Map status rows to feed items, resolving authors in one query.
-async fn items(db: &PgPool, rows: &[StatusRow]) -> Result<Vec<FeedItem>> {
+/// Emoji maps are cached per distinct author domain (epic 20 — feed
+/// content goes through the same read-time substitution the API uses).
+async fn items(
+    db: &PgPool,
+    config: &crate::config::Config,
+    base_url: &str,
+    rows: &[StatusRow],
+) -> Result<Vec<FeedItem>> {
     let mut ids: Vec<i64> = rows.iter().map(|r| r.account_id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -156,26 +171,36 @@ async fn items(db: &PgPool, rows: &[StatusRow]) -> Result<Vec<FeedItem>> {
         .into_iter()
         .map(|a| (a.id, a))
         .collect();
+    let mut maps: HashMap<Option<String>, crate::emoji::render::EmojiMap> = HashMap::new();
 
-    Ok(rows
-        .iter()
-        .filter_map(|row| {
-            let id = row.uri.clone()?;
-            let author = authors
-                .get(&row.account_id)
-                .map(author_name)
-                .unwrap_or_default();
-            Some(FeedItem {
-                link: item_link(row.url.as_deref(), &id),
-                id,
-                title: item_title(row),
-                published: row.created_at,
-                updated: row.edited_at.unwrap_or(row.created_at),
-                author,
-                content_html: item_content(row),
-            })
-        })
-        .collect())
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(id) = row.uri.clone() else { continue };
+        let author_row = authors.get(&row.account_id);
+        let author = author_row.map(author_name).unwrap_or_default();
+        let domain = author_row.and_then(|a| a.domain.clone());
+        if !maps.contains_key(&domain) {
+            let map =
+                crate::emoji::render::EmojiMap::for_author(db, config, base_url, domain.as_deref())
+                    .await
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(error = %e, "feed emoji map load failed");
+                        crate::emoji::render::EmojiMap::empty()
+                    });
+            maps.insert(domain.clone(), map);
+        }
+        let content = crate::emoji::render::substitute(&item_content(row), &maps[&domain]);
+        out.push(FeedItem {
+            link: item_link(row.url.as_deref(), &id),
+            id,
+            title: item_title(row),
+            published: row.created_at,
+            updated: row.edited_at.unwrap_or(row.created_at),
+            author,
+            content_html: content,
+        });
+    }
+    Ok(out)
 }
 
 /// Feed-level timestamp: the newest item's `updated`, `None` when empty.

@@ -206,6 +206,45 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         "content": status.content,
         "mediaType": status.content_type,
     });
+    // Epic 20 — Emoji tags for every local `:code:` in the text, so
+    // remote instances can render and record them (pubby has no
+    // Emoji tag builder; `doc["tag"]` is the emitted array). A map
+    // load failure degrades to no tags, never a failed status build.
+    let emoji_map =
+        crate::emoji::render::EmojiMap::load_local(&ctx.db, &ctx.config, &ctx.base_url())
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "emoji map load failed; no Emoji tags emitted");
+                crate::emoji::render::EmojiMap::empty()
+            });
+    let haystack = format!(
+        "{} {}",
+        status.content,
+        status.spoiler_text.clone().unwrap_or_default()
+    );
+    if !emoji_map.is_empty() {
+        if !doc["tag"].is_array() {
+            doc["tag"] = json!([]);
+        }
+        if let Some(tags) = doc["tag"].as_array_mut() {
+            let base = ctx.base_url();
+            for meta in emoji_map.used_in(&haystack) {
+                let mime = match meta.url.rsplit('.').next() {
+                    Some("jpg" | "jpeg") => "image/jpeg",
+                    Some("gif") => "image/gif",
+                    Some("webp") => "image/webp",
+                    Some("avif") => "image/avif",
+                    _ => "image/png",
+                };
+                tags.push(json!({
+                    "type": "Emoji",
+                    "id": format!("{}/emoji/{}", base.trim_end_matches('/'), meta.id),
+                    "name": format!(":{}:", meta.shortcode),
+                    "icon": { "type": "Image", "mediaType": mime, "url": meta.url },
+                }));
+            }
+        }
+    }
     if let Some(poll_id) = status.poll_id {
         for (k, v) in poll_fields(ctx, poll_id)
             .await?

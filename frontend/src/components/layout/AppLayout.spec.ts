@@ -12,7 +12,14 @@ function layout() {
     const url = String(input);
     if (url.includes("/instance"))
       return Promise.resolve(
-        new Response(JSON.stringify({ title: "Testville" }), { status: 200 }),
+        new Response(
+          JSON.stringify({
+            title: "Testville",
+            version: "Yonder/9.9.9",
+            uri: "testville.example",
+          }),
+          { status: 200 },
+        ),
       );
     if (url.includes("unread_count"))
       return Promise.resolve(
@@ -109,6 +116,34 @@ describe("AppLayout", () => {
     overlay.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await w.vm.$nextTick();
     expect(document.querySelector("[data-testid='mobile-menu']")).toBeNull();
+  });
+
+  it("wide-screen pane renders search, controls, version and links", async () => {
+    const w = layout();
+    await flushPromises();
+    const aside = w.get(".layout__aside");
+    expect(aside.get("input[type='search']").exists()).toBe(true);
+    expect(aside.get("select.layout__locale").exists()).toBe(true);
+    expect(aside.text()).toContain("Yonder/9.9.9");
+    expect(aside.text()).toContain("testville.example");
+    const links = aside.findAll(".layout__meta-links a");
+    expect(links.map((a) => a.text())).toEqual(["About", "Source code"]);
+  });
+
+  it("sidebar keeps a search fallback below the wide breakpoint", () => {
+    const w = layout();
+    expect(
+      w
+        .get(".layout__sidebar .layout__search--sidebar input[type='search']")
+        .exists(),
+    ).toBe(true);
+    expect(
+      w
+        .get(
+          ".layout__sidebar .layout__controls--sidebar select.layout__locale",
+        )
+        .exists(),
+    ).toBe(true);
   });
 
   it("mobile menu closes on route change", async () => {

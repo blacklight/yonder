@@ -9,6 +9,7 @@ import MobileMenu from "./MobileMenu.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
 import { getInstance } from "@/api/instance";
+import type { InstanceEntity } from "@/api/entities";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import { useNotificationsStore } from "@/stores/notifications";
@@ -31,13 +32,17 @@ const locales = [
   { code: "ar", label: "العربية" },
 ];
 
+// Upstream source repository — shown in the wide-screen footer.
+const SOURCE_URL = "https://git.platypush.tech/blacklight/yonder";
+
 const menuOpen = ref(false);
 const searchQuery = ref("");
-const instanceTitle = ref<string | null>(null);
+const instance = ref<InstanceEntity | null>(null);
+const instanceTitle = computed(() => instance.value?.title ?? null);
 
 onMounted(() => {
   void getInstance()
-    .then((i) => (instanceTitle.value = i.title ?? null))
+    .then((i) => (instance.value = i))
     .catch(() => {});
   notifications.start();
   conversations.start();
@@ -255,7 +260,11 @@ function search() {
         <span>{{ instanceTitle ?? t("app.name") }}</span>
       </router-link>
 
-      <form class="layout__search" role="search" @submit.prevent="search">
+      <form
+        class="layout__search layout__search--sidebar"
+        role="search"
+        @submit.prevent="search"
+      >
         <FontAwesomeIcon icon="magnifying-glass" class="layout__search-icon" />
         <input
           v-model="searchQuery"
@@ -291,7 +300,7 @@ function search() {
             <span class="layout__user-acct">@{{ auth.account.acct }}</span>
           </span>
         </router-link>
-        <div class="layout__controls">
+        <div class="layout__controls layout__controls--sidebar">
           <select
             class="layout__locale"
             :value="locale"
@@ -359,6 +368,52 @@ function search() {
     <main class="layout__main">
       <slot />
     </main>
+
+    <aside class="layout__aside">
+      <form class="layout__search" role="search" @submit.prevent="search">
+        <FontAwesomeIcon icon="magnifying-glass" class="layout__search-icon" />
+        <input
+          v-model="searchQuery"
+          type="search"
+          class="layout__search-input"
+          :placeholder="t('nav.searchPlaceholder')"
+          :aria-label="t('nav.search')"
+        />
+      </form>
+
+      <div class="layout__aside-footer">
+        <div class="layout__controls">
+          <select
+            class="layout__locale"
+            :value="locale"
+            :aria-label="t('settings.language')"
+            @change="setLocale(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="l in locales" :key="l.code" :value="l.code">
+              {{ l.label }}
+            </option>
+          </select>
+          <Button variant="secondary" size="sm" @click="toggle">
+            <FontAwesomeIcon :icon="resolvedMode === 'dark' ? 'sun' : 'moon'" />
+            {{ t("settings.theme") }}</Button
+          >
+        </div>
+        <div class="layout__meta">
+          <span v-if="instance?.version" class="layout__meta-version">{{
+            instance.version
+          }}</span>
+          <span v-if="instance?.uri" class="layout__meta-domain">{{
+            instance.uri
+          }}</span>
+        </div>
+        <nav class="layout__meta-links" :aria-label="t('footer.links')">
+          <router-link to="/about">{{ t("nav.about") }}</router-link>
+          <a :href="SOURCE_URL" target="_blank" rel="noopener">{{
+            t("footer.source")
+          }}</a>
+        </nav>
+      </div>
+    </aside>
   </div>
 </template>
 
@@ -366,7 +421,8 @@ function search() {
 .layout {
   min-height: 100vh;
 }
-.layout__sidebar {
+.layout__sidebar,
+.layout__aside {
   display: none;
 }
 .layout__topbar {
@@ -404,6 +460,11 @@ function search() {
 }
 
 @media (min-width: 768px) {
+  .layout {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }
   .layout__topbar {
     display: none;
   }
@@ -411,19 +472,18 @@ function search() {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    position: fixed;
+    position: sticky;
     top: 0;
-    bottom: 0;
-    left: 0;
-    width: 16rem;
+    height: 100vh;
+    width: 15rem;
+    flex: none;
     padding: var(--space-4);
-    background: var(--bg-raised);
-    border-right: 1px solid var(--border);
     overflow-y: auto;
   }
   .layout__main {
-    margin-left: 16rem;
-    max-width: 44rem;
+    flex: 0 1 44rem;
+    margin: 0;
+    min-height: 100vh;
   }
 }
 
@@ -512,5 +572,60 @@ function search() {
   padding: var(--space-1) var(--space-2);
   color: var(--text);
   font: inherit;
+}
+.layout__aside-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+.layout__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.layout__meta > * + *::before {
+  content: "·";
+  margin-right: var(--space-2);
+}
+.layout__meta-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 0.85rem;
+}
+.layout__meta-links a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.layout__meta-links a:hover {
+  color: var(--accent-link);
+  text-decoration: underline;
+}
+
+/* Wide screens: the right pane takes over search + theme/language, so
+   the sidebar copies hide. This block must come last — equal-specificity
+   base rules (`.layout__controls`, `.layout__search`) would otherwise
+   win on source order even when the media query matches. */
+@media (min-width: 1280px) {
+  .layout__aside {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    width: 19rem;
+    flex: none;
+    padding: var(--space-4);
+    overflow-y: auto;
+  }
+  .layout__search--sidebar,
+  .layout__controls--sidebar {
+    display: none;
+  }
 }
 </style>

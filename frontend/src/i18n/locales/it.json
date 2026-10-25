@@ -406,7 +406,8 @@
       "admin": "Amministrazione",
       "jobs": "Processi in background",
       "timelines": "Timeline",
-      "frontends": "Frontend"
+      "frontends": "Frontend",
+      "other": "Altro"
     },
     "email": {
       "templates": "Modelli email",
@@ -736,5 +737,9 @@
     "verifyEmail": "Controlla la posta in arrivo: conferma il tuo indirizzo email per sbloccare la pubblicazione.",
     "continue": "Continua",
     "registered": "Account creato!"
+  },
+  "footer": {
+    "links": "Collegamenti",
+    "source": "Codice sorgente"
   }
 }

@@ -406,7 +406,8 @@
       "admin": "Verwaltung",
       "jobs": "Hintergrundjobs",
       "timelines": "Zeitleisten",
-      "frontends": "Frontends"
+      "frontends": "Frontends",
+      "other": "Sonstiges"
     },
     "email": {
       "templates": "E-Mail-Vorlagen",
@@ -736,5 +737,9 @@
     "verifyEmail": "Prüfe dein Postfach — bestätige deine E-Mail-Adresse, um Posten freizuschalten.",
     "continue": "Weiter",
     "registered": "Konto erstellt!"
+  },
+  "footer": {
+    "links": "Links",
+    "source": "Quellcode"
   }
 }

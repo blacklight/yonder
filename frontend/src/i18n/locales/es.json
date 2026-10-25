@@ -406,7 +406,8 @@
       "admin": "Administración",
       "jobs": "Trabajos en segundo plano",
       "timelines": "Cronologías",
-      "frontends": "Frontends"
+      "frontends": "Frontends",
+      "other": "Otros"
     },
     "email": {
       "templates": "Plantillas de correo",
@@ -736,5 +737,9 @@
     "verifyEmail": "Revisa tu bandeja de entrada: confirma tu dirección de correo para desbloquear la publicación.",
     "continue": "Continuar",
     "registered": "¡Cuenta creada!"
+  },
+  "footer": {
+    "links": "Enlaces",
+    "source": "Código fuente"
   }
 }

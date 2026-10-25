@@ -406,7 +406,8 @@
       "admin": "Administration",
       "jobs": "Background jobs",
       "timelines": "Timelines",
-      "frontends": "Frontends"
+      "frontends": "Frontends",
+      "other": "Other"
     },
     "email": {
       "templates": "Email templates",
@@ -732,5 +733,9 @@
     "verifyEmail": "Check your inbox — confirm your email address to unlock posting.",
     "continue": "Continue",
     "registered": "Account created!"
+  },
+  "footer": {
+    "links": "Links",
+    "source": "Source code"
   }
 }

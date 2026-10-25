@@ -7,6 +7,7 @@ import type { Conversation } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { sanitizeHtml } from "@/utils/sanitize";
 
 const { t } = useI18n();
@@ -55,26 +56,46 @@ onMounted(() => {
             />
           </span>
           <strong>{{ names(c) }}</strong>
-          <span v-if="c.unread" class="dot" :aria-label="t('messages.unread')" />
+          <span
+            v-if="c.unread"
+            class="dot"
+            :aria-label="t('messages.unread')"
+          />
           <button
             class="del"
             :aria-label="t('messages.delete')"
             @click.stop="deleting = c"
           >
-            ×
+            <FontAwesomeIcon icon="trash-can" />
           </button>
         </div>
-        <p v-if="c.last_status" class="preview" v-html="sanitizeHtml(c.last_status.content)" />
+        <p
+          v-if="c.last_status"
+          class="preview"
+          v-html="sanitizeHtml(c.last_status.content)"
+        />
       </li>
     </ul>
-    <p v-if="!store.loading && !store.items.length">{{ t("messages.empty") }}</p>
+    <p v-if="!store.loading && !store.items.length">
+      {{ t("messages.empty") }}
+    </p>
     <p v-if="store.error" role="alert">{{ store.error }}</p>
-    <Button v-if="store.nextCursor" :loading="store.loading" @click="store.fetchPage()">
+    <Button
+      v-if="store.nextCursor"
+      :loading="store.loading"
+      @click="store.fetchPage()"
+    >
       {{ t("common.loadMore") }}
     </Button>
-    <Modal v-if="deleting" :title="t('messages.deleteTitle')" @close="deleting = null">
+    <Modal
+      v-if="deleting"
+      :title="t('messages.deleteTitle')"
+      @close="deleting = null"
+    >
       <p>{{ t("messages.deleteBody") }}</p>
-      <Button variant="danger" @click="confirmDelete">{{ t("common.confirm") }}</Button>
+      <Button variant="danger" @click="confirmDelete">{{
+        t("common.confirm")
+      }}</Button>
     </Modal>
   </main>
 </template>

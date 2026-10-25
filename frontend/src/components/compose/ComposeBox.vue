@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
 import PollBuilder from "./PollBuilder.vue";
 import EmojiPicker from "./EmojiPicker.vue";
+import { FontAwesomeIcon } from "@/icons";
 import {
   createStatus,
   editStatus,
@@ -372,8 +373,13 @@ async function submit() {
           :placeholder="t('compose.altPlaceholder')"
           @change="setAlt(m, ($event.target as HTMLInputElement).value)"
         />
-        <button type="button" class="compose__media-x" @click="removeMedia(m)">
-          ✕
+        <button
+          type="button"
+          class="compose__media-x"
+          :aria-label="t('compose.mediaRemove')"
+          @click="removeMedia(m)"
+        >
+          <FontAwesomeIcon icon="xmark" />
         </button>
       </figure>
     </div>
@@ -456,14 +462,14 @@ async function submit() {
         :title="t('compose.sensitive')"
         @click="compose.update({ sensitive: !d.sensitive })"
       >
-        ⚠
+        <FontAwesomeIcon icon="triangle-exclamation" />
       </button>
       <label
         class="compose__ctl compose__file"
         :title="t('compose.addMedia')"
         :aria-label="t('compose.addMedia')"
       >
-        📎
+        <FontAwesomeIcon icon="paperclip" />
         <input
           type="file"
           multiple
@@ -479,9 +485,10 @@ async function submit() {
         :title="t('compose.pollAdd')"
         :aria-label="t('compose.pollAdd')"
         :disabled="media.length > 0"
+        data-testid="poll-toggle"
         @click="togglePoll"
       >
-        📊
+        <FontAwesomeIcon icon="square-poll-vertical" />
       </button>
       <span class="compose__emoji-wrap">
         <button
@@ -491,7 +498,7 @@ async function submit() {
           :aria-label="t('compose.emoji')"
           @click="emojiOpen = !emojiOpen"
         >
-          ☺
+          <FontAwesomeIcon :icon="['far', 'face-smile']" />
         </button>
         <EmojiPicker v-if="emojiOpen" @select="insertEmoji" />
       </span>
@@ -539,6 +546,7 @@ async function submit() {
         data-testid="post"
         @click="submit"
       >
+        <FontAwesomeIcon icon="paper-plane" />
         {{ d.scheduledAt ? t("compose.schedule") : t("compose.post") }}
       </Button>
     </div>

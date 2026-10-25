@@ -10,6 +10,7 @@ import {
   unreblog,
 } from "@/api/statuses";
 import { ApiError } from "@/api/errors";
+import { FontAwesomeIcon } from "@/icons";
 import { useAuthStore } from "@/stores/auth";
 import type { Status } from "@/api/entities";
 
@@ -66,7 +67,8 @@ async function toggle(
       :aria-label="t('status.reply')"
       @click="emit('reply', status)"
     >
-      ↩ <span class="status-footer__count">{{ status.replies_count }}</span>
+      <FontAwesomeIcon icon="reply" />
+      <span class="status-footer__count">{{ status.replies_count }}</span>
     </button>
     <button
       type="button"
@@ -78,7 +80,8 @@ async function toggle(
       data-testid="like"
       @click="toggle('favourited', 'favourites_count', favourite, unfavourite)"
     >
-      ♥ <span class="status-footer__count">{{ status.favourites_count }}</span>
+      <FontAwesomeIcon :icon="status.favourited ? 'heart' : ['far', 'heart']" />
+      <span class="status-footer__count">{{ status.favourites_count }}</span>
     </button>
     <button
       type="button"
@@ -90,7 +93,8 @@ async function toggle(
       data-testid="boost"
       @click="toggle('reblogged', 'reblogs_count', reblog, unreblog)"
     >
-      ↻ <span class="status-footer__count">{{ status.reblogs_count }}</span>
+      <FontAwesomeIcon icon="retweet" />
+      <span class="status-footer__count">{{ status.reblogs_count }}</span>
     </button>
     <button
       type="button"
@@ -99,7 +103,8 @@ async function toggle(
       :disabled="!auth.isLoggedIn"
       @click="emit('quote', status)"
     >
-      ❝ <span class="status-footer__count">{{ status.quotes_count }}</span>
+      <FontAwesomeIcon icon="quote-left" />
+      <span class="status-footer__count">{{ status.quotes_count }}</span>
     </button>
     <button
       type="button"
@@ -109,7 +114,7 @@ async function toggle(
       data-testid="react"
       @click="emit('react', status)"
     >
-      ☺
+      <FontAwesomeIcon :icon="['far', 'face-smile']" />
     </button>
     <button
       type="button"
@@ -121,7 +126,9 @@ async function toggle(
       data-testid="bookmark"
       @click="toggle('bookmarked', null, bookmark, unbookmark)"
     >
-      🔖
+      <FontAwesomeIcon
+        :icon="status.bookmarked ? 'bookmark' : ['far', 'bookmark']"
+      />
     </button>
   </footer>
 </template>

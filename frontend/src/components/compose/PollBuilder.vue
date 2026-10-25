@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
+import { FontAwesomeIcon } from "@/icons";
 import type { PollDraft } from "@/stores/compose";
 
 const props = defineProps<{
@@ -58,7 +59,7 @@ function setOption(i: number, value: string) {
       class="poll__add"
       @click="patch({ options: [...poll.options, ''] })"
     >
-      +
+      <FontAwesomeIcon icon="plus" />
     </button>
     <div class="poll__row">
       <label>

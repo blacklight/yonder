@@ -230,7 +230,8 @@
     "overLimit": "Over the character limit",
     "editing": "Editing post",
     "discardText": "Your current draft will be replaced.",
-    "mediaLimit": "At most {n} attachments are allowed."
+    "mediaLimit": "At most {n} attachments are allowed.",
+    "mediaRemove": "Remove media"
   },
   "pages": {
     "comingSoon": "This page lands in a later epic."

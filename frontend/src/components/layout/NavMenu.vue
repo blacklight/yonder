@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import type { IconProp } from "@fortawesome/fontawesome-svg-core";
+import { FontAwesomeIcon } from "@/icons";
+
 export interface NavItem {
   id: string;
   label: string;
   /** Route target; absent → `action` semantics (emits `select`). */
   to?: string;
+  icon?: IconProp;
   badge?: number;
 }
 
@@ -21,6 +25,12 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
           class="navmenu__link"
           @click="emit('select', item)"
         >
+          <FontAwesomeIcon
+            v-if="item.icon"
+            :icon="item.icon"
+            class="navmenu__icon"
+            fixed-width
+          />
           <span class="navmenu__label">{{ item.label }}</span>
           <span
             v-if="item.badge"
@@ -35,6 +45,12 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
           class="navmenu__link navmenu__button"
           @click="emit('select', item)"
         >
+          <FontAwesomeIcon
+            v-if="item.icon"
+            :icon="item.icon"
+            class="navmenu__icon"
+            fixed-width
+          />
           <span class="navmenu__label">{{ item.label }}</span>
           <span v-if="item.badge" class="navmenu__badge">{{ item.badge }}</span>
         </button>
@@ -55,7 +71,6 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
 .navmenu__link {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
   padding: var(--space-2) var(--space-3);
@@ -76,6 +91,9 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
   color: var(--accent-link);
   font-weight: 600;
   background: var(--bg-active, var(--bg));
+}
+.navmenu__label {
+  flex: 1;
 }
 .navmenu__badge {
   min-width: 1.5em;

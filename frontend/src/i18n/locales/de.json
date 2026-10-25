@@ -230,7 +230,8 @@
     "overLimit": "Über dem Zeichenlimit",
     "editing": "Beitrag bearbeiten",
     "discardText": "Dein aktueller Entwurf wird ersetzt.",
-    "mediaLimit": "Maximal {n} Anhänge sind erlaubt."
+    "mediaLimit": "Maximal {n} Anhänge sind erlaubt.",
+    "mediaRemove": "Medien entfernen"
   },
   "pages": {
     "comingSoon": "Diese Seite kommt in einem späteren Epic."

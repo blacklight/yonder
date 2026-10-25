@@ -28,6 +28,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
+import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
@@ -40,7 +41,9 @@ const compose = useComposeStore();
 
 const account = ref<Account | null>(null);
 const rel = ref<Relationship | null>(null);
-const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">("loading");
+const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">(
+  "loading",
+);
 const actionError = ref<string | null>(null);
 const statuses = ref<Status[]>([]);
 const nextCursor = ref<string | undefined>();
@@ -55,7 +58,9 @@ const MAX_HOPS = 5;
 
 const bio = computed(() => sanitizeHtml(account.value?.note ?? ""));
 const headerUrl = computed(() => safeHttpUrl(account.value?.header));
-const avatarUrl = computed(() => safeHttpUrl(account.value?.avatar) ?? undefined);
+const avatarUrl = computed(
+  () => safeHttpUrl(account.value?.avatar) ?? undefined,
+);
 const isOwn = computed(() => auth.account?.id === account.value?.id);
 const handle = computed(() => {
   const a = account.value;
@@ -66,33 +71,65 @@ const menuItems = computed<MenuItem[]>(() => {
   const a = account.value;
   if (!a || r?.blocked_by) return [];
   const items: MenuItem[] = [
-    { id: "mention", label: t("profile.mention") },
-    { id: "dm", label: t("profile.dm") },
-    { id: "note", label: t("profile.note") },
-    { id: "lists", label: t("profile.lists") },
+    { id: "mention", label: t("profile.mention"), icon: "at" },
+    { id: "dm", label: t("profile.dm"), icon: "envelope" },
+    { id: "note", label: t("profile.note"), icon: "note-sticky" },
+    { id: "lists", label: t("profile.lists"), icon: "list-ul" },
   ];
   if (r?.following)
     items.push({
       id: "hide-boosts",
-      label: r.showing_reblogs === false ? t("profile.showBoosts") : t("profile.hideBoosts"),
+      label:
+        r.showing_reblogs === false
+          ? t("profile.showBoosts")
+          : t("profile.hideBoosts"),
+      icon: "retweet",
     });
   items.push(
-    { id: "mute", label: r?.muting ? t("profile.unmute") : t("profile.mute") },
-    { id: "block", label: r?.blocking ? t("profile.unblock") : t("profile.block") },
+    {
+      id: "mute",
+      label: r?.muting ? t("profile.unmute") : t("profile.mute"),
+      icon: "volume-xmark",
+    },
+    {
+      id: "block",
+      label: r?.blocking ? t("profile.unblock") : t("profile.block"),
+      icon: "ban",
+    },
   );
   if (a.acct.includes("@"))
-    items.push({ id: "domain", label: t("profile.blockDomain") });
-  items.push({ id: "report", label: t("profile.report") });
+    items.push({
+      id: "domain",
+      label: t("profile.blockDomain"),
+      icon: "globe",
+    });
+  items.push({ id: "report", label: t("profile.report"), icon: "flag" });
   if (auth.isStaff && !isOwn.value) {
     items.push(
-      { id: "admin-limit", label: t("profile.adminLimit") },
-      { id: "admin-suspend", label: t("profile.adminSuspend") },
+      {
+        id: "admin-limit",
+        label: t("profile.adminLimit"),
+        icon: "comment-slash",
+      },
+      {
+        id: "admin-suspend",
+        label: t("profile.adminSuspend"),
+        icon: "user-slash",
+      },
     );
   }
   if (auth.isAdmin && !isOwn.value) {
     items.push(
-      { id: "admin-delete", label: t("profile.adminDelete") },
-      { id: "admin-mod", label: t("profile.adminMakeMod") },
+      {
+        id: "admin-delete",
+        label: t("profile.adminDelete"),
+        icon: "user-xmark",
+      },
+      {
+        id: "admin-mod",
+        label: t("profile.adminMakeMod"),
+        icon: "user-shield",
+      },
     );
   }
   return items;
@@ -102,13 +139,17 @@ async function loadStatuses(more = false) {
   if (!account.value) return;
   const max_id =
     more && nextCursor.value
-      ? new URL(nextCursor.value, location.origin).searchParams.get("max_id") ?? undefined
+      ? (new URL(nextCursor.value, location.origin).searchParams.get(
+          "max_id",
+        ) ?? undefined)
       : undefined;
   const page = await accountStatuses(account.value.id, {
     max_id,
     only_media: tab.value === "media" || undefined,
-    exclude_replies: tab.value === "posts" && !showReplies.value ? true : undefined,
-    exclude_reblogs: tab.value === "posts" && !showBoosts.value ? true : undefined,
+    exclude_replies:
+      tab.value === "posts" && !showReplies.value ? true : undefined,
+    exclude_reblogs:
+      tab.value === "posts" && !showBoosts.value ? true : undefined,
   });
   statuses.value = more ? [...statuses.value, ...page.items] : page.items;
   nextCursor.value = page.next;
@@ -209,7 +250,15 @@ async function toggleSubscribe() {
   });
 }
 
-const DESTRUCTIVE = new Set(["block", "domain", "report", "admin-limit", "admin-suspend", "admin-delete", "admin-mod"]);
+const DESTRUCTIVE = new Set([
+  "block",
+  "domain",
+  "report",
+  "admin-limit",
+  "admin-suspend",
+  "admin-delete",
+  "admin-mod",
+]);
 
 async function onMenu(item: MenuItem) {
   if (DESTRUCTIVE.has(item.id)) {
@@ -224,11 +273,27 @@ async function run(id: string) {
   if (!a) return;
   await tryRun(async () => {
     switch (id) {
-      case "mention": compose.openMention(a.acct); router.push("/compose"); break;
-      case "dm": compose.openDirect(a.acct); router.push("/compose"); break;
-      case "note": noteText.value = rel.value?.note ?? ""; noteOpen.value = true; break;
-      case "lists": await toggleListMembership(); break;
-      case "hide-boosts": await follow(a.id, { reblogs: !(rel.value?.showing_reblogs !== false) }); await refreshRel(); break;
+      case "mention":
+        compose.openMention(a.acct);
+        router.push("/compose");
+        break;
+      case "dm":
+        compose.openDirect(a.acct);
+        router.push("/compose");
+        break;
+      case "note":
+        noteText.value = rel.value?.note ?? "";
+        noteOpen.value = true;
+        break;
+      case "lists":
+        await toggleListMembership();
+        break;
+      case "hide-boosts":
+        await follow(a.id, {
+          reblogs: !(rel.value?.showing_reblogs !== false),
+        });
+        await refreshRel();
+        break;
       case "mute":
         if (rel.value?.muting) await unmuteAccount(a.id);
         else await muteAccount(a.id);
@@ -249,10 +314,18 @@ async function run(id: string) {
       case "report":
         await fileReport({ account_id: Number(a.id) });
         break;
-      case "admin-limit": await adminAccountAction(a.id, { type: "limit" }); break;
-      case "admin-suspend": await adminAccountAction(a.id, { type: "suspend" }); break;
-      case "admin-delete": await adminAccountAction(a.id, { type: "delete" }); break;
-      case "admin-mod": await setRole(a.id, "moderator"); break;
+      case "admin-limit":
+        await adminAccountAction(a.id, { type: "limit" });
+        break;
+      case "admin-suspend":
+        await adminAccountAction(a.id, { type: "suspend" });
+        break;
+      case "admin-delete":
+        await adminAccountAction(a.id, { type: "delete" });
+        break;
+      case "admin-mod":
+        await setRole(a.id, "moderator");
+        break;
     }
   });
 }
@@ -302,7 +375,9 @@ watch([tab, showReplies, showBoosts], () => {
   <main class="page profile">
     <p v-if="state === 'loading'" aria-busy="true">{{ t("common.loading") }}</p>
     <p v-else-if="state === 'not-found'">{{ t("profile.notFound") }}</p>
-    <p v-else-if="state === 'error'" role="alert">{{ t("profile.loadError") }}</p>
+    <p v-else-if="state === 'error'" role="alert">
+      {{ t("profile.loadError") }}
+    </p>
     <div v-else-if="state === 'sign-in'" class="signin-prompt">
       <p>{{ t("profile.signInToView") }}</p>
       <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
@@ -310,20 +385,39 @@ watch([tab, showReplies, showBoosts], () => {
     <template v-else-if="account">
       <header class="profile-header">
         <img v-if="headerUrl" :src="headerUrl" class="banner" alt="" />
-        <Avatar :src="avatarUrl" :name="account.display_name || account.acct" size="lg" />
+        <Avatar
+          :src="avatarUrl"
+          :name="account.display_name || account.acct"
+          size="lg"
+        />
         <h1>{{ account.display_name || account.username }}</h1>
         <p class="handle">{{ handle }}</p>
-        <p v-if="rel?.followed_by" class="follows-you">{{ t("profile.followsYou") }}</p>
-        <p v-if="rel?.blocked_by" class="blocked">{{ t("profile.blockedYou") }}</p>
+        <p v-if="rel?.followed_by" class="follows-you">
+          {{ t("profile.followsYou") }}
+        </p>
+        <p v-if="rel?.blocked_by" class="blocked">
+          {{ t("profile.blockedYou") }}
+        </p>
         <div class="counters">
-          <span>{{ t("profile.followers", { count: account.followers_count }) }}</span>
-          <span>{{ t("profile.following", { count: account.following_count }) }}</span>
-          <span>{{ t("profile.statuses", { count: account.statuses_count }) }}</span>
+          <span>{{
+            t("profile.followers", { count: account.followers_count })
+          }}</span>
+          <span>{{
+            t("profile.following", { count: account.following_count })
+          }}</span>
+          <span>{{
+            t("profile.statuses", { count: account.statuses_count })
+          }}</span>
         </div>
         <div v-if="!rel?.blocked_by" class="actions">
-          <router-link v-if="isOwn" to="/settings/profile">{{ t("profile.edit") }}</router-link>
+          <router-link v-if="isOwn" to="/settings/profile">{{
+            t("profile.edit")
+          }}</router-link>
           <template v-else-if="auth.isLoggedIn">
             <Button @click="toggleFollow">
+              <FontAwesomeIcon
+                :icon="rel?.following ? 'user-check' : 'user-plus'"
+              />
               {{
                 rel?.following
                   ? t("profile.unfollow")
@@ -332,8 +426,16 @@ watch([tab, showReplies, showBoosts], () => {
                     : t("profile.follow")
               }}
             </Button>
-            <Button v-if="rel?.following" variant="secondary" @click="toggleSubscribe">
-              {{ rel.subscribing || rel.notifying ? t("profile.unsubscribe") : t("profile.subscribe") }}
+            <Button
+              v-if="rel?.following"
+              variant="secondary"
+              @click="toggleSubscribe"
+            >
+              {{
+                rel.subscribing || rel.notifying
+                  ? t("profile.unsubscribe")
+                  : t("profile.subscribe")
+              }}
             </Button>
           </template>
           <Menu
@@ -347,9 +449,21 @@ watch([tab, showReplies, showBoosts], () => {
         <div class="bio" v-html="bio" />
         <dl v-if="account.fields.length" class="fields">
           <template v-for="f in account.fields" :key="f.name">
-            <dt>{{ f.name }} <span v-if="f.verified_at" :title="t('profile.verified')">✓</span></dt>
+            <dt>
+              {{ f.name }}
+              <FontAwesomeIcon
+                v-if="f.verified_at"
+                icon="circle-check"
+                class="verified"
+                :title="t('profile.verified')"
+              />
+            </dt>
             <dd v-if="safeHttpUrl(f.value)">
-              <a :href="safeHttpUrl(f.value)!" target="_blank" rel="nofollow noopener noreferrer">
+              <a
+                :href="safeHttpUrl(f.value)!"
+                target="_blank"
+                rel="nofollow noopener noreferrer"
+              >
                 {{ f.value }}
               </a>
             </dd>
@@ -358,15 +472,21 @@ watch([tab, showReplies, showBoosts], () => {
         </dl>
       </header>
       <nav class="tabs">
-        <button :aria-pressed="tab === 'posts'" @click="tab = 'posts'">{{ t("profile.posts") }}</button>
-        <button :aria-pressed="tab === 'media'" @click="tab = 'media'">{{ t("profile.media") }}</button>
+        <button :aria-pressed="tab === 'posts'" @click="tab = 'posts'">
+          {{ t("profile.posts") }}
+        </button>
+        <button :aria-pressed="tab === 'media'" @click="tab = 'media'">
+          {{ t("profile.media") }}
+        </button>
       </nav>
       <div v-if="tab === 'posts'" class="toggles">
         <label
-          ><input v-model="showReplies" type="checkbox" /> {{ t("profile.showReplies") }}</label
+          ><input v-model="showReplies" type="checkbox" />
+          {{ t("profile.showReplies") }}</label
         >
         <label
-          ><input v-model="showBoosts" type="checkbox" /> {{ t("profile.showBoostsTab") }}</label
+          ><input v-model="showBoosts" type="checkbox" />
+          {{ t("profile.showBoostsTab") }}</label
         >
       </div>
       <StatusCard v-for="s in statuses" :key="s.id" :status="s" />
@@ -380,11 +500,23 @@ watch([tab, showReplies, showBoosts], () => {
       @close="confirmAction = null"
     >
       <p>{{ confirmAction.label }}</p>
-      <Button variant="danger" @click="confirmRun">{{ t("common.confirm") }}</Button>
+      <Button variant="danger" @click="confirmRun">{{
+        t("common.confirm")
+      }}</Button>
     </Modal>
-    <Modal v-if="noteOpen" :title="t('profile.noteTitle')" @close="noteOpen = false">
+    <Modal
+      v-if="noteOpen"
+      :title="t('profile.noteTitle')"
+      @close="noteOpen = false"
+    >
       <textarea v-model="noteText" rows="3" />
       <Button @click="saveNote">{{ t("common.save") }}</Button>
     </Modal>
   </main>
 </template>
+
+<style scoped>
+.verified {
+  color: var(--accent-link);
+}
+</style>

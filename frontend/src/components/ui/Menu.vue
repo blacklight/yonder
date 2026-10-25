@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { nextTick, onUnmounted, ref, useId, watch } from "vue";
+import type { IconProp } from "@fortawesome/fontawesome-svg-core";
+import { FontAwesomeIcon } from "@/icons";
 
 export interface MenuItem {
   id: string;
   label: string;
+  icon?: IconProp;
   disabled?: boolean;
 }
 
@@ -100,7 +103,7 @@ onUnmounted(() =>
       @keydown.down.prevent="openMenu('down')"
       @keydown.up.prevent="openMenu('up')"
     >
-      <slot name="trigger">{{ label }}</slot>
+      <slot name="trigger"><FontAwesomeIcon icon="ellipsis" /></slot>
     </button>
     <ul
       v-if="open"
@@ -128,6 +131,12 @@ onUnmounted(() =>
         @click="choose(item, i)"
         @mouseenter="activeIndex = i"
       >
+        <FontAwesomeIcon
+          v-if="item.icon"
+          :icon="item.icon"
+          class="menu__icon"
+          fixed-width
+        />
         {{ item.label }}
       </li>
     </ul>
@@ -160,6 +169,10 @@ onUnmounted(() =>
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
+}
+.menu__icon {
+  margin-right: var(--space-2);
+  color: var(--text-muted);
 }
 .menu__item--active {
   background: var(--accent-soft);

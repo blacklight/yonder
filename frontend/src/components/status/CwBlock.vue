@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { FontAwesomeIcon } from "@/icons";
 import { useSettingsStore } from "@/stores/settings";
 
 const props = defineProps<{
@@ -36,6 +37,7 @@ const label = computed(() =>
         :aria-expanded="expanded"
         @click="toggled = !expanded"
       >
+        <FontAwesomeIcon :icon="expanded ? 'eye-slash' : 'eye'" />
         {{ label }}
       </button>
     </div>
@@ -60,6 +62,9 @@ const label = computed(() =>
   font-weight: 600;
 }
 .cw__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border: 1px solid var(--border);
   background: var(--bg-raised);
   border-radius: var(--radius-sm);

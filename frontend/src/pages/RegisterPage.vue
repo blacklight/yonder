@@ -6,6 +6,7 @@ import AppLayout from "@/components/layout/AppLayout.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 import { register } from "@/api/accounts";
 import { getInstance } from "@/api/instance";
@@ -91,7 +92,10 @@ async function submit() {
       password: password.value,
       agreement: true,
       locale: locale.value,
-      reason: approvalRequired.value && reason.value.trim() ? reason.value.trim() : undefined,
+      reason:
+        approvalRequired.value && reason.value.trim()
+          ? reason.value.trim()
+          : undefined,
       invite_code: invite.value.trim() || undefined,
     });
     const pendingApproval = approvalRequired.value && !invite.value.trim();
@@ -139,68 +143,71 @@ async function submit() {
           {{ registrations.message }}
         </p>
         <form class="register__form" @submit.prevent="submit">
-        <p v-if="closed" class="register__closed" role="note">
-          {{ t("register.closedInvite") }}
-        </p>
-        <Input
-          v-model="invite"
-          :label="t('register.inviteCode')"
-          :disabled="pending"
-        />
-        <template v-if="!closed || invite.trim()">
+          <p v-if="closed" class="register__closed" role="note">
+            {{ t("register.closedInvite") }}
+          </p>
           <Input
-            v-model="username"
-            :label="t('register.username')"
+            v-model="invite"
+            :label="t('register.inviteCode')"
             :disabled="pending"
-            autocomplete="username"
-            required
           />
-          <Input
-            v-model="email"
-            :label="t('register.email')"
-            :disabled="pending"
-            type="email"
-            autocomplete="email"
-            required
-          />
-          <Input
-            v-model="password"
-            :label="t('register.password')"
-            :disabled="pending"
-            type="password"
-            autocomplete="new-password"
-            required
-          />
-          <Input
-            v-model="confirm"
-            :label="t('register.confirmPassword')"
-            :disabled="pending"
-            type="password"
-            autocomplete="new-password"
-            required
-          />
-          <Input
-            v-if="approvalRequired"
-            v-model="reason"
-            :label="t('register.reason')"
-            :disabled="pending"
-            required
-          />
-          <label class="register__agreement">
-            <input v-model="agreement" type="checkbox" :disabled="pending" />
-            {{ t("register.agreement") }}
-          </label>
-          <p v-if="error" class="register__error" role="alert">{{ error }}</p>
-          <Button type="submit" :loading="pending" :disabled="pending">
-            {{ t("register.submit") }}
-          </Button>
-        </template>
-        <p v-else-if="error" class="register__error" role="alert">{{ error }}</p>
-        <p class="register__alt">
-          {{ t("register.haveAccount") }}
-          <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
-        </p>
-      </form>
+          <template v-if="!closed || invite.trim()">
+            <Input
+              v-model="username"
+              :label="t('register.username')"
+              :disabled="pending"
+              autocomplete="username"
+              required
+            />
+            <Input
+              v-model="email"
+              :label="t('register.email')"
+              :disabled="pending"
+              type="email"
+              autocomplete="email"
+              required
+            />
+            <Input
+              v-model="password"
+              :label="t('register.password')"
+              :disabled="pending"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+            <Input
+              v-model="confirm"
+              :label="t('register.confirmPassword')"
+              :disabled="pending"
+              type="password"
+              autocomplete="new-password"
+              required
+            />
+            <Input
+              v-if="approvalRequired"
+              v-model="reason"
+              :label="t('register.reason')"
+              :disabled="pending"
+              required
+            />
+            <label class="register__agreement">
+              <input v-model="agreement" type="checkbox" :disabled="pending" />
+              {{ t("register.agreement") }}
+            </label>
+            <p v-if="error" class="register__error" role="alert">{{ error }}</p>
+            <Button type="submit" :loading="pending" :disabled="pending">
+              <FontAwesomeIcon icon="user-plus" />
+              {{ t("register.submit") }}
+            </Button>
+          </template>
+          <p v-else-if="error" class="register__error" role="alert">
+            {{ error }}
+          </p>
+          <p class="register__alt">
+            {{ t("register.haveAccount") }}
+            <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
+          </p>
+        </form>
       </template>
     </Card>
   </AppLayout>

@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useNotificationsStore, FILTERS, type NotificationFilter } from "@/stores/notifications";
+import {
+  useNotificationsStore,
+  FILTERS,
+  type NotificationFilter,
+} from "@/stores/notifications";
 import { useAuthStore } from "@/stores/auth";
-import { authorizeFollowRequest, rejectFollowRequest } from "@/api/followRequests";
+import {
+  authorizeFollowRequest,
+  rejectFollowRequest,
+} from "@/api/followRequests";
 import type { Notification } from "@/api/entities";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 
 const { t } = useI18n();
@@ -77,25 +85,41 @@ onMounted(() => store.fetchPage(true));
         <p class="notif-label">{{ label(n) }}</p>
         <StatusCard v-if="n.status" :status="n.status" />
         <div v-if="n.type === 'follow_request' && n.account" class="fr-actions">
-          <Button size="sm" @click="act(n, 'authorize')">{{ t("notifications.accept") }}</Button>
+          <Button size="sm" @click="act(n, 'authorize')">{{
+            t("notifications.accept")
+          }}</Button>
           <Button size="sm" variant="secondary" @click="act(n, 'reject')">
             {{ t("notifications.reject") }}
           </Button>
         </div>
-        <button class="dismiss" :aria-label="t('notifications.dismiss')" @click="store.dismiss(n.id)">
-          ×
+        <button
+          class="dismiss"
+          :aria-label="t('notifications.dismiss')"
+          @click="store.dismiss(n.id)"
+        >
+          <FontAwesomeIcon icon="xmark" />
         </button>
       </li>
     </ul>
     <p v-if="actionError" role="alert">{{ actionError }}</p>
     <p v-if="!store.loading && !store.items.length">{{ t("lists.empty") }}</p>
     <p v-if="store.error" role="alert">{{ store.error }}</p>
-    <Button v-if="store.nextCursor" :loading="store.loading" @click="store.fetchPage()">
+    <Button
+      v-if="store.nextCursor"
+      :loading="store.loading"
+      @click="store.fetchPage()"
+    >
       {{ t("common.loadMore") }}
     </Button>
-    <Modal v-if="confirming" :title="t('notifications.clearTitle')" @close="confirming = false">
+    <Modal
+      v-if="confirming"
+      :title="t('notifications.clearTitle')"
+      @close="confirming = false"
+    >
       <p>{{ t("notifications.clearBody") }}</p>
-      <Button variant="danger" @click="clearAll">{{ t("common.confirm") }}</Button>
+      <Button variant="danger" @click="clearAll">{{
+        t("common.confirm")
+      }}</Button>
     </Modal>
   </main>
 </template>

@@ -6,6 +6,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import NavMenu, { type NavItem } from "./NavMenu.vue";
 import MobileMenu from "./MobileMenu.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
 import { getInstance } from "@/api/instance";
 import { useAuthStore } from "@/stores/auth";
@@ -20,7 +21,7 @@ const auth = useAuthStore();
 const compose = useComposeStore();
 const notifications = useNotificationsStore();
 const conversations = useConversationsStore();
-const { toggle } = useTheme();
+const { resolvedMode, toggle } = useTheme();
 
 const locales = [
   { code: "en", label: "English" },
@@ -70,13 +71,32 @@ interface MenuEntry extends NavItem {
 // The data-driven menu — visibility follows auth/role; items without
 // `to` carry a `run` action (direct-message shortcut, sign out).
 const menuSource = computed<MenuEntry[]>(() => [
-  { id: "home", label: t("nav.home"), to: "/home", visible: auth.isLoggedIn },
-  { id: "local", label: t("nav.local"), to: "/local", visible: true },
-  { id: "explore", label: t("nav.explore"), to: "/explore", visible: true },
+  {
+    id: "home",
+    label: t("nav.home"),
+    to: "/home",
+    icon: "house",
+    visible: auth.isLoggedIn,
+  },
+  {
+    id: "local",
+    label: t("nav.local"),
+    to: "/local",
+    icon: "users",
+    visible: true,
+  },
+  {
+    id: "explore",
+    label: t("nav.explore"),
+    to: "/explore",
+    icon: "compass",
+    visible: true,
+  },
   {
     id: "notifications",
     label: t("nav.notifications"),
     to: "/notifications",
+    icon: "bell",
     badge: notifications.unread || undefined,
     visible: auth.isLoggedIn,
   },
@@ -84,11 +104,13 @@ const menuSource = computed<MenuEntry[]>(() => [
     id: "messages",
     label: t("nav.messages"),
     to: "/messages",
+    icon: "comments",
     visible: auth.isLoggedIn,
   },
   {
     id: "direct",
     label: t("nav.direct"),
+    icon: "envelope",
     visible: auth.isLoggedIn,
     run: () => {
       compose.openDirect();
@@ -99,45 +121,76 @@ const menuSource = computed<MenuEntry[]>(() => [
     id: "favourites",
     label: t("nav.favourites"),
     to: "/favourites",
+    icon: "star",
     visible: auth.isLoggedIn,
   },
   {
     id: "bookmarks",
     label: t("nav.bookmarks"),
     to: "/bookmarks",
+    icon: "bookmark",
     visible: auth.isLoggedIn,
   },
   {
     id: "lists",
     label: t("nav.lists"),
     to: "/lists",
+    icon: "list-ul",
     visible: auth.isLoggedIn,
   },
-  { id: "hashtags", label: t("nav.hashtags"), to: "/hashtags", visible: true },
+  {
+    id: "hashtags",
+    label: t("nav.hashtags"),
+    to: "/hashtags",
+    icon: "hashtag",
+    visible: true,
+  },
   {
     id: "moderation",
     label: t("nav.moderation"),
     to: "/moderation",
+    icon: "gavel",
     visible: auth.isStaff,
   },
-  { id: "admin", label: t("nav.admin"), to: "/admin", visible: auth.isAdmin },
-  { id: "about", label: t("nav.about"), to: "/about", visible: true },
-  { id: "settings", label: t("nav.settings"), to: "/settings", visible: true },
+  {
+    id: "admin",
+    label: t("nav.admin"),
+    to: "/admin",
+    icon: "toolbox",
+    visible: auth.isAdmin,
+  },
+  {
+    id: "about",
+    label: t("nav.about"),
+    to: "/about",
+    icon: "circle-info",
+    visible: true,
+  },
+  {
+    id: "settings",
+    label: t("nav.settings"),
+    to: "/settings",
+    icon: "gear",
+    visible: true,
+  },
   {
     id: "sign-in",
     label: t("nav.signIn"),
     to: "/sign-in",
+    icon: "right-to-bracket",
     visible: !auth.isLoggedIn,
   },
   {
     id: "register",
     label: t("nav.signUp"),
     to: "/register",
+    icon: "user-plus",
     visible: !auth.isLoggedIn,
   },
   {
     id: "sign-out",
     label: t("auth.signOut"),
+    icon: "right-from-bracket",
     visible: auth.isLoggedIn,
     run: () => {
       notifications.stop();
@@ -153,7 +206,13 @@ const menuSource = computed<MenuEntry[]>(() => [
 const menuItems = computed<NavItem[]>(() =>
   menuSource.value
     .filter((i) => i.visible)
-    .map((i) => ({ id: i.id, label: i.label, to: i.to, badge: i.badge })),
+    .map((i) => ({
+      id: i.id,
+      label: i.label,
+      to: i.to,
+      icon: i.icon,
+      badge: i.badge,
+    })),
 );
 
 // The mobile drawer gets a compose entry — the big sidebar button is
@@ -161,7 +220,12 @@ const menuItems = computed<NavItem[]>(() =>
 const mobileItems = computed<NavItem[]>(() =>
   auth.isLoggedIn
     ? [
-        { id: "compose", label: t("nav.compose"), to: "/compose" },
+        {
+          id: "compose",
+          label: t("nav.compose"),
+          to: "/compose",
+          icon: "pen-to-square",
+        },
         ...menuItems.value,
       ]
     : menuItems.value,
@@ -192,6 +256,7 @@ function search() {
       </router-link>
 
       <form class="layout__search" role="search" @submit.prevent="search">
+        <FontAwesomeIcon icon="magnifying-glass" class="layout__search-icon" />
         <input
           v-model="searchQuery"
           type="search"
@@ -205,7 +270,9 @@ function search() {
         v-if="auth.isLoggedIn"
         class="layout__compose"
         @click="router.push('/compose')"
-        >{{ t("nav.compose") }}</Button
+      >
+        <FontAwesomeIcon icon="pen-to-square" />
+        {{ t("nav.compose") }}</Button
       >
 
       <NavMenu :items="menuItems" @select="onSelect" />
@@ -235,9 +302,10 @@ function search() {
               {{ l.label }}
             </option>
           </select>
-          <Button variant="secondary" size="sm" @click="toggle">{{
-            t("settings.theme")
-          }}</Button>
+          <Button variant="secondary" size="sm" @click="toggle">
+            <FontAwesomeIcon :icon="resolvedMode === 'dark' ? 'sun' : 'moon'" />
+            {{ t("settings.theme") }}</Button
+          >
         </div>
       </div>
     </aside>
@@ -250,7 +318,7 @@ function search() {
         :aria-expanded="menuOpen"
         @click="menuOpen = true"
       >
-        ☰
+        <FontAwesomeIcon icon="bars" />
       </button>
       <router-link to="/" class="layout__topbar-title">
         {{ instanceTitle ?? t("app.name") }}
@@ -281,9 +349,10 @@ function search() {
             {{ l.label }}
           </option>
         </select>
-        <Button variant="secondary" size="sm" @click="toggle">{{
-          t("settings.theme")
-        }}</Button>
+        <Button variant="secondary" size="sm" @click="toggle">
+          <FontAwesomeIcon :icon="resolvedMode === 'dark' ? 'sun' : 'moon'" />
+          {{ t("settings.theme") }}</Button
+        >
       </div>
     </MobileMenu>
 
@@ -371,9 +440,21 @@ function search() {
   width: 28px;
   height: 28px;
 }
+.layout__search {
+  position: relative;
+}
+.layout__search-icon {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
 .layout__search-input {
   width: 100%;
   padding: var(--space-2) var(--space-3);
+  padding-left: calc(var(--space-3) + 1.5em);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);

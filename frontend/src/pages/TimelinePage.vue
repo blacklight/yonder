@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import StatusCard from "@/components/status/StatusCard.vue";
 import Button from "@/components/ui/Button.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { useTimelineStore, type TimelineKey } from "@/stores/timeline";
 import { useStreamingStore } from "@/stores/streaming";
 import type { Status } from "@/api/entities";
@@ -72,6 +73,7 @@ onBeforeUnmount(() => {
       data-testid="pending"
       @click="timelines.flushPending(timeline)"
     >
+      <FontAwesomeIcon icon="arrow-up" />
       {{ t("timeline.newPosts", { count: timelines.pendingCount(timeline) }) }}
     </button>
 

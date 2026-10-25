@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { FontAwesomeIcon } from "@/icons";
 
 const props = defineProps<{ title: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -65,7 +66,7 @@ onBeforeUnmount(() => {
             :aria-label="t('ui.close')"
             @click="emit('close')"
           >
-            ×
+            <FontAwesomeIcon icon="xmark" />
           </button>
         </header>
         <div class="modal__body"><slot /></div>

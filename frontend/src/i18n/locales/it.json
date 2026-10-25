@@ -230,7 +230,8 @@
     "overLimit": "Oltre il limite di caratteri",
     "editing": "Modifica post",
     "discardText": "La tua bozza attuale verrà sostituita.",
-    "mediaLimit": "Sono consentiti al massimo {n} allegati."
+    "mediaLimit": "Sono consentiti al massimo {n} allegati.",
+    "mediaRemove": "Rimuovi media"
   },
   "pages": {
     "comingSoon": "Questa pagina arriverà in un'epica successiva."

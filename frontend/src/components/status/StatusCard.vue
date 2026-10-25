@@ -15,6 +15,7 @@ import ReactionPicker from "./ReactionPicker.vue";
 import { sanitizeHtml } from "@/utils/sanitize";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
+import { FontAwesomeIcon } from "@/icons";
 import { deleteStatus, react, unreact } from "@/api/statuses";
 import { blockAccount, muteAccount } from "@/api/accounts";
 import { blockDomain } from "@/api/domains";
@@ -91,55 +92,81 @@ function fail(e: unknown) {
 
 const menuItems = computed<MenuItem[]>(() => {
   const items: MenuItem[] = [
-    { id: "copy", label: t("status.copyLink") },
-    { id: "open", label: t("status.openTab") },
+    { id: "copy", label: t("status.copyLink"), icon: "link" },
+    {
+      id: "open",
+      label: t("status.openTab"),
+      icon: "arrow-up-right-from-square",
+    },
   ];
   if (auth.isLoggedIn) {
     items.push(
-      { id: "mention", label: t("status.mention") },
-      { id: "dm", label: t("status.dm") },
+      { id: "mention", label: t("status.mention"), icon: "at" },
+      { id: "dm", label: t("status.dm"), icon: "envelope" },
       {
         id: "mute",
         label: t("status.mute", { user: `@${account.value.acct}` }),
+        icon: "volume-xmark",
       },
       {
         id: "block",
         label: t("status.block", { user: `@${account.value.acct}` }),
+        icon: "ban",
       },
       {
         id: "report",
         label: t("status.report", { user: `@${account.value.acct}` }),
+        icon: "flag",
       },
     );
     if (remoteDomain.value)
       items.push({
         id: "block-domain",
         label: t("status.blockDomain", { domain: remoteDomain.value }),
+        icon: "globe",
       });
     if (auth.account?.id === account.value.id) {
       items.push(
-        { id: "edit", label: t("status.edit") },
-        { id: "delete", label: t("status.delete") },
+        { id: "edit", label: t("status.edit"), icon: "pen" },
+        { id: "delete", label: t("status.delete"), icon: "trash-can" },
       );
     }
     if (auth.isStaff) {
       items.push(
-        { id: "mark-sensitive", label: t("status.adminMarkSensitive") },
-        { id: "admin-delete", label: t("status.adminDeleteInstance") },
+        {
+          id: "mark-sensitive",
+          label: t("status.adminMarkSensitive"),
+          icon: "eye-slash",
+        },
+        {
+          id: "admin-delete",
+          label: t("status.adminDeleteInstance"),
+          icon: "trash-can",
+        },
       );
       if (!remoteDomain.value)
         items.push({
           id: "admin-delete-profile",
           label: t("status.adminDeleteProfile"),
+          icon: "user-xmark",
         });
       items.push(
-        { id: "admin-limit", label: t("status.adminLimit") },
-        { id: "admin-suspend", label: t("status.adminSuspend") },
+        {
+          id: "admin-limit",
+          label: t("status.adminLimit"),
+          icon: "comment-slash",
+        },
+        {
+          id: "admin-suspend",
+          label: t("status.adminSuspend"),
+          icon: "user-slash",
+        },
       );
       if (auth.isAdmin)
         items.push({
           id: "admin-delete-user",
           label: t("status.adminDeleteUser"),
+          icon: "user-minus",
         });
     }
   }
@@ -260,7 +287,7 @@ async function onReact(emoji: string) {
 <template>
   <article class="status-card" :data-status-id="status.id">
     <p v-if="booster" class="status-card__boost">
-      ↻
+      <FontAwesomeIcon icon="retweet" />
       {{
         t("status.boosted", { name: booster.display_name || booster.username })
       }}

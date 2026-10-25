@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
+import { FontAwesomeIcon } from "@/icons";
 
 const props = defineProps<{ open: boolean }>();
 const emit = defineEmits<{ close: [] }>();
@@ -85,7 +86,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKeydown));
           :aria-label="t('ui.close')"
           @click="emit('close')"
         >
-          ✕
+          <FontAwesomeIcon icon="xmark" />
         </button>
         <slot />
       </div>

@@ -137,10 +137,7 @@ describe("ComposeBox", () => {
     const { wrapper } = mountWith(ComposeBox);
     await flushPromises();
     await wrapper.get("[data-testid='compose-text']").setValue("poll time");
-    const pollBtn = wrapper
-      .findAll(".compose__ctl")
-      .find((b) => b.text().includes("📊"))!;
-    await pollBtn.trigger("click");
+    await wrapper.get("[data-testid='poll-toggle']").trigger("click");
     // Two blank options → post stays disabled.
     expect(
       wrapper.get("[data-testid='post']").attributes("disabled"),
@@ -158,10 +155,7 @@ describe("ComposeBox", () => {
     const { wrapper } = mountWith(ComposeBox);
     await flushPromises();
     // Open the poll builder.
-    const pollBtn = wrapper
-      .findAll(".compose__ctl")
-      .find((b) => b.text().includes("📊"))!;
-    await pollBtn.trigger("click");
+    await wrapper.get("[data-testid='poll-toggle']").trigger("click");
     expect(useComposeStore().draft.poll).toBeTruthy();
     // Selecting media clears the poll (and poll button disables with media).
     const input = wrapper.get("[data-testid='media-input']");

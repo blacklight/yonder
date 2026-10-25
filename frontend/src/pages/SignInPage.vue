@@ -6,6 +6,7 @@ import AppLayout from "@/components/layout/AppLayout.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 import { MfaRequired, passwordToken, twoFactorVerify } from "@/api/oauth";
 import { useAuthStore } from "@/stores/auth";
@@ -112,6 +113,7 @@ async function submit() {
               autocomplete="one-time-code"
             />
             <Button type="submit" :loading="pending" :disabled="pending">
+              <FontAwesomeIcon icon="shield-halved" />
               {{ t("auth.verify") }}
             </Button>
           </template>
@@ -132,6 +134,7 @@ async function submit() {
             autocomplete="current-password"
           />
           <Button type="submit" :loading="pending" :disabled="pending">
+            <FontAwesomeIcon icon="right-to-bracket" />
             {{ t("auth.signIn") }}
           </Button>
           <p class="signin__alt">

@@ -1,8 +1,13 @@
 /* Directional icon mirroring for RTL locales.
-   Add selectors here when icons whose glyph implies direction
-   (arrows, chevrons, reply/share) are introduced (epics 24+).
-   postcss-rtlcss already mirrors physical LTR properties; this file
-   is for glyph-level flips that CSS direction can't express. */
-[dir="rtl"] .icon-dir {
+   FontAwesome renders a `fa-<name>` class on every icon, so glyphs
+   whose shape implies direction (reply/send arrows, enter/exit
+   brackets) are mirrored here by icon name. postcss-rtlcss already
+   mirrors physical LTR properties; this file is for glyph-level
+   flips that CSS direction can't express. */
+[dir="rtl"] .fa-reply,
+[dir="rtl"] .fa-paper-plane,
+[dir="rtl"] .fa-right-to-bracket,
+[dir="rtl"] .fa-right-from-bracket,
+[dir="rtl"] .fa-arrow-up-right-from-square {
   transform: scaleX(-1);
 }

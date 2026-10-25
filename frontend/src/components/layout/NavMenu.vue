@@ -73,7 +73,7 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
   color: var(--text);
 }
 .navmenu__link.router-link-active {
-  color: var(--accent);
+  color: var(--accent-link);
   font-weight: 600;
   background: var(--bg-active, var(--bg));
 }
@@ -82,7 +82,7 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
   padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--accent);
-  color: var(--bg);
+  color: var(--accent-fg);
   font-size: var(--font-sm, 0.8125rem);
   font-weight: 700;
   text-align: center;

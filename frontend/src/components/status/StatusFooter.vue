@@ -151,7 +151,7 @@ async function toggle(
   background: var(--bg-sunken);
 }
 .status-footer__btn--active {
-  color: var(--accent);
+  color: var(--accent-link);
 }
 .status-footer__btn:disabled {
   opacity: 0.45;

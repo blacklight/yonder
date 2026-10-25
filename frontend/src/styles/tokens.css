@@ -9,14 +9,20 @@
   --text: #1c2422;
   --text-muted: #1e2c27;
   --border: #d8dfdc;
-  --accent: #3f8f7f;
-  --accent-fg: #ffffff;
-  --accent-soft: #3f8f7f22;
+  /* Accent trio + --accent-link, the accent nudged to >=4.5:1
+     against --bg for links and accent-colored text. Defaults come
+     from the logo palette (teal-500/-400 between #0d9488 and
+     #2dd4bf); --accent-link values are what accentLink() derives —
+     keep them in sync if the accents change. */
+  --accent: #14b8a6;
+  --accent-fg: #122019;
+  --accent-soft: #14b8a622;
+  --accent-link: #0e8074;
   --success: #2e7d4f;
   --warning: #a16207;
   --danger: #b3362b;
   --info: #20638f;
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent-link);
 
   --space-1: 0.25rem;
   --space-2: 0.5rem;
@@ -57,9 +63,10 @@
   --text: #f2f5f4;
   --text-muted: #e0ece8;
   --border: #3c4a46;
-  --accent: #63b5a3;
+  --accent: #2dd4bf;
   --accent-fg: #122019;
-  --accent-soft: #63b5a322;
+  --accent-soft: #2dd4bf22;
+  --accent-link: #2dd4bf;
   --success: #58c184;
   --warning: #e6b545;
   --danger: #e06a5c;

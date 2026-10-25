@@ -25,7 +25,7 @@ textarea {
   color: inherit;
 }
 a {
-  color: var(--accent);
+  color: var(--accent-link);
 }
 
 :focus-visible {

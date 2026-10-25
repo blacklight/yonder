@@ -44,7 +44,7 @@ describe("theme store", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 
-  it("applies and clears the accent trio", () => {
+  it("applies and clears the accent vars", () => {
     const store = useThemeStore();
     store.setAccent("#ffffff");
     const style = document.documentElement.style;
@@ -52,6 +52,51 @@ describe("theme store", () => {
     expect(style.getPropertyValue("--accent-fg")).toBe("#1a1a1a");
     store.setAccent(null);
     expect(style.getPropertyValue("--accent")).toBe("");
+    expect(style.getPropertyValue("--accent-link")).toBe("");
     expect(localStorage.getItem("yonder.accent")).toBeNull();
+  });
+
+  it.each([
+    // Mid-dark accents get light text — #3f8f7f previously scored
+    // "light" under raw sRGB summation.
+    ["#3f8f7f", "#ffffff"],
+    ["#1565c0", "#ffffff"],
+    ["#7c3aed", "#ffffff"],
+    ["#808080", "#ffffff"],
+    // Genuinely light accents get dark ink — #14b8a6 and #2dd4bf are
+    // the light/dark theme defaults and must keep dark-text pairing.
+    ["#14b8a6", "#1a1a1a"],
+    ["#2dd4bf", "#1a1a1a"],
+    ["#ffc107", "#1a1a1a"],
+    ["#ffffff", "#1a1a1a"],
+  ])("picks readable text for accent %s", (hex, expected) => {
+    const store = useThemeStore();
+    store.setAccent(hex);
+    expect(document.documentElement.style.getPropertyValue("--accent-fg")).toBe(
+      expected,
+    );
+  });
+
+  it("derives --accent-link toward readable contrast against --bg", () => {
+    document.documentElement.style.setProperty("--bg", "#f9f8f7");
+    const store = useThemeStore();
+    const style = document.documentElement.style;
+    // Bright accent on a light bg gets darkened for text use.
+    store.setAccent("#14b8a6");
+    const link = style.getPropertyValue("--accent-link");
+    expect(link).toMatch(/^#[0-9a-f]{6}$/);
+    expect(link).not.toBe("#14b8a6");
+    // An accent that already contrasts well is kept as-is.
+    store.setAccent("#0e8074");
+    expect(style.getPropertyValue("--accent-link")).toBe("#0e8074");
+    document.documentElement.style.removeProperty("--bg");
+  });
+
+  it("falls back to light text for malformed accents", () => {
+    const store = useThemeStore();
+    store.setAccent("not-a-color");
+    expect(document.documentElement.style.getPropertyValue("--accent-fg")).toBe(
+      "#ffffff",
+    );
   });
 });

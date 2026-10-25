@@ -548,7 +548,7 @@ async function onReact(emoji: string) {
 }
 .status-card__confirm-yes {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-link);
   font-weight: 600;
 }
 .status-card__report-submit {

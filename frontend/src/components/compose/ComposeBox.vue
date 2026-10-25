@@ -635,7 +635,7 @@ async function submit() {
 }
 .compose__ctl--on {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-link);
 }
 .compose__file-input {
   display: none;
@@ -669,7 +669,7 @@ async function submit() {
 </style>
 <style>
 .compose__done {
-  color: var(--accent);
+  color: var(--accent-link);
   margin: 0;
   font-size: var(--text-sm);
 }

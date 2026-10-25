@@ -36,7 +36,7 @@ const initial = computed(
   overflow: hidden;
   border-radius: var(--radius-full);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-link);
   font-weight: 700;
 }
 .avatar--sm {

@@ -9,10 +9,15 @@ const css = readFileSync(
 
 function hexLuminance(hex: string): number {
   const n = parseInt(hex.replace("#", ""), 16);
-  const r = ((n >> 16) & 255) / 255;
-  const g = ((n >> 8) & 255) / 255;
-  const b = (n & 255) / 255;
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  const channel = (v: number) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return (
+    0.2126 * channel((n >> 16) & 255) +
+    0.7152 * channel((n >> 8) & 255) +
+    0.0722 * channel(n & 255)
+  );
 }
 
 // WCAG contrast ratio between two #rrggbb colors.
@@ -59,6 +64,7 @@ describe("design tokens", () => {
       "border",
       "accent",
       "accent-fg",
+      "accent-link",
       "success",
       "warning",
       "danger",
@@ -68,6 +74,22 @@ describe("design tokens", () => {
       token(name, "dark");
     }
   });
+
+  it.each(["light", "dark"] as const)(
+    "keeps WCAG AA contrast for --accent-link on %s bg",
+    (theme) => {
+      expect(
+        contrast(token("accent-link", theme), token("bg", theme)),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrast(token("accent-link", theme), token("bg-raised", theme)),
+      ).toBeGreaterThanOrEqual(4.5);
+      // Button text on the accent fill.
+      expect(
+        contrast(token("accent-fg", theme), token("accent", theme)),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 
   it("ships focus ring, motion and reduced-motion tokens", () => {
     expect(css).toContain("--focus-ring");

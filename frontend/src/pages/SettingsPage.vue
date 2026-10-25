@@ -18,7 +18,7 @@ const auth = useAuthStore();
 
 const frontends = ref<{ name: string; version?: string }[]>([]);
 const saved = ref(false);
-const accentInput = ref("#3f8f7f");
+const accentInput = ref("#14b8a6");
 
 const localeOptions = [
   { code: "en", label: "English" },
@@ -88,7 +88,7 @@ onMounted(async () => {
           <Input
             v-model="accentInput"
             :label="t('settings.accent')"
-            placeholder="#3f8f7f"
+            placeholder="#14b8a6"
           />
           <Button variant="secondary" size="sm" @click="saveAccent">{{
             t("settings.save")

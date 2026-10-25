@@ -31,6 +31,8 @@
     "theme_dark": "داكن",
     "theme_system": "النظام",
     "accent": "لون التمييز",
+    "accentCustom": "مخصص",
+    "accentInvalid": "أدخل لونًا ست عشريًا مثل #14b8a6",
     "language": "لغة الواجهة",
     "frontend": "الواجهة الأمامية",
     "frontend_default": "استخدام افتراضي الخادم",

@@ -31,6 +31,8 @@
     "theme_dark": "Oscuro",
     "theme_system": "Sistema",
     "accent": "Color de acento",
+    "accentCustom": "Personalizado",
+    "accentInvalid": "Introduce un color hexadecimal como #14b8a6",
     "language": "Idioma de la interfaz",
     "frontend": "Frontend",
     "frontend_default": "Usar predeterminado de la instancia",

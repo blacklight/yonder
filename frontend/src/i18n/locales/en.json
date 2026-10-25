@@ -31,6 +31,8 @@
     "theme_dark": "Dark",
     "theme_system": "System",
     "accent": "Accent color",
+    "accentCustom": "Custom",
+    "accentInvalid": "Enter a hex color like #14b8a6",
     "language": "Interface language",
     "frontend": "Frontend",
     "frontend_default": "Use instance default",

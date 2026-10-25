@@ -31,6 +31,8 @@
     "theme_dark": "Dunkel",
     "theme_system": "System",
     "accent": "Akzentfarbe",
+    "accentCustom": "Benutzerdefiniert",
+    "accentInvalid": "Gib eine Hex-Farbe wie #14b8a6 ein",
     "language": "Sprache der Oberfläche",
     "frontend": "Frontend",
     "frontend_default": "Instanz-Standard verwenden",

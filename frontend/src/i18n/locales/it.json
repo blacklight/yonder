@@ -31,6 +31,8 @@
     "theme_dark": "Scuro",
     "theme_system": "Sistema",
     "accent": "Colore di accento",
+    "accentCustom": "Personalizzato",
+    "accentInvalid": "Inserisci un colore esadecimale come #14b8a6",
     "language": "Lingua dell'interfaccia",
     "frontend": "Frontend",
     "frontend_default": "Usa predefinito dell'istanza",

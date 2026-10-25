@@ -43,9 +43,7 @@ function linearize(v: number): number {
 // first. Summing the raw values hugely overestimates mid-dark colors
 // (#3f8f7f scored ~0.49 and got near-black text).
 function luminance([r, g, b]: Rgb): number {
-  return (
-    0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
-  );
+  return 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b);
 }
 
 function contrastRatio(a: number, b: number): number {
@@ -55,7 +53,7 @@ function contrastRatio(a: number, b: number): number {
 // Foreground for text/icons on an accent fill. The 0.3 threshold
 // keeps dark ink for genuinely light accents only — both theme
 // defaults land on it: #14b8a6→dark (lum≈0.37), #2dd4bf→dark (≈0.51).
-function accentForeground(hex: string): string {
+export function accentForeground(hex: string): string {
   const rgb = parseColor(hex);
   return rgb && luminance(rgb) > 0.3 ? "#1a1a1a" : "#ffffff";
 }

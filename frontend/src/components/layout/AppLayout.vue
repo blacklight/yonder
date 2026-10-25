@@ -130,6 +130,12 @@ const menuSource = computed<MenuEntry[]>(() => [
     visible: !auth.isLoggedIn,
   },
   {
+    id: "register",
+    label: t("nav.signUp"),
+    to: "/register",
+    visible: !auth.isLoggedIn,
+  },
+  {
     id: "sign-out",
     label: t("auth.signOut"),
     visible: auth.isLoggedIn,

@@ -21,7 +21,8 @@
     "search": "Cerca",
     "searchPlaceholder": "Cerca…",
     "compose": "Scrivi",
-    "messages": "Messaggi"
+    "messages": "Messaggi",
+    "signUp": "Registrati"
   },
   "settings": {
     "title": "Impostazioni",
@@ -42,9 +43,6 @@
     },
     "settings": {
       "title": "Impostazioni"
-    },
-    "invite": {
-      "title": "Invito"
     },
     "not-found": {
       "title": "Non trovato"
@@ -99,11 +97,10 @@
     },
     "profile": {
       "title": "Profilo"
+    },
+    "register": {
+      "title": "Crea un account"
     }
-  },
-  "invite": {
-    "title": "Invito",
-    "placeholder": "L'accettazione degli inviti arriverà in un epic successivo."
   },
   "not_found": {
     "title": "Pagina non trovata",
@@ -117,12 +114,19 @@
   },
   "auth": {
     "signInTitle": "Accedi",
-    "tokenHint": "Incolla un token di accesso per accedere (il login OAuth arriverà in una versione successiva).",
-    "tokenLabel": "Token di accesso",
-    "tokenRequired": "Inserisci un token di accesso.",
     "signIn": "Accedi",
     "signInFailed": "Accesso non riuscito.",
-    "signOut": "Esci"
+    "signOut": "Esci",
+    "usernameLabel": "Nome utente o email",
+    "passwordLabel": "Password",
+    "codeLabel": "Codice a due fattori",
+    "verify": "Verifica",
+    "credentialsRequired": "Inserisci nome utente e password.",
+    "noAccount": "Nuovo qui?",
+    "register": "Crea un account",
+    "codeRequired": "Inserisci il tuo codice a due fattori.",
+    "mfaHintTotp": "Inserisci il codice della tua app di autenticazione o un codice di backup.",
+    "mfaHintWebauthn": "Questo account accede con una passkey; l'accesso con passkey non è ancora supportato in questo browser."
   },
   "menu": {
     "title": "Menu",
@@ -343,5 +347,27 @@
     "noteTitle": "Nota privata",
     "loadError": "Impossibile caricare questo profilo.",
     "lastAdmin": "Non puoi retrocedere l'ultimo amministratore."
+  },
+  "register": {
+    "title": "Crea un account",
+    "username": "Nome utente",
+    "email": "Email",
+    "password": "Password",
+    "confirmPassword": "Conferma password",
+    "reason": "Perché vuoi iscriverti?",
+    "inviteCode": "Codice di invito",
+    "agreement": "Accetto le regole dell'istanza",
+    "agreementRequired": "Devi accettare le regole dell'istanza.",
+    "passwordMismatch": "Le password non coincidono.",
+    "required": "Compila tutti i campi obbligatori.",
+    "submit": "Registrati",
+    "failed": "Registrazione fallita.",
+    "closed": "Le registrazioni sono chiuse.",
+    "closedInvite": "Le registrazioni sono chiuse: serve un codice di invito per iscriversi.",
+    "haveAccount": "Hai già un account?",
+    "pendingApproval": "Il tuo account è in attesa dell'approvazione di un amministratore. Puoi guardare, ma pubblicare e seguire sono bloccati fino ad allora.",
+    "verifyEmail": "Controlla la posta in arrivo: conferma il tuo indirizzo email per sbloccare la pubblicazione.",
+    "continue": "Continua",
+    "registered": "Account creato!"
   }
 }

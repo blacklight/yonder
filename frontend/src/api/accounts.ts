@@ -1,5 +1,6 @@
 import { request, requestWithResponse } from "./client";
 import { paginated, type Page } from "./pagination";
+import type { TokenBody } from "./oauth";
 import type {
   Account,
   CredentialAccount,
@@ -7,6 +8,38 @@ import type {
   Relationship,
   Status,
 } from "./entities";
+
+/** `POST /api/v1/accounts` — Mastodon registration shape. */
+export interface RegisterBody {
+  username: string;
+  email: string;
+  password: string;
+  /** Required by the backend — the form binds it to a rules checkbox. */
+  agreement: boolean;
+  locale?: string;
+  /** Registration reason (approval-required instances). */
+  reason?: string;
+  /** Bypasses closed registration; auto-approves on approval-required. */
+  invite_code?: string;
+}
+
+/**
+ * Register a new account. Anonymous on purpose (`skipAuth`): an
+ * optional bearer *app* token may be sent, but a user token would be
+ * rejected as a non-app credential. Returns the first token entity —
+ * sign in with `auth.signInWithToken(res.access_token)`. The backend
+ * adds `verification_pending` when email confirmation gates posting.
+ */
+export function register(
+  body: RegisterBody,
+): Promise<TokenBody & { verification_pending?: boolean }> {
+  return request<TokenBody>({
+    path: "/accounts",
+    method: "POST",
+    body,
+    skipAuth: true,
+  });
+}
 
 /** `GET /api/v1/accounts/verify_credentials` — the caller's account. */
 export function verifyCredentials(): Promise<CredentialAccount> {

@@ -93,6 +93,8 @@ export default defineConfig({
       // proxies the /api/v1/streaming websocket endpoint.
       "/api": { target: "http://localhost:3000", changeOrigin: true, ws: true },
       "/media": { target: "http://localhost:3000", changeOrigin: true },
+      // `/oauth/*` lives outside /api (token + 2FA exchange endpoints).
+      "/oauth": { target: "http://localhost:3000", changeOrigin: true },
       "/openapi.json": { target: "http://localhost:3000", changeOrigin: true },
       "/swagger-ui": { target: "http://localhost:3000", changeOrigin: true },
     },

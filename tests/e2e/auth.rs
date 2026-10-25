@@ -165,6 +165,8 @@ async fn register_login_verify_credentials_flow() {
     let (status, body) = register_user(&env.app, "alice", "alice@example.com").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["scope"], "read write");
+    // No mail server configured — nothing pending (epic 25 auth pass).
+    assert_eq!(body["verification_pending"], false);
     let reg_token = body["access_token"].as_str().unwrap();
 
     let (status, account) = request(
@@ -719,6 +721,9 @@ async fn email_verification_flow() {
     };
     let (status, body) = register_user(&env.app, "irene", "i@x.com").await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // The response flags the pending verification so the SPA can show
+    // "check your email" (epic 25 auth pass).
+    assert_eq!(body["verification_pending"], true);
     let unverified: bool =
         sqlx::query_scalar("SELECT email_verified_at IS NULL FROM users WHERE email = 'i@x.com'")
             .fetch_one(&env.state.db)

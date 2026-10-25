@@ -20,6 +20,11 @@ export const router = createRouter({
       component: () => import("@/pages/SignInPage.vue"),
     },
     {
+      path: "/register",
+      name: "register",
+      component: () => import("@/pages/RegisterPage.vue"),
+    },
+    {
       path: "/home",
       name: "home-timeline",
       component: () => import("@/pages/TimelinePage.vue"),
@@ -159,12 +164,14 @@ export const router = createRouter({
       component: () => import("@/pages/SettingsPage.vue"),
     },
     {
-      // The backend's /api/v1/invites flows link to this route; the
-      // invite acceptance UI lands in epic 25.
+      // Invite links land on registration with the code prefilled —
+      // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",
       name: "invite",
-      component: () => import("@/pages/InvitePage.vue"),
-      props: true,
+      redirect: (to) => ({
+        name: "register",
+        query: { invite: to.params.code },
+      }),
     },
     {
       path: "/:pathMatch(.*)*",

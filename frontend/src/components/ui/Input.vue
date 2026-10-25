@@ -9,6 +9,17 @@ const props = withDefaults(
     error?: string;
     disabled?: boolean;
     placeholder?: string;
+    autocomplete?: string;
+    inputmode?:
+      | "none"
+      | "text"
+      | "tel"
+      | "url"
+      | "email"
+      | "numeric"
+      | "decimal"
+      | "search";
+    required?: boolean;
   }>(),
   { modelValue: "", type: "text", disabled: false },
 );
@@ -34,6 +45,9 @@ function onInput(event: Event) {
       :value="modelValue"
       :disabled="disabled"
       :placeholder="placeholder"
+      :autocomplete="autocomplete"
+      :inputmode="inputmode"
+      :required="required"
       :aria-invalid="!!error"
       :aria-describedby="describedBy"
       @input="onInput"

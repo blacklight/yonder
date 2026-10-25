@@ -21,7 +21,8 @@
     "search": "Search",
     "searchPlaceholder": "Search…",
     "compose": "Compose",
-    "messages": "Messages"
+    "messages": "Messages",
+    "signUp": "Sign up"
   },
   "settings": {
     "title": "Settings",
@@ -42,9 +43,6 @@
     },
     "settings": {
       "title": "Settings"
-    },
-    "invite": {
-      "title": "Invite"
     },
     "not-found": {
       "title": "Not found"
@@ -99,11 +97,10 @@
     },
     "profile": {
       "title": "Profile"
+    },
+    "register": {
+      "title": "Create an account"
     }
-  },
-  "invite": {
-    "title": "Invite",
-    "placeholder": "Invite acceptance lands in a later epic."
   },
   "not_found": {
     "title": "Page not found",
@@ -117,12 +114,19 @@
   },
   "auth": {
     "signInTitle": "Sign in",
-    "tokenHint": "Paste an access token to sign in (OAuth login lands in a later release).",
-    "tokenLabel": "Access token",
-    "tokenRequired": "Enter an access token.",
     "signIn": "Sign in",
     "signInFailed": "Sign-in failed.",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "usernameLabel": "Username or email",
+    "passwordLabel": "Password",
+    "codeLabel": "Two-factor code",
+    "verify": "Verify",
+    "credentialsRequired": "Enter your username and password.",
+    "noAccount": "New here?",
+    "register": "Create an account",
+    "codeRequired": "Enter your two-factor code.",
+    "mfaHintTotp": "Enter the code from your authenticator app or a backup code.",
+    "mfaHintWebauthn": "This account signs in with a passkey; passkey sign-in is not supported in this browser yet."
   },
   "menu": {
     "title": "Menu",
@@ -343,5 +347,27 @@
     "noteTitle": "Private note",
     "loadError": "Could not load this profile.",
     "lastAdmin": "The last admin cannot be demoted."
+  },
+  "register": {
+    "title": "Create an account",
+    "username": "Username",
+    "email": "Email",
+    "password": "Password",
+    "confirmPassword": "Confirm password",
+    "reason": "Why do you want to join?",
+    "inviteCode": "Invite code",
+    "agreement": "I agree to the instance rules",
+    "agreementRequired": "You must agree to the instance rules.",
+    "passwordMismatch": "Passwords do not match.",
+    "required": "Fill in all required fields.",
+    "submit": "Sign up",
+    "failed": "Registration failed.",
+    "closed": "Registrations are closed.",
+    "closedInvite": "Registrations are closed — you need an invite code to sign up.",
+    "haveAccount": "Already have an account?",
+    "pendingApproval": "Your account is waiting for an administrator's approval. You can look around, but posting and following are locked until then.",
+    "verifyEmail": "Check your inbox — confirm your email address to unlock posting.",
+    "continue": "Continue",
+    "registered": "Account created!"
   }
 }

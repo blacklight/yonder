@@ -21,7 +21,8 @@
     "search": "Suche",
     "searchPlaceholder": "Suchen…",
     "compose": "Schreiben",
-    "messages": "Nachrichten"
+    "messages": "Nachrichten",
+    "signUp": "Registrieren"
   },
   "settings": {
     "title": "Einstellungen",
@@ -42,9 +43,6 @@
     },
     "settings": {
       "title": "Einstellungen"
-    },
-    "invite": {
-      "title": "Einladung"
     },
     "not-found": {
       "title": "Nicht gefunden"
@@ -99,11 +97,10 @@
     },
     "profile": {
       "title": "Profil"
+    },
+    "register": {
+      "title": "Konto erstellen"
     }
-  },
-  "invite": {
-    "title": "Einladung",
-    "placeholder": "Die Annahme von Einladungen folgt in einem späteren Epic."
   },
   "not_found": {
     "title": "Seite nicht gefunden",
@@ -117,12 +114,19 @@
   },
   "auth": {
     "signInTitle": "Anmelden",
-    "tokenHint": "Füge ein Zugriffstoken ein, um dich anzumelden (OAuth-Login folgt in einer späteren Version).",
-    "tokenLabel": "Zugriffstoken",
-    "tokenRequired": "Gib ein Zugriffstoken ein.",
     "signIn": "Anmelden",
     "signInFailed": "Anmeldung fehlgeschlagen.",
-    "signOut": "Abmelden"
+    "signOut": "Abmelden",
+    "usernameLabel": "Benutzername oder E-Mail",
+    "passwordLabel": "Passwort",
+    "codeLabel": "Zwei-Faktor-Code",
+    "verify": "Bestätigen",
+    "credentialsRequired": "Gib Benutzername und Passwort ein.",
+    "noAccount": "Neu hier?",
+    "register": "Konto erstellen",
+    "codeRequired": "Gib deinen Zwei-Faktor-Code ein.",
+    "mfaHintTotp": "Gib den Code aus deiner Authenticator-App oder einen Backup-Code ein.",
+    "mfaHintWebauthn": "Dieses Konto meldet sich mit einem Passkey an; Passkey-Anmeldung wird in diesem Browser noch nicht unterstützt."
   },
   "menu": {
     "title": "Menü",
@@ -343,5 +347,27 @@
     "noteTitle": "Private Notiz",
     "loadError": "Profil konnte nicht geladen werden.",
     "lastAdmin": "Der letzte Administrator kann nicht herabgestuft werden."
+  },
+  "register": {
+    "title": "Konto erstellen",
+    "username": "Benutzername",
+    "email": "E-Mail",
+    "password": "Passwort",
+    "confirmPassword": "Passwort bestätigen",
+    "reason": "Warum möchtest du beitreten?",
+    "inviteCode": "Einladungscode",
+    "agreement": "Ich akzeptiere die Instanzregeln",
+    "agreementRequired": "Du musst den Instanzregeln zustimmen.",
+    "passwordMismatch": "Die Passwörter stimmen nicht überein.",
+    "required": "Fülle alle Pflichtfelder aus.",
+    "submit": "Registrieren",
+    "failed": "Registrierung fehlgeschlagen.",
+    "closed": "Registrierungen sind geschlossen.",
+    "closedInvite": "Registrierungen sind geschlossen — du brauchst einen Einladungscode.",
+    "haveAccount": "Hast du schon ein Konto?",
+    "pendingApproval": "Dein Konto wartet auf die Freigabe durch eine Administration. Du kannst dich umsehen, aber Posten und Folgen sind bis dahin gesperrt.",
+    "verifyEmail": "Prüfe dein Postfach — bestätige deine E-Mail-Adresse, um Posten freizuschalten.",
+    "continue": "Weiter",
+    "registered": "Konto erstellt!"
   }
 }

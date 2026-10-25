@@ -21,7 +21,8 @@
     "search": "Buscar",
     "searchPlaceholder": "Buscar…",
     "compose": "Redactar",
-    "messages": "Mensajes"
+    "messages": "Mensajes",
+    "signUp": "Registrarse"
   },
   "settings": {
     "title": "Ajustes",
@@ -42,9 +43,6 @@
     },
     "settings": {
       "title": "Ajustes"
-    },
-    "invite": {
-      "title": "Invitación"
     },
     "not-found": {
       "title": "No encontrado"
@@ -99,11 +97,10 @@
     },
     "profile": {
       "title": "Perfil"
+    },
+    "register": {
+      "title": "Crear una cuenta"
     }
-  },
-  "invite": {
-    "title": "Invitación",
-    "placeholder": "La aceptación de invitaciones llegará en un epic posterior."
   },
   "not_found": {
     "title": "Página no encontrada",
@@ -117,12 +114,19 @@
   },
   "auth": {
     "signInTitle": "Iniciar sesión",
-    "tokenHint": "Pega un token de acceso para iniciar sesión (el inicio OAuth llegará en una versión posterior).",
-    "tokenLabel": "Token de acceso",
-    "tokenRequired": "Introduce un token de acceso.",
     "signIn": "Iniciar sesión",
     "signInFailed": "No se pudo iniciar sesión.",
-    "signOut": "Cerrar sesión"
+    "signOut": "Cerrar sesión",
+    "usernameLabel": "Usuario o correo electrónico",
+    "passwordLabel": "Contraseña",
+    "codeLabel": "Código de dos factores",
+    "verify": "Verificar",
+    "credentialsRequired": "Introduce tu usuario y contraseña.",
+    "noAccount": "¿Eres nuevo?",
+    "register": "Crear una cuenta",
+    "codeRequired": "Introduce tu código de dos factores.",
+    "mfaHintTotp": "Introduce el código de tu aplicación de autenticación o un código de respaldo.",
+    "mfaHintWebauthn": "Esta cuenta inicia sesión con una passkey; el inicio de sesión con passkey aún no es compatible con este navegador."
   },
   "menu": {
     "title": "Menú",
@@ -343,5 +347,27 @@
     "noteTitle": "Nota privada",
     "loadError": "No se pudo cargar este perfil.",
     "lastAdmin": "No se puede degradar al último administrador."
+  },
+  "register": {
+    "title": "Crear una cuenta",
+    "username": "Usuario",
+    "email": "Correo electrónico",
+    "password": "Contraseña",
+    "confirmPassword": "Confirmar contraseña",
+    "reason": "¿Por qué quieres unirte?",
+    "inviteCode": "Código de invitación",
+    "agreement": "Acepto las reglas de la instancia",
+    "agreementRequired": "Debes aceptar las reglas de la instancia.",
+    "passwordMismatch": "Las contraseñas no coinciden.",
+    "required": "Completa todos los campos obligatorios.",
+    "submit": "Registrarse",
+    "failed": "El registro falló.",
+    "closed": "Los registros están cerrados.",
+    "closedInvite": "Los registros están cerrados: necesitas un código de invitación para registrarte.",
+    "haveAccount": "¿Ya tienes una cuenta?",
+    "pendingApproval": "Tu cuenta espera la aprobación de un administrador. Puedes mirar, pero publicar y seguir estarán bloqueados hasta entonces.",
+    "verifyEmail": "Revisa tu bandeja de entrada: confirma tu dirección de correo para desbloquear la publicación.",
+    "continue": "Continuar",
+    "registered": "¡Cuenta creada!"
   }
 }

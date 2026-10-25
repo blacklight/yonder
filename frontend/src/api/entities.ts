@@ -377,6 +377,11 @@ export interface InstanceEntity {
     };
   };
   rules?: { id: string; text: string }[];
+  registrations?: {
+    enabled?: boolean;
+    approval_required?: boolean;
+    message?: string | null;
+  };
   [key: string]: unknown;
 }
 

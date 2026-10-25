@@ -60,8 +60,14 @@ pub async fn register(
     };
 
     // Account + actor + first token pair commit in one transaction.
-    let (_registered, issued) = registration::register(&state, &params, app.as_ref()).await?;
-    Ok(Json(tokens::token_entity(&issued)))
+    let (registered, issued) = registration::register(&state, &params, app.as_ref()).await?;
+    // `verification_pending` rides on the token entity so the SPA can
+    // show "check your email" — with `require_email_verification` on,
+    // writes stay gated until `verify_email` consumes the token, and
+    // without this flag the client has no way to explain the 403s.
+    let mut body = tokens::token_entity(&issued);
+    body["verification_pending"] = json!(registered.verification_pending);
+    Ok(Json(body))
 }
 
 /// `GET /api/v1/accounts/verify_credentials` — the caller's Account entity.

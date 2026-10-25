@@ -6,6 +6,7 @@ import {
   getAccount,
   getRelationships,
   muteAccount,
+  register,
   setNote,
   unblockAccount,
   unfollow,
@@ -23,6 +24,33 @@ function mockFetch(status: number, body: unknown) {
 
 describe("accounts api", () => {
   beforeEach(() => vi.restoreAllMocks());
+
+  it("register POSTs the Mastodon body without a bearer token", async () => {
+    const spy = mockFetch(200, { access_token: "tok" });
+    const res = await register({
+      username: "alice",
+      email: "a@b.c",
+      password: "secretpw",
+      agreement: true,
+      reason: "hi",
+      invite_code: "INV",
+    });
+    expect(spy.mock.calls[0][0]).toBe("/api/v1/accounts");
+    const init = spy.mock.calls[0][1]!;
+    expect(init.method).toBe("POST");
+    expect(
+      (init.headers as Headers).get("Authorization"),
+    ).toBeNull();
+    expect(JSON.parse(init.body as string)).toEqual({
+      username: "alice",
+      email: "a@b.c",
+      password: "secretpw",
+      agreement: true,
+      reason: "hi",
+      invite_code: "INV",
+    });
+    expect(res.access_token).toBe("tok");
+  });
 
   it("verifyCredentials GETs the credential endpoint", async () => {
     const spy = mockFetch(200, { id: "1" });

@@ -43,7 +43,13 @@ false`), or can be applied explicitly:
 yonder migrate              # apply all pending migrations (idempotent)
 yonder migrate --revert     # roll back the most recent migration
 yonder migrate --revert 3   # roll back to version 3 (exclusive)
+yonder migrate status       # applied/pending per migration (exit 1 if pending)
 ```
+
+The `yonder` binary also administers the instance offline — config
+overlays, users, domain blocks, relays, emoji and frontend installs,
+plus `run-job` for ad-hoc job execution. `docs/cli.md` has the full
+command reference, the `--json` output contract and exit codes.
 
 Migrations are additive and forward-only; destructive changes live in
 clearly-named migrations.

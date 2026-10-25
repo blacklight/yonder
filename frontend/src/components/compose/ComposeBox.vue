@@ -624,7 +624,8 @@ async function submit() {
   gap: var(--space-2);
   align-items: center;
 }
-.compose__controls select {
+.compose__controls select,
+.compose input[type="datetime-local"] {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);

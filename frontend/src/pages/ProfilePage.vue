@@ -386,27 +386,76 @@ watch([tab, showReplies, showBoosts], () => {
     <p v-else-if="state === 'error'" role="alert">
       {{ t("profile.loadError") }}
     </p>
-    <div v-else-if="state === 'sign-in'" class="signin-prompt">
+    <div v-else-if="state === 'sign-in'" class="profile__signin">
       <p>{{ t("profile.signInToView") }}</p>
       <router-link to="/login">{{ t("nav.signIn") }}</router-link>
     </div>
     <template v-else-if="account">
-      <header class="profile-header">
-        <img v-if="headerUrl" :src="headerUrl" class="banner" alt="" />
-        <Avatar
-          :src="avatarUrl"
-          :name="account.display_name || account.acct"
-          size="lg"
+      <header class="profile__header">
+        <img
+          v-if="headerUrl"
+          :src="headerUrl"
+          class="profile__banner"
+          alt=""
         />
-        <h1>{{ account.display_name || account.username }}</h1>
-        <p class="handle">{{ handle }}</p>
-        <p v-if="rel?.followed_by" class="follows-you">
+        <div class="profile__top">
+          <Avatar
+            :src="avatarUrl"
+            :name="account.display_name || account.acct"
+            size="lg"
+            class="profile__avatar"
+          />
+          <div v-if="!rel?.blocked_by" class="profile__actions">
+            <router-link
+              v-if="isOwn"
+              to="/settings/profile"
+              class="profile__edit"
+              >{{ t("profile.edit") }}</router-link
+            >
+            <template v-else-if="auth.isLoggedIn">
+              <Button @click="toggleFollow">
+                <FontAwesomeIcon
+                  :icon="rel?.following ? 'user-check' : 'user-plus'"
+                />
+                {{
+                  rel?.following
+                    ? t("profile.unfollow")
+                    : rel?.requested
+                      ? t("profile.requested")
+                      : t("profile.follow")
+                }}
+              </Button>
+              <Button
+                v-if="rel?.following"
+                variant="secondary"
+                @click="toggleSubscribe"
+              >
+                {{
+                  rel.subscribing || rel.notifying
+                    ? t("profile.unsubscribe")
+                    : t("profile.subscribe")
+                }}
+              </Button>
+            </template>
+            <Menu
+              v-if="auth.isLoggedIn && !isOwn"
+              :items="menuItems"
+              :label="t('profile.actions')"
+              @select="onMenu"
+            />
+          </div>
+        </div>
+        <h1 class="profile__name">
+          {{ account.display_name || account.username }}
+        </h1>
+        <p class="profile__handle">{{ handle }}</p>
+        <p v-if="rel?.followed_by" class="profile__badge">
           {{ t("profile.followsYou") }}
         </p>
-        <p v-if="rel?.blocked_by" class="blocked">
+        <p v-if="rel?.blocked_by" class="profile__badge profile__badge--danger">
           {{ t("profile.blockedYou") }}
         </p>
-        <div class="counters">
+        <div class="profile__counters">
           <span>{{
             t("profile.followers", { count: account.followers_count })
           }}</span>
@@ -417,45 +466,11 @@ watch([tab, showReplies, showBoosts], () => {
             t("profile.statuses", { count: account.statuses_count })
           }}</span>
         </div>
-        <div v-if="!rel?.blocked_by" class="actions">
-          <router-link v-if="isOwn" to="/settings/profile">{{
-            t("profile.edit")
-          }}</router-link>
-          <template v-else-if="auth.isLoggedIn">
-            <Button @click="toggleFollow">
-              <FontAwesomeIcon
-                :icon="rel?.following ? 'user-check' : 'user-plus'"
-              />
-              {{
-                rel?.following
-                  ? t("profile.unfollow")
-                  : rel?.requested
-                    ? t("profile.requested")
-                    : t("profile.follow")
-              }}
-            </Button>
-            <Button
-              v-if="rel?.following"
-              variant="secondary"
-              @click="toggleSubscribe"
-            >
-              {{
-                rel.subscribing || rel.notifying
-                  ? t("profile.unsubscribe")
-                  : t("profile.subscribe")
-              }}
-            </Button>
-          </template>
-          <Menu
-            v-if="auth.isLoggedIn && !isOwn"
-            :items="menuItems"
-            :label="t('profile.actions')"
-            @select="onMenu"
-          />
-        </div>
-        <p v-if="actionError" role="alert">{{ actionError }}</p>
-        <div class="bio" v-html="bio" />
-        <dl v-if="account.fields.length" class="fields">
+        <p v-if="actionError" class="profile__alert" role="alert">
+          {{ actionError }}
+        </p>
+        <div v-if="bio" class="profile__bio" v-html="bio" />
+        <dl v-if="account.fields.length" class="profile__fields">
           <template v-for="f in account.fields" :key="f.name">
             <dt>
               {{ f.name }}
@@ -480,7 +495,7 @@ watch([tab, showReplies, showBoosts], () => {
         </dl>
       </header>
       <Tabs v-model="tab" :items="tabs" :label="t('profile.tabs')" />
-      <div v-if="tab === 'posts'" class="toggles">
+      <div v-if="tab === 'posts'" class="profile__toggles">
         <label
           ><input v-model="showReplies" type="checkbox" />
           {{ t("profile.showReplies") }}</label
@@ -491,9 +506,11 @@ watch([tab, showReplies, showBoosts], () => {
         >
       </div>
       <StatusCard v-for="s in statuses" :key="s.id" :status="s" />
-      <Button v-if="nextCursor" variant="secondary" @click="loadStatuses(true)">
-        {{ t("common.loadMore") }}
-      </Button>
+      <div v-if="nextCursor" class="profile__more">
+        <Button variant="secondary" @click="loadStatuses(true)">
+          {{ t("common.loadMore") }}
+        </Button>
+      </div>
     </template>
     <Modal
       v-if="confirmAction"
@@ -517,6 +534,128 @@ watch([tab, showReplies, showBoosts], () => {
 </template>
 
 <style scoped>
+.profile__banner {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 1;
+  max-height: 12rem;
+  object-fit: cover;
+  border-radius: var(--radius-lg);
+  background: var(--bg-sunken);
+}
+.profile__top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.profile__banner + .profile__top {
+  margin-top: calc(-1 * var(--space-7));
+}
+.profile__avatar {
+  flex: none;
+  margin-left: var(--space-2);
+  border: 4px solid var(--bg);
+}
+.profile__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+.profile__edit {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.profile__name {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+.profile__handle {
+  margin: var(--space-1) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.profile__badge {
+  display: inline-block;
+  margin: var(--space-2) 0 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.profile__badge--danger {
+  color: var(--danger);
+}
+.profile__counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.profile__alert {
+  margin: var(--space-3) 0 0;
+  color: var(--danger);
+}
+.profile__bio {
+  margin-top: var(--space-4);
+  overflow-wrap: anywhere;
+}
+.profile__fields {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: var(--space-4) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.profile__fields dt {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.profile__fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.profile__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.profile__toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.profile__more {
+  margin-top: var(--space-4);
+  text-align: center;
+}
+.profile__signin {
+  padding: var(--space-6) 0;
+  text-align: center;
+}
 .verified {
   color: var(--accent-link);
 }

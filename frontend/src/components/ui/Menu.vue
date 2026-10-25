@@ -148,6 +148,20 @@ onUnmounted(() =>
   position: relative;
   display: inline-block;
 }
+.menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.menu__trigger:hover {
+  background: var(--bg-sunken);
+}
 .menu__list {
   position: absolute;
   top: 100%;

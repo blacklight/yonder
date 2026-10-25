@@ -36,6 +36,8 @@
     "language": "Interface language",
     "frontend": "Frontend",
     "frontend_default": "Use instance default",
+    "groupAppearance": "Appearance",
+    "groupInterface": "Interface",
     "save": "Save",
     "saved": "Saved"
   },

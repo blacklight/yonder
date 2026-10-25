@@ -36,6 +36,8 @@
     "language": "Idioma de la interfaz",
     "frontend": "Frontend",
     "frontend_default": "Usar predeterminado de la instancia",
+    "groupAppearance": "Apariencia",
+    "groupInterface": "Interfaz",
     "save": "Guardar",
     "saved": "Guardado"
   },

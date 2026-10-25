@@ -36,6 +36,8 @@
     "language": "لغة الواجهة",
     "frontend": "الواجهة الأمامية",
     "frontend_default": "استخدام افتراضي الخادم",
+    "groupAppearance": "المظهر",
+    "groupInterface": "الواجهة",
     "save": "حفظ",
     "saved": "تم الحفظ"
   },

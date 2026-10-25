@@ -36,6 +36,8 @@
     "language": "Sprache der Oberfläche",
     "frontend": "Frontend",
     "frontend_default": "Instanz-Standard verwenden",
+    "groupAppearance": "Darstellung",
+    "groupInterface": "Oberfläche",
     "save": "Speichern",
     "saved": "Gespeichert"
   },

@@ -11,7 +11,7 @@ import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const theme = useTheme();
 const settings = useSettingsStore();
 const auth = useAuthStore();
@@ -108,99 +108,107 @@ onMounted(async () => {
   <Card>
     <template #header>{{ t("settings.title") }}</template>
     <form class="settings" @submit.prevent>
-      <label class="settings__row">
-        <span>{{ t("settings.theme") }}</span>
-        <select
-          :value="theme.mode.value"
-          @change="
-            settings.setTheme(
-              ($event.target as HTMLSelectElement).value as ThemeMode,
-              theme.accent.value,
-            )
-          "
-        >
-          <option value="system">{{ t("settings.theme_system") }}</option>
-          <option value="light">{{ t("settings.theme_light") }}</option>
-          <option value="dark">{{ t("settings.theme_dark") }}</option>
-        </select>
-      </label>
-      <div class="settings__row settings__row--top">
-        <span>{{ t("settings.accent") }}</span>
-        <div class="accent-picker">
-          <div
-            class="accent-picker__swatches"
-            role="radiogroup"
-            :aria-label="t('settings.accent')"
+      <section class="settings__group">
+        <h3 class="settings__group-title">
+          {{ t("settings.groupAppearance") }}
+        </h3>
+        <label class="settings__row">
+          <span>{{ t("settings.theme") }}</span>
+          <select
+            :value="theme.mode.value"
+            @change="
+              settings.setTheme(
+                ($event.target as HTMLSelectElement).value as ThemeMode,
+                theme.accent.value,
+              )
+            "
           >
-            <button
-              v-for="preset in accentPresets"
-              :key="preset"
-              type="button"
-              role="radio"
-              class="accent-picker__swatch"
-              :class="{
-                'accent-picker__swatch--active': isActiveAccent(preset),
-              }"
-              :style="{ background: preset, color: accentForeground(preset) }"
-              :aria-checked="isActiveAccent(preset)"
-              :aria-label="preset"
-              @click="pickAccent(preset)"
+            <option value="system">{{ t("settings.theme_system") }}</option>
+            <option value="light">{{ t("settings.theme_light") }}</option>
+            <option value="dark">{{ t("settings.theme_dark") }}</option>
+          </select>
+        </label>
+        <div class="settings__row settings__row--top">
+          <span>{{ t("settings.accent") }}</span>
+          <div class="accent-picker">
+            <div
+              class="accent-picker__swatches"
+              role="radiogroup"
+              :aria-label="t('settings.accent')"
             >
-              <FontAwesomeIcon
-                v-if="isActiveAccent(preset)"
-                icon="check"
-                aria-hidden="true"
+              <button
+                v-for="preset in accentPresets"
+                :key="preset"
+                type="button"
+                role="radio"
+                class="accent-picker__swatch"
+                :class="{
+                  'accent-picker__swatch--active': isActiveAccent(preset),
+                }"
+                :style="{ background: preset, color: accentForeground(preset) }"
+                :aria-checked="isActiveAccent(preset)"
+                :aria-label="preset"
+                @click="pickAccent(preset)"
+              >
+                <FontAwesomeIcon
+                  v-if="isActiveAccent(preset)"
+                  icon="check"
+                  aria-hidden="true"
+                />
+              </button>
+              <input
+                type="color"
+                class="accent-picker__color"
+                :value="pickerColor"
+                :aria-label="t('settings.accentCustom')"
+                @input="
+                  accentInput = ($event.target as HTMLInputElement).value;
+                  accentInvalid = false;
+                "
               />
-            </button>
-            <input
-              type="color"
-              class="accent-picker__color"
-              :value="pickerColor"
-              :aria-label="t('settings.accentCustom')"
-              @input="
-                accentInput = ($event.target as HTMLInputElement).value;
-                accentInvalid = false;
-              "
-            />
-          </div>
-          <div class="accent-picker__custom">
-            <Input
-              v-model="accentInput"
-              :label="t('settings.accentCustom')"
-              :error="accentInvalid ? t('settings.accentInvalid') : undefined"
-              placeholder="#14b8a6"
-            />
-            <Button variant="secondary" size="sm" @click="saveAccent">{{
-              t("settings.save")
-            }}</Button>
+            </div>
+            <div class="accent-picker__custom">
+              <Input
+                v-model="accentInput"
+                :label="t('settings.accentCustom')"
+                :error="accentInvalid ? t('settings.accentInvalid') : undefined"
+                placeholder="#14b8a6"
+              />
+              <Button variant="secondary" size="sm" @click="saveAccent">{{
+                t("settings.save")
+              }}</Button>
+            </div>
           </div>
         </div>
-      </div>
-      <label class="settings__row">
-        <span>{{ t("settings.language") }}</span>
-        <select @change="setLocale(($event.target as HTMLSelectElement).value)">
-          <option
-            v-for="l in localeOptions"
-            :key="l.code"
-            :value="l.code"
-            :selected="l.code === settings.settings?.interface_language"
+      </section>
+      <section class="settings__group">
+        <h3 class="settings__group-title">
+          {{ t("settings.groupInterface") }}
+        </h3>
+        <label class="settings__row">
+          <span>{{ t("settings.language") }}</span>
+          <select
+            :value="locale"
+            @change="setLocale(($event.target as HTMLSelectElement).value)"
           >
-            {{ l.label }}
-          </option>
-        </select>
-      </label>
-      <label v-if="frontends.length" class="settings__row">
-        <span>{{ t("settings.frontend") }}</span>
-        <select
-          :value="settings.settings?.frontend ?? ''"
-          @change="setFrontend(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">{{ t("settings.frontend_default") }}</option>
-          <option v-for="f in frontends" :key="f.name" :value="f.name">
-            {{ f.name }}
-          </option>
-        </select>
-      </label>
+            <option v-for="l in localeOptions" :key="l.code" :value="l.code">
+              {{ l.label }}
+            </option>
+          </select>
+        </label>
+        <label v-if="frontends.length" class="settings__row">
+          <span>{{ t("settings.frontend") }}</span>
+          <select
+            :value="settings.settings?.frontend ?? ''"
+            @change="setFrontend(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ t("settings.frontend_default") }}</option>
+            <option v-for="f in frontends" :key="f.name" :value="f.name">
+              {{ f.name }}
+            </option>
+          </select>
+        </label>
+      </section>
       <p v-if="saved" class="settings__saved">{{ t("settings.saved") }}</p>
     </form>
   </Card>
@@ -210,29 +218,49 @@ onMounted(async () => {
 .settings {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-6);
+}
+.settings__group-title {
+  margin: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
 }
 .settings__row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(8rem, 11rem) minmax(0, 26rem);
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0;
+}
+.settings__row + .settings__row {
+  border-top: 1px solid var(--border);
 }
 .settings__row > span {
-  min-width: 10rem;
   font-weight: 600;
   color: var(--text-muted);
 }
 .settings__row select {
+  max-width: 16rem;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
 }
 .settings__row--top {
-  align-items: flex-start;
+  align-items: start;
 }
 .settings__row--top > span {
-  padding-top: var(--space-2);
+  padding-top: var(--space-1);
+}
+@media (max-width: 768px) {
+  .settings__row {
+    grid-template-columns: 1fr;
+  }
 }
 .accent-picker {
   display: flex;
@@ -284,6 +312,10 @@ onMounted(async () => {
   display: flex;
   align-items: flex-end;
   gap: var(--space-2);
+}
+.accent-picker__custom .field {
+  flex: 1;
+  max-width: 14rem;
 }
 .settings__saved {
   color: var(--success);

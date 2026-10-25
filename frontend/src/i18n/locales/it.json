@@ -36,6 +36,8 @@
     "language": "Lingua dell'interfaccia",
     "frontend": "Frontend",
     "frontend_default": "Usa predefinito dell'istanza",
+    "groupAppearance": "Aspetto",
+    "groupInterface": "Interfaccia",
     "save": "Salva",
     "saved": "Salvato"
   },

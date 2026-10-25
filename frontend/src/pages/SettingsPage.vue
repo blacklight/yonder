@@ -6,7 +6,6 @@ import { useAuthStore } from "@/stores/auth";
 import { useSettingsStore } from "@/stores/settings";
 import { useTheme } from "@/composables/useTheme";
 import type { ThemeMode } from "@/stores/theme";
-import AppLayout from "@/components/layout/AppLayout.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
@@ -64,67 +63,63 @@ onMounted(async () => {
 </script>
 
 <template>
-  <AppLayout>
-    <Card>
-      <template #header>{{ t("settings.title") }}</template>
-      <form class="settings" @submit.prevent>
-        <label class="settings__row">
-          <span>{{ t("settings.theme") }}</span>
-          <select
-            :value="theme.mode.value"
-            @change="
-              settings.setTheme(
-                ($event.target as HTMLSelectElement).value as ThemeMode,
-                theme.accent.value,
-              )
-            "
+  <Card>
+    <template #header>{{ t("settings.title") }}</template>
+    <form class="settings" @submit.prevent>
+      <label class="settings__row">
+        <span>{{ t("settings.theme") }}</span>
+        <select
+          :value="theme.mode.value"
+          @change="
+            settings.setTheme(
+              ($event.target as HTMLSelectElement).value as ThemeMode,
+              theme.accent.value,
+            )
+          "
+        >
+          <option value="system">{{ t("settings.theme_system") }}</option>
+          <option value="light">{{ t("settings.theme_light") }}</option>
+          <option value="dark">{{ t("settings.theme_dark") }}</option>
+        </select>
+      </label>
+      <div class="settings__row">
+        <Input
+          v-model="accentInput"
+          :label="t('settings.accent')"
+          placeholder="#14b8a6"
+        />
+        <Button variant="secondary" size="sm" @click="saveAccent">{{
+          t("settings.save")
+        }}</Button>
+      </div>
+      <label class="settings__row">
+        <span>{{ t("settings.language") }}</span>
+        <select @change="setLocale(($event.target as HTMLSelectElement).value)">
+          <option
+            v-for="l in localeOptions"
+            :key="l.code"
+            :value="l.code"
+            :selected="l.code === settings.settings?.interface_language"
           >
-            <option value="system">{{ t("settings.theme_system") }}</option>
-            <option value="light">{{ t("settings.theme_light") }}</option>
-            <option value="dark">{{ t("settings.theme_dark") }}</option>
-          </select>
-        </label>
-        <div class="settings__row">
-          <Input
-            v-model="accentInput"
-            :label="t('settings.accent')"
-            placeholder="#14b8a6"
-          />
-          <Button variant="secondary" size="sm" @click="saveAccent">{{
-            t("settings.save")
-          }}</Button>
-        </div>
-        <label class="settings__row">
-          <span>{{ t("settings.language") }}</span>
-          <select
-            @change="setLocale(($event.target as HTMLSelectElement).value)"
-          >
-            <option
-              v-for="l in localeOptions"
-              :key="l.code"
-              :value="l.code"
-              :selected="l.code === settings.settings?.interface_language"
-            >
-              {{ l.label }}
-            </option>
-          </select>
-        </label>
-        <label v-if="frontends.length" class="settings__row">
-          <span>{{ t("settings.frontend") }}</span>
-          <select
-            :value="settings.settings?.frontend ?? ''"
-            @change="setFrontend(($event.target as HTMLSelectElement).value)"
-          >
-            <option value="">{{ t("settings.frontend_default") }}</option>
-            <option v-for="f in frontends" :key="f.name" :value="f.name">
-              {{ f.name }}
-            </option>
-          </select>
-        </label>
-        <p v-if="saved" class="settings__saved">{{ t("settings.saved") }}</p>
-      </form>
-    </Card>
-  </AppLayout>
+            {{ l.label }}
+          </option>
+        </select>
+      </label>
+      <label v-if="frontends.length" class="settings__row">
+        <span>{{ t("settings.frontend") }}</span>
+        <select
+          :value="settings.settings?.frontend ?? ''"
+          @change="setFrontend(($event.target as HTMLSelectElement).value)"
+        >
+          <option value="">{{ t("settings.frontend_default") }}</option>
+          <option v-for="f in frontends" :key="f.name" :value="f.name">
+            {{ f.name }}
+          </option>
+        </select>
+      </label>
+      <p v-if="saved" class="settings__saved">{{ t("settings.saved") }}</p>
+    </form>
+  </Card>
 </template>
 
 <style scoped>

@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import AppLayout from "@/components/layout/AppLayout.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
@@ -123,94 +122,92 @@ async function submit() {
 </script>
 
 <template>
-  <AppLayout>
-    <Card class="register">
-      <template #header>{{ t("register.title") }}</template>
-      <div v-if="registered" class="register__form">
-        <p role="status">{{ t("register.registered") }}</p>
-        <p v-if="registered.pendingApproval" role="note">
-          {{ t("register.pendingApproval") }}
+  <Card class="register">
+    <template #header>{{ t("register.title") }}</template>
+    <div v-if="registered" class="register__form">
+      <p role="status">{{ t("register.registered") }}</p>
+      <p v-if="registered.pendingApproval" role="note">
+        {{ t("register.pendingApproval") }}
+      </p>
+      <p v-if="registered.verificationPending" role="note">
+        {{ t("register.verifyEmail") }}
+      </p>
+      <Button :disabled="!pendingToken" @click="finish(pendingToken)">
+        {{ t("register.continue") }}
+      </Button>
+    </div>
+    <template v-else>
+      <p v-if="registrations?.message" class="register__message">
+        {{ registrations.message }}
+      </p>
+      <form class="register__form" @submit.prevent="submit">
+        <p v-if="closed" class="register__closed" role="note">
+          {{ t("register.closedInvite") }}
         </p>
-        <p v-if="registered.verificationPending" role="note">
-          {{ t("register.verifyEmail") }}
-        </p>
-        <Button :disabled="!pendingToken" @click="finish(pendingToken)">
-          {{ t("register.continue") }}
-        </Button>
-      </div>
-      <template v-else>
-        <p v-if="registrations?.message" class="register__message">
-          {{ registrations.message }}
-        </p>
-        <form class="register__form" @submit.prevent="submit">
-          <p v-if="closed" class="register__closed" role="note">
-            {{ t("register.closedInvite") }}
-          </p>
+        <Input
+          v-model="invite"
+          :label="t('register.inviteCode')"
+          :disabled="pending"
+        />
+        <template v-if="!closed || invite.trim()">
           <Input
-            v-model="invite"
-            :label="t('register.inviteCode')"
+            v-model="username"
+            :label="t('register.username')"
             :disabled="pending"
+            autocomplete="username"
+            required
           />
-          <template v-if="!closed || invite.trim()">
-            <Input
-              v-model="username"
-              :label="t('register.username')"
-              :disabled="pending"
-              autocomplete="username"
-              required
-            />
-            <Input
-              v-model="email"
-              :label="t('register.email')"
-              :disabled="pending"
-              type="email"
-              autocomplete="email"
-              required
-            />
-            <Input
-              v-model="password"
-              :label="t('register.password')"
-              :disabled="pending"
-              type="password"
-              autocomplete="new-password"
-              required
-            />
-            <Input
-              v-model="confirm"
-              :label="t('register.confirmPassword')"
-              :disabled="pending"
-              type="password"
-              autocomplete="new-password"
-              required
-            />
-            <Input
-              v-if="approvalRequired"
-              v-model="reason"
-              :label="t('register.reason')"
-              :disabled="pending"
-              required
-            />
-            <label class="register__agreement">
-              <input v-model="agreement" type="checkbox" :disabled="pending" />
-              {{ t("register.agreement") }}
-            </label>
-            <p v-if="error" class="register__error" role="alert">{{ error }}</p>
-            <Button type="submit" :loading="pending" :disabled="pending">
-              <FontAwesomeIcon icon="user-plus" />
-              {{ t("register.submit") }}
-            </Button>
-          </template>
-          <p v-else-if="error" class="register__error" role="alert">
-            {{ error }}
-          </p>
-          <p class="register__alt">
-            {{ t("register.haveAccount") }}
-            <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
-          </p>
-        </form>
-      </template>
-    </Card>
-  </AppLayout>
+          <Input
+            v-model="email"
+            :label="t('register.email')"
+            :disabled="pending"
+            type="email"
+            autocomplete="email"
+            required
+          />
+          <Input
+            v-model="password"
+            :label="t('register.password')"
+            :disabled="pending"
+            type="password"
+            autocomplete="new-password"
+            required
+          />
+          <Input
+            v-model="confirm"
+            :label="t('register.confirmPassword')"
+            :disabled="pending"
+            type="password"
+            autocomplete="new-password"
+            required
+          />
+          <Input
+            v-if="approvalRequired"
+            v-model="reason"
+            :label="t('register.reason')"
+            :disabled="pending"
+            required
+          />
+          <label class="register__agreement">
+            <input v-model="agreement" type="checkbox" :disabled="pending" />
+            {{ t("register.agreement") }}
+          </label>
+          <p v-if="error" class="register__error" role="alert">{{ error }}</p>
+          <Button type="submit" :loading="pending" :disabled="pending">
+            <FontAwesomeIcon icon="user-plus" />
+            {{ t("register.submit") }}
+          </Button>
+        </template>
+        <p v-else-if="error" class="register__error" role="alert">
+          {{ error }}
+        </p>
+        <p class="register__alt">
+          {{ t("register.haveAccount") }}
+          <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
+        </p>
+      </form>
+    </template>
+  </Card>
 </template>
 
 <style scoped>

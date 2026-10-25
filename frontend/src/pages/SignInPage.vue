@@ -2,7 +2,6 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import AppLayout from "@/components/layout/AppLayout.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
@@ -97,54 +96,52 @@ async function submit() {
 </script>
 
 <template>
-  <AppLayout>
-    <Card class="signin">
-      <template #header>{{ t("auth.signInTitle") }}</template>
-      <form class="signin__form" @submit.prevent="submit">
-        <template v-if="mfaToken">
-          <p class="signin__hint">{{ mfaHint }}</p>
-          <template v-if="canVerifyCode">
-            <Input
-              v-model="code"
-              :label="t('auth.codeLabel')"
-              :error="error || undefined"
-              :disabled="pending"
-              inputmode="numeric"
-              autocomplete="one-time-code"
-            />
-            <Button type="submit" :loading="pending" :disabled="pending">
-              <FontAwesomeIcon icon="shield-halved" />
-              {{ t("auth.verify") }}
-            </Button>
-          </template>
-        </template>
-        <template v-else>
+  <Card class="signin">
+    <template #header>{{ t("auth.signInTitle") }}</template>
+    <form class="signin__form" @submit.prevent="submit">
+      <template v-if="mfaToken">
+        <p class="signin__hint">{{ mfaHint }}</p>
+        <template v-if="canVerifyCode">
           <Input
-            v-model="username"
-            :label="t('auth.usernameLabel')"
-            :disabled="pending"
-            autocomplete="username"
-          />
-          <Input
-            v-model="password"
-            :label="t('auth.passwordLabel')"
+            v-model="code"
+            :label="t('auth.codeLabel')"
             :error="error || undefined"
             :disabled="pending"
-            type="password"
-            autocomplete="current-password"
+            inputmode="numeric"
+            autocomplete="one-time-code"
           />
           <Button type="submit" :loading="pending" :disabled="pending">
-            <FontAwesomeIcon icon="right-to-bracket" />
-            {{ t("auth.signIn") }}
+            <FontAwesomeIcon icon="shield-halved" />
+            {{ t("auth.verify") }}
           </Button>
-          <p class="signin__alt">
-            {{ t("auth.noAccount") }}
-            <router-link to="/register">{{ t("auth.register") }}</router-link>
-          </p>
         </template>
-      </form>
-    </Card>
-  </AppLayout>
+      </template>
+      <template v-else>
+        <Input
+          v-model="username"
+          :label="t('auth.usernameLabel')"
+          :disabled="pending"
+          autocomplete="username"
+        />
+        <Input
+          v-model="password"
+          :label="t('auth.passwordLabel')"
+          :error="error || undefined"
+          :disabled="pending"
+          type="password"
+          autocomplete="current-password"
+        />
+        <Button type="submit" :loading="pending" :disabled="pending">
+          <FontAwesomeIcon icon="right-to-bracket" />
+          {{ t("auth.signIn") }}
+        </Button>
+        <p class="signin__alt">
+          {{ t("auth.noAccount") }}
+          <router-link to="/register">{{ t("auth.register") }}</router-link>
+        </p>
+      </template>
+    </form>
+  </Card>
 </template>
 
 <style scoped>

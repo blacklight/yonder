@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import AppLayout from "@/components/layout/AppLayout.vue";
 import { useTheme } from "@/composables/useTheme";
 import { useAuthStore } from "@/stores/auth";
 
@@ -30,5 +31,7 @@ watch(
 </script>
 
 <template>
-  <router-view />
+  <AppLayout>
+    <router-view />
+  </AppLayout>
 </template>

@@ -60,6 +60,9 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
 </template>
 
 <style scoped>
+.navmenu {
+  overflow-y: auto;
+}
 .navmenu__list {
   list-style: none;
   margin: 0;

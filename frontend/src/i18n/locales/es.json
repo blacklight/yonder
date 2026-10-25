@@ -580,7 +580,8 @@
     "posts": "Publicaciones",
     "hashtags": "Etiquetas",
     "signInRequired": "Inicia sesión para buscar en esta instancia.",
-    "remoteHint": "Inicia sesión para buscar cuentas y publicaciones remotas."
+    "remoteHint": "Inicia sesión para buscar cuentas y publicaciones remotas.",
+    "resultTypes": "Tipos de resultados de búsqueda"
   },
   "lists": {
     "empty": "Aquí no hay nada todavía.",
@@ -599,6 +600,7 @@
     "deleteBody": "¿Eliminar esta lista? Los miembros no se ven afectados."
   },
   "notifications": {
+    "filters": "Filtros de notificaciones",
     "filter": {
       "all": "Todas",
       "likes": "Me gusta",
@@ -669,6 +671,7 @@
     "following": "{count} siguiendo",
     "statuses": "{count} publicaciones",
     "verified": "Verificado",
+    "tabs": "Secciones del perfil",
     "posts": "Publicaciones",
     "media": "Multimedia",
     "showReplies": "Mostrar respuestas",

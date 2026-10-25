@@ -14,7 +14,7 @@
      from the logo palette (teal-500/-400 between #0d9488 and
      #2dd4bf); --accent-link values are what accentLink() derives —
      keep them in sync if the accents change. */
-  --accent: #14b8a6;
+  --accent: #049890;
   --accent-fg: #122019;
   --accent-soft: #14b8a622;
   --accent-link: #0e8074;

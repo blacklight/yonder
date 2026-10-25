@@ -580,7 +580,8 @@
     "posts": "Post",
     "hashtags": "Hashtag",
     "signInRequired": "Accedi per cercare in questa istanza.",
-    "remoteHint": "Accedi per cercare account e post remoti."
+    "remoteHint": "Accedi per cercare account e post remoti.",
+    "resultTypes": "Tipi di risultati di ricerca"
   },
   "lists": {
     "empty": "Niente qui per ora.",
@@ -599,6 +600,7 @@
     "deleteBody": "Eliminare questa lista? I membri non sono interessati."
   },
   "notifications": {
+    "filters": "Filtri delle notifiche",
     "filter": {
       "all": "Tutte",
       "likes": "Mi piace",
@@ -669,6 +671,7 @@
     "following": "{count} seguiti",
     "statuses": "{count} post",
     "verified": "Verificato",
+    "tabs": "Sezioni del profilo",
     "posts": "Post",
     "media": "Media",
     "showReplies": "Mostra risposte",

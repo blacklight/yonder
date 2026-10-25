@@ -28,6 +28,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
+import Tabs from "@/components/ui/Tabs.vue";
 import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
@@ -48,6 +49,13 @@ const actionError = ref<string | null>(null);
 const statuses = ref<Status[]>([]);
 const nextCursor = ref<string | undefined>();
 const tab = ref<"posts" | "media">("posts");
+const tabs = computed(
+  () =>
+    [
+      { key: "posts", label: t("profile.posts") },
+      { key: "media", label: t("profile.media") },
+    ] as const,
+);
 const showReplies = ref(false);
 const showBoosts = ref(true);
 const confirmAction = ref<MenuItem | null>(null);
@@ -471,14 +479,7 @@ watch([tab, showReplies, showBoosts], () => {
           </template>
         </dl>
       </header>
-      <nav class="tabs">
-        <button :aria-pressed="tab === 'posts'" @click="tab = 'posts'">
-          {{ t("profile.posts") }}
-        </button>
-        <button :aria-pressed="tab === 'media'" @click="tab = 'media'">
-          {{ t("profile.media") }}
-        </button>
-      </nav>
+      <Tabs v-model="tab" :items="tabs" :label="t('profile.tabs')" />
       <div v-if="tab === 'posts'" class="toggles">
         <label
           ><input v-model="showReplies" type="checkbox" />

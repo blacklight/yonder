@@ -14,6 +14,7 @@ import {
 import type { Notification } from "@/api/entities";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
+import Tabs from "@/components/ui/Tabs.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
@@ -25,11 +26,12 @@ const confirming = ref(false);
 
 // Computed, not constant — `auth.isStaff` can arrive after mount via
 // `auth.restore()`, and the reports tab must appear when it does.
-const tabs = computed(
-  () =>
+const tabs = computed(() =>
+  (
     Object.keys(FILTERS).filter(
       (f) => f !== "reports" || auth.isStaff,
-    ) as NotificationFilter[],
+    ) as NotificationFilter[]
+  ).map((f) => ({ key: f, label: t(`notifications.filter.${f}`) })),
 );
 const actionError = ref<string | null>(null);
 
@@ -67,19 +69,16 @@ onMounted(() => store.fetchPage(true));
 <template>
   <main class="page">
     <h1>{{ t("nav.notifications") }}</h1>
-    <nav class="tabs" aria-label="notification filters">
-      <button
-        v-for="f in tabs"
-        :key="f"
-        :aria-pressed="store.activeFilter === f"
-        @click="store.setFilter(f)"
-      >
-        {{ t(`notifications.filter.${f}`) }}
-      </button>
+    <Tabs
+      :model-value="store.activeFilter"
+      :items="tabs"
+      :label="t('notifications.filters')"
+      @update:model-value="store.setFilter"
+    >
       <Button variant="secondary" size="sm" @click="confirming = true">
         {{ t("notifications.clear") }}
       </Button>
-    </nav>
+    </Tabs>
     <ul class="notif-list">
       <li v-for="n in store.items" :key="n.id" class="notif" role="article">
         <p class="notif-label">{{ label(n) }}</p>

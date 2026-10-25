@@ -55,7 +55,7 @@ function contrastRatio(a: number, b: number): number {
 // defaults land on it: #14b8a6→dark (lum≈0.37), #2dd4bf→dark (≈0.51).
 export function accentForeground(hex: string): string {
   const rgb = parseColor(hex);
-  return rgb && luminance(rgb) > 0.3 ? "#1a1a1a" : "#ffffff";
+  return rgb && luminance(rgb) > 0.375 ? "#1a1a1a" : "#ffffff";
 }
 
 // --accent-link is the accent shifted until it reaches 4.5:1 against

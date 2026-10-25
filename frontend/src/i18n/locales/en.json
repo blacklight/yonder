@@ -576,7 +576,8 @@
     "posts": "Posts",
     "hashtags": "Hashtags",
     "signInRequired": "Sign in to search this instance.",
-    "remoteHint": "Sign in to look up remote accounts and posts."
+    "remoteHint": "Sign in to look up remote accounts and posts.",
+    "resultTypes": "Search result types"
   },
   "lists": {
     "empty": "Nothing here yet.",
@@ -595,6 +596,7 @@
     "deleteBody": "Delete this list? Members are not affected."
   },
   "notifications": {
+    "filters": "Notification filters",
     "filter": {
       "all": "All",
       "likes": "Likes",
@@ -665,6 +667,7 @@
     "following": "{count} following",
     "statuses": "{count} posts",
     "verified": "Verified",
+    "tabs": "Profile sections",
     "posts": "Posts",
     "media": "Media",
     "showReplies": "Show replies",

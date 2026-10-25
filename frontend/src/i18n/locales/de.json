@@ -580,7 +580,8 @@
     "posts": "Beiträge",
     "hashtags": "Hashtags",
     "signInRequired": "Zum Suchen auf dieser Instanz anmelden.",
-    "remoteHint": "Anmelden, um entfernte Konten und Beiträge zu finden."
+    "remoteHint": "Anmelden, um entfernte Konten und Beiträge zu finden.",
+    "resultTypes": "Suchergebnistypen"
   },
   "lists": {
     "empty": "Hier ist noch nichts.",
@@ -599,6 +600,7 @@
     "deleteBody": "Diese Liste löschen? Mitglieder bleiben unberührt."
   },
   "notifications": {
+    "filters": "Benachrichtigungsfilter",
     "filter": {
       "all": "Alle",
       "likes": "Gefällt mir",
@@ -669,6 +671,7 @@
     "following": "{count} folgend",
     "statuses": "{count} Beiträge",
     "verified": "Verifiziert",
+    "tabs": "Profilbereiche",
     "posts": "Beiträge",
     "media": "Medien",
     "showReplies": "Antworten zeigen",

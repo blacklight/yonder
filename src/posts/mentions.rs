@@ -301,6 +301,9 @@ pub async fn persist(
         .execute(&mut *conn)
         .await?;
     }
+    // Mentions are final at this point — refresh the conversation key
+    // (epic 25; covers local create and edit, both inside the same tx).
+    super::conversations::refresh_conversation_key(&mut *conn, status_id).await?;
     Ok(())
 }
 

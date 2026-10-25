@@ -20,7 +20,8 @@
     "signIn": "تسجيل الدخول",
     "search": "بحث",
     "searchPlaceholder": "…بحث",
-    "compose": "تحرير"
+    "compose": "تحرير",
+    "messages": "الرسائل"
   },
   "settings": {
     "title": "الإعدادات",
@@ -174,7 +175,9 @@
       "adminSuspend": "تعليق {user}؟ سيتم تعطيل الحساب.",
       "adminDeleteUser": "حذف حساب {user}؟ هذا لا رجعة فيه.",
       "adminLimit": "تقييد {user}؟ ستُخفى منشوراته من الخطوط الزمنية العامة."
-    }
+    },
+    "notFound": "هذا المنشور غير متاح.",
+    "loadError": "تعذّر تحميل المنشور."
   },
   "timeline": {
     "empty": "لا يوجد شيء هنا بعد.",
@@ -227,5 +230,118 @@
   },
   "pages": {
     "comingSoon": "هذه الصفحة ستصل في مرحلة لاحقة."
+  },
+  "common": {
+    "loading": "جارٍ التحميل…",
+    "loadMore": "تحميل المزيد",
+    "confirm": "تأكيد",
+    "save": "حفظ",
+    "delete": "حذف",
+    "error": "حدث خطأ ما."
+  },
+  "search": {
+    "users": "المستخدمون",
+    "posts": "المنشورات",
+    "hashtags": "الوسوم",
+    "signInRequired": "سجّل الدخول للبحث في هذا الخادم.",
+    "remoteHint": "سجّل الدخول للبحث عن حسابات ومنشورات بعيدة."
+  },
+  "lists": {
+    "empty": "لا يوجد شيء هنا بعد.",
+    "titleLabel": "عنوان القائمة",
+    "repliesPolicy": "إظهار الردود على",
+    "policyFollowed": "الأعضاء المتابَعون",
+    "policyList": "أعضاء القائمة",
+    "policyNone": "لا أحد",
+    "exclusive": "حصرية (إخفاء من الرئيسية)",
+    "create": "إنشاء قائمة",
+    "members": "الأعضاء",
+    "addMember": "إضافة عضو",
+    "add": "إضافة",
+    "remove": "إزالة",
+    "deleteTitle": "حذف القائمة",
+    "deleteBody": "حذف هذه القائمة؟ لن يتأثر الأعضاء."
+  },
+  "notifications": {
+    "filter": {
+      "all": "الكل",
+      "likes": "الإعجابات",
+      "boosts": "التعزيزات",
+      "quotes": "الاقتباسات",
+      "mentions": "الإشارات",
+      "reports": "البلاغات"
+    },
+    "type": {
+      "follow": "تابعك {acct}",
+      "follow_request": "طلب {acct} متابعتك",
+      "mention": "أشار {acct} إليك",
+      "favourite": "أعجب {acct} بمنشورك",
+      "reblog": "عزّز {acct} منشورك",
+      "quote": "اقتبس {acct} منشورك",
+      "poll": "انتهى تصويت شاركت فيه",
+      "status": "نشر {acct} منشورًا",
+      "update": "عدّل {acct} منشورًا",
+      "emoji_reaction": "تفاعل {acct} مع منشورك",
+      "admin_sign_up": "سجّل {acct} حسابًا",
+      "moderation_warning": "تلقيت تحذير إشراف",
+      "admin_report": "قُدّم بلاغ",
+      "unknown": "أرسل {acct} إشعارًا"
+    },
+    "accept": "قبول",
+    "reject": "رفض",
+    "clear": "مسح",
+    "dismiss": "تجاهل",
+    "clearTitle": "مسح الإشعارات",
+    "clearBody": "حذف جميع الإشعارات؟ لا يمكن التراجع."
+  },
+  "messages": {
+    "title": "الرسائل المباشرة",
+    "unread": "غير مقروء",
+    "delete": "حذف المحادثة",
+    "deleteTitle": "إخفاء المحادثة",
+    "deleteBody": "إخفاء هذه المحادثة عنك؟ تبقى مرئية للآخرين وتظهر مجددًا عند رسالة جديدة.",
+    "empty": "لا محادثات بعد.",
+    "notFound": "المحادثة غير موجودة."
+  },
+  "profile": {
+    "mention": "إشارة",
+    "dm": "رسالة مباشرة",
+    "note": "ملاحظة",
+    "lists": "إضافة إلى قائمة",
+    "hideBoosts": "إخفاء التعزيزات",
+    "showBoosts": "إظهار التعزيزات",
+    "mute": "كتم",
+    "unmute": "إلغاء الكتم",
+    "block": "حظر",
+    "unblock": "إلغاء الحظر",
+    "blockDomain": "حظر النطاق",
+    "report": "إبلاغ",
+    "adminLimit": "تقييد الحساب",
+    "adminSuspend": "تعليق الحساب",
+    "adminDelete": "حذف الحساب",
+    "adminMakeMod": "تعيين مشرفًا",
+    "edit": "تعديل الملف",
+    "follow": "متابعة",
+    "unfollow": "إلغاء المتابعة",
+    "requested": "مطلوب",
+    "subscribe": "اشتراك",
+    "unsubscribe": "إلغاء الاشتراك",
+    "actions": "إجراءات",
+    "followsYou": "يتابعك",
+    "blockedYou": "أنت محظور",
+    "followers": "لا متابعين | متابع واحد | متابعان | {count} متابعين | {count} متابعًا | {count} متابع",
+    "following": "لا يتابع أحد | يتابع واحد | يتابع اثنان | يتابع {count} | يتابع {count} | يتابع {count}",
+    "statuses": "لا منشورات | منشور واحد | منشوران | {count} منشورات | {count} منشورًا | {count} منشور",
+    "verified": "موثّق",
+    "posts": "المنشورات",
+    "media": "الوسائط",
+    "showReplies": "إظهار الردود",
+    "showBoostsTab": "إظهار التعزيزات",
+    "notFound": "الحساب غير موجود.",
+    "signInToView": "سجّل الدخول لعرض هذا الملف البعيد.",
+    "confirmTitle": "هل أنت متأكد؟",
+    "noteTitle": "ملاحظة خاصة",
+    "loadError": "تعذّر تحميل هذا الملف الشخصي.",
+    "lastAdmin": "لا يمكن إزالة صلاحيات آخر مدير."
   }
 }

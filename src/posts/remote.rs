@@ -352,6 +352,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             }
         }
     }
+    // Mentions are final — refresh the conversation key inside the
+    // materialization transaction (epic 25; covers remote create and
+    // update — the visibility upsert precedes this point).
+    super::conversations::refresh_conversation_key(&mut tx, status_id).await?;
     // Hashtags → tags/status_tags; remote `Emoji` tags are
     // collected for post-commit recording — emoji must never fail
     // or poison the ingest transaction (epic 20).

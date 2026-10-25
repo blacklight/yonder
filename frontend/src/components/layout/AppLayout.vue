@@ -11,6 +11,7 @@ import { getInstance } from "@/api/instance";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import { useNotificationsStore } from "@/stores/notifications";
+import { useConversationsStore } from "@/stores/conversations";
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -18,6 +19,7 @@ const router = useRouter();
 const auth = useAuthStore();
 const compose = useComposeStore();
 const notifications = useNotificationsStore();
+const conversations = useConversationsStore();
 const { toggle } = useTheme();
 
 const locales = [
@@ -37,12 +39,21 @@ onMounted(() => {
     .then((i) => (instanceTitle.value = i.title ?? null))
     .catch(() => {});
   notifications.start();
+  conversations.start();
 });
 
-// The badge feed follows the session.
+// The badge and DM feeds follow the session.
 watch(
   () => auth.isLoggedIn,
-  (logged) => (logged ? notifications.start() : notifications.stop()),
+  (logged) => {
+    if (logged) {
+      notifications.start();
+      conversations.start();
+    } else {
+      notifications.stop();
+      conversations.stop();
+    }
+  },
 );
 
 // Any navigation closes the mobile menu.
@@ -67,6 +78,12 @@ const menuSource = computed<MenuEntry[]>(() => [
     label: t("nav.notifications"),
     to: "/notifications",
     badge: notifications.unread || undefined,
+    visible: auth.isLoggedIn,
+  },
+  {
+    id: "messages",
+    label: t("nav.messages"),
+    to: "/messages",
     visible: auth.isLoggedIn,
   },
   {
@@ -118,6 +135,9 @@ const menuSource = computed<MenuEntry[]>(() => [
     visible: auth.isLoggedIn,
     run: () => {
       notifications.stop();
+      conversations.stop();
+      // Explicit sign-out drops any saved draft — it can hold DM text.
+      compose.clearPersisted();
       auth.signOut();
       void router.push("/");
     },

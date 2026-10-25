@@ -20,7 +20,8 @@
     "signIn": "Accedi",
     "search": "Cerca",
     "searchPlaceholder": "Cerca…",
-    "compose": "Scrivi"
+    "compose": "Scrivi",
+    "messages": "Messaggi"
   },
   "settings": {
     "title": "Impostazioni",
@@ -174,7 +175,9 @@
       "adminSuspend": "Sospendere {user}? L'account verrà disabilitato.",
       "adminDeleteUser": "Eliminare l'account di {user}? L'azione è irreversibile.",
       "adminLimit": "Limitare {user}? I suoi post saranno nascosti dalle timeline pubbliche."
-    }
+    },
+    "notFound": "Questo post non è disponibile.",
+    "loadError": "Impossibile caricare il post."
   },
   "timeline": {
     "empty": "Ancora niente qui.",
@@ -227,5 +230,118 @@
   },
   "pages": {
     "comingSoon": "Questa pagina arriverà in un'epica successiva."
+  },
+  "common": {
+    "loading": "Caricamento…",
+    "loadMore": "Carica altro",
+    "confirm": "Conferma",
+    "save": "Salva",
+    "delete": "Elimina",
+    "error": "Si è verificato un errore."
+  },
+  "search": {
+    "users": "Utenti",
+    "posts": "Post",
+    "hashtags": "Hashtag",
+    "signInRequired": "Accedi per cercare in questa istanza.",
+    "remoteHint": "Accedi per cercare account e post remoti."
+  },
+  "lists": {
+    "empty": "Niente qui per ora.",
+    "titleLabel": "Titolo della lista",
+    "repliesPolicy": "Mostra risposte a",
+    "policyFollowed": "Membri seguiti",
+    "policyList": "Membri della lista",
+    "policyNone": "Nessuno",
+    "exclusive": "Esclusiva (nascondi dalla home)",
+    "create": "Crea lista",
+    "members": "Membri",
+    "addMember": "Aggiungi membro",
+    "add": "Aggiungi",
+    "remove": "Rimuovi",
+    "deleteTitle": "Elimina lista",
+    "deleteBody": "Eliminare questa lista? I membri non sono interessati."
+  },
+  "notifications": {
+    "filter": {
+      "all": "Tutte",
+      "likes": "Mi piace",
+      "boosts": "Condivisioni",
+      "quotes": "Citazioni",
+      "mentions": "Menzioni",
+      "reports": "Segnalazioni"
+    },
+    "type": {
+      "follow": "{acct} ti ha seguito",
+      "follow_request": "{acct} ha chiesto di seguirti",
+      "mention": "{acct} ti ha menzionato",
+      "favourite": "A {acct} è piaciuto il tuo post",
+      "reblog": "{acct} ha condiviso il tuo post",
+      "quote": "{acct} ha citato il tuo post",
+      "poll": "Un sondaggio a cui hai votato è finito",
+      "status": "{acct} ha pubblicato",
+      "update": "{acct} ha modificato un post",
+      "emoji_reaction": "{acct} ha reagito al tuo post",
+      "admin_sign_up": "{acct} si è registrato",
+      "moderation_warning": "Hai ricevuto un avviso di moderazione",
+      "admin_report": "È stata inviata una segnalazione",
+      "unknown": "{acct} ha inviato una notifica"
+    },
+    "accept": "Accetta",
+    "reject": "Rifiuta",
+    "clear": "Cancella",
+    "dismiss": "Ignora",
+    "clearTitle": "Cancella notifiche",
+    "clearBody": "Eliminare tutte le notifiche? Non si può annullare."
+  },
+  "messages": {
+    "title": "Messaggi diretti",
+    "unread": "Non letto",
+    "delete": "Elimina conversazione",
+    "deleteTitle": "Nascondi conversazione",
+    "deleteBody": "Nascondere questa conversazione per te? Rimane visibile agli altri e riappare con un nuovo messaggio.",
+    "empty": "Nessuna conversazione.",
+    "notFound": "Conversazione non trovata."
+  },
+  "profile": {
+    "mention": "Menziona",
+    "dm": "Messaggio diretto",
+    "note": "Nota",
+    "lists": "Aggiungi a lista",
+    "hideBoosts": "Nascondi condivisioni",
+    "showBoosts": "Mostra condivisioni",
+    "mute": "Silenzia",
+    "unmute": "Riattiva",
+    "block": "Blocca",
+    "unblock": "Sblocca",
+    "blockDomain": "Blocca dominio",
+    "report": "Segnala",
+    "adminLimit": "Limita account",
+    "adminSuspend": "Sospendi account",
+    "adminDelete": "Elimina account",
+    "adminMakeMod": "Rendi moderatore",
+    "edit": "Modifica profilo",
+    "follow": "Segui",
+    "unfollow": "Smetti di seguire",
+    "requested": "Richiesto",
+    "subscribe": "Iscriviti",
+    "unsubscribe": "Disiscriviti",
+    "actions": "Azioni",
+    "followsYou": "Ti segue",
+    "blockedYou": "Sei bloccato",
+    "followers": "{count} follower",
+    "following": "{count} seguiti",
+    "statuses": "{count} post",
+    "verified": "Verificato",
+    "posts": "Post",
+    "media": "Media",
+    "showReplies": "Mostra risposte",
+    "showBoostsTab": "Mostra condivisioni",
+    "notFound": "Account non trovato.",
+    "signInToView": "Accedi per vedere questo profilo remoto.",
+    "confirmTitle": "Sei sicuro?",
+    "noteTitle": "Nota privata",
+    "loadError": "Impossibile caricare questo profilo.",
+    "lastAdmin": "Non puoi retrocedere l'ultimo amministratore."
   }
 }

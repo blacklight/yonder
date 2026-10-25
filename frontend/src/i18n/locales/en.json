@@ -20,7 +20,8 @@
     "signIn": "Sign in",
     "search": "Search",
     "searchPlaceholder": "Search…",
-    "compose": "Compose"
+    "compose": "Compose",
+    "messages": "Messages"
   },
   "settings": {
     "title": "Settings",
@@ -174,7 +175,9 @@
       "adminSuspend": "Suspend {user}? The account will be disabled.",
       "adminDeleteUser": "Delete {user}'s account? This is irreversible.",
       "adminLimit": "Limit {user}? Their posts will be hidden from public timelines."
-    }
+    },
+    "notFound": "This status is not available.",
+    "loadError": "Could not load the status."
   },
   "timeline": {
     "empty": "Nothing here yet.",
@@ -227,5 +230,118 @@
   },
   "pages": {
     "comingSoon": "This page lands in a later epic."
+  },
+  "common": {
+    "loading": "Loading…",
+    "loadMore": "Load more",
+    "confirm": "Confirm",
+    "save": "Save",
+    "delete": "Delete",
+    "error": "Something went wrong."
+  },
+  "search": {
+    "users": "Users",
+    "posts": "Posts",
+    "hashtags": "Hashtags",
+    "signInRequired": "Sign in to search this instance.",
+    "remoteHint": "Sign in to look up remote accounts and posts."
+  },
+  "lists": {
+    "empty": "Nothing here yet.",
+    "titleLabel": "List title",
+    "repliesPolicy": "Show replies to",
+    "policyFollowed": "Followed members",
+    "policyList": "List members",
+    "policyNone": "No one",
+    "exclusive": "Exclusive (hide from home)",
+    "create": "Create list",
+    "members": "Members",
+    "addMember": "Add member",
+    "add": "Add",
+    "remove": "Remove",
+    "deleteTitle": "Delete list",
+    "deleteBody": "Delete this list? Members are not affected."
+  },
+  "notifications": {
+    "filter": {
+      "all": "All",
+      "likes": "Likes",
+      "boosts": "Boosts",
+      "quotes": "Quotes",
+      "mentions": "Mentions",
+      "reports": "Reports"
+    },
+    "type": {
+      "follow": "{acct} followed you",
+      "follow_request": "{acct} requested to follow you",
+      "mention": "{acct} mentioned you",
+      "favourite": "{acct} liked your post",
+      "reblog": "{acct} boosted your post",
+      "quote": "{acct} quoted your post",
+      "poll": "A poll you voted in ended",
+      "status": "{acct} published a post",
+      "update": "{acct} edited a post",
+      "emoji_reaction": "{acct} reacted to your post",
+      "admin_sign_up": "{acct} signed up",
+      "moderation_warning": "You received a moderation warning",
+      "admin_report": "A report was filed",
+      "unknown": "{acct} sent a notification"
+    },
+    "accept": "Accept",
+    "reject": "Reject",
+    "clear": "Clear",
+    "dismiss": "Dismiss",
+    "clearTitle": "Clear notifications",
+    "clearBody": "Delete all notifications? This cannot be undone."
+  },
+  "messages": {
+    "title": "Direct messages",
+    "unread": "Unread",
+    "delete": "Delete conversation",
+    "deleteTitle": "Hide conversation",
+    "deleteBody": "Hide this conversation for you? It stays visible to other participants and reappears on a new message.",
+    "empty": "No conversations yet.",
+    "notFound": "Conversation not found."
+  },
+  "profile": {
+    "mention": "Mention",
+    "dm": "Direct message",
+    "note": "Note",
+    "lists": "Add to list",
+    "hideBoosts": "Hide boosts",
+    "showBoosts": "Show boosts",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "block": "Block",
+    "unblock": "Unblock",
+    "blockDomain": "Block domain",
+    "report": "Report",
+    "adminLimit": "Limit account",
+    "adminSuspend": "Suspend account",
+    "adminDelete": "Delete account",
+    "adminMakeMod": "Make moderator",
+    "edit": "Edit profile",
+    "follow": "Follow",
+    "unfollow": "Unfollow",
+    "requested": "Requested",
+    "subscribe": "Subscribe",
+    "unsubscribe": "Unsubscribe",
+    "actions": "Actions",
+    "followsYou": "Follows you",
+    "blockedYou": "You are blocked",
+    "followers": "{count} followers",
+    "following": "{count} following",
+    "statuses": "{count} posts",
+    "verified": "Verified",
+    "posts": "Posts",
+    "media": "Media",
+    "showReplies": "Show replies",
+    "showBoostsTab": "Show boosts",
+    "notFound": "Account not found.",
+    "signInToView": "Sign in to view this remote profile.",
+    "confirmTitle": "Are you sure?",
+    "noteTitle": "Private note",
+    "loadError": "Could not load this profile.",
+    "lastAdmin": "The last admin cannot be demoted."
   }
 }

@@ -124,14 +124,40 @@ export const useComposeStore = defineStore("compose", {
       this.openSignal++;
     },
 
-    /** Direct-message mode; `acct` (when given) seeds `@recipient `. */
-    openDirect(acct?: string) {
+    /** Direct-message mode; seeds `@a @b ` for one or more recipients. */
+    openDirect(acct?: string | string[]) {
+      const accts = Array.isArray(acct) ? acct : acct ? [acct] : [];
       this.reset();
       this.update({
         visibility: "direct",
-        text: acct ? `@${acct} ` : "",
+        text: accts.length ? `${accts.map((a) => `@${a}`).join(" ")} ` : "",
       });
       this.openSignal++;
+    },
+
+    /**
+     * Reply inside a DM thread — `openReply` seeding plus
+     * `visibility: "direct"` (openReply alone would post a public
+     * "DM"). The server's mention carry-over keeps the participant
+     * set — and therefore the conversation key — stable.
+     */
+    openDirectReply(status: Status) {
+      const target = status.reblog ?? status;
+      const acct = target.account.acct;
+      this.reset();
+      this.update({
+        inReplyToId: target.id,
+        replyToAcct: acct,
+        text: `@${acct} `,
+        visibility: "direct",
+      });
+      this.openSignal++;
+    },
+
+    /** Drop the persisted draft + stash (explicit logout / account deletion). */
+    clearPersisted() {
+      localStorage.removeItem(DRAFT_KEY);
+      localStorage.removeItem(STASH_KEY);
     },
 
     reset() {

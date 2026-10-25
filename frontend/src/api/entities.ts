@@ -20,7 +20,8 @@ export interface Account {
   followers_count: number;
   following_count: number;
   statuses_count: number;
-  fields: { name: string; value: string }[];
+  /** `users::account::public_fields` — `verified_at` non-null marks verified fields. */
+  fields: { name: string; value: string; verified_at?: string | null }[];
   emojis: CustomEmoji[];
   moved?: Account | null;
   last_status_at?: string | null;
@@ -188,15 +189,23 @@ export interface ScheduledStatus {
   media_attachments: MediaAttachment[];
 }
 
-/** `interactions::entity::relationship` — the Relationship entity. */
+/** `social::entity::relationship` — the full Relationship entity. */
 export interface Relationship {
   id: string;
   following: boolean;
+  showing_reblogs?: boolean;
+  notifying?: boolean;
   followed_by: boolean;
   blocking: boolean;
+  blocked_by?: boolean;
   muting: boolean;
+  muting_notifications?: boolean;
   requested: boolean;
+  requested_by?: boolean;
+  domain_blocking?: boolean;
   note: string;
+  endorsed?: boolean;
+  subscribing?: boolean;
   [key: string]: unknown;
 }
 
@@ -207,6 +216,146 @@ export interface Notification {
   created_at: string;
   account: Account | null;
   status?: Status | null;
+  /** `admin.report` rows carry the referenced Report object. */
+  report?: Report | null;
+}
+
+/** `moderation::reports` entity (subset consumed by the SPA). */
+export interface Report {
+  id: string;
+  action_taken?: boolean;
+  comment?: string;
+  category?: string;
+  account?: Account | null;
+  target_account?: Account | null;
+  [key: string]: unknown;
+}
+
+/** `posts::conversations` + `v1::conversations` — Mastodon Conversation. */
+export interface Conversation {
+  /** The conversation key (64-char hex), not a numeric id. */
+  id: string;
+  unread: boolean;
+  accounts: Account[];
+  last_status: Status | null;
+}
+
+/** `social::lists::entity` — a List. */
+export interface ListEntity {
+  id: string;
+  title: string;
+  replies_policy: "followed" | "list" | "none";
+  exclusive?: boolean;
+}
+
+/** `filters` v2 entity (subset). */
+export interface Filter {
+  id: string;
+  title: string;
+  context: string[];
+  expires_at: string | null;
+  filter_action: string;
+  keywords: FilterKeyword[];
+  statuses: FilterStatus[];
+}
+export interface FilterKeyword {
+  id: string;
+  keyword: string;
+  whole_word: boolean;
+}
+export interface FilterStatus {
+  id: string;
+  status_id: string;
+}
+
+/** `tokens::list_user_tokens` — a named token (never carries the secret). */
+export interface Token {
+  id: string;
+  name: string;
+  scopes?: string;
+  expires_at?: string | null;
+  created_at?: string;
+  last_used_at?: string | null;
+  [key: string]: unknown;
+}
+/** `POST /api/v1/tokens` response — the only place the secret appears. */
+export interface CreatedToken {
+  id: string;
+  name: string;
+  token: string;
+}
+
+/** `sessions::list_sessions` row. */
+export interface SessionEntity {
+  id: string;
+  ip?: string | null;
+  user_agent?: string | null;
+  created_at?: string;
+  last_seen_at?: string | null;
+  current?: boolean;
+  [key: string]: unknown;
+}
+
+/** `apps::authorized_applications` row. */
+export interface AuthorizedApp {
+  id: string;
+  name: string;
+  website?: string | null;
+  scopes?: string;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+/** `transfer::status_json` — an archive_exports/archive_imports row. */
+export interface TransferRow {
+  id: string;
+  kind: string;
+  state: string;
+  processed: number;
+  total: number | null;
+  failed: number;
+  file_size: number | null;
+  error: string | null;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string | null;
+}
+
+/** `invites::list` row. */
+export interface Invite {
+  id: string;
+  code: string;
+  url?: string;
+  uses?: number;
+  max_uses: number | null;
+  expires_at: string | null;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+/** `GET /api/v1/preferences` — Mastodon Preferences (subset). */
+export interface Preferences {
+  "posting:default:visibility"?: string;
+  "posting:default:sensitive"?: boolean;
+  "posting:default:language"?: string | null;
+  [key: string]: unknown;
+}
+
+/** `two_factor::status` response. */
+export interface TwoFactorStatus {
+  enabled: boolean;
+  totp: boolean;
+  webauthn: boolean;
+  backup_codes_remaining?: number;
+  [key: string]: unknown;
+}
+/** `webauthn_credentials` row. */
+export interface WebauthnCredential {
+  id: string;
+  name: string;
+  created_at?: string;
+  last_used_at?: string | null;
+  [key: string]: unknown;
 }
 
 /** `GET /api/v1/instance` — only the fields the SPA consumes. */

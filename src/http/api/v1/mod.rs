@@ -16,6 +16,7 @@ pub mod admin_relays;
 pub mod admin_settings;
 pub mod apps;
 pub mod blocks;
+pub mod conversations;
 pub mod custom_emojis;
 pub mod emoji_admin;
 pub mod follow_requests;
@@ -536,6 +537,34 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/accounts/{id}/statuses",
             get(accounts::account_statuses).route_layer(ratelimit::layer(state, "timeline")),
         )
+        // Epic 25 — handle lookup for `/@acct` profile URLs. Public
+        // like the profile reads above; counted against `search`
+        // (bounded remote-resolve amplification, see `accounts::lookup`).
+        .route(
+            "/api/v1/accounts/lookup",
+            get(accounts::lookup).route_layer(ratelimit::layer(state, "search")),
+        )
+        // Epic 25 — direct-message conversations: reads on `timeline`,
+        // marker writes on `relation`.
+        .route(
+            "/api/v1/conversations",
+            get(conversations::list_conversations).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/conversations/{id}/statuses",
+            get(conversations::conversation_statuses)
+                .route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/conversations/{id}/read",
+            post(conversations::mark_conversation_read)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/conversations/{id}",
+            axum::routing::delete(conversations::delete_conversation)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
         // Timelines (epic 15) — registered after the `authentication`
         // layer so reads count solely against the `timeline` bucket.
         .route(
@@ -759,6 +788,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     scheduled_statuses::update,
     scheduled_statuses::cancel,
     search::search_v1,
+    accounts::lookup,
+    conversations::list_conversations,
+    conversations::conversation_statuses,
+    conversations::mark_conversation_read,
+    conversations::delete_conversation,
     tags::show,
     tags::follow,
     tags::unfollow,

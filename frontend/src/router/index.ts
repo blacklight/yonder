@@ -74,19 +74,85 @@ export const router = createRouter({
       name: "about",
       ...stub("nav.about"),
     },
-    { path: "/search", name: "search", ...stub("nav.search") },
+    {
+      path: "/search",
+      name: "search",
+      component: () => import("@/pages/SearchPage.vue"),
+    },
+    {
+      path: "/statuses/:id",
+      name: "status",
+      component: () => import("@/pages/StatusPage.vue"),
+      props: true,
+    },
     {
       path: "/notifications",
       name: "notifications",
-      ...stub("nav.notifications"),
+      component: () => import("@/pages/NotificationsPage.vue"),
+      meta: { requiresAuth: true },
     },
-    { path: "/favourites", name: "favourites", ...stub("nav.favourites") },
-    { path: "/bookmarks", name: "bookmarks", ...stub("nav.bookmarks") },
-    { path: "/lists", name: "lists", ...stub("nav.lists") },
+    {
+      path: "/messages",
+      name: "messages",
+      component: () => import("@/pages/ConversationsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/messages/:id",
+      name: "conversation",
+      component: () => import("@/pages/ConversationThreadPage.vue"),
+      props: true,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/favourites",
+      name: "favourites",
+      component: () => import("@/pages/StatusListPage.vue"),
+      props: { feed: "favourites" },
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/bookmarks",
+      name: "bookmarks",
+      component: () => import("@/pages/StatusListPage.vue"),
+      props: { feed: "bookmarks" },
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/lists",
+      name: "lists",
+      component: () => import("@/pages/ListsPage.vue"),
+      meta: { requiresAuth: true },
+    },
     { path: "/hashtags", name: "hashtags", ...stub("nav.hashtags") },
     { path: "/moderation", name: "moderation", ...stub("nav.moderation") },
     { path: "/admin", name: "admin", ...stub("nav.admin") },
-    { path: "/profile", name: "profile", ...stub("nav.profile") },
+    {
+      // `/@user` / `/@user@domain` — the canonical profile URL.
+      path: "/@:acct",
+      name: "profile-acct",
+      component: () => import("@/pages/ProfilePage.vue"),
+    },
+    {
+      // Numeric ids resolve on this alias only — `/@123` is a valid handle.
+      path: "/accounts/:id",
+      name: "profile-id",
+      component: () => import("@/pages/ProfilePage.vue"),
+    },
+    {
+      path: "/profile",
+      name: "profile",
+      component: () => import("@/pages/ProfilePage.vue"),
+      // Waits for `auth.restore()` before resolving — a persisted
+      // token may not have an account yet, so never redirect to
+      // `/@undefined`.
+      beforeEnter: async () => {
+        const auth = useAuthStore();
+        if (!auth.isLoggedIn) return { name: "sign-in" };
+        await auth.restore();
+        return auth.account ? `/@${auth.account.acct}` : true;
+      },
+    },
     {
       path: "/settings",
       name: "settings",

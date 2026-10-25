@@ -230,6 +230,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/accounts/lookup": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/accounts/lookup?acct=` — resolve a handle to the same
+     *     Account entity `GET /accounts/{id}` serves (epic 25). Anonymous-
+     *     capable like the profile reads (not gated by
+     *     `search.unauthenticated_enabled`); counted against the `search`
+     *     bucket at the router.
+     * @description Accepted `acct` shapes: `user`, `@user`, `user@domain`,
+     *     `@user@domain`; a domain equal to `instance.domain` normalizes to
+     *     the bare local handle (local rows carry `domain IS NULL`).
+     *
+     *     Error contract the SPA relies on: malformed or missing `acct` →
+     *     422; a local or DB-known miss → 404; an unknown remote handle →
+     *     **401 only when sign-in is the missing gate** (anonymous +
+     *     `search.remote_fetch` on + federation up — the SPA renders a
+     *     sign-in hint) and 404 when remote resolution is disabled or
+     *     federation is down (signing in cannot help). Anonymous requests
+     *     never reach WebFinger/`lookup_fqn`.
+     */
+    get: operations["lookup"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/accounts/relationships": {
     parameters: {
       query?: never;
@@ -1131,6 +1165,89 @@ export interface paths {
     };
     /** `GET /api/v1/bookmarks`. */
     get: operations["bookmarks_list"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/conversations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/conversations` — the caller's DM conversations,
+     *     newest-activity first, `Link`-paginated by the group's newest
+     *     visible status id.
+     */
+    get: operations["list_conversations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/conversations/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * `DELETE /api/v1/conversations/{id}` — caller-only hide: sets
+     *     `hidden_through_status_id` to the newest status id with the key.
+     *     Statuses are never deleted; a newer status revives the
+     *     conversation for this caller.
+     */
+    delete: operations["delete_conversation"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/conversations/{id}/read": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/conversations/{id}/read` — set the caller's read
+     *     marker to the newest visible status; returns the conversation.
+     */
+    post: operations["mark_conversation_read"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/conversations/{id}/statuses": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/conversations/{id}/statuses` — the thread, newest
+     *     first, `Link`-paginated like the timelines.
+     */
+    get: operations["conversation_statuses"];
     put?: never;
     post?: never;
     delete?: never;
@@ -3655,6 +3772,63 @@ export interface operations {
       };
     };
   };
+  lookup: {
+    parameters: {
+      query: {
+        /** @description Handle: user, @user, user@domain or @user@domain */
+        acct: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The account */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Sign-in would allow a remote lookup */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Missing, deleted or suspended account */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Missing or malformed acct */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   relationships: {
     parameters: {
       query?: never;
@@ -5731,6 +5905,240 @@ export interface operations {
       };
       /** @description Missing or invalid token */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  list_conversations: {
+    parameters: {
+      query?: {
+        /** @description Return conversations older than this cursor */
+        max_id?: string;
+        /** @description Return conversations immediately newer than this cursor */
+        min_id?: string;
+        /** @description Alias of min_id */
+        since_id?: string;
+        /** @description Page size (1-40, default 20) */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Page of conversations (Link header carries cursors) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  delete_conversation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Conversation id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Hidden for the caller */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Unknown conversation or not a participant */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  mark_conversation_read: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Conversation id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The conversation */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Unknown conversation or not a participant */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Rate limited */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  conversation_statuses: {
+    parameters: {
+      query?: {
+        /** @description Return statuses older than this id */
+        max_id?: string;
+        /** @description Return statuses immediately newer than this id */
+        min_id?: string;
+        /** @description Alias of min_id */
+        since_id?: string;
+        /** @description Page size (1-40, default 20) */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Conversation id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Page of statuses, newest first (Link header carries cursors) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Unknown conversation or not a participant */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Rate limited */
+      429: {
         headers: {
           [name: string]: unknown;
         };

@@ -1800,6 +1800,14 @@ async fn import_post(ctx: &JobContext, rel: Ctx<'_>, account_id: i64, item: &Val
         }
     }
 
+    // Mentions are final — imported direct posts need a conversation
+    // key or they never appear in the DM list (epic 25). `import_post`
+    // runs on the pool, so use the standalone entry point, which opens
+    // its own transaction.
+    if visibility == "direct" {
+        crate::posts::conversations::refresh_conversation_key_standalone(db, status_id).await?;
+    }
+
     // Poll (Question).
     if obj_type == "Question" {
         let options = obj

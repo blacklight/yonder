@@ -20,7 +20,8 @@
     "signIn": "Anmelden",
     "search": "Suche",
     "searchPlaceholder": "Suchen…",
-    "compose": "Schreiben"
+    "compose": "Schreiben",
+    "messages": "Nachrichten"
   },
   "settings": {
     "title": "Einstellungen",
@@ -174,7 +175,9 @@
       "adminSuspend": "{user} sperren? Das Konto wird deaktiviert.",
       "adminDeleteUser": "Das Konto von {user} löschen? Das ist unumkehrbar.",
       "adminLimit": "{user} limitieren? Beiträge werden aus öffentlichen Timelines ausgeblendet."
-    }
+    },
+    "notFound": "Dieser Beitrag ist nicht verfügbar.",
+    "loadError": "Beitrag konnte nicht geladen werden."
   },
   "timeline": {
     "empty": "Hier ist noch nichts.",
@@ -227,5 +230,118 @@
   },
   "pages": {
     "comingSoon": "Diese Seite kommt in einem späteren Epic."
+  },
+  "common": {
+    "loading": "Laden…",
+    "loadMore": "Mehr laden",
+    "confirm": "Bestätigen",
+    "save": "Speichern",
+    "delete": "Löschen",
+    "error": "Etwas ist schiefgelaufen."
+  },
+  "search": {
+    "users": "Nutzer",
+    "posts": "Beiträge",
+    "hashtags": "Hashtags",
+    "signInRequired": "Zum Suchen auf dieser Instanz anmelden.",
+    "remoteHint": "Anmelden, um entfernte Konten und Beiträge zu finden."
+  },
+  "lists": {
+    "empty": "Hier ist noch nichts.",
+    "titleLabel": "Listentitel",
+    "repliesPolicy": "Antworten zeigen an",
+    "policyFollowed": "Gefolgte Mitglieder",
+    "policyList": "Listenmitglieder",
+    "policyNone": "Niemanden",
+    "exclusive": "Exklusiv (aus Start verbergen)",
+    "create": "Liste erstellen",
+    "members": "Mitglieder",
+    "addMember": "Mitglied hinzufügen",
+    "add": "Hinzufügen",
+    "remove": "Entfernen",
+    "deleteTitle": "Liste löschen",
+    "deleteBody": "Diese Liste löschen? Mitglieder bleiben unberührt."
+  },
+  "notifications": {
+    "filter": {
+      "all": "Alle",
+      "likes": "Gefällt mir",
+      "boosts": "Geteilt",
+      "quotes": "Zitate",
+      "mentions": "Erwähnungen",
+      "reports": "Meldungen"
+    },
+    "type": {
+      "follow": "{acct} folgt dir",
+      "follow_request": "{acct} möchte dir folgen",
+      "mention": "{acct} hat dich erwähnt",
+      "favourite": "{acct} gefällt dein Beitrag",
+      "reblog": "{acct} hat deinen Beitrag geteilt",
+      "quote": "{acct} hat deinen Beitrag zitiert",
+      "poll": "Eine Umfrage, an der du teilnahmst, endete",
+      "status": "{acct} hat einen Beitrag veröffentlicht",
+      "update": "{acct} hat einen Beitrag bearbeitet",
+      "emoji_reaction": "{acct} hat auf deinen Beitrag reagiert",
+      "admin_sign_up": "{acct} hat sich registriert",
+      "moderation_warning": "Du hast eine Moderationswarnung erhalten",
+      "admin_report": "Eine Meldung wurde eingereicht",
+      "unknown": "{acct} hat eine Mitteilung gesendet"
+    },
+    "accept": "Annehmen",
+    "reject": "Ablehnen",
+    "clear": "Leeren",
+    "dismiss": "Verwerfen",
+    "clearTitle": "Mitteilungen leeren",
+    "clearBody": "Alle Mitteilungen löschen? Kann nicht rückgängig gemacht werden."
+  },
+  "messages": {
+    "title": "Direktnachrichten",
+    "unread": "Ungelesen",
+    "delete": "Unterhaltung löschen",
+    "deleteTitle": "Unterhaltung verbergen",
+    "deleteBody": "Diese Unterhaltung für dich verbergen? Sie bleibt für andere sichtbar und erscheint bei einer neuen Nachricht wieder.",
+    "empty": "Noch keine Unterhaltungen.",
+    "notFound": "Unterhaltung nicht gefunden."
+  },
+  "profile": {
+    "mention": "Erwähnen",
+    "dm": "Direktnachricht",
+    "note": "Notiz",
+    "lists": "Zur Liste hinzufügen",
+    "hideBoosts": "Geteilte ausblenden",
+    "showBoosts": "Geteilte zeigen",
+    "mute": "Stummschalten",
+    "unmute": "Stummschaltung aufheben",
+    "block": "Blockieren",
+    "unblock": "Entblocken",
+    "blockDomain": "Domain blockieren",
+    "report": "Melden",
+    "adminLimit": "Konto einschränken",
+    "adminSuspend": "Konto sperren",
+    "adminDelete": "Konto löschen",
+    "adminMakeMod": "Zum Moderator machen",
+    "edit": "Profil bearbeiten",
+    "follow": "Folgen",
+    "unfollow": "Entfolgen",
+    "requested": "Angefragt",
+    "subscribe": "Abonnieren",
+    "unsubscribe": "Abbestellen",
+    "actions": "Aktionen",
+    "followsYou": "Folgt dir",
+    "blockedYou": "Du bist blockiert",
+    "followers": "{count} Follower",
+    "following": "{count} folgend",
+    "statuses": "{count} Beiträge",
+    "verified": "Verifiziert",
+    "posts": "Beiträge",
+    "media": "Medien",
+    "showReplies": "Antworten zeigen",
+    "showBoostsTab": "Geteilte zeigen",
+    "notFound": "Konto nicht gefunden.",
+    "signInToView": "Anmelden, um dieses entfernte Profil zu sehen.",
+    "confirmTitle": "Bist du sicher?",
+    "noteTitle": "Private Notiz",
+    "loadError": "Profil konnte nicht geladen werden.",
+    "lastAdmin": "Der letzte Administrator kann nicht herabgestuft werden."
   }
 }

@@ -20,7 +20,8 @@
     "signIn": "Iniciar sesión",
     "search": "Buscar",
     "searchPlaceholder": "Buscar…",
-    "compose": "Redactar"
+    "compose": "Redactar",
+    "messages": "Mensajes"
   },
   "settings": {
     "title": "Ajustes",
@@ -174,7 +175,9 @@
       "adminSuspend": "¿Suspender a {user}? La cuenta quedará deshabilitada.",
       "adminDeleteUser": "¿Eliminar la cuenta de {user}? Es irreversible.",
       "adminLimit": "¿Limitar a {user}? Sus publicaciones se ocultarán de las líneas de tiempo públicas."
-    }
+    },
+    "notFound": "Esta publicación no está disponible.",
+    "loadError": "No se pudo cargar la publicación."
   },
   "timeline": {
     "empty": "Nada por aquí todavía.",
@@ -227,5 +230,118 @@
   },
   "pages": {
     "comingSoon": "Esta página llegará en una épica posterior."
+  },
+  "common": {
+    "loading": "Cargando…",
+    "loadMore": "Cargar más",
+    "confirm": "Confirmar",
+    "save": "Guardar",
+    "delete": "Eliminar",
+    "error": "Se ha producido un error."
+  },
+  "search": {
+    "users": "Usuarios",
+    "posts": "Publicaciones",
+    "hashtags": "Etiquetas",
+    "signInRequired": "Inicia sesión para buscar en esta instancia.",
+    "remoteHint": "Inicia sesión para buscar cuentas y publicaciones remotas."
+  },
+  "lists": {
+    "empty": "Aquí no hay nada todavía.",
+    "titleLabel": "Título de la lista",
+    "repliesPolicy": "Mostrar respuestas a",
+    "policyFollowed": "Miembros seguidos",
+    "policyList": "Miembros de la lista",
+    "policyNone": "Nadie",
+    "exclusive": "Exclusiva (ocultar del inicio)",
+    "create": "Crear lista",
+    "members": "Miembros",
+    "addMember": "Añadir miembro",
+    "add": "Añadir",
+    "remove": "Quitar",
+    "deleteTitle": "Eliminar lista",
+    "deleteBody": "¿Eliminar esta lista? Los miembros no se ven afectados."
+  },
+  "notifications": {
+    "filter": {
+      "all": "Todas",
+      "likes": "Me gusta",
+      "boosts": "Impulsos",
+      "quotes": "Citas",
+      "mentions": "Menciones",
+      "reports": "Informes"
+    },
+    "type": {
+      "follow": "{acct} te siguió",
+      "follow_request": "{acct} solicitó seguirte",
+      "mention": "{acct} te mencionó",
+      "favourite": "A {acct} le gustó tu publicación",
+      "reblog": "{acct} impulsó tu publicación",
+      "quote": "{acct} citó tu publicación",
+      "poll": "Terminó una encuesta en la que votaste",
+      "status": "{acct} publicó",
+      "update": "{acct} editó una publicación",
+      "emoji_reaction": "{acct} reaccionó a tu publicación",
+      "admin_sign_up": "{acct} se registró",
+      "moderation_warning": "Recibiste una advertencia de moderación",
+      "admin_report": "Se presentó un informe",
+      "unknown": "{acct} envió una notificación"
+    },
+    "accept": "Aceptar",
+    "reject": "Rechazar",
+    "clear": "Limpiar",
+    "dismiss": "Descartar",
+    "clearTitle": "Limpiar notificaciones",
+    "clearBody": "¿Eliminar todas las notificaciones? No se puede deshacer."
+  },
+  "messages": {
+    "title": "Mensajes directos",
+    "unread": "Sin leer",
+    "delete": "Eliminar conversación",
+    "deleteTitle": "Ocultar conversación",
+    "deleteBody": "¿Ocultar esta conversación para ti? Sigue visible para los demás y reaparece con un mensaje nuevo.",
+    "empty": "Aún no hay conversaciones.",
+    "notFound": "Conversación no encontrada."
+  },
+  "profile": {
+    "mention": "Mencionar",
+    "dm": "Mensaje directo",
+    "note": "Nota",
+    "lists": "Añadir a lista",
+    "hideBoosts": "Ocultar impulsos",
+    "showBoosts": "Mostrar impulsos",
+    "mute": "Silenciar",
+    "unmute": "Dejar de silenciar",
+    "block": "Bloquear",
+    "unblock": "Desbloquear",
+    "blockDomain": "Bloquear dominio",
+    "report": "Informar",
+    "adminLimit": "Limitar cuenta",
+    "adminSuspend": "Suspender cuenta",
+    "adminDelete": "Eliminar cuenta",
+    "adminMakeMod": "Hacer moderador",
+    "edit": "Editar perfil",
+    "follow": "Seguir",
+    "unfollow": "Dejar de seguir",
+    "requested": "Solicitado",
+    "subscribe": "Suscribirse",
+    "unsubscribe": "Desuscribirse",
+    "actions": "Acciones",
+    "followsYou": "Te sigue",
+    "blockedYou": "Estás bloqueado",
+    "followers": "{count} seguidores",
+    "following": "{count} siguiendo",
+    "statuses": "{count} publicaciones",
+    "verified": "Verificado",
+    "posts": "Publicaciones",
+    "media": "Multimedia",
+    "showReplies": "Mostrar respuestas",
+    "showBoostsTab": "Mostrar impulsos",
+    "notFound": "Cuenta no encontrada.",
+    "signInToView": "Inicia sesión para ver este perfil remoto.",
+    "confirmTitle": "¿Estás seguro?",
+    "noteTitle": "Nota privada",
+    "loadError": "No se pudo cargar este perfil.",
+    "lastAdmin": "No se puede degradar al último administrador."
   }
 }

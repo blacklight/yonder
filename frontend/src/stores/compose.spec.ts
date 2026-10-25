@@ -49,6 +49,31 @@ describe("compose store", () => {
     expect(c.draft.text).toBe("@erin@x.test ");
   });
 
+  it("openDirect seeds every participant for group DMs", () => {
+    const c = useComposeStore();
+    c.openDirect(["a@x.test", "b@y.test"]);
+    expect(c.draft.visibility).toBe("direct");
+    expect(c.draft.text).toBe("@a@x.test @b@y.test ");
+  });
+
+  it("openDirectReply stays direct and targets the status", () => {
+    const c = useComposeStore();
+    c.openDirectReply(status("42", "frank@y.test"));
+    expect(c.draft.visibility).toBe("direct");
+    expect(c.draft.inReplyToId).toBe("42");
+    expect(c.draft.text).toBe("@frank@y.test ");
+  });
+
+  it("clearPersisted drops draft and stash from localStorage", () => {
+    const c = useComposeStore();
+    c.update({ text: "dm text", visibility: "direct" });
+    c.stash();
+    c.update({ text: "more" });
+    c.clearPersisted();
+    expect(localStorage.getItem("yonder.compose.draft")).toBeNull();
+    expect(localStorage.getItem("yonder.compose.stashed")).toBeNull();
+  });
+
   it("persists the draft to localStorage", () => {
     const c = useComposeStore();
     c.update({ text: "hello", visibility: "unlisted" });

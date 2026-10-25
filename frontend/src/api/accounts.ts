@@ -3,6 +3,7 @@ import { paginated, type Page } from "./pagination";
 import type {
   Account,
   CredentialAccount,
+  ListEntity,
   Relationship,
   Status,
 } from "./entities";
@@ -19,6 +20,15 @@ export function getAccount(id: string): Promise<Account> {
   return request<Account>({ path: `/accounts/${encodeURIComponent(id)}` });
 }
 
+/** `GET /api/v1/accounts/lookup?acct=` — handle → Account (epic 25). */
+export function lookup(acct: string): Promise<Account> {
+  return request<Account>({
+    path: "/accounts/lookup",
+    query: { acct },
+    skipAuth: false,
+  });
+}
+
 /** `GET /api/v1/accounts/relationships?id[]=…` — batch relationships. */
 export function getRelationships(ids: string[]): Promise<Relationship[]> {
   return request<Relationship[]>({
@@ -27,15 +37,27 @@ export function getRelationships(ids: string[]): Promise<Relationship[]> {
   });
 }
 
-function accountAction<T>(id: string, action: string): Promise<T> {
+function accountAction<T>(id: string, action: string, body?: unknown): Promise<T> {
   return request<T>({
     path: `/accounts/${encodeURIComponent(id)}/${action}`,
     method: "POST",
+    body,
   });
 }
 
-export function follow(id: string): Promise<Relationship> {
-  return accountAction(id, "follow");
+/**
+ * `POST /api/v1/accounts/{id}/follow` — optional `{reblogs, notify}`
+ * flags (`body_params` on the backend). Omitted keys keep the
+ * backend defaults.
+ */
+export function follow(
+  id: string,
+  opts?: { reblogs?: boolean; notify?: boolean },
+): Promise<Relationship> {
+  const body: Record<string, boolean> = {};
+  if (opts?.reblogs !== undefined) body.reblogs = opts.reblogs;
+  if (opts?.notify !== undefined) body.notify = opts.notify;
+  return accountAction(id, "follow", body);
 }
 export function unfollow(id: string): Promise<Relationship> {
   return accountAction(id, "unfollow");
@@ -62,6 +84,60 @@ export function setNote(id: string, comment: string): Promise<Relationship> {
     path: `/accounts/${encodeURIComponent(id)}/note`,
     method: "POST",
     body: { comment },
+  });
+}
+
+/** `POST /api/v1/accounts/{id}/subscribe` — notify on new posts. */
+export function subscribe(id: string): Promise<Relationship> {
+  return accountAction(id, "subscribe");
+}
+/** `POST /api/v1/accounts/{id}/unsubscribe`. */
+export function unsubscribe(id: string): Promise<Relationship> {
+  return accountAction(id, "unsubscribe");
+}
+
+/** `GET /api/v1/accounts/{id}/followers` — paginated accounts. */
+export async function followers(
+  id: string,
+  query?: { max_id?: string; min_id?: string; since_id?: string; limit?: number },
+): Promise<Page<Account>> {
+  const { data, response } = await requestWithResponse<Account[]>({
+    path: `/accounts/${encodeURIComponent(id)}/followers`,
+    query,
+  });
+  return paginated(response, data);
+}
+/** `GET /api/v1/accounts/{id}/following` — paginated accounts. */
+export async function following(
+  id: string,
+  query?: { max_id?: string; min_id?: string; since_id?: string; limit?: number },
+): Promise<Page<Account>> {
+  const { data, response } = await requestWithResponse<Account[]>({
+    path: `/accounts/${encodeURIComponent(id)}/following`,
+    query,
+  });
+  return paginated(response, data);
+}
+
+/** `GET /api/v1/accounts/{id}/lists` — lists this account is a member of. */
+export function getAccountLists(id: string): Promise<ListEntity[]> {
+  return request<ListEntity[]>({
+    path: `/accounts/${encodeURIComponent(id)}/lists`,
+  });
+}
+
+/**
+ * `PATCH /api/v1/accounts/update_credentials` — JSON normally;
+ * `FormData` only when avatar/header files are attached (the only
+ * transport that accepts files).
+ */
+export function updateCredentials(
+  body: Record<string, unknown> | FormData,
+): Promise<CredentialAccount> {
+  return request<CredentialAccount>({
+    path: "/accounts/update_credentials",
+    method: "PATCH",
+    body,
   });
 }
 

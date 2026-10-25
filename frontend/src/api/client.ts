@@ -89,4 +89,83 @@ export async function requestWithResponse<T>(
   return { data: data as T, response };
 }
 
+export interface BlobResult {
+  blob: Blob;
+  filename: string;
+}
+
+/**
+ * Bearer-authenticated blob download — exports can't use a bare
+ * `<a href>` (no Authorization header). Method/body are supported
+ * because the inline CSV/JSON exports come from `POST
+ * /api/v1/yonder/exports`, while the archive uses `GET
+ * /api/v1/yonder/exports/{id}/download`. Same token source, same
+ * `ApiError`, same 401 eviction as `requestWithResponse`. Callers own
+ * the object-URL lifecycle (create → click → revoke in `finally`).
+ */
+export async function requestBlob(opts: RequestOptions): Promise<BlobResult> {
+  const headers = new Headers();
+  let sentToken: string | null = null;
+  if (!opts.skipAuth) {
+    sentToken = useAuthStore().token;
+    if (sentToken) headers.set("Authorization", `Bearer ${sentToken}`);
+  }
+  let body: BodyInit | undefined;
+  if (opts.body instanceof FormData) {
+    body = opts.body;
+  } else if (opts.body !== undefined) {
+    headers.set("Content-Type", "application/json");
+    body = JSON.stringify(opts.body);
+  }
+  for (const [key, value] of Object.entries(opts.headers ?? {})) {
+    headers.set(key, value);
+  }
+  const fullPath = opts.path.startsWith("/api/")
+    ? opts.path
+    : `${API_PREFIX}${opts.path}`;
+  const response = await fetch(buildUrl(fullPath, opts.query), {
+    method: opts.method ?? "GET",
+    headers,
+    body,
+    signal: opts.signal ?? null,
+  });
+  if (!response.ok) {
+    if (response.status === 401 && sentToken) {
+      const auth = useAuthStore();
+      if (auth.token === sentToken) auth.setToken(null);
+    }
+    let data: unknown = null;
+    const text = await response.text();
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text;
+      }
+    }
+    throw await ApiError.fromResponse(response, data);
+  }
+  return {
+    blob: await response.blob(),
+    filename: dispositionFilename(response.headers.get("content-disposition")),
+  };
+}
+
+/** `filename*`/`filename` from Content-Disposition; a bare name, never a path. */
+function dispositionFilename(header: string | null): string {
+  if (header) {
+    const star = header.match(/filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/);
+    const raw = star?.[1] ?? header.match(/filename\s*=\s*"?([^";]+)"?/)?.[1];
+    if (raw) {
+      try {
+        const name = decodeURIComponent(raw).split(/[\\/]/).pop() ?? "";
+        if (name) return name;
+      } catch {
+        // Malformed %-escape in the header — fall through to the default.
+      }
+    }
+  }
+  return "download";
+}
+
 export { ApiError };

@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { request } from "@/api/client";
 import { useAuthStore } from "./auth";
+import { resetOnUserChange } from "./perUser";
 import { useThemeStore, type ThemeMode } from "./theme";
 
 interface YonderSettings {
@@ -15,9 +16,16 @@ interface YonderSettings {
 // `theme` is always present ("system" when unset); a null `accent`
 // means the instance default and clears any local accent.
 export const useSettingsStore = defineStore("settings", {
-  state: () => ({
-    settings: null as YonderSettings | null,
-  }),
+  state: () => {
+    const s = { settings: null as YonderSettings | null };
+    // Per-user data — drop the previous account's settings on sign-out.
+    // The callback must write through the reactive store (`s` is the
+    // raw state object; mutating it does not trigger reactivity).
+    resetOnUserChange(() => {
+      useSettingsStore().settings = null;
+    });
+    return s;
+  },
   actions: {
     async fetch() {
       this.settings = await request<YonderSettings>({

@@ -93,6 +93,43 @@ pub fn parse(params: &HashMap<String, String>) -> Result<SearchParams> {
     })
 }
 
+/// Parse an `acct` handle — `user`, `user@domain`, `@user`,
+/// `@user@domain` — into `(username, domain)`. Shared by search
+/// classification and `GET /api/v1/accounts/lookup` (epic 25): the
+/// lookup surfaces the error as 422 while [`classify`] falls through
+/// to `Text` on failure.
+///
+/// Grammar: one optional leading `@`; username `[A-Za-z0-9_.]` ≤ 100
+/// chars; domain passes [`plausible_domain`] and lowercases. Overall
+/// input capped at 255 chars.
+pub(crate) fn parse_acct(input: &str) -> Result<(String, Option<String>)> {
+    let input = input.trim();
+    if input.is_empty() || input.chars().count() > 255 {
+        return Err(Error::Validation("invalid acct".to_string()));
+    }
+    let valid_username = |u: &str| {
+        !u.is_empty()
+            && u.chars().count() <= 100
+            && u.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    };
+    let body = input.strip_prefix('@').unwrap_or(input);
+    match body.rsplit_once('@') {
+        Some((username, domain)) => {
+            if !valid_username(username) || !plausible_domain(domain) {
+                return Err(Error::Validation("invalid acct".to_string()));
+            }
+            Ok((username.to_string(), Some(domain.to_lowercase())))
+        }
+        None => {
+            if !valid_username(body) {
+                return Err(Error::Validation("invalid acct".to_string()));
+            }
+            Ok((body.to_string(), None))
+        }
+    }
+}
+
 /// Classify `q` into an operator kind — the same priority Mastodon
 /// uses: URL first, then FQN, then explicit hashtag, then text.
 pub fn classify(q: &str) -> QueryKind {
@@ -100,23 +137,10 @@ pub fn classify(q: &str) -> QueryKind {
     if (q.starts_with("https://") || q.starts_with("http://")) && url::Url::parse(q).is_ok() {
         return QueryKind::Url(q.to_string());
     }
-    // FQN: `@user@domain` or bare `user@domain` — the domain must look
-    // like a host (same `plausible_domain` rule mentions use).
-    let body = q.strip_prefix('@').unwrap_or(q);
-    if let Some((username, domain)) = body.rsplit_once('@') {
-        let username = username.trim_start_matches('@');
-        if !username.is_empty()
-            && username.chars().count() <= 100
-            && username
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-            && plausible_domain(domain)
-        {
-            return QueryKind::Fqn {
-                username: username.to_string(),
-                domain: domain.to_lowercase(),
-            };
-        }
+    // FQN: `@user@domain` or bare `user@domain` — only when a domain is
+    // present; a bare `user` stays text.
+    if let Ok((username, Some(domain))) = parse_acct(q) {
+        return QueryKind::Fqn { username, domain };
     }
     if let Some(tag) = q.strip_prefix('#') {
         let tag = tag.trim();
@@ -225,6 +249,39 @@ mod tests {
         assert!(matches!(classify("a@b.c"), QueryKind::Text(_)));
         assert!(matches!(classify("a@b"), QueryKind::Text(_)));
         assert!(matches!(classify("@alice"), QueryKind::Text(_)));
+    }
+
+    #[test]
+    fn parse_acct_shapes() {
+        assert_eq!(parse_acct("alice").unwrap(), ("alice".into(), None));
+        assert_eq!(parse_acct("@Alice").unwrap(), ("Alice".into(), None));
+        assert_eq!(
+            parse_acct("alice@Remote.Example").unwrap(),
+            ("alice".into(), Some("remote.example".into()))
+        );
+        assert_eq!(
+            parse_acct("@alice@remote.example").unwrap(),
+            ("alice".into(), Some("remote.example".into()))
+        );
+    }
+
+    #[test]
+    fn parse_acct_rejects_malformed() {
+        for bad in [
+            "",
+            "a@b",
+            "a@b.c",
+            "a b@example.com",
+            "bad!user@example.com",
+            "@",
+            &"a".repeat(256),
+            &format!("{}@example.com", "a".repeat(101)),
+        ] {
+            assert!(
+                matches!(parse_acct(bad), Err(Error::Validation(_))),
+                "{bad:?} should fail"
+            );
+        }
     }
 
     #[test]

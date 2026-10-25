@@ -40,3 +40,18 @@ export function adminAccountAction(
     body,
   });
 }
+
+export type AdminRole = "user" | "moderator" | "admin";
+
+/**
+ * `POST /api/v1/admin/accounts/{id}/role` — promote/demote.
+ * Admin scope; 409 when demoting the last active admin, 422 on an
+ * invalid role.
+ */
+export function setRole(id: string, role: AdminRole): Promise<Account> {
+  return request<Account>({
+    path: `/admin/accounts/${encodeURIComponent(id)}/role`,
+    method: "POST",
+    body: { role },
+  });
+}

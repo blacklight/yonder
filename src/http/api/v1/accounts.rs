@@ -332,8 +332,16 @@ pub async fn get_account(
     Path(id): Path<i64>,
     _auth: MaybeAuth,
 ) -> Result<Json<Value>> {
-    let account = load_public_account(&state, id).await?;
-    maybe_refresh_remote(&state, &account).await;
+    Ok(Json(public_account_entity(&state, id).await?))
+}
+
+/// The public Account entity for `id` — the exact payload of
+/// `GET /api/v1/accounts/{id}` (public-read rules, bounded remote
+/// refresh, `last_status_at`). Shared with [`lookup`] so a handle
+/// resolves to precisely what the numeric-id route serves.
+async fn public_account_entity(state: &AppState, id: i64) -> Result<Value> {
+    let account = load_public_account(state, id).await?;
+    maybe_refresh_remote(state, &account).await;
     let base_url = crate::activitypub::federation_base_url(&state.config());
     let mut entity =
         account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?;
@@ -347,7 +355,111 @@ pub async fn get_account(
     entity["last_status_at"] = last_status
         .map(|d| json!(d.to_string()))
         .unwrap_or(Value::Null);
-    Ok(Json(entity))
+    Ok(entity)
+}
+
+/// `GET /api/v1/accounts/lookup?acct=` — resolve a handle to the same
+/// Account entity `GET /accounts/{id}` serves (epic 25). Anonymous-
+/// capable like the profile reads (not gated by
+/// `search.unauthenticated_enabled`); counted against the `search`
+/// bucket at the router.
+///
+/// Accepted `acct` shapes: `user`, `@user`, `user@domain`,
+/// `@user@domain`; a domain equal to `instance.domain` normalizes to
+/// the bare local handle (local rows carry `domain IS NULL`).
+///
+/// Error contract the SPA relies on: malformed or missing `acct` →
+/// 422; a local or DB-known miss → 404; an unknown remote handle →
+/// **401 only when sign-in is the missing gate** (anonymous +
+/// `search.remote_fetch` on + federation up — the SPA renders a
+/// sign-in hint) and 404 when remote resolution is disabled or
+/// federation is down (signing in cannot help). Anonymous requests
+/// never reach WebFinger/`lookup_fqn`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/lookup",
+    tag = "accounts",
+    params(("acct" = String, Query, description = "Handle: user, @user, user@domain or @user@domain")),
+    responses(
+        (status = 200, description = "The account"),
+        (status = 401, description = "Sign-in would allow a remote lookup", body = crate::error::ErrorBody),
+        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+        (status = 422, description = "Missing or malformed acct", body = crate::error::ErrorBody),
+        (status = 429, description = "Rate limited", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn lookup(
+    State(state): State<Arc<AppState>>,
+    auth: MaybeAuth,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>> {
+    let acct = params
+        .get("acct")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Validation("acct is required".into()))?;
+    // `user@<our-domain>` is the local account — normalize to the
+    // bare handle *before* full parsing: local rows carry
+    // `domain IS NULL`, and the instance domain may fail the
+    // `plausible_domain` grammar anyway (`localhost` on dev boxes).
+    // Normalizing first also guarantees we never WebFinger our own
+    // host.
+    let body = acct.strip_prefix('@').unwrap_or(acct);
+    let normalized = match body.rsplit_once('@') {
+        Some((user, d)) if d.eq_ignore_ascii_case(&state.config().instance.domain) => {
+            user.to_string()
+        }
+        _ => acct.to_string(),
+    };
+    let (username, domain) = crate::search::params::parse_acct(&normalized)?;
+
+    let id: Option<i64> = match &domain {
+        None => {
+            sqlx::query_scalar(
+                "SELECT id FROM accounts \
+                 WHERE lower(username) = lower($1) AND domain IS NULL AND deleted_at IS NULL",
+            )
+            .bind(&username)
+            .fetch_optional(&state.db)
+            .await?
+        }
+        Some(d) => {
+            sqlx::query_scalar(
+                "SELECT id FROM accounts \
+                 WHERE lower(username) = lower($1) AND lower(domain) = lower($2) \
+                   AND deleted_at IS NULL",
+            )
+            .bind(&username)
+            .bind(d)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    };
+    if let Some(id) = id {
+        // Same render path as `get_account` — no search-visibility
+        // filtering (a muted/blocked account must stay reachable so
+        // the viewer can unmute it).
+        return Ok(Json(public_account_entity(&state, id).await?));
+    }
+
+    let Some(domain) = domain else {
+        return Err(Error::NotFound("account".into()));
+    };
+    // Unknown remote handle: a remote fetch needs the same gates as
+    // search resolution — authenticated + `remote_fetch` + federation.
+    let fetch_enabled = state.config().search.remote_fetch && state.ap.is_some();
+    if !fetch_enabled {
+        return Err(Error::NotFound("account".into()));
+    }
+    let Some(_authed) = &auth.0 else {
+        // Authentication is the only missing gate — the SPA prompts
+        // sign-in rather than rendering "not found".
+        return Err(Error::Unauthorized);
+    };
+    match crate::search::resolve::lookup_fqn(&state, &username, &domain).await? {
+        Some(id) => Ok(Json(public_account_entity(&state, id).await?)),
+        None => Err(Error::NotFound("account".into())),
+    }
 }
 
 /// `GET /api/v1/accounts/{id}/statuses` — the profile's content tabs:

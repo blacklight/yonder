@@ -42,6 +42,63 @@
     "saved": "تم الحفظ"
   },
   "route": {
+    "moderation-report": {
+      "title": "بلاغ"
+    },
+    "admin-general": {
+      "title": "عام"
+    },
+    "admin-instance": {
+      "title": "المثيل"
+    },
+    "admin-content": {
+      "title": "المحتوى"
+    },
+    "admin-federation": {
+      "title": "الفدرلة"
+    },
+    "admin-media": {
+      "title": "الوسائط"
+    },
+    "admin-email": {
+      "title": "البريد"
+    },
+    "admin-polls": {
+      "title": "الاستطلاعات"
+    },
+    "admin-http": {
+      "title": "HTTP"
+    },
+    "admin-rate-limits": {
+      "title": "حدود المعدل"
+    },
+    "admin-search": {
+      "title": "البحث"
+    },
+    "admin-server": {
+      "title": "الخادم"
+    },
+    "admin-users": {
+      "title": "المستخدمون"
+    },
+    "admin-user": {
+      "title": "المستخدم"
+    },
+    "admin-relays": {
+      "title": "المرحّلات"
+    },
+    "admin-domain-blocks": {
+      "title": "إشراف المثيلات"
+    },
+    "admin-emojis": {
+      "title": "الرموز التعبيرية"
+    },
+    "admin-frontends": {
+      "title": "الواجهات"
+    },
+    "admin-audit": {
+      "title": "سجل التدقيق"
+    },
     "home": {
       "title": "الرئيسية"
     },
@@ -237,8 +294,274 @@
     "mediaLimit": "يُسمح بـ {n} مرفقات كحد أقصى.",
     "mediaRemove": "إزالة الوسائط"
   },
+  "moderation": {
+    "showResolved": "عرض المحلولة",
+    "empty": "لا بلاغات.",
+    "resolved": "محلول",
+    "assigned": "مُسند",
+    "unassigned": "غير مُسند",
+    "reportTitle": "البلاغ رقم {id}",
+    "targetActions": "إجراءات على الحساب المُبلَّغ",
+    "moderatorHint": "تغيير الأدوار والحذف يتطلب مسؤولًا.",
+    "categories": {
+      "spam": "مزعج",
+      "violation": "مخالفة",
+      "legal": "قانوني",
+      "other": "أخرى"
+    },
+    "fields": {
+      "category": "الفئة",
+      "reporter": "المُبلِّغ",
+      "target": "الحساب المُبلَّغ",
+      "comment": "التعليق",
+      "created": "أُرسل",
+      "resolvedAt": "حُلّ",
+      "assignee": "مُسند إلى",
+      "status": "المنشور المُبلَّغ"
+    },
+    "actions": {
+      "resolve": "حلّ",
+      "reopen": "إعادة فتح",
+      "assignSelf": "إسناد إليّ",
+      "unassign": "إلغاء الإسناد",
+      "markSensitive": "وسم كحسّاس",
+      "deletePost": "حذف المنشور"
+    },
+    "confirm": {
+      "sensitive": "وسم هذا المنشور كحسّاس؟",
+      "delete": "حذف هذا المنشور من المثيل؟"
+    }
+  },
   "pages": {
     "comingSoon": "هذه الصفحة ستصل في مرحلة لاحقة."
+  },
+  "admin": {
+    "nav": {
+      "general": "عام",
+      "instance": "المثيل",
+      "content": "المحتوى",
+      "federation": "الفدرلة",
+      "media": "الوسائط",
+      "email": "البريد",
+      "polls": "الاستطلاعات",
+      "http": "HTTP",
+      "rateLimits": "حدود المعدل",
+      "search": "البحث",
+      "server": "الخادم",
+      "users": "المستخدمون",
+      "relays": "المرحّلات",
+      "domainBlocks": "إشراف المثيلات",
+      "emojis": "الرموز التعبيرية",
+      "other": "أخرى",
+      "frontends": "الواجهات",
+      "audit": "سجل التدقيق"
+    },
+    "sections": {
+      "server": "الخادم",
+      "database": "قاعدة البيانات",
+      "redis": "Redis",
+      "instance": "المثيل",
+      "i18n": "اللغات",
+      "auth": "التسجيل وتسجيل الدخول",
+      "federation": "الفدرلة",
+      "media": "الوسائط",
+      "email": "البريد",
+      "search": "البحث",
+      "http": "HTTP",
+      "rate_limit": "حدود المعدل",
+      "polls": "الاستطلاعات",
+      "content": "المحتوى",
+      "admin": "الإدارة",
+      "jobs": "المهام الخلفية",
+      "timelines": "الخطوط الزمنية",
+      "frontends": "الواجهات"
+    },
+    "email": {
+      "templates": "قوالب البريد",
+      "templateLabel": "القالب",
+      "kinds": {
+        "verify_email": "تأكيد البريد",
+        "password_reset": "إعادة تعيين كلمة المرور",
+        "welcome": "ترحيب",
+        "account_status": "حالة الحساب"
+      },
+      "subject": "الموضوع",
+      "textBody": "نص الرسالة",
+      "htmlBody": "نص HTML",
+      "test": "إرسال بريد تجريبي",
+      "testTo": "المستلم",
+      "testToHint": "افتراضيًا إلى بريدك الإداري",
+      "testSend": "إرسال تجريبي",
+      "testSent": "تم إرسال البريد التجريبي.",
+      "discardTitle": "تجاهل التغييرات؟",
+      "discardChanges": "التبديل بين القوالب وفقدان تعديلاتك غير المحفوظة؟"
+    },
+    "webpush": {
+      "title": "دفع الويب (VAPID)",
+      "rotateHint": "إنشاء مفاتيح جديدة يُبطل اشتراكات الدفع الحالية.",
+      "generate": "إنشاء المفاتيح",
+      "publicKey": "المفتاح العام"
+    },
+    "relays": {
+      "hint": "تبدأ المرحّلات معلَّقة — فوِّض واحدًا ليستقبل منشورات المثيل العامة. لا مصافحة تلقائية.",
+      "inboxUrl": "رابط صندوق الوارد",
+      "add": "إضافة مرحّل",
+      "empty": "لا مرحّلات.",
+      "authorize": "تفويض",
+      "remove": "إزالة",
+      "confirmRemove": "إزالة المرحّل {url}؟",
+      "states": { "pending": "معلَّق", "accepted": "مقبول" }
+    },
+    "domainBlocks": {
+      "hint": "الكتم يُخفي النطاق من الخطوط العامة؛ الإيقاف يحجبه كليًا.",
+      "domain": "النطاق",
+      "severityLabel": "الشدة",
+      "severities": {
+        "noop": "بلا",
+        "silence": "كتم",
+        "suspend": "إيقاف"
+      },
+      "rejectMedia": "رفض الوسائط",
+      "rejectReports": "رفض البلاغات",
+      "obfuscate": "تشويش النطاق",
+      "publicComment": "سبب علني",
+      "privateComment": "ملاحظة خاصة",
+      "add": "حجب النطاق",
+      "remove": "رفع الحجب",
+      "confirmRemove": "رفع الحجب عن {domain}؟",
+      "empty": "لا نطاقات خاضعة للإشراف."
+    },
+    "audit": {
+      "filterAction": "بادئة الإجراء",
+      "filterActor": "معرّف حساب الفاعل",
+      "filterTargetType": "نوع الهدف",
+      "filterTargetId": "معرّف الهدف",
+      "apply": "تطبيق المرشحات",
+      "empty": "لا سجلات تدقيق.",
+      "system": "النظام",
+      "cols": {
+        "when": "متى",
+        "actor": "الفاعل",
+        "action": "الإجراء",
+        "target": "الهدف",
+        "details": "التفاصيل"
+      }
+    },
+    "emojis": {
+      "upload": "رفع رمز تعبيري",
+      "file": "ملف الصورة",
+      "shortcode": "الرمز القصير",
+      "category": "الفئة",
+      "pack": "الحزمة",
+      "noPack": "بلا حزمة",
+      "allPacks": "كل الحزم",
+      "uploadBtn": "رفع",
+      "uploaded": "تم رفع الرمز.",
+      "import": "استيراد جماعي",
+      "zipFile": "أرشيف zip",
+      "importZip": "استيراد zip",
+      "dirLabel": "دليل على الخادم",
+      "importDir": "استيراد دليل",
+      "dirHint": "فحص مسطّح لملفات الصور في دليل الاستيراد المضبوط.",
+      "importReport": "{imported} مستورد، {skipped} متخطّى.",
+      "packs": "حزم الرموز",
+      "packName": "اسم الحزمة",
+      "packCount": "{count} رموز",
+      "newPack": "اسم الحزمة الجديدة",
+      "createPack": "إنشاء حزمة",
+      "rename": "إعادة تسمية",
+      "list": "الرموز المخصصة",
+      "visible": "مرئي",
+      "disabled": "معطّل",
+      "empty": "لا رموز مخصصة.",
+      "confirmDelete": "حذف :{code}:؟ ستُحذف الصورة المخزّنة.",
+      "confirmDeletePack": "حذف الحزمة {name}؟ تبقى رموزها دون إسناد."
+    },
+    "frontends": {
+      "isDefault": "الافتراضي",
+      "makeDefault": "اجعله افتراضيًا",
+      "defaultSet": "الواجهة الافتراضية: {name}.",
+      "installed": "تم تثبيت الواجهة {name}.",
+      "installZip": "تثبيت من zip",
+      "zipFile": "أرشيف zip",
+      "installSource": "تثبيت من مسار أو git",
+      "source": "المصدر",
+      "sourcePath": "مسار على الخادم",
+      "sourceGit": "مستودع git",
+      "name": "الاسم",
+      "version": "الإصدار",
+      "pathLabel": "مسار على الخادم",
+      "gitUrl": "رابط المستودع",
+      "gitRef": "المرجع (فرع/وسم)",
+      "installBtn": "تثبيت",
+      "installHint": "التثبيت تزامني — نسخ git أو zip كبير قد يستغرق وقتًا.",
+      "confirmRemove": "إزالة الواجهة {name}؟"
+    },
+    "users": {
+      "lookupLabel": "ابحث عن حساب",
+      "lookupHint": "user@domain أو اسم محلي",
+      "lookup": "بحث",
+      "viewProfile": "عرض الملف العام",
+      "remote": "بعيد",
+      "roles": { "user": "مستخدم", "moderator": "مشرف", "admin": "مسؤول" },
+      "state": {
+        "suspended": "موقوف",
+        "limited": "محدود",
+        "disabled": "معطّل",
+        "sensitive": "حسّاس إجباري"
+      },
+      "actions": {
+        "limit": "تقييد الحساب",
+        "unlimit": "إلغاء التقييد",
+        "suspend": "إيقاف الحساب",
+        "unsuspend": "إلغاء الإيقاف",
+        "markSensitive": "وضع كحسّاس",
+        "unmarkSensitive": "إزالة وسم الحسّاسية",
+        "disable": "تعطيل الدخول",
+        "enable": "تفعيل الدخول",
+        "delete": "حذف الحساب",
+        "resetPassword": "رابط إعادة تعيين كلمة المرور",
+        "emailReset": "إرسال الرابط بالبريد",
+        "disable2fa": "تعطيل التحقق بخطوتين",
+        "verifyEmail": "تعليم البريد كمؤكّد",
+        "requirePasswordReset": "طلب إعادة تعيين كلمة المرور",
+        "makeModerator": "تعيين مشرفًا",
+        "makeAdmin": "تعيين مسؤولًا",
+        "demote": "تخفيض إلى مستخدم"
+      },
+      "copyLink": "نسخ الرابط",
+      "emailResetSent": "تم إرسال بريد إعادة التعيين.",
+      "confirm": {
+        "suspend": "إيقاف {acct}؟ سيُعطَّل الحساب ويُخفى.",
+        "disable": "تعطيل دخول {acct}؟",
+        "delete": "حذف {acct} من المثيل؟ هذا لا يمكن التراجع عنه."
+      }
+    },
+    "settings": {
+      "helpLabel": "تفاصيل الإعداد",
+      "helpKey": "المفتاح",
+      "helpValue": "القيمة الحالية",
+      "helpEnv": "متغير البيئة",
+      "helpDefault": "القيمة الافتراضية",
+      "helpSource": "المصدر",
+      "secret": "سرّي",
+      "secretSet": "مضبوط — أدخل قيمة جديدة لاستبدالها",
+      "secretUnset": "غير مضبوط",
+      "secretHint": "هذه القيمة للكتابة فقط؛ الحفظ يستبدلها.",
+      "requiresRestart": "يتطلب إعادة التشغيل",
+      "readOnly": "للقراءة فقط — يُضبط عند بدء التشغيل.",
+      "invalidNumber": "أدخل رقمًا.",
+      "invalidJson": "JSON غير صالح.",
+      "reset": "إعادة تعيين",
+      "saved": "تم الحفظ",
+      "on": "مفعّل",
+      "off": "معطّل",
+      "source": {
+        "overlay": "تجاوز المسؤول",
+        "env": "البيئة",
+        "default": "افتراضي"
+      }
+    }
   },
   "common": {
     "loading": "جارٍ التحميل…",

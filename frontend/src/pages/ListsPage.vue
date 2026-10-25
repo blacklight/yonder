@@ -15,7 +15,11 @@ const store = useListsStore();
 const open = ref<string | null>(null);
 const members = ref<Account[]>([]);
 const membersNext = ref<string | undefined>();
-const form = ref({ title: "", replies_policy: "followed" as const, exclusive: false });
+const form = ref({
+  title: "",
+  replies_policy: "followed" as const,
+  exclusive: false,
+});
 const memberQuery = ref("");
 const memberHits = ref<Account[]>([]);
 const deleting = ref<ListEntity | null>(null);
@@ -38,7 +42,9 @@ async function toggle(l: ListEntity) {
 
 async function moreMembers() {
   if (!open.value || !membersNext.value) return;
-  const page = await listMembers(open.value, { max_id: cursor(membersNext.value) });
+  const page = await listMembers(open.value, {
+    max_id: cursor(membersNext.value),
+  });
   members.value = [...members.value, ...page.items];
   membersNext.value = page.next;
 }
@@ -60,8 +66,9 @@ async function findMembers() {
     return;
   }
   try {
-    const hits = (await search({ q, type: "accounts", limit: 5, resolve: false }))
-      .accounts;
+    const hits = (
+      await search({ q, type: "accounts", limit: 5, resolve: false })
+    ).accounts;
     if (id === memberSeq) memberHits.value = hits;
   } catch {
     if (id === memberSeq) memberHits.value = [];
@@ -100,27 +107,37 @@ onMounted(() => store.fetch());
     <h1>{{ t("nav.lists") }}</h1>
     <form @submit.prevent="create">
       <Input v-model="form.title" :label="t('lists.titleLabel')" />
-      <select v-model="form.replies_policy" :aria-label="t('lists.repliesPolicy')">
+      <select
+        v-model="form.replies_policy"
+        :aria-label="t('lists.repliesPolicy')"
+      >
         <option value="followed">{{ t("lists.policyFollowed") }}</option>
         <option value="list">{{ t("lists.policyList") }}</option>
         <option value="none">{{ t("lists.policyNone") }}</option>
       </select>
       <label>
-        <input v-model="form.exclusive" type="checkbox" /> {{ t("lists.exclusive") }}
+        <input v-model="form.exclusive" type="checkbox" />
+        {{ t("lists.exclusive") }}
       </label>
       <Button type="submit">{{ t("lists.create") }}</Button>
     </form>
     <ul>
       <li v-for="l in store.lists" :key="l.id">
         <router-link :to="`/lists/${l.id}`">{{ l.title }}</router-link>
-        <Button size="sm" variant="secondary" @click="toggle(l)">{{ t("lists.members") }}</Button>
-        <Button size="sm" variant="danger" @click="deleting = l">{{ t("common.delete") }}</Button>
+        <Button size="sm" variant="secondary" @click="toggle(l)">{{
+          t("lists.members")
+        }}</Button>
+        <Button size="sm" variant="danger" @click="deleting = l">{{
+          t("common.delete")
+        }}</Button>
         <div v-if="open === l.id" class="members">
           <Input v-model="memberQuery" :label="t('lists.addMember')" />
           <ul v-if="memberHits.length">
             <li v-for="a in memberHits" :key="a.id">
               <Avatar :src="a.avatar" :name="a.acct" size="sm" /> @{{ a.acct }}
-              <Button size="sm" @click="addMember(a.id)">{{ t("lists.add") }}</Button>
+              <Button size="sm" @click="addMember(a.id)">{{
+                t("lists.add")
+              }}</Button>
             </li>
           </ul>
           <ul>
@@ -131,16 +148,27 @@ onMounted(() => store.fetch());
               </Button>
             </li>
           </ul>
-          <Button v-if="membersNext" size="sm" variant="secondary" @click="moreMembers">
+          <Button
+            v-if="membersNext"
+            size="sm"
+            variant="secondary"
+            @click="moreMembers"
+          >
             {{ t("common.loadMore") }}
           </Button>
         </div>
       </li>
     </ul>
     <p v-if="!store.loading && !store.lists.length">{{ t("lists.empty") }}</p>
-    <Modal v-if="deleting" :title="t('lists.deleteTitle')" @close="deleting = null">
+    <Modal
+      v-if="deleting"
+      :title="t('lists.deleteTitle')"
+      @close="deleting = null"
+    >
       <p>{{ t("lists.deleteBody") }}</p>
-      <Button variant="danger" @click="confirmDelete">{{ t("common.confirm") }}</Button>
+      <Button variant="danger" @click="confirmDelete">{{
+        t("common.confirm")
+      }}</Button>
     </Modal>
   </main>
 </template>

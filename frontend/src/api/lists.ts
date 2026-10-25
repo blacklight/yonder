@@ -43,7 +43,12 @@ export function deleteList(id: string): Promise<unknown> {
 /** `GET /api/v1/lists/{id}/accounts` — paginated members. */
 export async function listMembers(
   id: string,
-  query?: { max_id?: string; min_id?: string; since_id?: string; limit?: number },
+  query?: {
+    max_id?: string;
+    min_id?: string;
+    since_id?: string;
+    limit?: number;
+  },
 ): Promise<Page<Account>> {
   const { data, response } = await requestWithResponse<Account[]>({
     path: `/lists/${encodeURIComponent(id)}/accounts`,
@@ -53,7 +58,10 @@ export async function listMembers(
 }
 
 /** `POST /api/v1/lists/{id}/accounts` — JSON `{account_ids}`. */
-export function addListMembers(id: string, accountIds: string[]): Promise<unknown> {
+export function addListMembers(
+  id: string,
+  accountIds: string[],
+): Promise<unknown> {
   return request<unknown>({
     path: `/lists/${encodeURIComponent(id)}/accounts`,
     method: "POST",
@@ -62,7 +70,10 @@ export function addListMembers(id: string, accountIds: string[]): Promise<unknow
 }
 
 /** `DELETE /api/v1/lists/{id}/accounts` — JSON `{account_ids}`. */
-export function removeListMembers(id: string, accountIds: string[]): Promise<unknown> {
+export function removeListMembers(
+  id: string,
+  accountIds: string[],
+): Promise<unknown> {
   return request<unknown>({
     path: `/lists/${encodeURIComponent(id)}/accounts`,
     method: "DELETE",

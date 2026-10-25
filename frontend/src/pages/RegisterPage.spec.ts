@@ -28,7 +28,8 @@ async function fillForm(
   await inputs[2].setValue("alice@example.com");
   await inputs[3].setValue("secretpw1");
   await inputs[4].setValue("secretpw1");
-  if (agreement) await wrapper.get('.register__form input[type="checkbox"]').setValue(true);
+  if (agreement)
+    await wrapper.get('.register__form input[type="checkbox"]').setValue(true);
 }
 
 describe("RegisterPage", () => {
@@ -148,7 +149,9 @@ describe("RegisterPage", () => {
     api.getInstance.mockResolvedValue({
       registrations: { enabled: true },
     });
-    api.register.mockRejectedValue(new ApiError("username is already taken", 422));
+    api.register.mockRejectedValue(
+      new ApiError("username is already taken", 422),
+    );
     const { wrapper, router } = mountWith(RegisterPage);
     await router.push("/register");
     await flushPromises();

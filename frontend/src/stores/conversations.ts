@@ -28,7 +28,11 @@ export const useConversationsStore = defineStore("conversations", () => {
   const nextCursor = ref<string | undefined>();
   const loading = ref(false);
   const error = ref<string | null>(null);
-  const activeThread = ref<{ id: string; statuses: Status[]; next?: string } | null>(null);
+  const activeThread = ref<{
+    id: string;
+    statuses: Status[];
+    next?: string;
+  } | null>(null);
   let off: (() => void) | null = null;
   let debounce: ReturnType<typeof setTimeout> | null = null;
 
@@ -102,7 +106,9 @@ export const useConversationsStore = defineStore("conversations", () => {
   async function fetchOlder() {
     const t = activeThread.value;
     if (!t?.next) return;
-    const page = await conversationStatuses(t.id, { max_id: cursorParam(t.next) });
+    const page = await conversationStatuses(t.id, {
+      max_id: cursorParam(t.next),
+    });
     t.statuses = [...t.statuses, ...page.items];
     t.next = page.next;
   }

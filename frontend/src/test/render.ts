@@ -11,7 +11,7 @@ const stub = { template: "<div />" };
 
 export const stubRoutes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: stub },
-  { path: "/sign-in", name: "sign-in", component: stub },
+  { path: "/login", name: "sign-in", component: stub },
   { path: "/register", name: "register", component: stub },
   { path: "/settings", name: "settings", component: stub },
   { path: "/compose", name: "compose", component: stub },
@@ -23,6 +23,11 @@ export const stubRoutes: RouteRecordRaw[] = [
   { path: "/lists", name: "lists", component: stub },
   { path: "/hashtags", name: "hashtags", component: stub },
   { path: "/moderation", name: "moderation", component: stub },
+  {
+    path: "/moderation/reports/:id",
+    name: "moderation-report",
+    component: stub,
+  },
   { path: "/admin", name: "admin", component: stub },
   { path: "/profile", name: "profile", component: stub },
   { path: "/search", name: "search", component: stub },

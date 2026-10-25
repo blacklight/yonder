@@ -26,8 +26,10 @@ const tabs = computed(
       ["hashtags", t("search.hashtags")],
     ] as const,
 );
-const isFqnOrUrl = computed(() =>
-  /^https?:\/\//.test(q.value.trim()) || /^@?[\w.]+@[\w.-]+\.[a-zA-Z]{2,}$/.test(q.value.trim()),
+const isFqnOrUrl = computed(
+  () =>
+    /^https?:\/\//.test(q.value.trim()) ||
+    /^@?[\w.]+@[\w.-]+\.[a-zA-Z]{2,}$/.test(q.value.trim()),
 );
 
 function onInput() {
@@ -81,7 +83,8 @@ onMounted(() => {
         @click="goAccount(a.acct)"
         @keydown.enter="goAccount(a.acct)"
       >
-        <Avatar :src="a.avatar" :name="a.display_name || a.acct" size="sm" /> @{{ a.acct }}
+        <Avatar :src="a.avatar" :name="a.display_name || a.acct" size="sm" />
+        @{{ a.acct }}
       </li>
       <li
         v-for="h in store.suggestions.hashtags"
@@ -140,7 +143,9 @@ onMounted(() => {
           #{{ h.name }}
         </li>
       </ul>
-      <p v-if="isFqnOrUrl && !auth.isLoggedIn" class="hint">{{ t("search.remoteHint") }}</p>
+      <p v-if="isFqnOrUrl && !auth.isLoggedIn" class="hint">
+        {{ t("search.remoteHint") }}
+      </p>
     </template>
   </main>
 </template>

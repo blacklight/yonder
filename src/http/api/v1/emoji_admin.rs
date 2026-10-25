@@ -20,10 +20,19 @@ use crate::{
     Error, Result,
 };
 
-/// Shared renderer — one row → entity.
+/// Shared renderer — one row → entity. The admin surface adds the
+/// row `id` (needed by PATCH/DELETE/{id}), `disabled`, and `pack_id`,
+/// none of which belong in the public `CustomEmoji` shape.
 fn entity_of(state: &Arc<AppState>, row: &model::EmojiRow) -> Value {
     let ctx = PostContext::new(state);
-    emoji_entity(&state.config(), &ctx.base_url(), row)
+    let mut v = emoji_entity(&state.config(), &ctx.base_url(), row);
+    v["id"] = json!(row.id.to_string());
+    v["disabled"] = json!(row.disabled);
+    v["pack_id"] = match row.pack_id {
+        Some(id) => json!(id.to_string()),
+        None => Value::Null,
+    };
+    v
 }
 
 /// The per-entry outcome report shared by both import endpoints.
@@ -35,7 +44,7 @@ fn import_report(state: &Arc<AppState>, outcomes: &[import::ImportOutcome]) -> V
         "skipped": outcomes.iter().filter(|o| o.result.is_err()).count(),
         "results": outcomes.iter().map(|o| {
             match &o.result {
-                Ok(row) => json!({ "name": o.name, "ok": true, "emoji": emoji_entity(&state.config(), &base, row) }),
+                Ok(row) => json!({ "name": o.name, "ok": true, "emoji": entity_of(state, row) }),
                 Err(msg) => json!({ "name": o.name, "ok": false, "error": msg }),
             }
         }).collect::<Vec<_>>(),

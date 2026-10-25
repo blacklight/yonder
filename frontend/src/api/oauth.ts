@@ -74,7 +74,11 @@ async function postForm(
   // `signInWithToken` would surface as a confusing verify failure.
   const token = data as TokenBody;
   if (typeof token?.access_token !== "string" || !token.access_token) {
-    throw new ApiError("The server returned an invalid token response.", response.status, data);
+    throw new ApiError(
+      "The server returned an invalid token response.",
+      response.status,
+      data,
+    );
   }
   return token;
 }

@@ -42,6 +42,63 @@
     "saved": "Gespeichert"
   },
   "route": {
+    "moderation-report": {
+      "title": "Meldung"
+    },
+    "admin-general": {
+      "title": "Allgemein"
+    },
+    "admin-instance": {
+      "title": "Instanz"
+    },
+    "admin-content": {
+      "title": "Inhalte"
+    },
+    "admin-federation": {
+      "title": "Föderation"
+    },
+    "admin-media": {
+      "title": "Medien"
+    },
+    "admin-email": {
+      "title": "E-Mail"
+    },
+    "admin-polls": {
+      "title": "Umfragen"
+    },
+    "admin-http": {
+      "title": "HTTP"
+    },
+    "admin-rate-limits": {
+      "title": "Ratenlimits"
+    },
+    "admin-search": {
+      "title": "Suche"
+    },
+    "admin-server": {
+      "title": "Server"
+    },
+    "admin-users": {
+      "title": "Benutzer"
+    },
+    "admin-user": {
+      "title": "Benutzer"
+    },
+    "admin-relays": {
+      "title": "Relays"
+    },
+    "admin-domain-blocks": {
+      "title": "Instanzmoderation"
+    },
+    "admin-emojis": {
+      "title": "Emojis"
+    },
+    "admin-frontends": {
+      "title": "Frontends"
+    },
+    "admin-audit": {
+      "title": "Auditprotokoll"
+    },
     "home": {
       "title": "Start"
     },
@@ -237,8 +294,278 @@
     "mediaLimit": "Maximal {n} Anhänge sind erlaubt.",
     "mediaRemove": "Medien entfernen"
   },
+  "moderation": {
+    "showResolved": "Erledigte anzeigen",
+    "empty": "Keine Meldungen.",
+    "resolved": "Erledigt",
+    "assigned": "Zugewiesen",
+    "unassigned": "Nicht zugewiesen",
+    "reportTitle": "Meldung Nr. {id}",
+    "targetActions": "Aktionen auf das gemeldete Konto",
+    "moderatorHint": "Rollenänderungen und Löschen erfordern einen Admin.",
+    "categories": {
+      "spam": "Spam",
+      "violation": "Verstoß",
+      "legal": "Rechtlich",
+      "other": "Sonstiges"
+    },
+    "fields": {
+      "category": "Kategorie",
+      "reporter": "Melder",
+      "target": "Gemeldetes Konto",
+      "comment": "Kommentar",
+      "created": "Gemeldet",
+      "resolvedAt": "Erledigt",
+      "assignee": "Zugewiesen an",
+      "status": "Gemeldeter Beitrag"
+    },
+    "actions": {
+      "resolve": "Erledigen",
+      "reopen": "Wieder öffnen",
+      "assignSelf": "Mir zuweisen",
+      "unassign": "Zuweisung aufheben",
+      "markSensitive": "Als sensibel markieren",
+      "deletePost": "Beitrag löschen"
+    },
+    "confirm": {
+      "sensitive": "Diesen Beitrag als sensibel markieren?",
+      "delete": "Diesen Beitrag von der Instanz löschen?"
+    }
+  },
   "pages": {
     "comingSoon": "Diese Seite kommt in einem späteren Epic."
+  },
+  "admin": {
+    "nav": {
+      "general": "Allgemein",
+      "instance": "Instanz",
+      "content": "Inhalte",
+      "federation": "Föderation",
+      "media": "Medien",
+      "email": "E-Mail",
+      "polls": "Umfragen",
+      "http": "HTTP",
+      "rateLimits": "Ratenlimits",
+      "search": "Suche",
+      "server": "Server",
+      "users": "Benutzer",
+      "relays": "Relays",
+      "domainBlocks": "Instanzmoderation",
+      "emojis": "Emojis",
+      "other": "Sonstige",
+      "frontends": "Frontends",
+      "audit": "Auditprotokoll"
+    },
+    "sections": {
+      "server": "Server",
+      "database": "Datenbank",
+      "redis": "Redis",
+      "instance": "Instanz",
+      "i18n": "Sprachen",
+      "auth": "Registrierung & Anmeldung",
+      "federation": "Föderation",
+      "media": "Medien",
+      "email": "E-Mail",
+      "search": "Suche",
+      "http": "HTTP",
+      "rate_limit": "Ratenlimits",
+      "polls": "Umfragen",
+      "content": "Inhalte",
+      "admin": "Verwaltung",
+      "jobs": "Hintergrundjobs",
+      "timelines": "Zeitleisten",
+      "frontends": "Frontends"
+    },
+    "email": {
+      "templates": "E-Mail-Vorlagen",
+      "templateLabel": "Vorlage",
+      "kinds": {
+        "verify_email": "E-Mail bestätigen",
+        "password_reset": "Passwort zurücksetzen",
+        "welcome": "Willkommen",
+        "account_status": "Kontostatus"
+      },
+      "subject": "Betreff",
+      "textBody": "Textkörper",
+      "htmlBody": "HTML-Körper",
+      "test": "Test-E-Mail senden",
+      "testTo": "Empfänger",
+      "testToHint": "Standardmäßig deine Admin-E-Mail",
+      "testSend": "Test senden",
+      "testSent": "Test-E-Mail gesendet.",
+      "discardTitle": "Änderungen verwerfen?",
+      "discardChanges": "Vorlage wechseln und ungespeicherte Änderungen verlieren?"
+    },
+    "webpush": {
+      "title": "Web Push (VAPID)",
+      "rotateHint": "Neue Schlüssel machen bestehende Push-Abonnements ungültig.",
+      "generate": "Schlüssel generieren",
+      "publicKey": "Öffentlicher Schlüssel"
+    },
+    "relays": {
+      "hint": "Relays starten als ausstehend — autorisiere eines, damit es öffentliche Beiträge erhält. Es gibt keinen automatischen Handshake.",
+      "inboxUrl": "Inbox-URL",
+      "add": "Relay hinzufügen",
+      "empty": "Keine Relays.",
+      "authorize": "Autorisieren",
+      "remove": "Entfernen",
+      "confirmRemove": "Relay {url} entfernen?",
+      "states": { "pending": "Ausstehend", "accepted": "Akzeptiert" }
+    },
+    "domainBlocks": {
+      "hint": "Stummschalten versteckt eine Domain aus öffentlichen Zeitleisten; Sperren blockiert sie vollständig.",
+      "domain": "Domain",
+      "severityLabel": "Strenge",
+      "severities": {
+        "noop": "Keine",
+        "silence": "Stummschalten",
+        "suspend": "Sperren"
+      },
+      "rejectMedia": "Medien ablehnen",
+      "rejectReports": "Meldungen ablehnen",
+      "obfuscate": "Domain verschleiern",
+      "publicComment": "Öffentlicher Grund",
+      "privateComment": "Private Notiz",
+      "add": "Domain blockieren",
+      "remove": "Block aufheben",
+      "confirmRemove": "Block von {domain} aufheben?",
+      "empty": "Keine moderierten Domains."
+    },
+    "audit": {
+      "filterAction": "Aktionspräfix",
+      "filterActor": "Akteur-Konto-ID",
+      "filterTargetType": "Zieltyp",
+      "filterTargetId": "Ziel-ID",
+      "apply": "Filter anwenden",
+      "empty": "Keine Audit-Einträge.",
+      "system": "System",
+      "cols": {
+        "when": "Wann",
+        "actor": "Akteur",
+        "action": "Aktion",
+        "target": "Ziel",
+        "details": "Details"
+      }
+    },
+    "emojis": {
+      "upload": "Emoji hochladen",
+      "file": "Bilddatei",
+      "shortcode": "Shortcode",
+      "category": "Kategorie",
+      "pack": "Paket",
+      "noPack": "Kein Paket",
+      "allPacks": "Alle Pakete",
+      "uploadBtn": "Hochladen",
+      "uploaded": "Emoji hochgeladen.",
+      "import": "Massenimport",
+      "zipFile": "Zip-Archiv",
+      "importZip": "Zip importieren",
+      "dirLabel": "Server-Verzeichnis",
+      "importDir": "Verzeichnis importieren",
+      "dirHint": "Flacher Scan der Bilddateien im konfigurierten Import-Verzeichnis.",
+      "importReport": "{imported} importiert, {skipped} übersprungen.",
+      "packs": "Emoji-Pakete",
+      "packName": "Paketname",
+      "packCount": "{count} Emojis",
+      "newPack": "Neuer Paketname",
+      "createPack": "Paket erstellen",
+      "rename": "Umbenennen",
+      "list": "Benutzerdefinierte Emojis",
+      "visible": "Sichtbar",
+      "disabled": "Deaktiviert",
+      "empty": "Keine benutzerdefinierten Emojis.",
+      "confirmDelete": ":{code}: löschen? Das gespeicherte Bild wird entfernt.",
+      "confirmDeletePack": "Paket {name} löschen? Seine Emojis bleiben, nicht zugeordnet."
+    },
+    "frontends": {
+      "isDefault": "Standard",
+      "makeDefault": "Als Standard setzen",
+      "defaultSet": "Standard-Frontend: {name}.",
+      "installed": "Frontend {name} installiert.",
+      "installZip": "Aus Zip installieren",
+      "zipFile": "Zip-Archiv",
+      "installSource": "Aus Pfad oder Git installieren",
+      "source": "Quelle",
+      "sourcePath": "Server-Pfad",
+      "sourceGit": "Git-Repository",
+      "name": "Name",
+      "version": "Version",
+      "pathLabel": "Server-Pfad",
+      "gitUrl": "Repository-URL",
+      "gitRef": "Ref (Branch/Tag)",
+      "installBtn": "Installieren",
+      "installHint": "Die Installation läuft synchron — ein Git-Klon oder großes Zip kann dauern.",
+      "confirmRemove": "Frontend {name} entfernen?"
+    },
+    "users": {
+      "lookupLabel": "Konto suchen",
+      "lookupHint": "nutzer@domain oder lokaler Name",
+      "lookup": "Suchen",
+      "viewProfile": "Öffentliches Profil ansehen",
+      "remote": "Entfernt",
+      "roles": {
+        "user": "Benutzer",
+        "moderator": "Moderator",
+        "admin": "Administrator"
+      },
+      "state": {
+        "suspended": "Gesperrt",
+        "limited": "Eingeschränkt",
+        "disabled": "Deaktiviert",
+        "sensitive": "Sensibel erzwungen"
+      },
+      "actions": {
+        "limit": "Konto einschränken",
+        "unlimit": "Einschränkung aufheben",
+        "suspend": "Konto sperren",
+        "unsuspend": "Sperre aufheben",
+        "markSensitive": "Als sensibel markieren",
+        "unmarkSensitive": "Sensibel-Markierung entfernen",
+        "disable": "Login deaktivieren",
+        "enable": "Login aktivieren",
+        "delete": "Konto löschen",
+        "resetPassword": "Passwort-Reset-Link",
+        "emailReset": "Reset-Link mailen",
+        "disable2fa": "2FA deaktivieren",
+        "verifyEmail": "E-Mail als bestätigt markieren",
+        "requirePasswordReset": "Passwort-Reset erzwingen",
+        "makeModerator": "Zum Moderator machen",
+        "makeAdmin": "Zum Admin machen",
+        "demote": "Zu Benutzer degradieren"
+      },
+      "copyLink": "Link kopieren",
+      "emailResetSent": "Reset-E-Mail gesendet.",
+      "confirm": {
+        "suspend": "{acct} sperren? Das Konto wird deaktiviert und ausgeblendet.",
+        "disable": "Login für {acct} deaktivieren?",
+        "delete": "{acct} von der Instanz löschen? Das ist unwiderruflich."
+      }
+    },
+    "settings": {
+      "helpLabel": "Einstellungsdetails",
+      "helpKey": "Schlüssel",
+      "helpValue": "Aktueller Wert",
+      "helpEnv": "Umgebungsvariable",
+      "helpDefault": "Standardwert",
+      "helpSource": "Quelle",
+      "secret": "geheim",
+      "secretSet": "Gesetzt — neuen Wert eingeben, um ihn zu ersetzen",
+      "secretUnset": "Nicht gesetzt",
+      "secretHint": "Dieser Wert ist schreibgeschützt; Speichern ersetzt ihn.",
+      "requiresRestart": "Neustart erforderlich",
+      "readOnly": "Schreibgeschützt — wird beim Start konfiguriert.",
+      "invalidNumber": "Gib eine Zahl ein.",
+      "invalidJson": "Ungültiges JSON.",
+      "reset": "Zurücksetzen",
+      "saved": "Gespeichert",
+      "on": "An",
+      "off": "Aus",
+      "source": {
+        "overlay": "Admin-Override",
+        "env": "Umgebung",
+        "default": "Standard"
+      }
+    }
   },
   "common": {
     "loading": "Laden…",

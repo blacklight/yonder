@@ -44,8 +44,16 @@ onMounted(async () => {
     <p v-else-if="loadError" role="alert">{{ t("common.error") }}</p>
     <template v-else-if="store.activeThread">
       <ComposeBox />
-      <StatusCard v-for="s in store.activeThread.statuses" :key="s.id" :status="s" />
-      <Button v-if="store.activeThread.next" variant="secondary" @click="store.fetchOlder()">
+      <StatusCard
+        v-for="s in store.activeThread.statuses"
+        :key="s.id"
+        :status="s"
+      />
+      <Button
+        v-if="store.activeThread.next"
+        variant="secondary"
+        @click="store.fetchOlder()"
+      >
         {{ t("common.loadMore") }}
       </Button>
     </template>

@@ -13,7 +13,10 @@ import { resetOnUserChange } from "./perUser";
  */
 export const useSearchStore = defineStore("search", () => {
   const results = ref<SearchResults | null>(null);
-  const suggestions = ref<{ accounts: SearchResults["accounts"]; hashtags: SearchResults["hashtags"] } | null>(null);
+  const suggestions = ref<{
+    accounts: SearchResults["accounts"];
+    hashtags: SearchResults["hashtags"];
+  } | null>(null);
   const loading = ref(false);
   const suggestLoading = ref(false);
   const error = ref<string | null>(null);
@@ -87,5 +90,14 @@ export const useSearchStore = defineStore("search", () => {
     }
   }
 
-  return { results, suggestions, loading, suggestLoading, error, run, suggest, clearSuggestions };
+  return {
+    results,
+    suggestions,
+    loading,
+    suggestLoading,
+    error,
+    run,
+    suggest,
+    clearSuggestions,
+  };
 });

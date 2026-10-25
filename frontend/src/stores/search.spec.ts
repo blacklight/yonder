@@ -35,9 +35,7 @@ describe("search store", () => {
 
   it("ignores stale responses from an earlier keystroke", async () => {
     let release: (v: unknown) => void;
-    api.search.mockImplementation(
-      () => new Promise((r) => (release = r)),
-    );
+    api.search.mockImplementation(() => new Promise((r) => (release = r)));
     const store = useSearchStore();
     store.suggest("one", 0);
     await vi.runAllTimersAsync();
@@ -47,9 +45,9 @@ describe("search store", () => {
     await vi.runAllTimersAsync();
     release!({ ...empty, accounts: [{ id: "stale" }] });
     await vi.runAllTimersAsync();
-    expect(
-      store.suggestions?.accounts.some((a) => a.id === "stale"),
-    ).toBe(false);
+    expect(store.suggestions?.accounts.some((a) => a.id === "stale")).toBe(
+      false,
+    );
   });
 
   it("run rethrows so callers can distinguish a 401", async () => {

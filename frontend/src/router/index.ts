@@ -3,6 +3,14 @@ import { i18n } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
 import HomePage from "@/pages/HomePage.vue";
 
+declare module "vue-router" {
+  interface RouteMeta {
+    requiresAuth?: boolean;
+    /** Minimum staff role: `moderator` admits moderators and admins. */
+    requiresRole?: "moderator" | "admin";
+  }
+}
+
 function stub(titleKey: string) {
   return {
     component: () => import("@/pages/ComingSoonPage.vue"),
@@ -15,9 +23,14 @@ export const router = createRouter({
   routes: [
     { path: "/", name: "home", component: HomePage },
     {
-      path: "/sign-in",
+      path: "/login",
       name: "sign-in",
       component: () => import("@/pages/SignInPage.vue"),
+    },
+    {
+      // Old links/bookmarks keep working.
+      path: "/sign-in",
+      redirect: { name: "sign-in" },
     },
     {
       path: "/register",
@@ -130,8 +143,154 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     { path: "/hashtags", name: "hashtags", ...stub("nav.hashtags") },
-    { path: "/moderation", name: "moderation", ...stub("nav.moderation") },
-    { path: "/admin", name: "admin", ...stub("nav.admin") },
+    {
+      path: "/moderation",
+      name: "moderation",
+      component: () => import("@/pages/moderation/ModerationReportsPage.vue"),
+      meta: { requiresAuth: true, requiresRole: "moderator" },
+    },
+    {
+      path: "/moderation/reports/:id",
+      name: "moderation-report",
+      component: () => import("@/pages/moderation/ModerationReportPage.vue"),
+      props: true,
+      meta: { requiresAuth: true, requiresRole: "moderator" },
+    },
+    {
+      path: "/admin",
+      component: () => import("@/pages/admin/AdminLayout.vue"),
+      meta: { requiresAuth: true, requiresRole: "admin" },
+      children: [
+        { path: "", name: "admin", redirect: { name: "admin-general" } },
+        {
+          path: "general",
+          name: "admin-general",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.general",
+            sections: ["auth", "admin", "timelines"],
+            // PROMPT "General" keys that live in other sections —
+            // they appear here *and* on their own page.
+            extraKeys: [
+              "content.max_post_length",
+              "instance.directory_enabled",
+            ],
+          },
+        },
+        {
+          path: "instance",
+          name: "admin-instance",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.instance",
+            sections: ["instance", "i18n"],
+          },
+        },
+        {
+          path: "content",
+          name: "admin-content",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.content",
+            sections: ["content"],
+          },
+        },
+        {
+          path: "federation",
+          name: "admin-federation",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.federation",
+            sections: ["federation"],
+          },
+        },
+        {
+          path: "media",
+          name: "admin-media",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: { titleKey: "admin.nav.media", sections: ["media"] },
+        },
+        {
+          path: "email",
+          name: "admin-email",
+          component: () => import("@/pages/admin/AdminEmailPage.vue"),
+        },
+        {
+          path: "polls",
+          name: "admin-polls",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: { titleKey: "admin.nav.polls", sections: ["polls"] },
+        },
+        {
+          path: "http",
+          name: "admin-http",
+          component: () => import("@/pages/admin/AdminHttpPage.vue"),
+        },
+        {
+          path: "rate-limits",
+          name: "admin-rate-limits",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.rateLimits",
+            sections: ["rate_limit"],
+          },
+        },
+        {
+          path: "search",
+          name: "admin-search",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: { titleKey: "admin.nav.search", sections: ["search"] },
+        },
+        {
+          // Read-only sections (server/database/redis/jobs reject
+          // overlay writes) — listed so admins can see effective
+          // values, sources and restart requirements.
+          path: "server",
+          name: "admin-server",
+          component: () => import("@/pages/admin/AdminSettingsPage.vue"),
+          props: {
+            titleKey: "admin.nav.server",
+            sections: ["server", "database", "redis", "jobs"],
+          },
+        },
+        {
+          path: "users",
+          name: "admin-users",
+          component: () => import("@/pages/admin/AdminUsersPage.vue"),
+        },
+        {
+          path: "users/:id",
+          name: "admin-user",
+          component: () => import("@/pages/admin/AdminUserPage.vue"),
+          props: true,
+        },
+        {
+          path: "relays",
+          name: "admin-relays",
+          component: () => import("@/pages/admin/AdminRelaysPage.vue"),
+        },
+        {
+          path: "domain-blocks",
+          name: "admin-domain-blocks",
+          component: () => import("@/pages/admin/AdminDomainBlocksPage.vue"),
+        },
+        {
+          path: "emojis",
+          name: "admin-emojis",
+          component: () => import("@/pages/admin/AdminEmojisPage.vue"),
+        },
+        {
+          path: "frontends",
+          name: "admin-frontends",
+          component: () => import("@/pages/admin/AdminFrontendsPage.vue"),
+        },
+        {
+          path: "audit",
+          name: "admin-audit",
+          component: () => import("@/pages/admin/AdminAuditPage.vue"),
+        },
+      ],
+    },
     {
       // `/@user` / `/@user@domain` — the canonical profile URL.
       path: "/@:acct",
@@ -182,13 +341,23 @@ export const router = createRouter({
 });
 
 // Routes carrying `meta.requiresAuth` bounce anonymous visitors to
-// the sign-in page with a `redirect` back-reference.
-router.beforeEach((to) => {
-  if (to.meta.requiresAuth && !useAuthStore().isLoggedIn) {
+// the sign-in page with a `redirect` back-reference. `meta.requiresRole`
+// additionally waits for `auth.restore()` (the role is not persisted, so
+// a reload has no role until verify_credentials returns) and sends
+// under-privileged users home. The backend remains the authority.
+router.beforeEach(async (to) => {
+  const auth = useAuthStore();
+  if (to.meta.requiresAuth && !auth.isLoggedIn) {
     return {
       name: "sign-in",
       query: { redirect: to.fullPath },
     };
+  }
+  if (to.meta.requiresRole) {
+    await auth.restore();
+    const allowed =
+      to.meta.requiresRole === "admin" ? auth.isAdmin : auth.isStaff;
+    if (!allowed) return { name: "home" };
   }
   return true;
 });

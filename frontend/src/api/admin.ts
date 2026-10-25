@@ -1,5 +1,5 @@
 import { request } from "./client";
-import type { Account } from "./entities";
+import type { AdminAccount } from "./adminUsers";
 
 export type AdminStatusAction = "sensitive" | "delete";
 
@@ -31,11 +31,11 @@ export interface AdminAccountActionBody {
  * moderation surface (returns the Admin::Account entity).
  */
 export function adminAccountAction(
-  id: string,
+  id: string | number,
   body: AdminAccountActionBody,
-): Promise<Account> {
-  return request<Account>({
-    path: `/admin/accounts/${encodeURIComponent(id)}/action`,
+): Promise<AdminAccount> {
+  return request<AdminAccount>({
+    path: `/admin/accounts/${encodeURIComponent(String(id))}/action`,
     method: "POST",
     body,
   });
@@ -48,9 +48,12 @@ export type AdminRole = "user" | "moderator" | "admin";
  * Admin scope; 409 when demoting the last active admin, 422 on an
  * invalid role.
  */
-export function setRole(id: string, role: AdminRole): Promise<Account> {
-  return request<Account>({
-    path: `/admin/accounts/${encodeURIComponent(id)}/role`,
+export function setRole(
+  id: string | number,
+  role: AdminRole,
+): Promise<AdminAccount> {
+  return request<AdminAccount>({
+    path: `/admin/accounts/${encodeURIComponent(String(id))}/role`,
     method: "POST",
     body: { role },
   });

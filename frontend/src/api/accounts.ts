@@ -70,7 +70,11 @@ export function getRelationships(ids: string[]): Promise<Relationship[]> {
   });
 }
 
-function accountAction<T>(id: string, action: string, body?: unknown): Promise<T> {
+function accountAction<T>(
+  id: string,
+  action: string,
+  body?: unknown,
+): Promise<T> {
   return request<T>({
     path: `/accounts/${encodeURIComponent(id)}/${action}`,
     method: "POST",
@@ -132,7 +136,12 @@ export function unsubscribe(id: string): Promise<Relationship> {
 /** `GET /api/v1/accounts/{id}/followers` — paginated accounts. */
 export async function followers(
   id: string,
-  query?: { max_id?: string; min_id?: string; since_id?: string; limit?: number },
+  query?: {
+    max_id?: string;
+    min_id?: string;
+    since_id?: string;
+    limit?: number;
+  },
 ): Promise<Page<Account>> {
   const { data, response } = await requestWithResponse<Account[]>({
     path: `/accounts/${encodeURIComponent(id)}/followers`,
@@ -143,7 +152,12 @@ export async function followers(
 /** `GET /api/v1/accounts/{id}/following` — paginated accounts. */
 export async function following(
   id: string,
-  query?: { max_id?: string; min_id?: string; since_id?: string; limit?: number },
+  query?: {
+    max_id?: string;
+    min_id?: string;
+    since_id?: string;
+    limit?: number;
+  },
 ): Promise<Page<Account>> {
   const { data, response } = await requestWithResponse<Account[]>({
     path: `/accounts/${encodeURIComponent(id)}/following`,

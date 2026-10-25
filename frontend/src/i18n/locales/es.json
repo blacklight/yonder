@@ -42,6 +42,63 @@
     "saved": "Guardado"
   },
   "route": {
+    "moderation-report": {
+      "title": "Informe"
+    },
+    "admin-general": {
+      "title": "General"
+    },
+    "admin-instance": {
+      "title": "Instancia"
+    },
+    "admin-content": {
+      "title": "Contenido"
+    },
+    "admin-federation": {
+      "title": "Federación"
+    },
+    "admin-media": {
+      "title": "Medios"
+    },
+    "admin-email": {
+      "title": "Correo"
+    },
+    "admin-polls": {
+      "title": "Encuestas"
+    },
+    "admin-http": {
+      "title": "HTTP"
+    },
+    "admin-rate-limits": {
+      "title": "Límites de frecuencia"
+    },
+    "admin-search": {
+      "title": "Búsqueda"
+    },
+    "admin-server": {
+      "title": "Servidor"
+    },
+    "admin-users": {
+      "title": "Usuarios"
+    },
+    "admin-user": {
+      "title": "Usuario"
+    },
+    "admin-relays": {
+      "title": "Retransmisores"
+    },
+    "admin-domain-blocks": {
+      "title": "Moderación de instancias"
+    },
+    "admin-emojis": {
+      "title": "Emojis"
+    },
+    "admin-frontends": {
+      "title": "Frontends"
+    },
+    "admin-audit": {
+      "title": "Registro de auditoría"
+    },
     "home": {
       "title": "Inicio"
     },
@@ -237,8 +294,278 @@
     "mediaLimit": "Se permiten como máximo {n} archivos adjuntos.",
     "mediaRemove": "Quitar media"
   },
+  "moderation": {
+    "showResolved": "Mostrar resueltos",
+    "empty": "No hay informes.",
+    "resolved": "Resuelto",
+    "assigned": "Asignado",
+    "unassigned": "Sin asignar",
+    "reportTitle": "Informe n.º {id}",
+    "targetActions": "Acciones sobre la cuenta denunciada",
+    "moderatorHint": "Cambiar roles y eliminar requiere ser administrador.",
+    "categories": {
+      "spam": "Spam",
+      "violation": "Infracción",
+      "legal": "Legal",
+      "other": "Otro"
+    },
+    "fields": {
+      "category": "Categoría",
+      "reporter": "Denunciante",
+      "target": "Cuenta denunciada",
+      "comment": "Comentario",
+      "created": "Fecha",
+      "resolvedAt": "Resuelto",
+      "assignee": "Asignado a",
+      "status": "Publicación denunciada"
+    },
+    "actions": {
+      "resolve": "Resolver",
+      "reopen": "Reabrir",
+      "assignSelf": "Asignarme",
+      "unassign": "Desasignar",
+      "markSensitive": "Marcar como sensible",
+      "deletePost": "Eliminar publicación"
+    },
+    "confirm": {
+      "sensitive": "¿Marcar esta publicación como sensible?",
+      "delete": "¿Eliminar esta publicación de la instancia?"
+    }
+  },
   "pages": {
     "comingSoon": "Esta página llegará en una épica posterior."
+  },
+  "admin": {
+    "nav": {
+      "general": "General",
+      "instance": "Instancia",
+      "content": "Contenido",
+      "federation": "Federación",
+      "media": "Medios",
+      "email": "Correo",
+      "polls": "Encuestas",
+      "http": "HTTP",
+      "rateLimits": "Límites de frecuencia",
+      "search": "Búsqueda",
+      "server": "Servidor",
+      "users": "Usuarios",
+      "relays": "Retransmisores",
+      "domainBlocks": "Moderación de instancias",
+      "emojis": "Emojis",
+      "other": "Otros",
+      "frontends": "Frontends",
+      "audit": "Registro de auditoría"
+    },
+    "sections": {
+      "server": "Servidor",
+      "database": "Base de datos",
+      "redis": "Redis",
+      "instance": "Instancia",
+      "i18n": "Idiomas",
+      "auth": "Registro e inicio de sesión",
+      "federation": "Federación",
+      "media": "Medios",
+      "email": "Correo",
+      "search": "Búsqueda",
+      "http": "HTTP",
+      "rate_limit": "Límites de frecuencia",
+      "polls": "Encuestas",
+      "content": "Contenido",
+      "admin": "Administración",
+      "jobs": "Trabajos en segundo plano",
+      "timelines": "Cronologías",
+      "frontends": "Frontends"
+    },
+    "email": {
+      "templates": "Plantillas de correo",
+      "templateLabel": "Plantilla",
+      "kinds": {
+        "verify_email": "Verificar correo",
+        "password_reset": "Restablecer contraseña",
+        "welcome": "Bienvenida",
+        "account_status": "Estado de la cuenta"
+      },
+      "subject": "Asunto",
+      "textBody": "Cuerpo de texto",
+      "htmlBody": "Cuerpo HTML",
+      "test": "Enviar correo de prueba",
+      "testTo": "Destinatario",
+      "testToHint": "Por defecto, tu correo de administrador",
+      "testSend": "Enviar prueba",
+      "testSent": "Correo de prueba enviado.",
+      "discardTitle": "¿Descartar cambios?",
+      "discardChanges": "¿Cambiar de plantilla y perder las ediciones sin guardar?"
+    },
+    "webpush": {
+      "title": "Web Push (VAPID)",
+      "rotateHint": "Generar claves nuevas invalida las suscripciones push existentes.",
+      "generate": "Generar claves",
+      "publicKey": "Clave pública"
+    },
+    "relays": {
+      "hint": "Los retransmisores empiezan pendientes — autoriza uno para recibir las publicaciones públicas. No hay saludo automático.",
+      "inboxUrl": "URL del buzón",
+      "add": "Añadir retransmisor",
+      "empty": "No hay retransmisores.",
+      "authorize": "Autorizar",
+      "remove": "Eliminar",
+      "confirmRemove": "¿Eliminar el retransmisor {url}?",
+      "states": { "pending": "Pendiente", "accepted": "Aceptado" }
+    },
+    "domainBlocks": {
+      "hint": "Silenciar oculta el dominio de las cronologías públicas; suspender lo bloquea por completo.",
+      "domain": "Dominio",
+      "severityLabel": "Severidad",
+      "severities": {
+        "noop": "Ninguna",
+        "silence": "Silenciar",
+        "suspend": "Suspender"
+      },
+      "rejectMedia": "Rechazar medios",
+      "rejectReports": "Rechazar informes",
+      "obfuscate": "Ofuscar dominio",
+      "publicComment": "Motivo público",
+      "privateComment": "Nota privada",
+      "add": "Bloquear dominio",
+      "remove": "Levantar bloqueo",
+      "confirmRemove": "¿Levantar el bloqueo de {domain}?",
+      "empty": "No hay dominios moderados."
+    },
+    "audit": {
+      "filterAction": "Prefijo de acción",
+      "filterActor": "Id de cuenta actora",
+      "filterTargetType": "Tipo de objetivo",
+      "filterTargetId": "Id de objetivo",
+      "apply": "Aplicar filtros",
+      "empty": "No hay entradas de auditoría.",
+      "system": "sistema",
+      "cols": {
+        "when": "Cuándo",
+        "actor": "Actor",
+        "action": "Acción",
+        "target": "Objetivo",
+        "details": "Detalles"
+      }
+    },
+    "emojis": {
+      "upload": "Subir emoji",
+      "file": "Archivo de imagen",
+      "shortcode": "Código corto",
+      "category": "Categoría",
+      "pack": "Paquete",
+      "noPack": "Sin paquete",
+      "allPacks": "Todos los paquetes",
+      "uploadBtn": "Subir",
+      "uploaded": "Emoji subido.",
+      "import": "Importación masiva",
+      "zipFile": "Archivo zip",
+      "importZip": "Importar zip",
+      "dirLabel": "Directorio del servidor",
+      "importDir": "Importar directorio",
+      "dirHint": "Escaneo plano de imágenes en el directorio de importación configurado.",
+      "importReport": "{imported} importados, {skipped} omitidos.",
+      "packs": "Paquetes de emojis",
+      "packName": "Nombre del paquete",
+      "packCount": "{count} emojis",
+      "newPack": "Nombre del paquete nuevo",
+      "createPack": "Crear paquete",
+      "rename": "Renombrar",
+      "list": "Emojis personalizados",
+      "visible": "Visible",
+      "disabled": "Desactivado",
+      "empty": "No hay emojis personalizados.",
+      "confirmDelete": "¿Eliminar :{code}:? Se borra la imagen almacenada.",
+      "confirmDeletePack": "¿Eliminar el paquete {name}? Sus emojis se conservan sin asignar."
+    },
+    "frontends": {
+      "isDefault": "Predeterminado",
+      "makeDefault": "Hacer predeterminado",
+      "defaultSet": "Frontend predeterminado: {name}.",
+      "installed": "Frontend {name} instalado.",
+      "installZip": "Instalar desde zip",
+      "zipFile": "Archivo zip",
+      "installSource": "Instalar desde ruta o git",
+      "source": "Origen",
+      "sourcePath": "Ruta del servidor",
+      "sourceGit": "Repositorio git",
+      "name": "Nombre",
+      "version": "Versión",
+      "pathLabel": "Ruta del servidor",
+      "gitUrl": "URL del repositorio",
+      "gitRef": "Ref (rama/etiqueta)",
+      "installBtn": "Instalar",
+      "installHint": "La instalación es síncrona — un clon git o un zip grande puede tardar.",
+      "confirmRemove": "¿Eliminar el frontend {name}?"
+    },
+    "users": {
+      "lookupLabel": "Buscar una cuenta",
+      "lookupHint": "usuario@dominio o nombre local",
+      "lookup": "Buscar",
+      "viewProfile": "Ver perfil público",
+      "remote": "Remoto",
+      "roles": {
+        "user": "Usuario",
+        "moderator": "Moderador",
+        "admin": "Administrador"
+      },
+      "state": {
+        "suspended": "Suspendido",
+        "limited": "Limitado",
+        "disabled": "Desactivado",
+        "sensitive": "Sensible forzado"
+      },
+      "actions": {
+        "limit": "Limitar cuenta",
+        "unlimit": "Quitar límite",
+        "suspend": "Suspender cuenta",
+        "unsuspend": "Reactivar cuenta",
+        "markSensitive": "Forzar sensible",
+        "unmarkSensitive": "Quitar sensible forzado",
+        "disable": "Desactivar acceso",
+        "enable": "Reactivar acceso",
+        "delete": "Eliminar cuenta",
+        "resetPassword": "Enlace de restablecimiento",
+        "emailReset": "Enviar enlace por correo",
+        "disable2fa": "Desactivar 2FA",
+        "verifyEmail": "Marcar correo verificado",
+        "requirePasswordReset": "Exigir nueva contraseña",
+        "makeModerator": "Hacer moderador",
+        "makeAdmin": "Hacer administrador",
+        "demote": "Degradar a usuario"
+      },
+      "copyLink": "Copiar enlace",
+      "emailResetSent": "Correo de restablecimiento enviado.",
+      "confirm": {
+        "suspend": "¿Suspender a {acct}? La cuenta queda desactivada y oculta.",
+        "disable": "¿Desactivar el acceso de {acct}?",
+        "delete": "¿Eliminar a {acct} de la instancia? Es irreversible."
+      }
+    },
+    "settings": {
+      "helpLabel": "Detalles del ajuste",
+      "helpKey": "Clave",
+      "helpValue": "Valor actual",
+      "helpEnv": "Variable de entorno",
+      "helpDefault": "Valor predeterminado",
+      "helpSource": "Origen",
+      "secret": "secreto",
+      "secretSet": "Establecido — escribe un valor nuevo para reemplazarlo",
+      "secretUnset": "Sin establecer",
+      "secretHint": "Este valor es de solo escritura; al guardar se reemplaza.",
+      "requiresRestart": "requiere reinicio",
+      "readOnly": "Solo lectura — se configura al arrancar.",
+      "invalidNumber": "Introduce un número.",
+      "invalidJson": "JSON no válido.",
+      "reset": "Restablecer",
+      "saved": "Guardado",
+      "on": "Activado",
+      "off": "Desactivado",
+      "source": {
+        "overlay": "anulación del administrador",
+        "env": "entorno",
+        "default": "predeterminado"
+      }
+    }
   },
   "common": {
     "loading": "Cargando…",

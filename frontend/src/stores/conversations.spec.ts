@@ -102,7 +102,9 @@ describe("conversations store", () => {
     await vi.runAllTimersAsync();
     // Simulate a second page already loaded.
     store.items.push(conv("k-old", "40"));
-    api.listConversations.mockResolvedValue(page([conv("k1", "55"), conv("k2", "60")]));
+    api.listConversations.mockResolvedValue(
+      page([conv("k1", "55"), conv("k2", "60")]),
+    );
 
     stream.handler!({ event: "update", payload: { visibility: "direct" } });
     await vi.runAllTimersAsync();

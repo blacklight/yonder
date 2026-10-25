@@ -203,7 +203,7 @@ async function submit() {
         </p>
         <p class="register__alt">
           {{ t("register.haveAccount") }}
-          <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
+          <router-link to="/login">{{ t("nav.signIn") }}</router-link>
         </p>
       </form>
     </template>

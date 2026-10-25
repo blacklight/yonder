@@ -176,7 +176,7 @@ const menuSource = computed<MenuEntry[]>(() => [
   {
     id: "sign-in",
     label: t("nav.signIn"),
-    to: "/sign-in",
+    to: "/login",
     icon: "right-to-bracket",
     visible: !auth.isLoggedIn,
   },

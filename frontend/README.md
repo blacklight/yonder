@@ -35,7 +35,15 @@ alongside it (Pleroma/Akkoma-style) via the admin API.
 - `src/api` — typed client (auth, `{ error }` mapping, `Link`
   pagination) + generated OpenAPI types
 - `src/components/ui` — design-system components (Button, Input,
-  Card, Avatar, Modal, Menu, Tooltip); `src/components/layout`
+  Card, Avatar, Modal, Menu, Tooltip); `src/components/layout`;
+  `src/components/admin` — shared admin controls (SettingField,
+  SettingHelp, SettingsSection, AccountActions, ConfirmDialog)
+- `src/pages/admin` — the admin panel (`/admin/*`, `meta.requiresRole:
+"admin"`); `src/pages/moderation` — the report queue
+  (`/moderation*`, admin+moderator). Admin settings pages render the
+  `/api/v1/yonder/admin/settings` registry via `stores/adminSettings`;
+  each field shows TOML key/env/source, Reset on overlays, and
+  `requires_restart` badges
 - `src/stores` — auth, theme, settings; `src/composables`
 - `src/styles` — tokens (light/dark/accent), base, rtl
 - `src/i18n` — `vue-i18n` with `en` eager, `es`/`it`/`de`/`ar` lazy;

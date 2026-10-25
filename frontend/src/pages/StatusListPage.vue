@@ -19,9 +19,11 @@ async function load(more = false) {
   loading.value = true;
   error.value = null;
   try {
-    const max_id = more && next.value
-      ? new URL(next.value, location.origin).searchParams.get("max_id") ?? undefined
-      : undefined;
+    const max_id =
+      more && next.value
+        ? (new URL(next.value, location.origin).searchParams.get("max_id") ??
+          undefined)
+        : undefined;
     const { data, response } = await requestWithResponse<Status[]>({
       path: `/${props.feed}`,
       query: { max_id },

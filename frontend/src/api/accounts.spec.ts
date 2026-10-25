@@ -38,9 +38,7 @@ describe("accounts api", () => {
     expect(spy.mock.calls[0][0]).toBe("/api/v1/accounts");
     const init = spy.mock.calls[0][1]!;
     expect(init.method).toBe("POST");
-    expect(
-      (init.headers as Headers).get("Authorization"),
-    ).toBeNull();
+    expect((init.headers as Headers).get("Authorization")).toBeNull();
     expect(JSON.parse(init.body as string)).toEqual({
       username: "alice",
       email: "a@b.c",

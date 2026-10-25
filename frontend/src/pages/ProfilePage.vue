@@ -380,7 +380,7 @@ watch([tab, showReplies, showBoosts], () => {
     </p>
     <div v-else-if="state === 'sign-in'" class="signin-prompt">
       <p>{{ t("profile.signInToView") }}</p>
-      <router-link to="/sign-in">{{ t("nav.signIn") }}</router-link>
+      <router-link to="/login">{{ t("nav.signIn") }}</router-link>
     </div>
     <template v-else-if="account">
       <header class="profile-header">

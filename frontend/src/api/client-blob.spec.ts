@@ -3,9 +3,9 @@ import { useAuthStore } from "@/stores/auth";
 import { ApiError, requestBlob } from "./client";
 
 function mockFetch(status: number, headers: Record<string, string> = {}) {
-  return vi.spyOn(globalThis, "fetch").mockResolvedValue(
-    new Response("bytes", { status, headers }),
-  );
+  return vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue(new Response("bytes", { status, headers }));
 }
 
 describe("requestBlob", () => {
@@ -19,7 +19,9 @@ describe("requestBlob", () => {
     const spy = mockFetch(200, {
       "content-disposition": 'attachment; filename="export.csv"',
     });
-    const { filename } = await requestBlob({ path: "/yonder/exports/1/download" });
+    const { filename } = await requestBlob({
+      path: "/yonder/exports/1/download",
+    });
     const [, init] = spy.mock.calls[0];
     expect((init!.headers as Headers).get("Authorization")).toBe("Bearer tok");
     expect(filename).toBe("export.csv");
@@ -35,7 +37,9 @@ describe("requestBlob", () => {
     });
     const [, init] = spy.mock.calls[0];
     expect(init!.method).toBe("POST");
-    expect((init!.headers as Headers).get("Content-Type")).toBe("application/json");
+    expect((init!.headers as Headers).get("Content-Type")).toBe(
+      "application/json",
+    );
     expect(init!.body).toBe(JSON.stringify({ kind: "blocks" }));
   });
 

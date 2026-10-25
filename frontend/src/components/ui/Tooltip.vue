@@ -45,7 +45,9 @@ function hide() {
   bottom: calc(100% + var(--space-1));
   left: 50%;
   transform: translateX(-50%);
-  white-space: nowrap;
+  /* pre-line: explicit \n breaks (admin setting help) without
+     wrapping otherwise. */
+  white-space: pre-line;
   background: var(--text);
   color: var(--bg);
   font-size: var(--text-xs);

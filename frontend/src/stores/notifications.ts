@@ -77,8 +77,9 @@ export const useNotificationsStore = defineStore("notifications", () => {
       const page = await fetchNotifications({
         types: types.length ? [...types] : undefined,
         max_id: nextCursor.value
-          ? new URL(nextCursor.value, location.origin).searchParams.get("max_id") ??
-            undefined
+          ? (new URL(nextCursor.value, location.origin).searchParams.get(
+              "max_id",
+            ) ?? undefined)
           : undefined,
       });
       items.value = fresh ? page.items : [...items.value, ...page.items];

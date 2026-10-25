@@ -228,7 +228,11 @@ export function createImport(
   form.set("kind", kind);
   form.set("mode", mode);
   form.set("file", file);
-  return request<TransferRow>({ path: "/yonder/imports", method: "POST", body: form });
+  return request<TransferRow>({
+    path: "/yonder/imports",
+    method: "POST",
+    body: form,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +260,11 @@ export function listAliases(): Promise<string[]> {
   return request<string[]>({ path: "/yonder/aliases" });
 }
 export function addAlias(acct: string): Promise<unknown> {
-  return request<unknown>({ path: "/yonder/aliases", method: "POST", body: { acct } });
+  return request<unknown>({
+    path: "/yonder/aliases",
+    method: "POST",
+    body: { acct },
+  });
 }
 export function removeAlias(acct: string): Promise<unknown> {
   return request<unknown>({
@@ -268,11 +276,19 @@ export function removeAlias(acct: string): Promise<unknown> {
 
 /** `POST /api/v1/yonder/move` — password-gated account redirect. */
 export function moveAccount(acct: string, password: string): Promise<unknown> {
-  return request<unknown>({ path: "/yonder/move", method: "POST", body: { acct, password } });
+  return request<unknown>({
+    path: "/yonder/move",
+    method: "POST",
+    body: { acct, password },
+  });
 }
 /** `DELETE /api/v1/yonder/move` — password-gated cancel. */
 export function cancelMove(password: string): Promise<unknown> {
-  return request<unknown>({ path: "/yonder/move", method: "DELETE", body: { password } });
+  return request<unknown>({
+    path: "/yonder/move",
+    method: "DELETE",
+    body: { password },
+  });
 }
 
 /** `POST /api/v1/yonder/account/delete` — schedules deletion after the grace period. */

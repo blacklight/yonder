@@ -19,16 +19,18 @@ describe("oauth api", () => {
     expect(spy.mock.calls[0][0]).toBe("/oauth/token");
     const init = spy.mock.calls[0][1]!;
     expect(init.method).toBe("POST");
-    expect(
-      (init.headers as Record<string, string>)["Content-Type"],
-    ).toBe("application/x-www-form-urlencoded");
+    expect((init.headers as Record<string, string>)["Content-Type"]).toBe(
+      "application/x-www-form-urlencoded",
+    );
     const body = new URLSearchParams(init.body as string);
     expect(body.get("grant_type")).toBe("password");
     expect(body.get("username")).toBe("alice");
     expect(body.get("password")).toBe("pw");
     expect(body.get("scope")).toBe("read write");
     // No bearer — the token endpoint runs before any session exists.
-    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
+    expect(
+      (init.headers as Record<string, string>).Authorization,
+    ).toBeUndefined();
     expect(res.access_token).toBe("tok");
   });
 
@@ -43,9 +45,7 @@ describe("oauth api", () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err).not.toBeInstanceOf(MfaRequired);
     expect(err.status).toBe(400);
-    expect(err.message).toBe(
-      "The provided authorization grant is invalid.",
-    );
+    expect(err.message).toBe("The provided authorization grant is invalid.");
   });
 
   it("maps mfa_required to MfaRequired carrying the token and methods", async () => {

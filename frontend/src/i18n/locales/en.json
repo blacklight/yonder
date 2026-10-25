@@ -42,6 +42,63 @@
     "saved": "Saved"
   },
   "route": {
+    "moderation-report": {
+      "title": "Report"
+    },
+    "admin-general": {
+      "title": "General"
+    },
+    "admin-instance": {
+      "title": "Instance"
+    },
+    "admin-content": {
+      "title": "Content"
+    },
+    "admin-federation": {
+      "title": "Federation"
+    },
+    "admin-media": {
+      "title": "Media"
+    },
+    "admin-email": {
+      "title": "Email"
+    },
+    "admin-polls": {
+      "title": "Polls"
+    },
+    "admin-http": {
+      "title": "HTTP"
+    },
+    "admin-rate-limits": {
+      "title": "Rate limits"
+    },
+    "admin-search": {
+      "title": "Search"
+    },
+    "admin-server": {
+      "title": "Server"
+    },
+    "admin-users": {
+      "title": "Users"
+    },
+    "admin-user": {
+      "title": "User"
+    },
+    "admin-relays": {
+      "title": "Relays"
+    },
+    "admin-domain-blocks": {
+      "title": "Instance moderation"
+    },
+    "admin-emojis": {
+      "title": "Emojis"
+    },
+    "admin-frontends": {
+      "title": "Frontends"
+    },
+    "admin-audit": {
+      "title": "Audit log"
+    },
     "home": {
       "title": "Home"
     },
@@ -237,8 +294,274 @@
     "mediaLimit": "At most {n} attachments are allowed.",
     "mediaRemove": "Remove media"
   },
+  "moderation": {
+    "showResolved": "Show resolved",
+    "empty": "No reports.",
+    "resolved": "Resolved",
+    "assigned": "Assigned",
+    "unassigned": "Unassigned",
+    "reportTitle": "Report #{id}",
+    "targetActions": "Actions on the reported account",
+    "moderatorHint": "Role changes and deletion require an admin.",
+    "categories": {
+      "spam": "Spam",
+      "violation": "Violation",
+      "legal": "Legal",
+      "other": "Other"
+    },
+    "fields": {
+      "category": "Category",
+      "reporter": "Reporter",
+      "target": "Reported account",
+      "comment": "Comment",
+      "created": "Filed",
+      "resolvedAt": "Resolved",
+      "assignee": "Assignee",
+      "status": "Reported post"
+    },
+    "actions": {
+      "resolve": "Resolve",
+      "reopen": "Reopen",
+      "assignSelf": "Assign to me",
+      "unassign": "Unassign",
+      "markSensitive": "Mark post sensitive",
+      "deletePost": "Delete post"
+    },
+    "confirm": {
+      "sensitive": "Mark this post as sensitive?",
+      "delete": "Delete this post from the instance?"
+    }
+  },
   "pages": {
     "comingSoon": "This page lands in a later epic."
+  },
+  "admin": {
+    "nav": {
+      "general": "General",
+      "instance": "Instance",
+      "content": "Content",
+      "federation": "Federation",
+      "media": "Media",
+      "email": "Email",
+      "polls": "Polls",
+      "http": "HTTP",
+      "rateLimits": "Rate limits",
+      "search": "Search",
+      "server": "Server",
+      "users": "Users",
+      "relays": "Relays",
+      "domainBlocks": "Instance moderation",
+      "emojis": "Emojis",
+      "other": "Other",
+      "frontends": "Frontends",
+      "audit": "Audit log"
+    },
+    "sections": {
+      "server": "Server",
+      "database": "Database",
+      "redis": "Redis",
+      "instance": "Instance",
+      "i18n": "Languages",
+      "auth": "Registration & sign-in",
+      "federation": "Federation",
+      "media": "Media",
+      "email": "Email",
+      "search": "Search",
+      "http": "HTTP",
+      "rate_limit": "Rate limits",
+      "polls": "Polls",
+      "content": "Content",
+      "admin": "Administration",
+      "jobs": "Background jobs",
+      "timelines": "Timelines",
+      "frontends": "Frontends"
+    },
+    "email": {
+      "templates": "Email templates",
+      "templateLabel": "Template",
+      "kinds": {
+        "verify_email": "Verify email",
+        "password_reset": "Password reset",
+        "welcome": "Welcome",
+        "account_status": "Account status"
+      },
+      "subject": "Subject",
+      "textBody": "Text body",
+      "htmlBody": "HTML body",
+      "test": "Send a test email",
+      "testTo": "Recipient",
+      "testToHint": "Defaults to your admin email",
+      "testSend": "Send test",
+      "testSent": "Test email sent.",
+      "discardTitle": "Discard changes?",
+      "discardChanges": "Switch templates and lose your unsaved edits?"
+    },
+    "webpush": {
+      "title": "Web Push (VAPID)",
+      "rotateHint": "Generating new keys invalidates existing push subscriptions.",
+      "generate": "Generate keys",
+      "publicKey": "Public key"
+    },
+    "relays": {
+      "hint": "Relays start pending — authorize one to receive this instance's public posts. There is no automatic handshake.",
+      "inboxUrl": "Inbox URL",
+      "add": "Add relay",
+      "empty": "No relays.",
+      "authorize": "Authorize",
+      "remove": "Remove",
+      "confirmRemove": "Remove relay {url}?",
+      "states": { "pending": "Pending", "accepted": "Accepted" }
+    },
+    "domainBlocks": {
+      "hint": "Silence hides a domain from public timelines; suspend blocks it entirely.",
+      "domain": "Domain",
+      "severityLabel": "Severity",
+      "severities": {
+        "noop": "None",
+        "silence": "Silence",
+        "suspend": "Suspend"
+      },
+      "rejectMedia": "Reject media",
+      "rejectReports": "Reject reports",
+      "obfuscate": "Obfuscate domain",
+      "publicComment": "Public reason",
+      "privateComment": "Private note",
+      "add": "Block domain",
+      "remove": "Lift block",
+      "confirmRemove": "Lift the block on {domain}?",
+      "empty": "No moderated domains."
+    },
+    "audit": {
+      "filterAction": "Action prefix",
+      "filterActor": "Actor account id",
+      "filterTargetType": "Target type",
+      "filterTargetId": "Target id",
+      "apply": "Apply filters",
+      "empty": "No audit entries.",
+      "system": "system",
+      "cols": {
+        "when": "When",
+        "actor": "Actor",
+        "action": "Action",
+        "target": "Target",
+        "details": "Details"
+      }
+    },
+    "emojis": {
+      "upload": "Upload emoji",
+      "file": "Image file",
+      "shortcode": "Shortcode",
+      "category": "Category",
+      "pack": "Pack",
+      "noPack": "No pack",
+      "allPacks": "All packs",
+      "uploadBtn": "Upload",
+      "uploaded": "Emoji uploaded.",
+      "import": "Bulk import",
+      "zipFile": "Zip archive",
+      "importZip": "Import zip",
+      "dirLabel": "Server directory",
+      "importDir": "Import directory",
+      "dirHint": "Flat scan of image files under the configured emoji import directory.",
+      "importReport": "{imported} imported, {skipped} skipped.",
+      "packs": "Emoji packs",
+      "packName": "Pack name",
+      "packCount": "{count} emoji",
+      "newPack": "New pack name",
+      "createPack": "Create pack",
+      "rename": "Rename",
+      "list": "Custom emoji",
+      "visible": "Visible",
+      "disabled": "Disabled",
+      "empty": "No custom emoji.",
+      "confirmDelete": "Delete :{code}:? This removes the stored image.",
+      "confirmDeletePack": "Delete pack {name}? Its emoji are kept, unassigned."
+    },
+    "frontends": {
+      "isDefault": "Default",
+      "makeDefault": "Make default",
+      "defaultSet": "Default frontend set to {name}.",
+      "installed": "Frontend {name} installed.",
+      "installZip": "Install from zip",
+      "zipFile": "Zip archive",
+      "installSource": "Install from path or git",
+      "source": "Source",
+      "sourcePath": "Server path",
+      "sourceGit": "Git repository",
+      "name": "Name",
+      "version": "Version",
+      "pathLabel": "Server path",
+      "gitUrl": "Repository URL",
+      "gitRef": "Ref (branch/tag)",
+      "installBtn": "Install",
+      "installHint": "The install runs synchronously — a git clone or large zip can take a while.",
+      "confirmRemove": "Remove frontend {name}?"
+    },
+    "users": {
+      "lookupLabel": "Find an account",
+      "lookupHint": "user@domain or local username",
+      "lookup": "Look up",
+      "viewProfile": "View public profile",
+      "remote": "Remote",
+      "roles": { "user": "User", "moderator": "Moderator", "admin": "Admin" },
+      "state": {
+        "suspended": "Suspended",
+        "limited": "Limited",
+        "disabled": "Disabled",
+        "sensitive": "Force-sensitive"
+      },
+      "actions": {
+        "limit": "Limit account",
+        "unlimit": "Unlimit account",
+        "suspend": "Suspend account",
+        "unsuspend": "Unsuspend account",
+        "markSensitive": "Force sensitive",
+        "unmarkSensitive": "Remove force-sensitive",
+        "disable": "Disable login",
+        "enable": "Enable login",
+        "delete": "Delete account",
+        "resetPassword": "Password reset link",
+        "emailReset": "Email reset link",
+        "disable2fa": "Disable 2FA",
+        "verifyEmail": "Mark email verified",
+        "requirePasswordReset": "Require password reset",
+        "makeModerator": "Make moderator",
+        "makeAdmin": "Make admin",
+        "demote": "Demote to user"
+      },
+      "copyLink": "Copy link",
+      "emailResetSent": "Reset email sent.",
+      "confirm": {
+        "suspend": "Suspend {acct}? The account is disabled and hidden.",
+        "disable": "Disable login for {acct}?",
+        "delete": "Delete {acct} from the instance? This is irreversible."
+      }
+    },
+    "settings": {
+      "helpLabel": "Setting details",
+      "helpKey": "Key",
+      "helpValue": "Current value",
+      "helpEnv": "Env var",
+      "helpDefault": "Default",
+      "helpSource": "Source",
+      "secret": "secret",
+      "secretSet": "Set — enter a new value to replace it",
+      "secretUnset": "Not set",
+      "secretHint": "This value is write-only; saving replaces it.",
+      "requiresRestart": "requires restart",
+      "readOnly": "Read-only — configured at startup.",
+      "invalidNumber": "Enter a number.",
+      "invalidJson": "Invalid JSON.",
+      "reset": "Reset",
+      "saved": "Saved",
+      "on": "On",
+      "off": "Off",
+      "source": {
+        "overlay": "admin override",
+        "env": "environment",
+        "default": "default"
+      }
+    }
   },
   "common": {
     "loading": "Loading…",

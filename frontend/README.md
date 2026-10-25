@@ -10,12 +10,17 @@ alongside it (Pleroma/Akkoma-style) via the admin API.
 
 - Node.js ≥ 24 (vite 8 / vitest 5 / jsdom 30 toolchain)
 - A running Yonder backend on `localhost:3000` for dev (not needed
-  for `api:gen`, which uses `cargo run -- openapi`)
+  for `api:gen`, which uses `cargo run -- openapi`). If the backend
+  binds a different host/port, set `VITE_BACKEND_URL` in a gitignored
+  `.env.local` (e.g. `VITE_BACKEND_URL=http://10.0.0.34:3000`).
 
 ## Scripts
 
-- `npm run dev` — dev server; proxies `/api` (incl. the streaming websocket), `/media`,
-  `/openapi.json`, `/swagger-ui` to `:3000`
+- `npm run dev` — dev server; proxies `/api` (incl. the streaming
+  websocket), `/oauth`, `/media`, `/.well-known`, `/nodeinfo`,
+  `/openapi.json`, `/swagger-ui` to `$VITE_BACKEND_URL` (default
+  `http://localhost:3000`). `/users`, `/tags`, `/lists` and `/ap`
+  are intentionally not proxied — they would shadow SPA routes.
 - `npm run build` — `vue-tsc` + `vite build` → `dist/`
 - `npm run lint` / `npm run format` / `npm run type-check`
 - `npm run test` — Vitest (jsdom + @vue/test-utils)

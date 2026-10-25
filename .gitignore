@@ -187,6 +187,8 @@ activemq-data/
 
 # Environments
 .env
+.env.local
+.env.*.local
 .envrc
 .venv
 env/
@@ -257,3 +259,4 @@ __marimo__/
 frontend/node_modules/
 frontend/dist/
 frontend/dev-dist/
+frontend/*.tsbuildinfo

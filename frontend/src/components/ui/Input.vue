@@ -9,6 +9,7 @@ const props = withDefaults(
     error?: string;
     disabled?: boolean;
     placeholder?: string;
+    maxlength?: number;
     autocomplete?: string;
     inputmode?:
       | "none"
@@ -45,6 +46,7 @@ function onInput(event: Event) {
       :value="modelValue"
       :disabled="disabled"
       :placeholder="placeholder"
+      :maxlength="maxlength"
       :autocomplete="autocomplete"
       :inputmode="inputmode"
       :required="required"

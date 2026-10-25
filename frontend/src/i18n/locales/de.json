@@ -41,6 +41,35 @@
     "save": "Speichern",
     "saved": "Gespeichert"
   },
+  "settingsProfile": {
+    "title": "Profil bearbeiten",
+    "loadError": "Dein Profil konnte nicht geladen werden.",
+    "groupIdentity": "Identität",
+    "avatar": "Avatar",
+    "header": "Header",
+    "change": "Ändern",
+    "remove": "Entfernen",
+    "displayName": "Anzeigename",
+    "bio": "Biografie",
+    "fields": "Profilfelder",
+    "fieldName": "Bezeichnung",
+    "fieldValue": "Inhalt",
+    "addField": "Feld hinzufügen",
+    "removeField": "Feld entfernen",
+    "groupFlags": "Privatsphäre",
+    "locked": "Konto sperren",
+    "lockedHint": "Neue Follower erst nach manueller Genehmigung zulassen",
+    "bot": "Bot-Konto",
+    "botHint": "Dieses Konto führt hauptsächlich automatisierte Aktionen aus",
+    "discoverable": "Im Verzeichnis listen",
+    "discoverableHint": "Dieses Konto im öffentlichen Profilverzeichnis anzeigen",
+    "hideCollections": "Netzwerk verbergen",
+    "hideCollectionsHint": "Deine Follower- und Folgt-Listen ausblenden",
+    "indexable": "Suchmaschinen-Indexierung",
+    "indexableHint": "Öffentliche Beiträge in Suchmaschinenergebnissen anzeigen",
+    "save": "Änderungen speichern",
+    "saved": "Profil gespeichert"
+  },
   "route": {
     "moderation-report": {
       "title": "Meldung"
@@ -104,6 +133,9 @@
     },
     "settings": {
       "title": "Einstellungen"
+    },
+    "settings-profile": {
+      "title": "Profil bearbeiten"
     },
     "not-found": {
       "title": "Nicht gefunden"

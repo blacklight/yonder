@@ -41,6 +41,35 @@
     "save": "Guardar",
     "saved": "Guardado"
   },
+  "settingsProfile": {
+    "title": "Editar perfil",
+    "loadError": "No se pudo cargar tu perfil.",
+    "groupIdentity": "Identidad",
+    "avatar": "Avatar",
+    "header": "Cabecera",
+    "change": "Cambiar",
+    "remove": "Eliminar",
+    "displayName": "Nombre visible",
+    "bio": "Biografía",
+    "fields": "Campos del perfil",
+    "fieldName": "Etiqueta",
+    "fieldValue": "Contenido",
+    "addField": "Añadir campo",
+    "removeField": "Eliminar campo",
+    "groupFlags": "Privacidad",
+    "locked": "Bloquear cuenta",
+    "lockedHint": "Requiere aprobación manual antes de que alguien pueda seguirte",
+    "bot": "Cuenta bot",
+    "botHint": "Esta cuenta realiza principalmente acciones automatizadas",
+    "discoverable": "Mostrar en el directorio",
+    "discoverableHint": "Muestra esta cuenta en el directorio público de perfiles",
+    "hideCollections": "Ocultar tu red",
+    "hideCollectionsHint": "Oculta tus listas de seguidores y seguidos",
+    "indexable": "Indexación en buscadores",
+    "indexableHint": "Incluye las publicaciones públicas en los resultados de búsqueda",
+    "save": "Guardar cambios",
+    "saved": "Perfil guardado"
+  },
   "route": {
     "moderation-report": {
       "title": "Informe"
@@ -104,6 +133,9 @@
     },
     "settings": {
       "title": "Ajustes"
+    },
+    "settings-profile": {
+      "title": "Editar perfil"
     },
     "not-found": {
       "title": "No encontrado"

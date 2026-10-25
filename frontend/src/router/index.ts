@@ -323,6 +323,12 @@ export const router = createRouter({
       component: () => import("@/pages/SettingsPage.vue"),
     },
     {
+      path: "/settings/profile",
+      name: "settings-profile",
+      component: () => import("@/pages/settings/ProfileSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Invite links land on registration with the code prefilled —
       // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",

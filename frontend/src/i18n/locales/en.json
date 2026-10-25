@@ -41,6 +41,35 @@
     "save": "Save",
     "saved": "Saved"
   },
+  "settingsProfile": {
+    "title": "Edit profile",
+    "loadError": "Could not load your profile.",
+    "groupIdentity": "Identity",
+    "avatar": "Avatar",
+    "header": "Header",
+    "change": "Change",
+    "remove": "Remove",
+    "displayName": "Display name",
+    "bio": "Bio",
+    "fields": "Profile fields",
+    "fieldName": "Label",
+    "fieldValue": "Content",
+    "addField": "Add field",
+    "removeField": "Remove field",
+    "groupFlags": "Privacy",
+    "locked": "Lock account",
+    "lockedHint": "Require manual approval before someone can follow you",
+    "bot": "Bot account",
+    "botHint": "This account mainly performs automated actions",
+    "discoverable": "List in directory",
+    "discoverableHint": "Show this account in the public profile directory",
+    "hideCollections": "Hide your network",
+    "hideCollectionsHint": "Hide your followers and following lists",
+    "indexable": "Search engine indexing",
+    "indexableHint": "Include public posts in search engine results",
+    "save": "Save changes",
+    "saved": "Profile saved"
+  },
   "route": {
     "moderation-report": {
       "title": "Report"
@@ -104,6 +133,9 @@
     },
     "settings": {
       "title": "Settings"
+    },
+    "settings-profile": {
+      "title": "Edit profile"
     },
     "not-found": {
       "title": "Not found"

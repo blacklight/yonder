@@ -16,6 +16,7 @@ export interface Account {
   header: string;
   locked: boolean;
   bot: boolean;
+  discoverable?: boolean;
   created_at: string;
   followers_count: number;
   following_count: number;

@@ -41,6 +41,35 @@
     "save": "Salva",
     "saved": "Salvato"
   },
+  "settingsProfile": {
+    "title": "Modifica profilo",
+    "loadError": "Impossibile caricare il tuo profilo.",
+    "groupIdentity": "Identità",
+    "avatar": "Avatar",
+    "header": "Intestazione",
+    "change": "Cambia",
+    "remove": "Rimuovi",
+    "displayName": "Nome visualizzato",
+    "bio": "Biografia",
+    "fields": "Campi del profilo",
+    "fieldName": "Etichetta",
+    "fieldValue": "Contenuto",
+    "addField": "Aggiungi campo",
+    "removeField": "Rimuovi campo",
+    "groupFlags": "Privacy",
+    "locked": "Blocca account",
+    "lockedHint": "Richiedi l'approvazione manuale prima che qualcuno possa seguirti",
+    "bot": "Account bot",
+    "botHint": "Questo account esegue principalmente azioni automatizzate",
+    "discoverable": "Mostra nella directory",
+    "discoverableHint": "Mostra questo account nella directory pubblica dei profili",
+    "hideCollections": "Nascondi la tua rete",
+    "hideCollectionsHint": "Nascondi i tuoi elenchi di follower e seguiti",
+    "indexable": "Indicizzazione nei motori di ricerca",
+    "indexableHint": "Includi i post pubblici nei risultati dei motori di ricerca",
+    "save": "Salva modifiche",
+    "saved": "Profilo salvato"
+  },
   "route": {
     "moderation-report": {
       "title": "Segnalazione"
@@ -104,6 +133,9 @@
     },
     "settings": {
       "title": "Impostazioni"
+    },
+    "settings-profile": {
+      "title": "Modifica profilo"
     },
     "not-found": {
       "title": "Non trovato"

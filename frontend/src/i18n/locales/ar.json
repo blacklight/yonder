@@ -41,6 +41,35 @@
     "save": "حفظ",
     "saved": "تم الحفظ"
   },
+  "settingsProfile": {
+    "title": "تعديل الملف الشخصي",
+    "loadError": "تعذر تحميل ملفك الشخصي.",
+    "groupIdentity": "الهوية",
+    "avatar": "الصورة الرمزية",
+    "header": "صورة الغلاف",
+    "change": "تغيير",
+    "remove": "إزالة",
+    "displayName": "الاسم المعروض",
+    "bio": "السيرة الذاتية",
+    "fields": "حقول الملف الشخصي",
+    "fieldName": "التسمية",
+    "fieldValue": "المحتوى",
+    "addField": "إضافة حقل",
+    "removeField": "إزالة الحقل",
+    "groupFlags": "الخصوصية",
+    "locked": "قفل الحساب",
+    "lockedHint": "يتطلب موافقة يدوية قبل أن يتمكن أحد من متابعتك",
+    "bot": "حساب آلي",
+    "botHint": "ينفذ هذا الحساب إجراءات آلية في الغالب",
+    "discoverable": "الإدراج في الدليل",
+    "discoverableHint": "إظهار هذا الحساب في دليل الملفات الشخصية العام",
+    "hideCollections": "إخفاء شبكتك",
+    "hideCollectionsHint": "إخفاء قوائم المتابِعين والمتابَعين",
+    "indexable": "الفهرسة في محركات البحث",
+    "indexableHint": "تضمين المنشورات العامة في نتائج محركات البحث",
+    "save": "حفظ التغييرات",
+    "saved": "تم حفظ الملف الشخصي"
+  },
   "route": {
     "moderation-report": {
       "title": "بلاغ"
@@ -104,6 +133,9 @@
     },
     "settings": {
       "title": "الإعدادات"
+    },
+    "settings-profile": {
+      "title": "تعديل الملف الشخصي"
     },
     "not-found": {
       "title": "غير موجود"

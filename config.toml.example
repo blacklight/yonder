@@ -19,7 +19,7 @@ port = 3000
 # RUST_LOG overrides this when set.
 log_level = "info"
 # pretty | compact | json
-log_format = "pretty"
+log_format = "compact"
 # Trusted reverse-proxy hops used to resolve the client IP from
 # X-Forwarded-For. Keep 0 when no proxy is in front.
 trusted_proxy_hops = 0

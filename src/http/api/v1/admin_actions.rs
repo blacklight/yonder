@@ -20,7 +20,9 @@ use serde_json::{json, Value};
 use crate::{
     auth::scopes::{require_moderator_scope, require_scope},
     http::{middleware::auth::AuthContext, AppState},
-    moderation::actions,
+    interactions::boost,
+    moderation::{actions, audit},
+    posts::{self, PostContext},
     Error, Result,
 };
 
@@ -106,6 +108,111 @@ pub struct ActionBody {
     #[serde(default)]
     #[allow(dead_code)]
     pub send_email_notification: Option<bool>,
+}
+
+#[derive(Deserialize)]
+pub struct StatusActionBody {
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+/// `POST /api/v1/admin/statuses/{id}/action` — Yonder extension
+/// (epic 24): status-level moderation. `type` is `sensitive`
+/// (flag the status so its media/content render behind a warning)
+/// or `delete` (tombstone it; boost rows unreblog instead, matching
+/// the owner-delete path). Moderators and admins; each applied
+/// action writes an audit row.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/statuses/{id}/action",
+    tag = "admin",
+    request_body(content_type = "application/json"),
+    params(("id" = i64, Path)),
+    responses(
+        (status = 200, description = "Action applied"),
+        (status = 403, description = "Moderator/admin role required", body = crate::error::ErrorBody),
+        (status = 404, description = "No such status", body = crate::error::ErrorBody),
+        (status = 422, description = "Invalid action type", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn status_action(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+    Json(body): Json<StatusActionBody>,
+) -> Result<Json<Value>> {
+    require_moderator_scope(&state.config(), &auth, "admin:write")?;
+    let audit_action = match body.ty.as_str() {
+        "sensitive" => "status.mark_sensitive",
+        "delete" => "status.delete",
+        _ => {
+            return Err(Error::Validation(format!(
+                "unknown status action type {:?}",
+                body.ty
+            )))
+        }
+    };
+    let status = posts::load(&state.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    match body.ty.as_str() {
+        "sensitive" => {
+            // Flag + audit atomically, then propagate: live clients get
+            // the re-rendered entity, the AP object cache is dropped,
+            // and local statuses federate an `Update` (same pattern as
+            // `tombstone`'s `Delete`).
+            let mut tx = state.db.begin().await?;
+            sqlx::query("UPDATE statuses SET sensitive = true, updated_at = now() WHERE id = $1")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            audit::record(
+                &mut *tx,
+                Some(auth.account_id),
+                audit_action,
+                "status",
+                Some(id),
+                json!({ "type": body.ty }),
+            )
+            .await?;
+            tx.commit().await?;
+            let ctx = PostContext::new(&state);
+            crate::timelines::stream::publish_update(&ctx, &status).await;
+            if let Some(ap) = &ctx.ap {
+                if status.local {
+                    if let Err(e) =
+                        crate::activitypub::posts::publish_update(ap, &ctx, &status, &[]).await
+                    {
+                        tracing::error!(status_id = id, error = %e, "AP Update publish failed");
+                    }
+                }
+                crate::activitypub::posts::invalidate_object(ap, id);
+            }
+        }
+        "delete" => {
+            let ctx = PostContext::new(&state);
+            if status.reblog_of_id.is_some() {
+                boost::unreblog_row(&ctx, &status).await?;
+            } else {
+                posts::create::tombstone(&ctx, &status).await?;
+            }
+            audit::record(
+                &state.db,
+                Some(auth.account_id),
+                audit_action,
+                "status",
+                Some(id),
+                json!({ "type": body.ty }),
+            )
+            .await?;
+        }
+        _ => unreachable!(),
+    }
+    Ok(Json(json!({
+        "id": id.to_string(),
+        "action": body.ty,
+        "applied": true,
+    })))
 }
 
 /// `POST /api/v1/admin/accounts/{id}/{unsilence,unsuspend,unsensitive,enable}`

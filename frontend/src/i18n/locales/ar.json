@@ -4,7 +4,23 @@
   },
   "nav": {
     "home": "الرئيسية",
-    "settings": "الإعدادات"
+    "settings": "الإعدادات",
+    "local": "المحلي",
+    "explore": "استكشاف",
+    "notifications": "التنبيهات",
+    "direct": "الرسائل الخاصة",
+    "favourites": "المفضلة",
+    "bookmarks": "العلامات",
+    "lists": "القوائم",
+    "hashtags": "الوسوم",
+    "moderation": "الإشراف",
+    "admin": "الإدارة",
+    "about": "حول",
+    "profile": "الملف الشخصي",
+    "signIn": "تسجيل الدخول",
+    "search": "بحث",
+    "searchPlaceholder": "…بحث",
+    "compose": "تحرير"
   },
   "settings": {
     "title": "الإعدادات",
@@ -31,11 +47,58 @@
     },
     "not-found": {
       "title": "غير موجود"
+    },
+    "sign-in": {
+      "title": "تسجيل الدخول"
+    },
+    "home-timeline": {
+      "title": "الرئيسية"
+    },
+    "local": {
+      "title": "المحلي"
+    },
+    "explore": {
+      "title": "استكشاف"
+    },
+    "tag": {
+      "title": "وسم"
+    },
+    "list": {
+      "title": "قائمة"
+    },
+    "compose": {
+      "title": "تحرير"
+    },
+    "about": {
+      "title": "حول"
+    },
+    "search": {
+      "title": "بحث"
+    },
+    "notifications": {
+      "title": "التنبيهات"
+    },
+    "favourites": {
+      "title": "المفضلة"
+    },
+    "bookmarks": {
+      "title": "العلامات"
+    },
+    "lists": {
+      "title": "القوائم"
+    },
+    "hashtags": {
+      "title": "الوسوم"
+    },
+    "moderation": {
+      "title": "الإشراف"
+    },
+    "admin": {
+      "title": "الإدارة"
+    },
+    "profile": {
+      "title": "الملف الشخصي"
     }
-  },
-  "home": {
-    "welcome": "مرحبًا بك في Yonder",
-    "placeholder": "خادم ActivityPub متوافق مع Mastodon. هذه الواجهة قيد الإنشاء."
   },
   "invite": {
     "title": "دعوة",
@@ -48,6 +111,121 @@
   "ui": {
     "close": "إغلاق",
     "loading": "جارٍ التحميل…",
-    "error": "خطأ"
+    "confirm": "تأكيد",
+    "cancel": "إلغاء"
+  },
+  "auth": {
+    "signInTitle": "تسجيل الدخول",
+    "tokenHint": "ألصق رمز الوصول لتسجيل الدخول (تسجيل الدخول عبر OAuth سيصل في إصدار لاحق).",
+    "tokenLabel": "رمز الوصول",
+    "tokenRequired": "أدخل رمز الوصول.",
+    "signIn": "تسجيل الدخول",
+    "signInFailed": "فشل تسجيل الدخول.",
+    "signOut": "تسجيل الخروج"
+  },
+  "menu": {
+    "title": "القائمة",
+    "open": "افتح القائمة"
+  },
+  "status": {
+    "actions": "إجراءات المنشور",
+    "reply": "رد",
+    "like": "إعجاب",
+    "boost": "تعزيز",
+    "quote": "اقتباس",
+    "react": "تفاعل",
+    "bookmark": "حفظ",
+    "more": "المزيد",
+    "copyLink": "نسخ الرابط",
+    "openTab": "فتح في تبويب جديد",
+    "mention": "ذكر",
+    "dm": "رسالة خاصة",
+    "mute": "كتم {user}",
+    "block": "حظر {user}",
+    "report": "الإبلاغ عن {user}",
+    "blockDomain": "حظر النطاق {domain}",
+    "edit": "تحرير",
+    "delete": "حذف",
+    "adminMarkSensitive": "وضع علامة حساس",
+    "adminDeleteInstance": "حذف من الخادم",
+    "adminDeleteProfile": "حذف من الملف",
+    "adminLimit": "تقييد المؤلف",
+    "adminSuspend": "إيقاف المؤلف",
+    "adminDeleteUser": "حذف المستخدم",
+    "boosted": "عزز {name}",
+    "cwShow": "إظهار المزيد",
+    "cwHide": "إظهار أقل",
+    "showSensitive": "محتوى حساس — انقر للإظهار",
+    "altText": "النص البديل",
+    "quoteUnavailable": "المنشور المقتبس غير متاح",
+    "vote": "تصويت",
+    "pollVotes": "{count} أصوات | {count} صوت | {count} صوتان | {count} أصوات | {count} صوتًا | {count} صوت",
+    "pollClosed": "مغلق",
+    "pollEnds": "ينتهي {at}",
+    "pollError": "فشل التصويت",
+    "reportTitle": "إبلاغ",
+    "reportPlaceholder": "لماذا تبلغ عن هذا؟",
+    "reportSubmit": "إرسال البلاغ",
+    "confirm": {
+      "title": "هل أنت متأكد؟",
+      "delete": "حذف هذا المنشور؟ لا يمكن التراجع عن ذلك.",
+      "adminDeleteInstance": "حذف هذا المنشور من الخادم؟",
+      "adminDeleteProfile": "حذف هذا المنشور من ملف {user}؟",
+      "adminSuspend": "تعليق {user}؟ سيتم تعطيل الحساب.",
+      "adminDeleteUser": "حذف حساب {user}؟ هذا لا رجعة فيه.",
+      "adminLimit": "تقييد {user}؟ ستُخفى منشوراته من الخطوط الزمنية العامة."
+    }
+  },
+  "timeline": {
+    "empty": "لا يوجد شيء هنا بعد.",
+    "newPosts": "{count} منشورات جديدة | {count} منشور جديد | {count} منشوران جديدان | {count} منشورات جديدة | {count} منشورًا جديدًا | {count} منشور جديد",
+    "retry": "إعادة المحاولة",
+    "empty_home": "صفحتك الرئيسية فارغة. تابع أشخاصًا لملئها.",
+    "empty_local": "لا منشورات محلية بعد.",
+    "empty_explore": "لا شيء للاستكشاف بعد.",
+    "empty_tag": "لا منشورات بهذا الوسم.",
+    "empty_list": "هذه القائمة فارغة.",
+    "homeIntro": "أحدث المنشورات من الفيديفرس."
+  },
+  "compose": {
+    "title": "تحرير",
+    "placeholder": "بماذا تفكر؟",
+    "post": "انشر",
+    "schedule": "جدولة",
+    "replyBanner": "رد على {'@'}{user}",
+    "quoteBanner": "اقتباس {'@'}{user}",
+    "directBanner": "رسالة خاصة",
+    "cancelContext": "إلغاء",
+    "language": "اللغة",
+    "detect": "اكتشاف",
+    "visibility": "الرؤية",
+    "vis_public": "عام",
+    "vis_unlisted": "غير مدرج",
+    "vis_private": "المتابعون فقط",
+    "vis_direct": "خاص",
+    "contentType": "نوع المحتوى",
+    "cw": "تحذير محتوى",
+    "cwPlaceholder": "نص التحذير",
+    "sensitive": "وضع علامة حساس على الوسائط",
+    "addMedia": "إضافة وسائط",
+    "altPlaceholder": "صف هذه الوسائط",
+    "poll": "استطلاع",
+    "pollAdd": "إضافة استطلاع",
+    "pollRemove": "إزالة الاستطلاع",
+    "pollOption": "خيار {n}",
+    "pollExpires": "ينتهي في",
+    "pollMultiple": "اختيار متعدد",
+    "emoji": "إيموجي",
+    "scheduleAt": "جدولة لـ",
+    "schedulePast": "اختر وقتًا في المستقبل.",
+    "posted": "تم النشر",
+    "scheduled": "مجدول",
+    "overLimit": "تجاوز حد الأحرف",
+    "editing": "تحرير المنشور",
+    "discardText": "سيُستبدل مسودتك الحالية.",
+    "mediaLimit": "يُسمح بـ {n} مرفقات كحد أقصى."
+  },
+  "pages": {
+    "comingSoon": "هذه الصفحة ستصل في مرحلة لاحقة."
   }
 }

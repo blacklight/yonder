@@ -4,7 +4,23 @@
   },
   "nav": {
     "home": "Home",
-    "settings": "Settings"
+    "settings": "Settings",
+    "local": "Local",
+    "explore": "Explore",
+    "notifications": "Notifications",
+    "direct": "Direct messages",
+    "favourites": "Favourites",
+    "bookmarks": "Bookmarks",
+    "lists": "Lists",
+    "hashtags": "Hashtags",
+    "moderation": "Moderation",
+    "admin": "Administration",
+    "about": "About",
+    "profile": "Profile",
+    "signIn": "Sign in",
+    "search": "Search",
+    "searchPlaceholder": "Search…",
+    "compose": "Compose"
   },
   "settings": {
     "title": "Settings",
@@ -31,11 +47,58 @@
     },
     "not-found": {
       "title": "Not found"
+    },
+    "sign-in": {
+      "title": "Sign in"
+    },
+    "home-timeline": {
+      "title": "Home"
+    },
+    "local": {
+      "title": "Local"
+    },
+    "explore": {
+      "title": "Explore"
+    },
+    "tag": {
+      "title": "Hashtag"
+    },
+    "list": {
+      "title": "List"
+    },
+    "compose": {
+      "title": "Compose"
+    },
+    "about": {
+      "title": "About"
+    },
+    "search": {
+      "title": "Search"
+    },
+    "notifications": {
+      "title": "Notifications"
+    },
+    "favourites": {
+      "title": "Favourites"
+    },
+    "bookmarks": {
+      "title": "Bookmarks"
+    },
+    "lists": {
+      "title": "Lists"
+    },
+    "hashtags": {
+      "title": "Hashtags"
+    },
+    "moderation": {
+      "title": "Moderation"
+    },
+    "admin": {
+      "title": "Administration"
+    },
+    "profile": {
+      "title": "Profile"
     }
-  },
-  "home": {
-    "welcome": "Welcome to Yonder",
-    "placeholder": "A Mastodon-compatible ActivityPub server. This frontend is under construction."
   },
   "invite": {
     "title": "Invite",
@@ -48,6 +111,121 @@
   "ui": {
     "close": "Close",
     "loading": "Loading…",
-    "error": "Error"
+    "confirm": "Confirm",
+    "cancel": "Cancel"
+  },
+  "auth": {
+    "signInTitle": "Sign in",
+    "tokenHint": "Paste an access token to sign in (OAuth login lands in a later release).",
+    "tokenLabel": "Access token",
+    "tokenRequired": "Enter an access token.",
+    "signIn": "Sign in",
+    "signInFailed": "Sign-in failed.",
+    "signOut": "Sign out"
+  },
+  "menu": {
+    "title": "Menu",
+    "open": "Open menu"
+  },
+  "status": {
+    "actions": "Post actions",
+    "reply": "Reply",
+    "like": "Like",
+    "boost": "Boost",
+    "quote": "Quote",
+    "react": "React",
+    "bookmark": "Bookmark",
+    "more": "More",
+    "copyLink": "Copy link",
+    "openTab": "Open in new tab",
+    "mention": "Mention",
+    "dm": "Direct message",
+    "mute": "Mute {user}",
+    "block": "Block {user}",
+    "report": "Report {user}",
+    "blockDomain": "Block domain {domain}",
+    "edit": "Edit",
+    "delete": "Delete",
+    "adminMarkSensitive": "Mark sensitive",
+    "adminDeleteInstance": "Delete from instance",
+    "adminDeleteProfile": "Delete from profile",
+    "adminLimit": "Limit author",
+    "adminSuspend": "Suspend author",
+    "adminDeleteUser": "Delete user",
+    "boosted": "{name} boosted",
+    "cwShow": "Show more",
+    "cwHide": "Show less",
+    "showSensitive": "Sensitive content — click to show",
+    "altText": "Alt text",
+    "quoteUnavailable": "Quoted post unavailable",
+    "vote": "Vote",
+    "pollVotes": "{count} votes",
+    "pollClosed": "Closed",
+    "pollEnds": "Ends {at}",
+    "pollError": "Vote failed",
+    "reportTitle": "Report",
+    "reportPlaceholder": "Why are you reporting this?",
+    "reportSubmit": "Submit report",
+    "confirm": {
+      "title": "Are you sure?",
+      "delete": "Delete this post? This cannot be undone.",
+      "adminDeleteInstance": "Delete this post from the instance?",
+      "adminDeleteProfile": "Delete this post from {user}'s profile?",
+      "adminSuspend": "Suspend {user}? The account will be disabled.",
+      "adminDeleteUser": "Delete {user}'s account? This is irreversible.",
+      "adminLimit": "Limit {user}? Their posts will be hidden from public timelines."
+    }
+  },
+  "timeline": {
+    "empty": "Nothing here yet.",
+    "newPosts": "{count} new posts",
+    "retry": "Retry",
+    "empty_home": "Your home timeline is empty. Follow people to fill it.",
+    "empty_local": "No local posts yet.",
+    "empty_explore": "No posts to explore yet.",
+    "empty_tag": "No posts with this hashtag.",
+    "empty_list": "This list is empty.",
+    "homeIntro": "Latest posts from across the fediverse."
+  },
+  "compose": {
+    "title": "Compose",
+    "placeholder": "What's on your mind?",
+    "post": "Post",
+    "schedule": "Schedule",
+    "replyBanner": "Replying to {'@'}{user}",
+    "quoteBanner": "Quoting {'@'}{user}",
+    "directBanner": "Direct message",
+    "cancelContext": "Cancel",
+    "language": "Language",
+    "detect": "Detect",
+    "visibility": "Visibility",
+    "vis_public": "Public",
+    "vis_unlisted": "Unlisted",
+    "vis_private": "Followers only",
+    "vis_direct": "Direct",
+    "contentType": "Content type",
+    "cw": "Content warning",
+    "cwPlaceholder": "Warning text",
+    "sensitive": "Mark media sensitive",
+    "addMedia": "Add media",
+    "altPlaceholder": "Describe this media",
+    "poll": "Poll",
+    "pollAdd": "Add poll",
+    "pollRemove": "Remove poll",
+    "pollOption": "Option {n}",
+    "pollExpires": "Expires in",
+    "pollMultiple": "Multiple choice",
+    "emoji": "Emoji",
+    "scheduleAt": "Schedule for",
+    "schedulePast": "Pick a time in the future.",
+    "posted": "Posted",
+    "scheduled": "Scheduled",
+    "overLimit": "Over the character limit",
+    "editing": "Editing post",
+    "discardText": "Your current draft will be replaced.",
+    "mediaLimit": "At most {n} attachments are allowed."
+  },
+  "pages": {
+    "comingSoon": "This page lands in a later epic."
   }
 }

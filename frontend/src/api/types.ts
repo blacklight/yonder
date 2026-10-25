@@ -1044,6 +1044,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/admin/statuses/{id}/action": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/admin/statuses/{id}/action` — Yonder extension
+     *     (epic 24): status-level moderation. `type` is `sensitive`
+     *     (flag the status so its media/content render behind a warning)
+     *     or `delete` (tombstone it; boost rows unreblog instead, matching
+     *     the owner-delete path). Moderators and admins; each applied
+     *     action writes an audit row.
+     */
+    post: operations["status_action"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/apps": {
     parameters: {
       query?: never;
@@ -5544,6 +5568,57 @@ export interface operations {
       };
       /** @description No such report */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  status_action: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": unknown;
+      };
+    };
+    responses: {
+      /** @description Action applied */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Moderator/admin role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description No such status */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Invalid action type */
+      422: {
         headers: {
           [name: string]: unknown;
         };

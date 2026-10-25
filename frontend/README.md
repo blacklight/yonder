@@ -55,3 +55,27 @@ An alternative frontend installed via the admin API must:
 Per-user frontend choice is stored via `PATCH /api/v1/yonder/settings`
 (`frontend` key) in this epic; serving a per-user frontend lands with
 the login flow in epics 24/25.
+
+## Core SPA (epic 24)
+
+- **Auth**: the sign-in form accepts an access token (`SignInPage`);
+  OAuth login lands in epic 25. The token persists in `localStorage`
+  and re-verifies on reload; a `401` clears it. Routes carry
+  `meta.requiresAuth` to redirect anonymous visitors.
+- **Timelines**: `/`, `/home`, `/local`, `/explore`, `/tags/:name`,
+  `/lists/:id` share `TimelinePage` + the `timeline` Pinia store
+  (Link-header pagination, pending-buffer for live updates).
+- **Live updates**: `stores/streaming` is the sole raw-WebSocket
+  consumer — a singleton `/api/v1/streaming` socket with
+  reference-counted subscriptions and exponential-backoff reconnect.
+  The token rides in the WS query string (`?access_token=`, required
+  for Mastodon compatibility) — make sure the production proxy does
+  not log query strings on the streaming path.
+- **Compose**: dedicated `/compose` route (chosen over an inline
+  modal) with media, alt text, polls, CW, language, visibility,
+  scheduling and a per-submission `Idempotency-Key`.
+- **Sanitization**: status HTML is re-sanitized client-side with
+  DOMPurify (allowlist mirrors the server's ammonia policy).
+- **Favicon privacy**: remote accounts show `https://<domain>/favicon.ico`
+  loaded directly — the request reveals the viewer's IP to that
+  domain. Documented trade-off; revisit if a proxy endpoint lands.

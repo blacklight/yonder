@@ -124,6 +124,17 @@ async fn credential_account(
     entity["hide_collections"] = json!(user_settings.hide_network);
     entity["indexable"] = json!(user_settings.indexable);
     entity["yonder"]["settings"] = user_settings.yonder_json(&state.config(), accept_language);
+    // `yonder.role` feeds the SPA's staff-only UI; the top-level
+    // `role` keeps Mastodon compatibility (permission bits are not
+    // modeled — the object is a name carrier). Mastodon serializes
+    // the bitmask as a decimal string, so "0" rather than "".
+    entity["yonder"]["role"] = json!(auth.role);
+    entity["role"] = json!({
+        "id": auth.role,
+        "name": auth.role,
+        "permissions": "0",
+        "color": "",
+    });
     Ok(Json(entity))
 }
 

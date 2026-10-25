@@ -40,6 +40,23 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
+// No real WebSocket in jsdom tests — the streaming store injects its
+// own factory in specs; anywhere else a silent stub prevents noise.
+class StubWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  readyState = StubWebSocket.CLOSED;
+  onopen: unknown = null;
+  onmessage: unknown = null;
+  onclose: unknown = null;
+  onerror: unknown = null;
+  send() {}
+  close() {}
+}
+vi.stubGlobal("WebSocket", StubWebSocket);
+
 beforeEach(() => {
   setActivePinia(createPinia());
   local.clear();

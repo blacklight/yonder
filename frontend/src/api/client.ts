@@ -5,11 +5,21 @@ import { ApiError } from "./errors";
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface RequestOptions {
-  /** Path under `/api/v1`, e.g. `/instance` or `/yonder/settings`. */
+  /**
+   * Path under `/api/v1`, e.g. `/instance` or `/yonder/settings`.
+   * A path starting with `/api/` is used verbatim (for `/api/v2`
+   * endpoints such as media upload).
+   */
   path: string;
   method?: HttpMethod;
+  /** JSON body, or a `FormData` for multipart uploads (no JSON header). */
   body?: unknown;
-  query?: Record<string, string | number | boolean | undefined | null>;
+  query?: Record<
+    string,
+    string | number | boolean | Array<string | number> | undefined | null
+  >;
+  /** Extra request headers, e.g. `Idempotency-Key` on status create. */
+  headers?: Record<string, string>;
   signal?: AbortSignal;
   skipAuth?: boolean;
 }
@@ -30,24 +40,34 @@ export async function requestWithResponse<T>(
   opts: RequestOptions,
 ): Promise<ApiResponse<T>> {
   const headers = new Headers();
+  // The token actually sent, for the 401 eviction below — a 401 on a
+  // request that carried a token means it is revoked/expired, so the
+  // store forgets it (anonymous requests never clear anything).
+  let sentToken: string | null = null;
   if (!opts.skipAuth) {
-    const token = useAuthStore().token;
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    sentToken = useAuthStore().token;
+    if (sentToken) headers.set("Authorization", `Bearer ${sentToken}`);
   }
   let body: BodyInit | undefined;
-  if (opts.body !== undefined) {
+  if (opts.body instanceof FormData) {
+    // Multipart: the browser sets Content-Type with the boundary.
+    body = opts.body;
+  } else if (opts.body !== undefined) {
     headers.set("Content-Type", "application/json");
     body = JSON.stringify(opts.body);
   }
-  const response = await fetch(
-    buildUrl(`${API_PREFIX}${opts.path}`, opts.query),
-    {
-      method: opts.method ?? "GET",
-      headers,
-      body,
-      signal: opts.signal ?? null,
-    },
-  );
+  for (const [key, value] of Object.entries(opts.headers ?? {})) {
+    headers.set(key, value);
+  }
+  const fullPath = opts.path.startsWith("/api/")
+    ? opts.path
+    : `${API_PREFIX}${opts.path}`;
+  const response = await fetch(buildUrl(fullPath, opts.query), {
+    method: opts.method ?? "GET",
+    headers,
+    body,
+    signal: opts.signal ?? null,
+  });
   const text = await response.text();
   let data: unknown = null;
   if (text) {
@@ -58,6 +78,12 @@ export async function requestWithResponse<T>(
     }
   }
   if (!response.ok) {
+    // Evict only if the sent token is still the active one — a stale
+    // in-flight request must not wipe a newer session's token.
+    if (response.status === 401 && sentToken) {
+      const auth = useAuthStore();
+      if (auth.token === sentToken) auth.setToken(null);
+    }
     throw await ApiError.fromResponse(response, data);
   }
   return { data: data as T, response };

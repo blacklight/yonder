@@ -162,6 +162,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/admin/accounts/{id}/action",
             post(admin_actions::action),
         )
+        // Epic 24 — status-level actions (sensitive, delete).
+        .route(
+            "/api/v1/admin/statuses/{id}/action",
+            post(admin_actions::status_action),
+        )
         .route(
             "/api/v1/admin/accounts/{id}/role",
             post(admin_actions::set_role),
@@ -781,6 +786,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     admin_actions::action,
     admin_actions::reverse,
     admin_actions::set_role,
+    admin_actions::status_action,
     admin_actions::show,
     admin_actions::reset_password,
     admin_actions::email_reset,

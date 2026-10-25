@@ -1217,3 +1217,148 @@ async fn frontend_selection() {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+// ---------------------------------------------------------------------------
+// Epic 24 — role on CredentialAccount + status-level admin actions
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verify_credentials_exposes_role() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+
+    for role in ["user", "moderator", "admin"] {
+        let username = format!("role_{role}");
+        let token = register(&env.app, &username, &format!("{username}@x.test")).await;
+        if role != "user" {
+            make_role(&env, &username, role).await;
+        }
+        let (status, _, body) = request(
+            &env.app,
+            "GET",
+            "/api/v1/accounts/verify_credentials",
+            Some(&token),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["yonder"]["role"], role, "{role}: yonder.role");
+        assert_eq!(body["role"]["name"], role, "{role}: role.name");
+        assert_eq!(body["role"]["id"], role, "{role}: role.id");
+        // Mastodon serializes the permissions bitmask as a decimal string.
+        assert_eq!(body["role"]["permissions"], "0", "{role}: role.permissions");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_status_actions_mark_sensitive_and_delete() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let author = register(&env.app, "author", "author@x.test").await;
+    let mod_token = register(&env.app, "mod", "mod@x.test").await;
+    make_role(&env, "mod", "moderator").await;
+    let plain = register(&env.app, "plain", "plain@x.test").await;
+
+    let (status, _, posted) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&author),
+        Some(json!({"status": "moderate me"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{posted}");
+    let status_id = posted["id"].as_str().unwrap().to_string();
+    let action_path = format!("/api/v1/admin/statuses/{status_id}/action");
+
+    // A plain user cannot act.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        &action_path,
+        Some(&plain),
+        Some(json!({"type": "sensitive"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Unknown action types are 422.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        &action_path,
+        Some(&mod_token),
+        Some(json!({"type": "explode"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Missing status → 404.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/statuses/999999999/action",
+        Some(&mod_token),
+        Some(json!({"type": "sensitive"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // `sensitive` flags the row.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &action_path,
+        Some(&mod_token),
+        Some(json!({"type": "sensitive"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], true);
+    let (status, _, shown) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&author),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{shown}");
+    assert_eq!(shown["sensitive"], true);
+
+    // `delete` tombstones; reads 404.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &action_path,
+        Some(&mod_token),
+        Some(json!({"type": "delete"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&author),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Both actions audited.
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log \
+         WHERE target_type = 'status' AND target_id = $1 \
+           AND action IN ('status.mark_sensitive', 'status.delete')",
+    )
+    .bind(status_id.parse::<i64>().unwrap())
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(audits, 2);
+}

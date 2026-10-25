@@ -4,7 +4,23 @@
   },
   "nav": {
     "home": "Start",
-    "settings": "Einstellungen"
+    "settings": "Einstellungen",
+    "local": "Lokal",
+    "explore": "Entdecken",
+    "notifications": "Mitteilungen",
+    "direct": "Direktnachrichten",
+    "favourites": "Favoriten",
+    "bookmarks": "Lesezeichen",
+    "lists": "Listen",
+    "hashtags": "Hashtags",
+    "moderation": "Moderation",
+    "admin": "Administration",
+    "about": "Über",
+    "profile": "Profil",
+    "signIn": "Anmelden",
+    "search": "Suche",
+    "searchPlaceholder": "Suchen…",
+    "compose": "Schreiben"
   },
   "settings": {
     "title": "Einstellungen",
@@ -31,11 +47,58 @@
     },
     "not-found": {
       "title": "Nicht gefunden"
+    },
+    "sign-in": {
+      "title": "Anmelden"
+    },
+    "home-timeline": {
+      "title": "Start"
+    },
+    "local": {
+      "title": "Lokal"
+    },
+    "explore": {
+      "title": "Entdecken"
+    },
+    "tag": {
+      "title": "Hashtag"
+    },
+    "list": {
+      "title": "Liste"
+    },
+    "compose": {
+      "title": "Schreiben"
+    },
+    "about": {
+      "title": "Über"
+    },
+    "search": {
+      "title": "Suche"
+    },
+    "notifications": {
+      "title": "Mitteilungen"
+    },
+    "favourites": {
+      "title": "Favoriten"
+    },
+    "bookmarks": {
+      "title": "Lesezeichen"
+    },
+    "lists": {
+      "title": "Listen"
+    },
+    "hashtags": {
+      "title": "Hashtags"
+    },
+    "moderation": {
+      "title": "Moderation"
+    },
+    "admin": {
+      "title": "Administration"
+    },
+    "profile": {
+      "title": "Profil"
     }
-  },
-  "home": {
-    "welcome": "Willkommen bei Yonder",
-    "placeholder": "Ein Mastodon-kompatibler ActivityPub-Server. Dieses Frontend befindet sich im Aufbau."
   },
   "invite": {
     "title": "Einladung",
@@ -48,6 +111,121 @@
   "ui": {
     "close": "Schließen",
     "loading": "Lädt…",
-    "error": "Fehler"
+    "confirm": "Bestätigen",
+    "cancel": "Abbrechen"
+  },
+  "auth": {
+    "signInTitle": "Anmelden",
+    "tokenHint": "Füge ein Zugriffstoken ein, um dich anzumelden (OAuth-Login folgt in einer späteren Version).",
+    "tokenLabel": "Zugriffstoken",
+    "tokenRequired": "Gib ein Zugriffstoken ein.",
+    "signIn": "Anmelden",
+    "signInFailed": "Anmeldung fehlgeschlagen.",
+    "signOut": "Abmelden"
+  },
+  "menu": {
+    "title": "Menü",
+    "open": "Menü öffnen"
+  },
+  "status": {
+    "actions": "Beitragsaktionen",
+    "reply": "Antworten",
+    "like": "Gefällt mir",
+    "boost": "Boosten",
+    "quote": "Zitieren",
+    "react": "Reagieren",
+    "bookmark": "Merken",
+    "more": "Mehr",
+    "copyLink": "Link kopieren",
+    "openTab": "In neuem Tab öffnen",
+    "mention": "Erwähnen",
+    "dm": "Direktnachricht",
+    "mute": "{user} stummschalten",
+    "block": "{user} blockieren",
+    "report": "{user} melden",
+    "blockDomain": "Domain {domain} blockieren",
+    "edit": "Bearbeiten",
+    "delete": "Löschen",
+    "adminMarkSensitive": "Als sensibel markieren",
+    "adminDeleteInstance": "Von Instanz löschen",
+    "adminDeleteProfile": "Vom Profil löschen",
+    "adminLimit": "Autor limitieren",
+    "adminSuspend": "Autor sperren",
+    "adminDeleteUser": "Benutzer löschen",
+    "boosted": "{name} hat geboostet",
+    "cwShow": "Mehr anzeigen",
+    "cwHide": "Weniger anzeigen",
+    "showSensitive": "Sensible Inhalte — Klicken zum Anzeigen",
+    "altText": "Alt-Text",
+    "quoteUnavailable": "Zitierter Beitrag nicht verfügbar",
+    "vote": "Abstimmen",
+    "pollVotes": "{count} Stimmen",
+    "pollClosed": "Geschlossen",
+    "pollEnds": "Endet {at}",
+    "pollError": "Abstimmung fehlgeschlagen",
+    "reportTitle": "Melden",
+    "reportPlaceholder": "Warum meldest du das?",
+    "reportSubmit": "Meldung senden",
+    "confirm": {
+      "title": "Bist du sicher?",
+      "delete": "Diesen Beitrag löschen? Das kann nicht rückgängig gemacht werden.",
+      "adminDeleteInstance": "Diesen Beitrag von der Instanz löschen?",
+      "adminDeleteProfile": "Diesen Beitrag aus dem Profil von {user} löschen?",
+      "adminSuspend": "{user} sperren? Das Konto wird deaktiviert.",
+      "adminDeleteUser": "Das Konto von {user} löschen? Das ist unumkehrbar.",
+      "adminLimit": "{user} limitieren? Beiträge werden aus öffentlichen Timelines ausgeblendet."
+    }
+  },
+  "timeline": {
+    "empty": "Hier ist noch nichts.",
+    "newPosts": "{count} neue Beiträge",
+    "retry": "Erneut versuchen",
+    "empty_home": "Deine Startseite ist leer. Folge Leuten, um sie zu füllen.",
+    "empty_local": "Noch keine lokalen Beiträge.",
+    "empty_explore": "Nichts zu entdecken.",
+    "empty_tag": "Keine Beiträge mit diesem Hashtag.",
+    "empty_list": "Diese Liste ist leer.",
+    "homeIntro": "Neueste Beiträge aus dem Fediverse."
+  },
+  "compose": {
+    "title": "Schreiben",
+    "placeholder": "Was beschäftigt dich?",
+    "post": "Posten",
+    "schedule": "Planen",
+    "replyBanner": "Antwort an {'@'}{user}",
+    "quoteBanner": "Zitiert {'@'}{user}",
+    "directBanner": "Direktnachricht",
+    "cancelContext": "Abbrechen",
+    "language": "Sprache",
+    "detect": "Erkennen",
+    "visibility": "Sichtbarkeit",
+    "vis_public": "Öffentlich",
+    "vis_unlisted": "Ungelistet",
+    "vis_private": "Nur Follower",
+    "vis_direct": "Direkt",
+    "contentType": "Inhaltstyp",
+    "cw": "Inhaltswarnung",
+    "cwPlaceholder": "Warnungstext",
+    "sensitive": "Medien als sensibel markieren",
+    "addMedia": "Medien hinzufügen",
+    "altPlaceholder": "Beschreibe diese Datei",
+    "poll": "Umfrage",
+    "pollAdd": "Umfrage hinzufügen",
+    "pollRemove": "Umfrage entfernen",
+    "pollOption": "Option {n}",
+    "pollExpires": "Läuft ab in",
+    "pollMultiple": "Mehrfachauswahl",
+    "emoji": "Emoji",
+    "scheduleAt": "Planen für",
+    "schedulePast": "Wähle eine Zeit in der Zukunft.",
+    "posted": "Gepostet",
+    "scheduled": "Geplant",
+    "overLimit": "Über dem Zeichenlimit",
+    "editing": "Beitrag bearbeiten",
+    "discardText": "Dein aktueller Entwurf wird ersetzt.",
+    "mediaLimit": "Maximal {n} Anhänge sind erlaubt."
+  },
+  "pages": {
+    "comingSoon": "Diese Seite kommt in einem späteren Epic."
   }
 }

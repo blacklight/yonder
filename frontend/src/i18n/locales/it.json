@@ -4,7 +4,23 @@
   },
   "nav": {
     "home": "Home",
-    "settings": "Impostazioni"
+    "settings": "Impostazioni",
+    "local": "Locale",
+    "explore": "Esplora",
+    "notifications": "Notifiche",
+    "direct": "Messaggi diretti",
+    "favourites": "Preferiti",
+    "bookmarks": "Segnalibri",
+    "lists": "Liste",
+    "hashtags": "Hashtag",
+    "moderation": "Moderazione",
+    "admin": "Amministrazione",
+    "about": "Informazioni",
+    "profile": "Profilo",
+    "signIn": "Accedi",
+    "search": "Cerca",
+    "searchPlaceholder": "Cerca…",
+    "compose": "Scrivi"
   },
   "settings": {
     "title": "Impostazioni",
@@ -31,11 +47,58 @@
     },
     "not-found": {
       "title": "Non trovato"
+    },
+    "sign-in": {
+      "title": "Accedi"
+    },
+    "home-timeline": {
+      "title": "Home"
+    },
+    "local": {
+      "title": "Locale"
+    },
+    "explore": {
+      "title": "Esplora"
+    },
+    "tag": {
+      "title": "Hashtag"
+    },
+    "list": {
+      "title": "Lista"
+    },
+    "compose": {
+      "title": "Scrivi"
+    },
+    "about": {
+      "title": "Informazioni"
+    },
+    "search": {
+      "title": "Cerca"
+    },
+    "notifications": {
+      "title": "Notifiche"
+    },
+    "favourites": {
+      "title": "Preferiti"
+    },
+    "bookmarks": {
+      "title": "Segnalibri"
+    },
+    "lists": {
+      "title": "Liste"
+    },
+    "hashtags": {
+      "title": "Hashtag"
+    },
+    "moderation": {
+      "title": "Moderazione"
+    },
+    "admin": {
+      "title": "Amministrazione"
+    },
+    "profile": {
+      "title": "Profilo"
     }
-  },
-  "home": {
-    "welcome": "Benvenuto su Yonder",
-    "placeholder": "Un server ActivityPub compatibile con Mastodon. Questo frontend è in costruzione."
   },
   "invite": {
     "title": "Invito",
@@ -48,6 +111,121 @@
   "ui": {
     "close": "Chiudi",
     "loading": "Caricamento…",
-    "error": "Errore"
+    "confirm": "Conferma",
+    "cancel": "Annulla"
+  },
+  "auth": {
+    "signInTitle": "Accedi",
+    "tokenHint": "Incolla un token di accesso per accedere (il login OAuth arriverà in una versione successiva).",
+    "tokenLabel": "Token di accesso",
+    "tokenRequired": "Inserisci un token di accesso.",
+    "signIn": "Accedi",
+    "signInFailed": "Accesso non riuscito.",
+    "signOut": "Esci"
+  },
+  "menu": {
+    "title": "Menu",
+    "open": "Apri menu"
+  },
+  "status": {
+    "actions": "Azioni post",
+    "reply": "Rispondi",
+    "like": "Mi piace",
+    "boost": "Boost",
+    "quote": "Cita",
+    "react": "Reagisci",
+    "bookmark": "Salva",
+    "more": "Altro",
+    "copyLink": "Copia link",
+    "openTab": "Apri in nuova scheda",
+    "mention": "Menziona",
+    "dm": "Messaggio diretto",
+    "mute": "Silenzia {user}",
+    "block": "Blocca {user}",
+    "report": "Segnala {user}",
+    "blockDomain": "Blocca dominio {domain}",
+    "edit": "Modifica",
+    "delete": "Elimina",
+    "adminMarkSensitive": "Segna sensibile",
+    "adminDeleteInstance": "Elimina dall'istanza",
+    "adminDeleteProfile": "Elimina dal profilo",
+    "adminLimit": "Limita autore",
+    "adminSuspend": "Sospendi autore",
+    "adminDeleteUser": "Elimina utente",
+    "boosted": "{name} ha boostato",
+    "cwShow": "Mostra di più",
+    "cwHide": "Mostra meno",
+    "showSensitive": "Contenuto sensibile — clicca per mostrare",
+    "altText": "Testo alternativo",
+    "quoteUnavailable": "Post citato non disponibile",
+    "vote": "Vota",
+    "pollVotes": "{count} voti",
+    "pollClosed": "Chiuso",
+    "pollEnds": "Termina {at}",
+    "pollError": "Voto fallito",
+    "reportTitle": "Segnala",
+    "reportPlaceholder": "Perché segnali questo?",
+    "reportSubmit": "Invia segnalazione",
+    "confirm": {
+      "title": "Sei sicuro?",
+      "delete": "Eliminare questo post? L'azione è irreversibile.",
+      "adminDeleteInstance": "Eliminare questo post dall'istanza?",
+      "adminDeleteProfile": "Eliminare questo post dal profilo di {user}?",
+      "adminSuspend": "Sospendere {user}? L'account verrà disabilitato.",
+      "adminDeleteUser": "Eliminare l'account di {user}? L'azione è irreversibile.",
+      "adminLimit": "Limitare {user}? I suoi post saranno nascosti dalle timeline pubbliche."
+    }
+  },
+  "timeline": {
+    "empty": "Ancora niente qui.",
+    "newPosts": "{count} nuovi post",
+    "retry": "Riprova",
+    "empty_home": "La tua home è vuota. Segui qualcuno per riempirla.",
+    "empty_local": "Ancora nessun post locale.",
+    "empty_explore": "Niente da esplorare.",
+    "empty_tag": "Nessun post con questo hashtag.",
+    "empty_list": "Questa lista è vuota.",
+    "homeIntro": "Ultimi post dal fediverso."
+  },
+  "compose": {
+    "title": "Scrivi",
+    "placeholder": "A cosa stai pensando?",
+    "post": "Pubblica",
+    "schedule": "Programma",
+    "replyBanner": "Risposta a {'@'}{user}",
+    "quoteBanner": "Citando {'@'}{user}",
+    "directBanner": "Messaggio diretto",
+    "cancelContext": "Annulla",
+    "language": "Lingua",
+    "detect": "Rileva",
+    "visibility": "Visibilità",
+    "vis_public": "Pubblico",
+    "vis_unlisted": "Non elencato",
+    "vis_private": "Solo follower",
+    "vis_direct": "Diretto",
+    "contentType": "Tipo di contenuto",
+    "cw": "Avviso contenuto",
+    "cwPlaceholder": "Testo dell'avviso",
+    "sensitive": "Segna media sensibile",
+    "addMedia": "Aggiungi media",
+    "altPlaceholder": "Descrivi questo media",
+    "poll": "Sondaggio",
+    "pollAdd": "Aggiungi sondaggio",
+    "pollRemove": "Rimuovi sondaggio",
+    "pollOption": "Opzione {n}",
+    "pollExpires": "Scade tra",
+    "pollMultiple": "Scelta multipla",
+    "emoji": "Emoji",
+    "scheduleAt": "Programma per",
+    "schedulePast": "Scegli un orario futuro.",
+    "posted": "Pubblicato",
+    "scheduled": "Programmato",
+    "overLimit": "Oltre il limite di caratteri",
+    "editing": "Modifica post",
+    "discardText": "La tua bozza attuale verrà sostituita.",
+    "mediaLimit": "Sono consentiti al massimo {n} allegati."
+  },
+  "pages": {
+    "comingSoon": "Questa pagina arriverà in un'epica successiva."
   }
 }

@@ -108,8 +108,9 @@ impl Error {
     }
 
     /// Message safe to send to clients: real message for client-facing
-    /// variants, generic text for infrastructure failures.
-    fn public_message(&self) -> std::borrow::Cow<'_, str> {
+    /// variants, generic text for infrastructure failures. The CLI
+    /// reuses it for its `--json` error envelope.
+    pub fn public_message(&self) -> std::borrow::Cow<'_, str> {
         match self {
             Self::NotFound(_)
             | Self::Unauthorized

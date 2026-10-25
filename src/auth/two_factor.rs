@@ -628,19 +628,30 @@ pub async fn disable_all(state: &AppState, user_id: i64, keep_backup_codes: bool
 /// WebAuthn credential and every backup code in one transaction.
 pub async fn admin_disable_2fa(pool: &sqlx::PgPool, user_id: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
+    admin_disable_2fa_conn(&mut tx, user_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// [`admin_disable_2fa`] inside a caller-owned transaction — the CLI
+/// commits the wipe atomically with its audit row so the mutation can
+/// never land without its audit trail.
+pub async fn admin_disable_2fa_conn(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user_id: i64,
+) -> Result<()> {
     sqlx::query("DELETE FROM two_factor WHERE user_id = $1")
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     sqlx::query("DELETE FROM webauthn_credentials WHERE user_id = $1")
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     sqlx::query("DELETE FROM backup_codes WHERE user_id = $1")
         .bind(user_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    tx.commit().await?;
     Ok(())
 }
 

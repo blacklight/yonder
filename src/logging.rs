@@ -22,10 +22,24 @@ pub fn init(server: &ServerConfig) -> Result<()> {
         .with_default_directive(default_directive)
         .from_env_lossy();
 
+    // Logs belong on stderr — stdout is reserved for `yonder`'s
+    // `--json` output contract, which a stray log line would corrupt.
     match server.log_format {
-        LogFormat::Pretty => fmt().pretty().with_env_filter(filter).try_init(),
-        LogFormat::Json => fmt().json().with_env_filter(filter).try_init(),
-        LogFormat::Compact => fmt().compact().with_env_filter(filter).try_init(),
+        LogFormat::Pretty => fmt()
+            .pretty()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .try_init(),
+        LogFormat::Json => fmt()
+            .json()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .try_init(),
+        LogFormat::Compact => fmt()
+            .compact()
+            .with_writer(std::io::stderr)
+            .with_env_filter(filter)
+            .try_init(),
     }
     .map_err(|e| Error::Internal(format!("failed to initialize logging: {e}")))
 }

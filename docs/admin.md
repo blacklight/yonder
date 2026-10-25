@@ -1,5 +1,9 @@
 # Admin panel backend
 
+Everything here is also available from the `yonder` CLI (`config`,
+`instance`, `user`, `domain-block`, `relay`, `emoji`, `frontend`,
+`run-job`) — see `docs/cli.md`.
+
 ## Settings overlays
 
 `GET /api/v1/yonder/admin/settings` lists every config key with

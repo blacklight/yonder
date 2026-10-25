@@ -82,6 +82,86 @@ pub async fn load_local_by_username(
     Ok(row.map(|r| account_row(&r)))
 }
 
+/// Load a local account for an admin-side mutation by username
+/// (case-insensitive). Unlike [`load_local_by_username`] this
+/// resolves suspended accounts — admin actions must still reach
+/// them — but the `users` INNER JOIN keeps it to real local users:
+/// remote rows and the `yonder.instance` actor (no `users` row) are
+/// excluded. Deleted accounts still return `None`.
+pub async fn load_local_admin_view(
+    pool: &sqlx::PgPool,
+    username: &str,
+) -> Result<Option<AccountRow>> {
+    let row = sqlx::query(&format!(
+        "SELECT {ACCOUNT_COLS} \
+         FROM accounts a JOIN users u ON u.account_id = a.id \
+         WHERE lower(a.username) = $1 AND a.domain IS NULL \
+           AND a.deleted_at IS NULL"
+    ))
+    .bind(username.to_lowercase())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| account_row(&r)))
+}
+
+/// Local user accounts for `yonder user list`: every non-deleted
+/// account with a `users` row (remote accounts and the instance
+/// actor have none). `suspended` selects the suspended subset —
+/// active accounts are the default view. `search` is a
+/// case-insensitive substring match on username or email; every
+/// filter is a bound parameter.
+pub async fn admin_list(
+    pool: &sqlx::PgPool,
+    role: Option<&str>,
+    suspended: bool,
+    search: Option<&str>,
+    limit: i64,
+) -> Result<Vec<Value>> {
+    let pattern = search.map(|s| {
+        let escaped: String = s
+            .chars()
+            .take(100)
+            .flat_map(|c| {
+                if matches!(c, '%' | '_' | '\\') {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
+            .collect();
+        format!("%{escaped}%")
+    });
+    let rows = sqlx::query(
+        "SELECT a.id, a.username, a.role, u.email, a.suspended_at, a.created_at \
+         FROM accounts a JOIN users u ON u.account_id = a.id \
+         WHERE a.domain IS NULL AND a.deleted_at IS NULL \
+           AND ($1::text IS NULL OR a.role = $1) \
+           AND (a.suspended_at IS NOT NULL) = $2 \
+           AND ($3::text IS NULL OR a.username ILIKE $3 ESCAPE '\\' \
+                OR u.email ILIKE $3 ESCAPE '\\') \
+         ORDER BY a.id LIMIT $4",
+    )
+    .bind(role)
+    .bind(suspended)
+    .bind(pattern)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            json!({
+                "account_id": r.get::<i64, _>("id"),
+                "username": r.get::<String, _>("username"),
+                "role": r.get::<String, _>("role"),
+                "email": r.get::<String, _>("email"),
+                "suspended": r.get::<Option<chrono::DateTime<chrono::Utc>>, _>("suspended_at").is_some(),
+                "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
+            })
+        })
+        .collect())
+}
+
 /// Load many `accounts` rows in one query — the listing form of
 /// [`load`]. Result order matches `ids`; missing/deleted/suspended
 /// ids are dropped (the caller loses the position). Admin surfaces

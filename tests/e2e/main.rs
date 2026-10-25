@@ -13,6 +13,7 @@ mod account_management;
 mod activitypub;
 mod admin;
 mod auth;
+mod cli;
 mod conversations;
 mod db;
 mod feeds;

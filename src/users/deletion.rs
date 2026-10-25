@@ -8,6 +8,7 @@
 //! reserved (registration's pre-check already counts it), and the key
 //! pair remains so in-flight `Delete` deliveries can still sign.
 
+use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
 
@@ -64,6 +65,14 @@ pub async fn revoke_access(
     Ok(())
 }
 
+/// What [`schedule_account_deletion`] / [`schedule_account_deletion_cli`]
+/// recorded: the `account_deletions` row id and its due time.
+#[derive(Debug)]
+pub struct DeletionSchedule {
+    pub id: i64,
+    pub scheduled_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// Schedule `account_id` for deletion: deactivate the account now
 /// (suspend + revoke every token/session), then record the due time.
 /// `delay == 0` enqueues the purge immediately; otherwise the cron
@@ -78,6 +87,53 @@ pub async fn schedule_account_deletion(
     requested_by: Option<i64>,
     delay: std::time::Duration,
 ) -> Result<i64> {
+    Ok(schedule_inner(
+        state,
+        account_id,
+        requested_by,
+        delay,
+        delay.is_zero(),
+        None,
+    )
+    .await?
+    .id)
+}
+
+/// The CLI's scheduling entry point: same guards and mutation as
+/// [`schedule_account_deletion`], plus an `account.delete_request`
+/// audit row committed in the same transaction. `enqueue_immediate`
+/// replaces the implicit `delay == 0` enqueue — `--now` passes
+/// `false` so the CLI's inline purge is the only purger (a queued
+/// job and the CLI would otherwise race to claim the row).
+pub async fn schedule_account_deletion_cli(
+    state: &AppState,
+    account_id: i64,
+    actor_id: i64,
+    delay: std::time::Duration,
+    enqueue_immediate: bool,
+) -> Result<DeletionSchedule> {
+    schedule_inner(
+        state,
+        account_id,
+        Some(actor_id),
+        delay,
+        enqueue_immediate,
+        Some(actor_id),
+    )
+    .await
+}
+
+/// Shared body of the two scheduling entry points. `audit_actor`
+/// controls the audit row: `None` (the HTTP callers) keeps the
+/// historical no-audit behavior.
+async fn schedule_inner(
+    state: &AppState,
+    account_id: i64,
+    requested_by: Option<i64>,
+    delay: std::time::Duration,
+    enqueue_immediate: bool,
+    audit_actor: Option<i64>,
+) -> Result<DeletionSchedule> {
     // The instance actor must never be deleted; nor can a deleted
     // account be scheduled twice.
     let guard: Option<(String, bool, bool, bool)> = sqlx::query_as(
@@ -109,7 +165,7 @@ pub async fn schedule_account_deletion(
     // requests; a stale 'cancelled'/'completed' row is resurrected in
     // place ('completed' is unreachable — the deleted_at guard above
     // already refused the account).
-    let deletion_id: Option<i64> = sqlx::query_scalar(
+    let scheduled: Option<(i64, DateTime<Utc>)> = sqlx::query_as(
         "INSERT INTO account_deletions \
              (account_id, requested_by_account_id, scheduled_at, was_suspended) \
          VALUES ($1, $2, now() + $3::float8 * interval '1 second', $4) \
@@ -119,7 +175,7 @@ pub async fn schedule_account_deletion(
              was_suspended = EXCLUDED.was_suspended, \
              state = 'pending', updated_at = now() \
          WHERE account_deletions.state = 'cancelled' \
-         RETURNING id",
+         RETURNING id, scheduled_at",
     )
     .bind(account_id)
     .bind(requested_by)
@@ -127,19 +183,20 @@ pub async fn schedule_account_deletion(
     .bind(was_suspended)
     .fetch_optional(&mut *tx)
     .await?;
-    let deletion_id = match deletion_id {
-        Some(id) => id,
+    let (deletion_id, scheduled_at) = match scheduled {
+        Some(row) => row,
         None => {
             // Conflict with a 'pending'/'running' row: return the
             // pending row (idempotent), refuse a running purge.
-            match sqlx::query_scalar::<_, i64>(
-                "SELECT id FROM account_deletions WHERE account_id = $1 AND state = 'pending'",
+            match sqlx::query_as::<_, (i64, DateTime<Utc>)>(
+                "SELECT id, scheduled_at FROM account_deletions \
+                 WHERE account_id = $1 AND state = 'pending'",
             )
             .bind(account_id)
             .fetch_optional(&mut *tx)
             .await?
             {
-                Some(id) => id,
+                Some(row) => row,
                 None => {
                     return Err(Error::Conflict(
                         "a deletion for this account is already in progress".into(),
@@ -157,9 +214,20 @@ pub async fn schedule_account_deletion(
         .execute(&mut *tx)
         .await?;
     revoke_access(&mut tx, account_id).await?;
+    if let Some(actor_id) = audit_actor {
+        crate::moderation::audit::record(
+            &mut *tx,
+            Some(actor_id),
+            "account.delete_request",
+            "account",
+            Some(account_id),
+            json!({ "scheduled_at": scheduled_at.to_rfc3339() }),
+        )
+        .await?;
+    }
     tx.commit().await?;
 
-    if delay.is_zero() {
+    if enqueue_immediate {
         state
             .dispatcher
             .enqueue(
@@ -168,7 +236,10 @@ pub async fn schedule_account_deletion(
             )
             .await?;
     }
-    Ok(deletion_id)
+    Ok(DeletionSchedule {
+        id: deletion_id,
+        scheduled_at,
+    })
 }
 
 /// Cancel a pending deletion: marks the row cancelled and lifts the

@@ -161,6 +161,7 @@ impl JobKind {
         JobKind::FollowEvent,
         JobKind::TimelineFanOut,
         JobKind::DeleteMediaObject,
+        JobKind::AuditLogCleanup,
     ];
 
     /// Stable wire name (`snake_case`).

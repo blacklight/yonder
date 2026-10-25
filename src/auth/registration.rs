@@ -75,6 +75,196 @@ pub fn validate_username(config: &crate::config::Config, username: &str) -> Resu
     Ok(())
 }
 
+/// The account-creation core shared by self-service [`register`] and
+/// admin-side [`create_admin_account`]: insert the `accounts` +
+/// `users` rows and provision the ActivityPub actor inside the
+/// caller's transaction. Returns `(account_id, user_id)`. Token
+/// issuance, invite consumption, audit and email enqueueing stay with
+/// the callers — the transaction boundary is theirs.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_local_account(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    base_url: &str,
+    username: &str,
+    email: &str,
+    password_hash: &str,
+    approved: bool,
+    email_verified: bool,
+    reason: Option<&str>,
+    locale: Option<&str>,
+    invite_id: Option<i64>,
+) -> Result<(i64, i64)> {
+    let actor_id = format!("{base_url}/ap/users/{username}");
+    let account_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id) VALUES (NULL, $1, $2) RETURNING id",
+    )
+    .bind(username)
+    .bind(&actor_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(registration_db_error)?;
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users \
+         (account_id, email, password_hash, approved_at, email_verified_at, registration_reason, locale, invite_id) \
+         VALUES ($1, $2, $3, CASE WHEN $4 THEN now() END, CASE WHEN $5 THEN now() END, $6, $7, $8) \
+         RETURNING id",
+    )
+    .bind(account_id)
+    .bind(email)
+    .bind(password_hash)
+    .bind(approved)
+    .bind(email_verified)
+    .bind(reason)
+    .bind(locale)
+    .bind(invite_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(registration_db_error)?;
+    provision_local_conn(&mut *tx, base_url, account_id, username).await?;
+    Ok((account_id, user_id))
+}
+
+/// Inputs for [`create_admin_account`]. `actor_id` attributes the
+/// `account.create` audit row — the instance actor normally, an
+/// explicit `--actor` when given, `None` only for bootstrap creates
+/// before the instance actor exists.
+pub struct AdminCreateParams<'a> {
+    pub username: &'a str,
+    pub email: &'a str,
+    pub password_hash: &'a str,
+    pub role: &'a str,
+    /// Skip the email-verification requirement: the account is
+    /// created already verified.
+    pub skip_verification: bool,
+    pub locale: Option<&'a str>,
+    pub actor_id: Option<i64>,
+}
+
+/// Admin-side account creation (`yonder user create`). Same core as
+/// [`register`] with `approved = true`, the requested role written in
+/// the same transaction, no OAuth tokens, the same
+/// verification-email flow when verification is required and not
+/// skipped, and the same best-effort auto-follow after commit.
+/// Registration mode does not gate this path — the CLI is a
+/// privileged admin surface.
+pub async fn create_admin_account(
+    state: &AppState,
+    params: &AdminCreateParams<'_>,
+) -> Result<Registered> {
+    let config = &state.config();
+    if !matches!(params.role, "user" | "moderator" | "admin") {
+        return Err(Error::Validation(format!("invalid role {:?}", params.role)));
+    }
+    let username = params.username.trim();
+    validate_username(config, username)?;
+    let email = params.email.trim();
+    if email.is_empty() || !email.contains('@') || email.chars().count() > 500 {
+        return Err(Error::Validation("a valid email is required".to_string()));
+    }
+    let locale = params
+        .locale
+        .map(crate::users::settings::normalize_locale)
+        .filter(|l| !l.is_empty());
+    if let Some(locale) = &locale {
+        crate::users::settings::validate_supported_locale("locale", locale)?;
+    }
+    let email_verified =
+        params.skip_verification || !crate::auth::scopes::requires_email_verification(config);
+
+    // Same friendly pre-checks as `register`; the unique indexes
+    // still guard the race.
+    let taken: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE lower(username) = lower($1) AND domain IS NULL)",
+    )
+    .bind(username)
+    .fetch_one(&state.db)
+    .await?;
+    if taken {
+        return Err(Error::Validation("username is already taken".to_string()));
+    }
+    let email_taken: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email) = lower($1))")
+            .bind(email)
+            .fetch_one(&state.db)
+            .await?;
+    if email_taken {
+        return Err(Error::Validation("email is already taken".to_string()));
+    }
+
+    let base_url = activitypub::federation_base_url(config);
+    let mut tx = state.db.begin().await?;
+    let (account_id, user_id) = create_local_account(
+        &mut tx,
+        &base_url,
+        username,
+        email,
+        params.password_hash,
+        true,
+        email_verified,
+        None,
+        locale.as_deref(),
+        None,
+    )
+    .await?;
+    if params.role != "user" {
+        sqlx::query("UPDATE accounts SET role = $2, updated_at = now() WHERE id = $1")
+            .bind(account_id)
+            .bind(params.role)
+            .execute(&mut *tx)
+            .await?;
+    }
+    crate::moderation::audit::record(
+        &mut *tx,
+        params.actor_id,
+        "account.create",
+        "account",
+        Some(account_id),
+        serde_json::json!({ "username": username, "role": params.role }),
+    )
+    .await?;
+    let verification_pending = !email_verified;
+    if verification_pending {
+        enqueue_verification_email(state, user_id, email).await?;
+    }
+    tx.commit().await?;
+
+    let af = crate::users::auto_follow::AutoFollowCtx {
+        db: state.db.clone(),
+        config: state.config().clone(),
+        ap: state.ap.clone(),
+    };
+    tokio::spawn(async move {
+        if let Err(e) = crate::users::auto_follow::apply(&af, account_id).await {
+            tracing::warn!(account_id, error = %e, "auto-follow failed");
+        }
+    });
+
+    Ok(Registered {
+        user_id,
+        account_id,
+        verification_pending,
+    })
+}
+
+/// Mark a local account's email verified inside the caller's
+/// transaction — `yonder user verify-email` pairs it with an
+/// `account.verify_email` audit row so the change and its record
+/// commit atomically. Returns whether a `users` row was updated.
+pub async fn admin_verify_email(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: i64,
+) -> Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE users SET email_verified_at = now(), updated_at = now() \
+             WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    Ok(updated > 0)
+}
+
 /// Create the local `accounts` + `users` rows, provision the
 /// ActivityPub actor, and issue the caller's first token pair — one
 /// transaction, so a failure anywhere (actor provisioning, token
@@ -159,7 +349,6 @@ pub async fn register(
         crate::users::settings::validate_supported_locale("locale", locale)?;
     }
     let base_url = activitypub::federation_base_url(config);
-    let actor_id = format!("{base_url}/ap/users/{username}");
     let email_verified = !requires_email_verification(config);
     // Open registrations are active at once; under approval-required an
     // invite auto-approves (Mastodon behavior). Closed registrations
@@ -198,32 +387,19 @@ pub async fn register(
             .map(Some)?,
         None => None,
     };
-    let account_id: i64 = sqlx::query_scalar(
-        "INSERT INTO accounts (domain, username, actor_id) VALUES (NULL, $1, $2) RETURNING id",
+    let (account_id, user_id) = create_local_account(
+        &mut tx,
+        &base_url,
+        username,
+        email,
+        &password_hash,
+        approved,
+        email_verified,
+        reason,
+        locale.as_deref(),
+        invite_id,
     )
-    .bind(username)
-    .bind(&actor_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(registration_db_error)?;
-    let user_id: i64 = sqlx::query_scalar(
-        "INSERT INTO users \
-         (account_id, email, password_hash, approved_at, email_verified_at, registration_reason, locale, invite_id) \
-         VALUES ($1, $2, $3, CASE WHEN $4 THEN now() END, CASE WHEN $5 THEN now() END, $6, $7, $8) \
-         RETURNING id",
-    )
-    .bind(account_id)
-    .bind(email)
-    .bind(&password_hash)
-    .bind(approved)
-    .bind(email_verified)
-    .bind(reason)
-    .bind(&locale)
-    .bind(invite_id)
-    .fetch_one(&mut *tx)
-    .await
-    .map_err(registration_db_error)?;
-    provision_local_conn(&mut tx, &base_url, account_id, username).await?;
+    .await?;
 
     // The first token pair (+ the authorization record for app-bound
     // registrations) commits with the account, not after it.

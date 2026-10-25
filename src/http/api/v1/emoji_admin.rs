@@ -37,8 +37,6 @@ fn entity_of(state: &Arc<AppState>, row: &model::EmojiRow) -> Value {
 
 /// The per-entry outcome report shared by both import endpoints.
 fn import_report(state: &Arc<AppState>, outcomes: &[import::ImportOutcome]) -> Value {
-    let ctx = PostContext::new(state);
-    let base = ctx.base_url();
     json!({
         "imported": outcomes.iter().filter(|o| o.result.is_ok()).count(),
         "skipped": outcomes.iter().filter(|o| o.result.is_err()).count(),
@@ -326,6 +324,7 @@ pub async fn import_dir(
         &body.from_dir,
         auth.account_id,
         body.pack_id,
+        false,
     )
     .await?;
     Ok(Json(import_report(&state, &outcomes)))

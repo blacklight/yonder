@@ -2,20 +2,35 @@
 //!
 //! One binary, subcommand-driven: `serve` (default — HTTP plus the
 //! optional in-process worker), `worker` (standalone queue drain +
-//! scheduler), `migrate`, `config`. Epic 27 grows this with admin
-//! subcommands; the config tree already exists so `config list`/
-//! `config get` exercise the registry contract.
+//! scheduler), `migrate`, `config`, `instance`, `run-job`, `user`,
+//! `domain-block`, `relay`, `emoji`, `frontend` and `openapi` —
+//! thin adapters over the same service functions the HTTP API uses.
+//!
+//! Output contract: `--json` prints exactly one JSON value on
+//! stdout for result-bearing commands; diagnostics, warnings and
+//! errors always go to stderr. Errors map to stable exit codes via
+//! [`exit::exit_code`]; clap's own usage errors keep exit code 2.
+
+pub mod config;
+pub mod confirm;
+pub mod context;
+pub mod domain_block;
+pub mod emoji;
+pub mod exit;
+pub mod frontend;
+pub mod jobs;
+pub mod migrate;
+pub mod output;
+pub mod relay;
+pub mod user;
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 
-use crate::{
-    cache,
-    config::{registry, Config},
-    db, http, jobs, logging, Error, Result,
-};
+use crate::{activitypub::ApContext, cache, config::Config, db, http, logging, Error, Result};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -28,6 +43,16 @@ pub struct Cli {
     #[arg(long, global = true, env = "YONDER_CONFIG", value_name = "PATH")]
     pub config: Option<PathBuf>,
 
+    /// Emit exactly one JSON value on stdout for result-bearing
+    /// commands; errors render as a JSON object on stderr.
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Attribute mutations (audit-log actor) to this local admin
+    /// account instead of the default `yonder.instance` actor.
+    #[arg(long, global = true, value_name = "USERNAME")]
+    pub actor: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -38,17 +63,66 @@ pub enum Command {
     Serve,
     /// Run the background-job worker (queue drain + scheduler).
     Worker,
-    /// Run database migrations.
+    /// Run database migrations, or inspect their status.
     Migrate {
+        #[command(subcommand)]
+        command: Option<migrate::MigrateCommand>,
         /// Roll back instead of applying: to the given target version
         /// (exclusive), or one step back when omitted.
         #[arg(long, value_name = "VERSION")]
         revert: Option<Option<i64>>,
     },
-    /// Inspect instance configuration.
+    /// Inspect and manage instance configuration (database overlays).
     Config {
         #[command(subcommand)]
-        command: ConfigCommand,
+        command: config::ConfigCommand,
+    },
+    /// Enqueue a background job, or run one in-process.
+    RunJob {
+        /// Job kind — one of the names `yonder run-job` reports for an
+        /// unknown kind (e.g. `audit_log_cleanup`, `email_send`).
+        kind: String,
+        /// Job payload as a JSON object (default: {}).
+        #[arg(long, value_name = "JSON")]
+        payload: Option<String>,
+        /// Execute the handler in this process instead of enqueuing.
+        /// Bypasses worker retry and dead-letter accounting.
+        #[arg(long)]
+        inline: bool,
+        /// Enqueue the job to fire no earlier than this many seconds
+        /// from now (enqueue mode only).
+        #[arg(long, value_name = "SECS")]
+        delay: Option<u64>,
+    },
+    /// Administer local user accounts.
+    User {
+        #[command(subcommand)]
+        command: user::UserCommand,
+    },
+    /// Show or change instance identity settings.
+    Instance {
+        #[command(subcommand)]
+        command: config::InstanceCommand,
+    },
+    /// Manage instance domain blocks (moderation).
+    DomainBlock {
+        #[command(subcommand)]
+        command: domain_block::DomainBlockCommand,
+    },
+    /// Manage ActivityPub relays.
+    Relay {
+        #[command(subcommand)]
+        command: relay::RelayCommand,
+    },
+    /// Import custom emoji.
+    Emoji {
+        #[command(subcommand)]
+        command: emoji::EmojiCommand,
+    },
+    /// Install and remove alternative frontends.
+    Frontend {
+        #[command(subcommand)]
+        command: frontend::FrontendCommand,
     },
     /// Print the OpenAPI document as JSON on stdout — the input the
     /// frontend's `npm run api:gen` consumes; needs no config or
@@ -56,27 +130,47 @@ pub enum Command {
     Openapi,
 }
 
-#[derive(Debug, Subcommand)]
-pub enum ConfigCommand {
-    /// List every configuration key as `toml.path` ↔ `YONDER_ENV_NAME`.
-    List,
-    /// Print the value of a configuration key (dotted TOML path) as
-    /// resolved from config.toml, env vars and defaults — database
-    /// overlays (`config_overlays`) are not consulted.
-    Get { key: String },
-}
-
-/// Entry point called by `main`. Reads `.env` if present, then dispatches.
-pub async fn main() -> Result<()> {
+/// Entry point called by `main`. Reads `.env` if present, dispatches,
+/// and owns all error rendering — clap usage errors keep their own
+/// stderr format and exit code 2 and never reach this path.
+pub async fn main() -> ExitCode {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
+    let json = cli.json;
+    match run(cli).await {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+            output::render_error(&e, json);
+            ExitCode::from(exit::exit_code(&e))
+        }
+    }
+}
+
+/// Dispatch one parsed command. `Ok(0)` is success; `Ok(1)` is the
+/// `migrate status` "migrations pending" signal (a status, not an
+/// error); `Err` renders via `main`.
+async fn run(cli: Cli) -> Result<u8> {
     let path = cli.config.as_deref();
+    let out = output::Output::new(cli.json);
+    let actor = cli.actor.as_deref();
     match cli.command.unwrap_or(Command::Serve) {
-        Command::Serve => serve(path).await,
-        Command::Worker => worker(path).await,
-        Command::Migrate { revert } => migrate(path, revert).await,
-        Command::Config { command } => config(path, command),
-        Command::Openapi => openapi(),
+        Command::Serve => serve(path).await.map(|_| 0),
+        Command::Worker => worker(path).await.map(|_| 0),
+        Command::Openapi => openapi().map(|_| 0),
+        Command::Migrate { command, revert } => migrate::run(path, command, revert, &out).await,
+        Command::Config { command } => config::run(path, command, &out, actor).await,
+        Command::Instance { command } => config::run_instance(path, command, &out, actor).await,
+        Command::RunJob {
+            kind,
+            payload,
+            inline,
+            delay,
+        } => jobs::run_job(path, &kind, payload.as_deref(), inline, delay, &out).await,
+        Command::User { command } => user::run(path, command, &out, actor).await,
+        Command::DomainBlock { command } => domain_block::run(path, command, &out, actor).await,
+        Command::Relay { command } => relay::run(path, command, &out, actor).await,
+        Command::Emoji { command } => emoji::run(path, command, &out, actor).await,
+        Command::Frontend { command } => frontend::run(path, command, &out).await,
     }
 }
 
@@ -191,8 +285,51 @@ async fn shutdown_signal() {
     }
 }
 
-/// Build the job registry (stubs for now) and the worker over it. The
-/// returned scheduler must be kept alive for cron jobs to keep firing.
+/// Every job handler, registered once — the worker (standalone or
+/// in-process) and `run-job --inline` share exactly this wiring so an
+/// inline run executes the same handler a drained job would. Stubs
+/// are registered first; real handlers replace them in domain order.
+/// `ap` is `Some` only when federation is enabled — handlers that
+/// need the AP context are either AP-gated or degrade to local work.
+pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
+    let mut registry = crate::jobs::Registry::default();
+    crate::jobs::stub::register_all(&mut registry);
+    // Epic-09 profile jobs — independent of the federation gate.
+    crate::users::profile::register_jobs(&mut registry);
+    // Real federation handlers replace the stubs when federation is on.
+    if let Some(ap) = ap {
+        crate::activitypub::register_handlers(&mut registry, ap);
+    }
+    // Epic-11 account-management jobs: local work runs regardless of
+    // the federation gate; handlers degrade to "no AP emission" when
+    // `ap` is None. MigrateFollowers needs AP (actor fetches,
+    // Undo/Follow publishes), so it only registers under the gate.
+    crate::users::deletion::register_jobs(&mut registry, ap);
+    crate::users::transfer::register_jobs(&mut registry, ap);
+    if let Some(ap) = ap {
+        crate::users::moves::register_jobs(&mut registry, ap);
+    }
+    // Epic-12 posting jobs (scheduled publish, link previews,
+    // scheduled deletion, orphan-media cleanup).
+    crate::posts::register_jobs(&mut registry, ap);
+    // Epic-14 social jobs (FollowEvent settle — local work regardless
+    // of the federation gate).
+    crate::social::register_jobs(&mut registry);
+    // Epic-15 timeline jobs (fan-out + backfill).
+    crate::timelines::register_jobs(&mut registry);
+    // Epic-16 notifications (fan-out + email enqueue).
+    crate::notifications::register_jobs(&mut registry);
+    // Epic 21 — audit log retention sweep.
+    crate::moderation::register_jobs(&mut registry);
+    // Epic 22 — the real `EmailSend` SMTP sender (replaces the stub).
+    crate::admin::register_jobs(&mut registry);
+    // Epic-18 media jobs (remote fetch + cleanup sweep).
+    crate::media::register_jobs(&mut registry);
+    registry
+}
+
+/// Build the job registry and the worker over it. The returned
+/// scheduler must be kept alive for cron jobs to keep firing.
 ///
 /// The worker gets its own Redis pool sized for its blocking
 /// consumers: each of the `concurrency` tasks per queue holds a
@@ -202,63 +339,35 @@ async fn start_worker(
     config: &Config,
     pool: sqlx::PgPool,
     bus: &crate::http::ws::EventBus,
-) -> Result<(jobs::worker::Worker, tokio_cron_scheduler::JobScheduler)> {
-    let blocking_consumers = config.jobs.concurrency * jobs::Queue::ALL.len() as u32;
+) -> Result<(
+    crate::jobs::worker::Worker,
+    tokio_cron_scheduler::JobScheduler,
+)> {
+    let blocking_consumers = config.jobs.concurrency * crate::jobs::Queue::ALL.len() as u32;
     let redis = cache::connect(&crate::config::RedisConfig {
         pool_size: config.redis.pool_size.max(blocking_consumers + 4),
         ..config.redis.clone()
     })
     .await?;
-    let mut registry = jobs::Registry::default();
-    jobs::stub::register_all(&mut registry);
-    // Epic-09 profile jobs — independent of the federation gate.
-    crate::users::profile::register_jobs(&mut registry);
-    let dispatcher = jobs::Dispatcher::new(&redis, &config.jobs);
-    // Real federation handlers replace the stubs when federation is on.
+    let dispatcher = crate::jobs::Dispatcher::new(&redis, &config.jobs);
     let mut ap_ctx = None;
     if config.federation.enabled {
         let ap = crate::activitypub::build(config, &pool, &redis, &dispatcher, bus).await?;
-        crate::activitypub::register_handlers(&mut registry, &ap);
         ap_ctx = Some(ap);
     }
-    // Epic-11 account-management jobs: local work runs regardless of
-    // the federation gate; handlers degrade to "no AP emission" when
-    // `ap_ctx` is None. MigrateFollowers needs AP (actor fetches,
-    // Undo/Follow publishes), so it only registers under the gate.
-    crate::users::deletion::register_jobs(&mut registry, ap_ctx.as_ref());
-    crate::users::transfer::register_jobs(&mut registry, ap_ctx.as_ref());
-    if let Some(ap) = ap_ctx.as_ref() {
-        crate::users::moves::register_jobs(&mut registry, ap);
-    }
-    // Epic-12 posting jobs (scheduled publish, link previews,
-    // scheduled deletion, orphan-media cleanup).
-    crate::posts::register_jobs(&mut registry, ap_ctx.as_ref());
-    // Epic-14 social jobs (FollowEvent settle — local work regardless
-    // of the federation gate).
-    crate::social::register_jobs(&mut registry);
-    // Epic-15 timeline jobs (fan-out + backfill).
-    crate::timelines::register_jobs(&mut registry);
-    // Epic-16 notifications (fan-out + email enqueue).
-    crate::notifications::register_jobs(&mut registry);
-
-    // Epic 21 — audit log retention sweep.
-    crate::moderation::register_jobs(&mut registry);
-    // Epic 22 — the real `EmailSend` SMTP sender (replaces the stub).
-    crate::admin::register_jobs(&mut registry);
-    // Epic-18 media jobs (remote fetch + cleanup sweep).
-    crate::media::register_jobs(&mut registry);
-    let ctx = jobs::JobContext {
+    let registry = build_registry(ap_ctx.as_ref());
+    let ctx = crate::jobs::JobContext {
         db: pool,
         redis: redis.clone(),
         config: Arc::new(config.clone()),
         media: crate::media::storage::MediaStore::from_config(config),
     };
-    let scheduler = jobs::scheduler::start(config, &dispatcher).await?;
-    let worker = jobs::worker::Worker::new(
+    let scheduler = crate::jobs::scheduler::start(config, &dispatcher).await?;
+    let worker = crate::jobs::worker::Worker::new(
         ctx,
         Arc::new(registry),
         Arc::new(config.jobs.clone()),
-        jobs::worker::default_consumer(),
+        crate::jobs::worker::default_consumer(),
     );
     Ok((worker, scheduler))
 }
@@ -279,50 +388,4 @@ async fn worker(path: Option<&Path>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-async fn migrate(path: Option<&Path>, revert: Option<Option<i64>>) -> Result<()> {
-    let config = Config::load(path)?;
-    logging::init(&config.server)?;
-    let pool = db::connect(&config.database).await?;
-    match revert {
-        Some(target) => {
-            db::migrate::revert(&pool, target).await?;
-            tracing::info!(target = ?target, "migrations reverted");
-        }
-        None => {
-            db::migrate::run(&pool).await?;
-            let versions = db::migrate::applied_versions(&pool).await?;
-            tracing::info!(?versions, "migrations applied");
-        }
-    }
-    Ok(())
-}
-
-fn config(path: Option<&Path>, command: ConfigCommand) -> Result<()> {
-    match command {
-        ConfigCommand::List => {
-            for entry in registry::entries() {
-                println!("{:<58} {}", entry.toml_path, entry.env);
-            }
-            Ok(())
-        }
-        ConfigCommand::Get { key } => {
-            if registry::find(&key).is_none() {
-                return Err(Error::NotFound(format!("config key {key:?}")));
-            }
-            let config = Config::load(path)?;
-            let value =
-                serde_json::to_value(&config).map_err(|e| Error::Internal(e.to_string()))?;
-            let leaf = key
-                .split('.')
-                .try_fold(&value, |node, part| node.get(part))
-                .expect("key exists in the registry");
-            println!(
-                "{}",
-                serde_json::to_string_pretty(leaf).map_err(|e| Error::Internal(e.to_string()))?
-            );
-            Ok(())
-        }
-    }
 }

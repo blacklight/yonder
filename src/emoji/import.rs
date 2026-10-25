@@ -382,12 +382,73 @@ fn scan_dir(import_root: &Path, from_dir: &str, max_size: u64) -> Result<Vec<Sca
     Ok(out)
 }
 
+/// Import a single image file: metadata size check first (a huge
+/// file never reaches allocation), then a bounded read, shortcode
+/// derived from the filename stem, and the shared [`store_one`]
+/// decode/validate/store path. `overwrite` replaces an existing
+/// local shortcode in place, as in [`import_zip`].
+pub async fn from_file(
+    db: &PgPool,
+    store: &MediaStore,
+    config: &Config,
+    path: &Path,
+    uploader_id: i64,
+    pack_id: Option<i64>,
+    overwrite: bool,
+) -> Result<EmojiRow> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    if std::fs::metadata(path)?.len() > config.media.max_emoji_size {
+        return Err(Error::Validation(format!(
+            "{name} exceeds the per-emoji size cap of {} bytes",
+            config.media.max_emoji_size
+        )));
+    }
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let shortcode = shortcode_from_stem(&stem)
+        .ok_or_else(|| Error::Validation(format!("{name} does not yield a valid shortcode")))?;
+    let bytes = {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        std::fs::File::open(path)?
+            .take(config.media.max_emoji_size + 1)
+            .read_to_end(&mut buf)?;
+        if buf.len() as u64 > config.media.max_emoji_size {
+            return Err(Error::Validation(format!(
+                "{name} exceeds the per-emoji size cap of {} bytes",
+                config.media.max_emoji_size
+            )));
+        }
+        buf
+    };
+    store_one(
+        db,
+        store,
+        config,
+        &shortcode,
+        bytes,
+        uploader_id,
+        pack_id,
+        None,
+        overwrite,
+    )
+    .await
+    .map_err(|e| Error::Validation(format!("{name}: {e}")))
+}
+
 /// Import image files from a directory on the server filesystem.
 /// `from_dir` is resolved against `config.admin.emoji_import_dir`
 /// (the import root — unset means the endpoint is disabled): the
 /// given path must stay inside it after canonicalization, and
 /// symlinks escaping the root are refused. The scan and reads run
 /// on the blocking pool; rows are written one at a time here.
+/// `overwrite` replaces existing local shortcodes in place; the API
+/// route passes `false`.
 pub async fn from_dir(
     db: &PgPool,
     store: &MediaStore,
@@ -395,6 +456,7 @@ pub async fn from_dir(
     from_dir: &str,
     uploader_id: i64,
     pack_id: Option<i64>,
+    overwrite: bool,
 ) -> Result<Vec<ImportOutcome>> {
     let root = config
         .admin
@@ -433,7 +495,7 @@ pub async fn from_dir(
             uploader_id,
             pack_id,
             None,
-            false,
+            overwrite,
         )
         .await;
         out.push(ImportOutcome { name, result });

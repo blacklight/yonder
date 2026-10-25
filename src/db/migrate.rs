@@ -47,3 +47,42 @@ pub async fn applied_versions(pool: &PgPool) -> Result<Vec<i64>> {
         .await
         .map_err(Into::into)
 }
+
+/// One embedded migration's state for `yonder migrate status`.
+#[derive(Debug)]
+pub struct MigrationStatus {
+    pub version: i64,
+    pub description: String,
+    pub applied: bool,
+}
+
+/// Per-migration applied/pending view of [`MIGRATOR`]. Only
+/// `success = true` rows in `_sqlx_migrations` count as applied — a
+/// failed/dirty row stays pending. On a fresh database the
+/// migrations table doesn't exist yet and every embedded migration
+/// reports pending.
+pub async fn status(pool: &PgPool) -> Result<Vec<MigrationStatus>> {
+    let exists: Option<String> = sqlx::query_scalar("SELECT to_regclass('_sqlx_migrations')::text")
+        .fetch_one(pool)
+        .await?;
+    let applied: std::collections::HashSet<i64> = if exists.is_some() {
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success")
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+    Ok(MIGRATOR
+        .iter()
+        // A reversible migration is two entries (Up + Down) sharing a
+        // version; only the Up side has an applied/pending meaning.
+        .filter(|m| m.migration_type != sqlx::migrate::MigrationType::ReversibleDown)
+        .map(|m| MigrationStatus {
+            version: m.version,
+            description: m.description.to_string(),
+            applied: applied.contains(&m.version),
+        })
+        .collect())
+}

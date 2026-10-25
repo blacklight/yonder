@@ -1,0 +1,8 @@
+{
+  // Specs are excluded from the app tsconfig (they should not ship in
+  // the bundle's type surface) but still deserve type-checking — run
+  // `vue-tsc -p tsconfig.spec.json` for them.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue"],
+  "exclude": []
+}

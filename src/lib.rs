@@ -15,6 +15,7 @@ pub mod emoji;
 pub mod error;
 pub mod feeds;
 pub mod filters;
+pub mod frontends;
 pub mod http;
 pub mod i18n;
 pub mod interactions;

@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Yonder"
+  },
+  "nav": {
+    "home": "Start",
+    "settings": "Einstellungen"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "theme": "Design",
+    "theme_light": "Hell",
+    "theme_dark": "Dunkel",
+    "theme_system": "System",
+    "accent": "Akzentfarbe",
+    "language": "Sprache der Oberfläche",
+    "frontend": "Frontend",
+    "frontend_default": "Instanz-Standard verwenden",
+    "save": "Speichern",
+    "saved": "Gespeichert"
+  },
+  "route": {
+    "home": {
+      "title": "Start"
+    },
+    "settings": {
+      "title": "Einstellungen"
+    },
+    "invite": {
+      "title": "Einladung"
+    },
+    "not-found": {
+      "title": "Nicht gefunden"
+    }
+  },
+  "home": {
+    "welcome": "Willkommen bei Yonder",
+    "placeholder": "Ein Mastodon-kompatibler ActivityPub-Server. Dieses Frontend befindet sich im Aufbau."
+  },
+  "invite": {
+    "title": "Einladung",
+    "placeholder": "Die Annahme von Einladungen folgt in einem späteren Epic."
+  },
+  "not_found": {
+    "title": "Seite nicht gefunden",
+    "message": "Die gesuchte Seite existiert nicht."
+  },
+  "ui": {
+    "close": "Schließen",
+    "loading": "Lädt…",
+    "error": "Fehler"
+  }
+}

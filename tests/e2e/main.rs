@@ -16,6 +16,7 @@ mod auth;
 mod db;
 mod feeds;
 mod filters_tags_emoji;
+mod frontends;
 mod http;
 mod interactions;
 mod media;

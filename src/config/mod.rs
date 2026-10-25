@@ -60,6 +60,7 @@ pub struct Config {
     pub admin: AdminConfig,
     pub jobs: JobsConfig,
     pub timelines: TimelinesConfig,
+    pub frontends: FrontendsConfig,
 }
 
 impl Config {
@@ -976,6 +977,46 @@ pub struct AdminConfig {
     /// (`POST /api/v1/yonder/emoji/import_path`). Unset disables the
     /// endpoint — paths are canonicalized and must stay inside it.
     pub emoji_import_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FrontendsConfig {
+    /// Directory holding installed alternative frontends, one
+    /// subdirectory per frontend containing a `frontend.json` manifest.
+    pub dir: String,
+    /// Directory containing the built `yonder` frontend
+    /// (`frontend/dist` after `npm run build`). Served at `/` by
+    /// default; when it has no `index.html` the server answers with a
+    /// built-in placeholder page.
+    pub builtin_dir: String,
+    /// Multipart size cap for `POST /api/v1/yonder/admin/frontends`
+    /// zip uploads (bytes).
+    pub max_upload_size: u64,
+    /// Total uncompressed-size cap applied while extracting a frontend
+    /// archive — zip-bomb protection (bytes).
+    pub max_uncompressed_size: u64,
+    /// Root directory for filesystem frontend installs
+    /// (`source = "path"`). Unset disables that source — paths are
+    /// canonicalized and must stay inside it.
+    pub install_from_path_root: Option<String>,
+    /// Allow installing frontends from a Git repository
+    /// (`source = "git"`). Disabled by default — the operation shells
+    /// out to `git clone` and fetches remote content.
+    pub git_enabled: bool,
+}
+
+impl Default for FrontendsConfig {
+    fn default() -> Self {
+        Self {
+            dir: "./frontends".to_string(),
+            builtin_dir: "./frontend/dist".to_string(),
+            max_upload_size: 50 * 1024 * 1024,
+            max_uncompressed_size: 200 * 1024 * 1024,
+            install_from_path_root: None,
+            git_enabled: false,
+        }
+    }
 }
 
 impl Default for AdminConfig {

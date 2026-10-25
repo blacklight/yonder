@@ -1,0 +1,74 @@
+/* Design tokens — color (light + dark), spacing (4px base), radius,
+   typography, motion, focus ring, accent.
+   Breakpoints (documented; CSS can't use vars in media queries):
+     --bp-sm 640px | --bp-md 768px | --bp-lg 1024px | --bp-xl 1280px */
+:root {
+  --bg: #f9f8f7;
+  --bg-raised: #ffffff;
+  --bg-sunken: #eef0ee;
+  --text: #1c2422;
+  --text-muted: #1e2c27;
+  --border: #d8dfdc;
+  --accent: #3f8f7f;
+  --accent-fg: #ffffff;
+  --accent-soft: #3f8f7f22;
+  --success: #2e7d4f;
+  --warning: #a16207;
+  --danger: #b3362b;
+  --info: #20638f;
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-full: 9999px;
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+}
+
+[data-theme="dark"] {
+  --bg: #1f2927;
+  --bg-raised: #222b28;
+  --bg-sunken: #171f1d;
+  --text: #f2f5f4;
+  --text-muted: #e0ece8;
+  --border: #3c4a46;
+  --accent: #63b5a3;
+  --accent-fg: #122019;
+  --accent-soft: #63b5a322;
+  --success: #58c184;
+  --warning: #e6b545;
+  --danger: #e06a5c;
+  --info: #6da8d8;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+  }
+}

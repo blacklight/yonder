@@ -50,6 +50,10 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Print the OpenAPI document as JSON on stdout — the input the
+    /// frontend's `npm run api:gen` consumes; needs no config or
+    /// database.
+    Openapi,
 }
 
 #[derive(Debug, Subcommand)]
@@ -72,7 +76,16 @@ pub async fn main() -> Result<()> {
         Command::Worker => worker(path).await,
         Command::Migrate { revert } => migrate(path, revert).await,
         Command::Config { command } => config(path, command),
+        Command::Openapi => openapi(),
     }
+}
+
+fn openapi() -> Result<()> {
+    let doc = http::openapi::document()
+        .to_json()
+        .map_err(|e| Error::Internal(format!("openapi serialize failed: {e}")))?;
+    println!("{doc}");
+    Ok(())
 }
 
 async fn serve(path: Option<&Path>) -> Result<()> {

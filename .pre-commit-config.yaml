@@ -43,6 +43,14 @@ repos:
         args: ['--fix']
         files: ^frontend/.*\.(js|jsx|ts|tsx|vue)$
 
+    # Flag UI strings used in code but missing from en.json.
+    -   id: i18n-check
+        name: i18n completeness (frontend)
+        language: system
+        entry: node frontend/scripts/extract-i18n.mjs --check
+        files: ^frontend/src/.*\.(vue|ts)$|frontend/src/i18n/locales/en\.json$
+        pass_filenames: false
+
     # Markdown table of contents ([TOC]/[[_TOC_]] markers and
     # <!-- toc -->/<!-- tocstop --> managed regions).
     -   id: markdown-toc

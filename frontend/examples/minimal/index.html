@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>minimal frontend</title>
+  </head>
+  <body style="font-family: system-ui">
+    <h1>minimal example frontend</h1>
+    <p id="status">connecting…</p>
+    <script>
+      fetch("/api/v1/instance")
+        .then((r) => r.json())
+        .then((d) => {
+          document.getElementById("status").textContent =
+            d.title || d.uri || "api ok";
+        })
+        .catch((e) => {
+          document.getElementById("status").textContent = `api error: ${e}`;
+        });
+    </script>
+  </body>
+</html>

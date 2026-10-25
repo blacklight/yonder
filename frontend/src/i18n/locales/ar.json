@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Yonder"
+  },
+  "nav": {
+    "home": "الرئيسية",
+    "settings": "الإعدادات"
+  },
+  "settings": {
+    "title": "الإعدادات",
+    "theme": "السمة",
+    "theme_light": "فاتح",
+    "theme_dark": "داكن",
+    "theme_system": "النظام",
+    "accent": "لون التمييز",
+    "language": "لغة الواجهة",
+    "frontend": "الواجهة الأمامية",
+    "frontend_default": "استخدام افتراضي الخادم",
+    "save": "حفظ",
+    "saved": "تم الحفظ"
+  },
+  "route": {
+    "home": {
+      "title": "الرئيسية"
+    },
+    "settings": {
+      "title": "الإعدادات"
+    },
+    "invite": {
+      "title": "دعوة"
+    },
+    "not-found": {
+      "title": "غير موجود"
+    }
+  },
+  "home": {
+    "welcome": "مرحبًا بك في Yonder",
+    "placeholder": "خادم ActivityPub متوافق مع Mastodon. هذه الواجهة قيد الإنشاء."
+  },
+  "invite": {
+    "title": "دعوة",
+    "placeholder": "قبول الدعوات سيصل في مرحلة لاحقة."
+  },
+  "not_found": {
+    "title": "الصفحة غير موجودة",
+    "message": "الصفحة التي تبحث عنها غير موجودة."
+  },
+  "ui": {
+    "close": "إغلاق",
+    "loading": "جارٍ التحميل…",
+    "error": "خطأ"
+  }
+}

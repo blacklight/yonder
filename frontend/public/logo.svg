@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Yonder">
+  <!--
+    Yonder logo: "the network beyond the horizon".
+
+    A home instance (large dot) resting on a shallow horizon arc, with
+    three thin connections reaching up to equal-sized distant instances.
+    The distant nodes carry a lighter tint of the brand color — a depth
+    cue: the farther instances read fainter. The connection lines run from
+    the home circle's center outward and are drawn beneath the circles, so
+    every line is visibly attached at both ends. Purely geometric: every
+    shape inherits one of the two brand colors below, so the mark recolors
+    by replacing those two hex values.
+
+    Layers are named for editability: home, horizon, rays, nodes.
+  -->
+  <style>
+    .brand-fill { fill: #0d9488; }
+    .brand-node { fill: #2dd4bf; }
+    .brand-stroke { fill: none; stroke: #0d9488; stroke-linecap: round; }
+  </style>
+
+  <g id="rays">
+    <path class="brand-stroke" stroke-width="20" d="M256 320 L256 120"/>
+    <path class="brand-stroke" stroke-width="20" d="M256 320 L140 190"/>
+    <path class="brand-stroke" stroke-width="20" d="M256 320 L372 190"/>
+  </g>
+
+  <g id="nodes">
+    <circle class="brand-node" cx="256" cy="120" r="34"/>
+    <circle class="brand-node" cx="140" cy="190" r="34"/>
+    <circle class="brand-node" cx="372" cy="190" r="34"/>
+  </g>
+
+  <g id="horizon">
+    <path class="brand-stroke" stroke-width="26" d="M96 356 Q256 428 416 356"/>
+  </g>
+
+  <g id="home">
+    <circle class="brand-fill" cx="256" cy="320" r="70"/>
+  </g>
+</svg>

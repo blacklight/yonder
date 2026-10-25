@@ -364,3 +364,23 @@ max_import_size = 52428800
 # Server-side directory emoji imports are read from; unset disables
 # POST /api/v1/admin/emojis/import_dir.
 # emoji_import_dir = "/var/lib/yonder/emoji-import"
+
+[frontends]
+# Directory holding installed alternative frontends, one subdirectory
+# per frontend containing a `frontend.json` manifest.
+dir = "./frontends"
+# Directory containing the built `yonder` frontend (`frontend/dist`
+# after `npm run build`); a placeholder page is served when it has no
+# index.html.
+builtin_dir = "./frontend/dist"
+# Multipart size cap for zip frontend installs (bytes).
+max_upload_size = 52428800
+# Total uncompressed-size cap applied while extracting a frontend
+# archive — zip-bomb protection (bytes).
+max_uncompressed_size = 209715200
+# Root directory filesystem frontend installs (`source = "path"`) must
+# stay inside; unset disables that source.
+# install_from_path_root = "/var/lib/yonder/frontends-src"
+# Allow installing frontends from a Git repository (`source = "git"`;
+# shells out to `git clone` and fetches remote content).
+git_enabled = false

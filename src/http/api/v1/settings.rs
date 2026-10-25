@@ -82,6 +82,8 @@ pub struct SettingsPatchSchema {
     pub theme: Option<String>,
     /// `#rrggbb` accent color (`null` = instance default).
     pub accent: Option<String>,
+    /// Alternative frontend name (`null` = instance default).
+    pub frontend: Option<String>,
     /// Drop notifications from strangers.
     pub block_stranger_notifications: Option<bool>,
     /// Auto-delete posts after N days (`0`/`null` = never).
@@ -132,7 +134,7 @@ pub async fn patch_settings(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:accounts")?;
-    let patch = settings::parse_patch(&body)?;
+    let patch = settings::parse_patch(&state.config(), &body)?;
     settings::save(&state.db, &auth, &patch).await?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
     Ok(Json(user_settings.yonder_json(

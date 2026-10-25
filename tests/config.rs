@@ -168,6 +168,7 @@ fn registry_covers_every_leaf_and_all_sections() {
         "polls",
         "content",
         "admin",
+        "frontends",
     ] {
         assert!(
             entries

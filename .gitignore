@@ -26,11 +26,14 @@ target
 #
 # Recommended template: Node.gitignore
 
-# TODO: where does this rule come from?
 docs/_book
 
-# TODO: where does this rule come from?
-test/
+# Unscoped `test/` would also ignore frontend/src/test/ — keep it
+# anchored to the repository root.
+/test/
+
+# Local deployment configuration (config.toml.example is the template)
+config.toml
 
 # ---> Python
 # Byte-compiled / optimized / DLL files
@@ -249,3 +252,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dev-dist/

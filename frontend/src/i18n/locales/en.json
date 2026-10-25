@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Yonder"
+  },
+  "nav": {
+    "home": "Home",
+    "settings": "Settings"
+  },
+  "settings": {
+    "title": "Settings",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark",
+    "theme_system": "System",
+    "accent": "Accent color",
+    "language": "Interface language",
+    "frontend": "Frontend",
+    "frontend_default": "Use instance default",
+    "save": "Save",
+    "saved": "Saved"
+  },
+  "route": {
+    "home": {
+      "title": "Home"
+    },
+    "settings": {
+      "title": "Settings"
+    },
+    "invite": {
+      "title": "Invite"
+    },
+    "not-found": {
+      "title": "Not found"
+    }
+  },
+  "home": {
+    "welcome": "Welcome to Yonder",
+    "placeholder": "A Mastodon-compatible ActivityPub server. This frontend is under construction."
+  },
+  "invite": {
+    "title": "Invite",
+    "placeholder": "Invite acceptance lands in a later epic."
+  },
+  "not_found": {
+    "title": "Page not found",
+    "message": "The page you are looking for does not exist."
+  },
+  "ui": {
+    "close": "Close",
+    "loading": "Loading…",
+    "error": "Error"
+  }
+}

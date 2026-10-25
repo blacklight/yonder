@@ -172,8 +172,8 @@ pub async fn get_frontend(
 }
 
 /// `PUT /api/v1/yonder/admin/frontend` — set the default frontend;
-/// the value must be a non-empty string until epic 23 provides a
-/// registry of installed frontends to validate against.
+/// the value must name an installed frontend (or the builtin
+/// `yonder`), validated against the epic-23 registry.
 #[utoipa::path(
     put,
     path = "/api/v1/yonder/admin/frontend",
@@ -191,14 +191,11 @@ pub async fn set_frontend(
     Json(body): Json<SetBody>,
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "admin")?;
-    let valid = body
-        .value
-        .as_str()
-        .is_some_and(|name| !name.trim().is_empty());
-    if !valid {
-        return Err(crate::Error::Validation(
-            "frontend must be a non-empty string".into(),
-        ));
+    let name = body.value.as_str().unwrap_or("");
+    if crate::frontends::find(&state.config(), name)?.is_none() {
+        return Err(crate::Error::Validation(format!(
+            "unknown frontend {name:?}"
+        )));
     }
     let entry = settings::validate_and_apply(&state, "admin.default_frontend", body.value).await?;
     audit::record(

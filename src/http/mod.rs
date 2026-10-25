@@ -7,6 +7,7 @@
 //! `server.host`/`server.port` and shuts down gracefully on SIGINT.
 
 pub mod api;
+pub mod frontend;
 pub mod middleware;
 pub mod negotiate;
 pub mod oauth;
@@ -172,6 +173,13 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // RSS/Atom feeds are outside `/api` too — Mastodon-shaped
     // `/users/{u}.atom`-style URLs for profiles, tags and lists.
     router = router.merge(crate::feeds::router(&state));
+
+    // Epic 23 — the active frontend's SPA files are the catch-all:
+    // every route above wins by construction, and anything else lands
+    // on `index.html` (or the placeholder page until `frontend/dist`
+    // exists). Registered while the router still carries its state
+    // type so the handler can use the `State` extractor.
+    router = router.fallback(frontend::fallback);
 
     let router = match cors_layer(&state.config().http) {
         Some(cors) => router.layer(cors),

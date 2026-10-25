@@ -1183,16 +1183,28 @@ async fn frontend_selection() {
     .await;
     assert_eq!(body["value"], "yonder");
 
+    // Epic 23: the value must name an installed frontend — the
+    // builtin always resolves, arbitrary names are 422.
     let (status, _, body) = request(
         &env.app,
         "PUT",
         "/api/v1/yonder/admin/frontend",
         Some(&admin),
-        Some(json!({"value": "mastodon-fe"})),
+        Some(json!({"value": "yonder"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(env.state.config().admin.default_frontend, "mastodon-fe");
+    assert_eq!(env.state.config().admin.default_frontend, "yonder");
+
+    let (status, _, _) = request(
+        &env.app,
+        "PUT",
+        "/api/v1/yonder/admin/frontend",
+        Some(&admin),
+        Some(json!({"value": "not-installed"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 
     // Empty → 422.
     let (status, _, _) = request(

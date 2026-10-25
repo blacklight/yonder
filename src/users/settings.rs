@@ -364,6 +364,9 @@ pub struct UserSettings {
     pub theme: Option<String>,
     pub accent: Option<String>,
     pub locale: Option<String>,
+    /// Alternative-frontend name; NULL resolves to the instance
+    /// default (`admin.default_frontend`).
+    pub frontend: Option<String>,
     pub filter_languages: Vec<String>,
     pub email_notif_follow: bool,
     pub email_notif_follow_request: bool,
@@ -381,7 +384,7 @@ pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
                 u.indexable, u.include_public_posts_in_search, \
                 u.show_app_display, u.cw_always_expand, \
                 u.block_stranger_notifications, u.scheduled_deletion_days, \
-                u.theme, u.accent, u.locale, u.filter_languages, \
+                u.theme, u.accent, u.locale, u.frontend, u.filter_languages, \
                 u.email_notif_follow, u.email_notif_follow_request, \
                 u.email_notif_reblog, u.email_notif_favourite, \
                 u.email_notif_mention, u.email_notif_quote \
@@ -409,6 +412,7 @@ pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
         theme: row.get("theme"),
         accent: row.get("accent"),
         locale: row.get("locale"),
+        frontend: row.get("frontend"),
         filter_languages: row.get("filter_languages"),
         email_notif_follow: row.get("email_notif_follow"),
         email_notif_follow_request: row.get("email_notif_follow_request"),
@@ -445,6 +449,7 @@ impl UserSettings {
             "default_sensitive": self.default_sensitive,
             "theme": self.theme.as_deref().unwrap_or("system"),
             "accent": self.accent,
+            "frontend": self.frontend,
             "block_stranger_notifications": self.block_stranger_notifications,
             "scheduled_deletion_days": self.scheduled_deletion_days,
             "show_app_display": self.show_app_display,
@@ -507,6 +512,7 @@ pub struct SettingsPatch {
     pub default_sensitive: Patch<bool>,
     pub theme: Patch<String>,
     pub accent: Patch<String>,
+    pub frontend: Patch<String>,
     pub block_stranger_notifications: Patch<bool>,
     pub scheduled_deletion_days: Patch<i32>,
     pub show_app_display: Patch<bool>,
@@ -605,7 +611,7 @@ fn parse_email_notif(value: Option<&Value>) -> Result<Option<EmailNotifPatch>> {
 
 /// Parse + validate `PATCH /api/v1/yonder/settings` input. Unknown
 /// keys, wrong types and out-of-range values are all 422.
-pub fn parse_patch(body: &Value) -> Result<SettingsPatch> {
+pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
     let obj = body
         .as_object()
         .ok_or_else(|| Error::Validation("settings must be a JSON object".to_string()))?;
@@ -617,6 +623,7 @@ pub fn parse_patch(body: &Value) -> Result<SettingsPatch> {
             | "default_sensitive"
             | "theme"
             | "accent"
+            | "frontend"
             | "block_stranger_notifications"
             | "scheduled_deletion_days"
             | "show_app_display"
@@ -668,6 +675,16 @@ pub fn parse_patch(body: &Value) -> Result<SettingsPatch> {
         },
         other => other,
     };
+    let frontend = match json_string_patch(body, "frontend")? {
+        Patch::Set(name) => {
+            crate::frontends::validate_name(&name)?;
+            if crate::frontends::find(config, &name)?.is_none() {
+                return Err(Error::Validation(format!("unknown frontend {name:?}")));
+            }
+            Patch::Set(name)
+        }
+        other => other,
+    };
 
     Ok(SettingsPatch {
         interface_language,
@@ -676,6 +693,7 @@ pub fn parse_patch(body: &Value) -> Result<SettingsPatch> {
         default_sensitive: patch_bool(body, "default_sensitive")?,
         theme,
         accent,
+        frontend,
         block_stranger_notifications: patch_bool(body, "block_stranger_notifications")?,
         scheduled_deletion_days: patch_i32(body, "scheduled_deletion_days")?,
         show_app_display: patch_bool(body, "show_app_display")?,
@@ -705,7 +723,7 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
     let user = sqlx::query(
         "SELECT indexable, include_public_posts_in_search, show_app_display, \
                 cw_always_expand, block_stranger_notifications, \
-                scheduled_deletion_days, theme, accent, locale, \
+                scheduled_deletion_days, theme, accent, locale, frontend, \
                 filter_languages, email_notif_follow, \
                 email_notif_follow_request, email_notif_reblog, \
                 email_notif_favourite, email_notif_mention, email_notif_quote \
@@ -760,6 +778,7 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
     let users_touched = !patch.interface_language.is_unset()
         || !patch.theme.is_unset()
         || !patch.accent.is_unset()
+        || !patch.frontend.is_unset()
         || !patch.block_stranger_notifications.is_unset()
         || !patch.scheduled_deletion_days.is_unset()
         || !patch.show_app_display.is_unset()
@@ -781,6 +800,7 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
                     email_notif_follow = $11, email_notif_follow_request = $12, \
                     email_notif_reblog = $13, email_notif_favourite = $14, \
                     email_notif_mention = $15, email_notif_quote = $16, \
+                    frontend = $17, \
                     updated_at = now() WHERE id = $1",
         )
         .bind(auth.user_id)
@@ -858,6 +878,12 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
             |e| &e.quote,
             true,
         ))
+        .bind(
+            patch
+                .frontend
+                .clone()
+                .resolve_nullable(user.get("frontend")),
+        )
         .execute(&mut *tx)
         .await?;
     }
@@ -927,22 +953,29 @@ mod tests {
 
     #[test]
     fn parse_patch_strict_and_validated() {
-        assert!(parse_patch(&json!({"bogus": 1})).is_err());
-        assert!(parse_patch(&json!({"theme": "sepia"})).is_err());
-        assert!(parse_patch(&json!({"default_visibility": "direct"})).is_err());
-        assert!(parse_patch(&json!({"scheduled_deletion_days": 99999})).is_err());
-        assert!(parse_patch(&json!({"interface_language": "fr"})).is_err());
-        assert!(parse_patch(&json!({"email_notifications": {"zzz": true}})).is_err());
-        let patch = parse_patch(&json!({
-            "theme": "dark",
-            "interface_language": null,
-            "scheduled_deletion_days": 30,
-            "email_notifications": {"follow": true},
-            "filter_languages": ["IT", " de-AT "],
-        }))
+        let config = Config::default();
+        assert!(parse_patch(&config, &json!({"bogus": 1})).is_err());
+        assert!(parse_patch(&config, &json!({"theme": "sepia"})).is_err());
+        assert!(parse_patch(&config, &json!({"default_visibility": "direct"})).is_err());
+        assert!(parse_patch(&config, &json!({"scheduled_deletion_days": 99999})).is_err());
+        assert!(parse_patch(&config, &json!({"interface_language": "fr"})).is_err());
+        assert!(parse_patch(&config, &json!({"email_notifications": {"zzz": true}})).is_err());
+        assert!(parse_patch(&config, &json!({"frontend": "not-installed"})).is_err());
+        let patch = parse_patch(
+            &config,
+            &json!({
+                "theme": "dark",
+                "interface_language": null,
+                "frontend": "yonder",
+                "scheduled_deletion_days": 30,
+                "email_notifications": {"follow": true},
+                "filter_languages": ["IT", " de-AT "],
+            }),
+        )
         .unwrap();
         assert_eq!(patch.theme, Patch::Set("dark".to_string()));
         assert_eq!(patch.interface_language, Patch::Reset);
+        assert_eq!(patch.frontend, Patch::Set("yonder".to_string()));
         assert_eq!(patch.scheduled_deletion_days, Patch::Set(30));
         assert_eq!(
             patch.filter_languages,

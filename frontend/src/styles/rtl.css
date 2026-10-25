@@ -1,0 +1,8 @@
+/* Directional icon mirroring for RTL locales.
+   Add selectors here when icons whose glyph implies direction
+   (arrows, chevrons, reply/share) are introduced (epics 24+).
+   postcss-rtlcss already mirrors physical LTR properties; this file
+   is for glyph-level flips that CSS direction can't express. */
+[dir="rtl"] .icon-dir {
+  transform: scaleX(-1);
+}

@@ -1,0 +1,53 @@
+{
+  "app": {
+    "name": "Yonder"
+  },
+  "nav": {
+    "home": "Home",
+    "settings": "Impostazioni"
+  },
+  "settings": {
+    "title": "Impostazioni",
+    "theme": "Tema",
+    "theme_light": "Chiaro",
+    "theme_dark": "Scuro",
+    "theme_system": "Sistema",
+    "accent": "Colore di accento",
+    "language": "Lingua dell'interfaccia",
+    "frontend": "Frontend",
+    "frontend_default": "Usa predefinito dell'istanza",
+    "save": "Salva",
+    "saved": "Salvato"
+  },
+  "route": {
+    "home": {
+      "title": "Home"
+    },
+    "settings": {
+      "title": "Impostazioni"
+    },
+    "invite": {
+      "title": "Invito"
+    },
+    "not-found": {
+      "title": "Non trovato"
+    }
+  },
+  "home": {
+    "welcome": "Benvenuto su Yonder",
+    "placeholder": "Un server ActivityPub compatibile con Mastodon. Questo frontend è in costruzione."
+  },
+  "invite": {
+    "title": "Invito",
+    "placeholder": "L'accettazione degli inviti arriverà in un epic successivo."
+  },
+  "not_found": {
+    "title": "Pagina non trovata",
+    "message": "La pagina che stai cercando non esiste."
+  },
+  "ui": {
+    "close": "Chiudi",
+    "loading": "Caricamento…",
+    "error": "Errore"
+  }
+}

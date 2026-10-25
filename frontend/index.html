@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yonder</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/icons/maskable-192.png" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f9f8f7"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#1f2927"
+    />
+    <!-- Unscoped variant: the theme store updates this once the user picks an explicit mode. -->
+    <meta name="theme-color" content="#f9f8f7" />
+    <script>
+      // Anti-flash theme bootstrap: apply the stored mode/accent before
+      // the bundle paints. `system` resolves via prefers-color-scheme.
+      (function () {
+        try {
+          var mode = localStorage.getItem("yonder.theme") || "system";
+          var dark =
+            mode === "dark" ||
+            (mode === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+          var accent = localStorage.getItem("yonder.accent");
+          if (accent) {
+            document.documentElement.style.setProperty("--accent", accent);
+          }
+        } catch (e) {
+          /* storage unavailable — defaults apply */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

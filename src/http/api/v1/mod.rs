@@ -11,6 +11,7 @@ pub mod admin_actions;
 pub mod admin_audit;
 pub mod admin_domain_blocks;
 pub mod admin_email;
+pub mod admin_frontends;
 pub mod admin_relays;
 pub mod admin_settings;
 pub mod apps;
@@ -226,6 +227,29 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/yonder/admin/frontend",
             get(admin_settings::get_frontend).put(admin_settings::set_frontend),
+        )
+        // Epic 23 — alternative frontends: admin CRUD plus the
+        // user-facing list behind the settings picker. Zip installs
+        // carry their own body cap, scoped to POST only.
+        .route(
+            "/api/v1/yonder/admin/frontends",
+            get(admin_frontends::list_frontends),
+        )
+        .route(
+            "/api/v1/yonder/admin/frontends",
+            post(admin_frontends::install_frontend).route_layer(
+                tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config().frontends.max_upload_size as usize + 64 * 1024,
+                ),
+            ),
+        )
+        .route(
+            "/api/v1/yonder/admin/frontends/{name}",
+            axum::routing::delete(admin_frontends::delete_frontend),
+        )
+        .route(
+            "/api/v1/yonder/frontends",
+            get(admin_frontends::list_available),
         )
         .route(
             "/api/v1/yonder/admin/webpush/generate_keys",
@@ -771,6 +795,10 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     admin_settings::reset_setting,
     admin_settings::get_frontend,
     admin_settings::set_frontend,
+    admin_frontends::list_frontends,
+    admin_frontends::install_frontend,
+    admin_frontends::delete_frontend,
+    admin_frontends::list_available,
     admin_settings::generate_webpush_keys,
     admin_email::get_template,
     admin_email::put_template,

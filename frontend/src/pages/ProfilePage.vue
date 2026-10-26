@@ -467,20 +467,45 @@ watch([tab, showReplies, showBoosts], () => {
           <router-link
             :to="`/@${account.acct}/followers`"
             class="profile__counter"
-            >{{
-              t("profile.followers", { count: account.followers_count })
-            }}</router-link
           >
+            <i18n-t
+              keypath="profile.followers"
+              :plural="account.followers_count"
+            >
+              <template #count>
+                <strong class="profile__counter-num">{{
+                  account.followers_count
+                }}</strong>
+              </template>
+            </i18n-t>
+          </router-link>
           <router-link
             :to="`/@${account.acct}/following`"
             class="profile__counter"
-            >{{
-              t("profile.following", { count: account.following_count })
-            }}</router-link
           >
-          <span>{{
-            t("profile.statuses", { count: account.statuses_count })
-          }}</span>
+            <i18n-t
+              keypath="profile.following"
+              :plural="account.following_count"
+            >
+              <template #count>
+                <strong class="profile__counter-num">{{
+                  account.following_count
+                }}</strong>
+              </template>
+            </i18n-t>
+          </router-link>
+          <span class="profile__counter">
+            <i18n-t
+              keypath="profile.statuses"
+              :plural="account.statuses_count"
+            >
+              <template #count>
+                <strong class="profile__counter-num">{{
+                  account.statuses_count
+                }}</strong>
+              </template>
+            </i18n-t>
+          </span>
         </div>
         <p v-if="actionError" class="profile__alert" role="alert">
           {{ actionError }}
@@ -631,6 +656,11 @@ watch([tab, showReplies, showBoosts], () => {
 .profile__counter {
   color: inherit;
   text-decoration: none;
+  text-transform: capitalize;
+}
+.profile__counter-num {
+  color: var(--text);
+  font-weight: 600;
 }
 .profile__counter:hover {
   color: var(--text);

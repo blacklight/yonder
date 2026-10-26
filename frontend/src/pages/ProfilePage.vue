@@ -615,6 +615,7 @@ watch([tab, showReplies, showBoosts], () => {
   color: var(--danger);
 }
 .profile__bio {
+  font-size: var(--text-sm);
   margin-top: var(--space-4);
   overflow-wrap: anywhere;
 }

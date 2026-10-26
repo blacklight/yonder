@@ -19,10 +19,29 @@ use crate::{
     Error, Result,
 };
 
+/// `redirect_uris` per the Mastodon API is a single string — multiple
+/// URIs are whitespace-separated, doorkeeper-style. Some clients send
+/// a JSON array instead; both normalize to a list.
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum RedirectUrisParam {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl RedirectUrisParam {
+    fn into_vec(self) -> Vec<String> {
+        match self {
+            Self::One(s) => s.split_whitespace().map(str::to_string).collect(),
+            Self::Many(v) => v,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreateAppParams {
     pub client_name: String,
-    pub redirect_uris: Vec<String>,
+    pub redirect_uris: RedirectUrisParam,
     pub scopes: Option<String>,
     pub website: Option<String>,
     /// `false` marks a public client (PKCE-required, no secret use).
@@ -51,7 +70,7 @@ pub async fn create_app(
     let (app, secret) = oauth::create_app(
         &state,
         &params.client_name,
-        &params.redirect_uris,
+        &params.redirect_uris.into_vec(),
         params.scopes.as_deref().unwrap_or("read"),
         params.website.as_deref(),
         params.confidential.unwrap_or(true),

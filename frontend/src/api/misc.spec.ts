@@ -134,10 +134,10 @@ describe("admin api", () => {
 describe("instance api", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("getInstance GETs /instance", async () => {
+  it("getInstance GETs /api/v2/instance", async () => {
     const spy = mockFetch(200, { title: "Yonder" });
     await getInstance();
-    expect(spy.mock.calls[0][0]).toBe("/api/v1/instance");
+    expect(spy.mock.calls[0][0]).toBe("/api/v2/instance");
   });
 
   it("composeLimits reads configuration with fallbacks", () => {

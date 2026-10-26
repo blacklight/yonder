@@ -13,7 +13,7 @@ import type { InstanceEntity } from "@/api/entities";
 import { useAuthStore } from "@/stores/auth";
 
 // `POST /api/v1/accounts` — the shape follows instance policy read
-// from `/api/v1/instance` `registrations`: `enabled` gates the form
+// from `/api/v2/instance` `registrations`: `enabled` gates the form
 // (invite codes still work when closed), `approval_required` asks for
 // a reason, and `message` renders the admin's custom notice.
 const { t, locale } = useI18n();

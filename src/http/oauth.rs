@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{FromRequest, Request, State},
     http::HeaderMap,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Form, Json, Router,
 };
@@ -28,7 +28,7 @@ use crate::{
 pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/oauth/token", post(token))
-        .route("/oauth/authorize", get(authorize_info).post(authorize))
+        .route("/oauth/authorize", post(authorize))
         .route("/oauth/device_code", post(device_code))
         .route("/oauth/device", get(device_info))
         .route("/oauth/device/authorize", post(device_authorize))
@@ -46,6 +46,37 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             state,
             "authentication",
         ))
+        // Cheap public read — the consent page's own metadata fetch
+        // and every browser navigation would otherwise drain the tiny
+        // `authentication` bucket and 429 the flow mid-consent.
+        .route("/oauth/authorize", get(authorize_info))
+}
+
+/// `/oauth/*` clients split on body encoding: browsers and most
+/// libraries post `x-www-form-urlencoded`, while several Mastodon
+/// apps (Moshidon among them) post `application/json`. Doorkeeper
+/// accepts both; deserialize whichever the `Content-Type` declares,
+/// defaulting to form.
+async fn body_params<T: serde::de::DeserializeOwned>(
+    req: Request,
+    state: &Arc<AppState>,
+) -> std::result::Result<T, crate::Error> {
+    let is_json = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
+    if is_json {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(v)| v)
+            .map_err(|e| crate::Error::BadRequest(e.body_text()))
+    } else {
+        Form::<T>::from_request(req, state)
+            .await
+            .map(|Form(v)| v)
+            .map_err(|e| crate::Error::BadRequest(e.body_text()))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,8 +109,11 @@ async fn token(
     State(state): State<Arc<AppState>>,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
-    Form(mut params): Form<TokenParams>,
+    req: Request,
 ) -> std::result::Result<TokenResponse, crate::auth::oauth::GrantError> {
+    let mut params: TokenParams = body_params(req, &state)
+        .await
+        .map_err(|_| invalid_request("The request body is malformed."))?;
     // RFC 6749 §2.3.1: client credentials may arrive as HTTP Basic
     // (`Authorization: Basic base64(client_id:client_secret)`); the form
     // fields are the fallback.
@@ -357,11 +391,22 @@ pub struct AuthorizeParams {
     code_challenge_method: Option<String>,
 }
 
-/// `GET /oauth/authorize` — consent metadata for the future UI.
+/// `GET /oauth/authorize` — browsers opening the authorization URL
+/// (`Accept: text/html`, the client app's consent hop) get the SPA so
+/// its authorize page can mount; API callers — including that page —
+/// get the consent metadata JSON.
 async fn authorize_info(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<AuthorizeParams>,
-) -> Result<Json<Value>> {
+) -> Result<Response> {
+    let wants_html = headers
+        .get(axum::http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("text/html"));
+    if wants_html {
+        return Ok(crate::http::frontend::spa_index(&state));
+    }
     let app = oauth::load_client(&state.db, &params.client_id)
         .await?
         .ok_or_else(|| crate::Error::NotFound("client".into()))?;
@@ -370,16 +415,19 @@ async fn authorize_info(
         "website": app.website,
         "scopes": app.scopes.split_whitespace().collect::<Vec<_>>(),
         "redirect_uri": params.redirect_uri,
-    })))
+    }))
+    .into_response())
 }
 
 /// `POST /oauth/authorize` — an authenticated user issues a code for a
-/// client. The consent UI lands with the frontend epics.
+/// client. The SPA's authorize page calls this with the session token
+/// and navigates to the returned `redirect_to`.
 async fn authorize(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
-    Form(params): Form<AuthorizeParams>,
+    req: Request,
 ) -> Result<Json<Value>> {
+    let params: AuthorizeParams = body_params(req, &state).await?;
     if params.response_type.as_deref() != Some("code") {
         return Err(crate::Error::Validation(
             "response_type must be 'code'".into(),
@@ -419,8 +467,11 @@ pub struct DeviceCodeParams {
 /// `POST /oauth/device_code` — start a device authorization session.
 async fn device_code(
     State(state): State<Arc<AppState>>,
-    Form(params): Form<DeviceCodeParams>,
+    req: Request,
 ) -> std::result::Result<Json<Value>, oauth::GrantError> {
+    let params: DeviceCodeParams = body_params(req, &state)
+        .await
+        .map_err(|_| invalid_request("The request body is malformed."))?;
     let client = oauth::authenticate_client(
         &state.db,
         Some(&params.client_id),
@@ -453,8 +504,9 @@ pub struct DeviceAuthorizeParams {
 async fn device_authorize(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
-    Form(params): Form<DeviceAuthorizeParams>,
+    req: Request,
 ) -> Result<Json<Value>> {
+    let params: DeviceAuthorizeParams = body_params(req, &state).await?;
     if !oauth::approve_device_code(
         &state,
         auth.user_id,
@@ -559,8 +611,11 @@ async fn two_factor_verify(
     State(state): State<Arc<AppState>>,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
-    Form(params): Form<TwoFactorVerifyParams>,
+    req: Request,
 ) -> std::result::Result<TokenResponse, oauth::GrantError> {
+    let params: TwoFactorVerifyParams = body_params(req, &state)
+        .await
+        .map_err(|_| invalid_request("The request body is malformed."))?;
     let pending = require_pending_login(&state, &params.mfa_token).await?;
     let ok = two_factor::verify_totp(&state, pending.user_id, &params.code)
         .await
@@ -585,8 +640,11 @@ pub struct TwoFactorMfaTokenParams {
 /// pending login's registered keys.
 async fn two_factor_webauthn_begin(
     State(state): State<Arc<AppState>>,
-    Form(params): Form<TwoFactorMfaTokenParams>,
+    req: Request,
 ) -> std::result::Result<Json<Value>, oauth::GrantError> {
+    let params: TwoFactorMfaTokenParams = body_params(req, &state)
+        .await
+        .map_err(|_| invalid_request("The request body is malformed."))?;
     let pending = require_pending_login(&state, &params.mfa_token).await?;
     let options = webauthn::begin_authentication(&state, &params.mfa_token, pending.user_id)
         .await
@@ -607,8 +665,11 @@ async fn two_factor_webauthn_assert(
     State(state): State<Arc<AppState>>,
     ClientIp(ip): ClientIp,
     headers: HeaderMap,
-    Form(params): Form<TwoFactorAssertParams>,
+    req: Request,
 ) -> std::result::Result<TokenResponse, oauth::GrantError> {
+    let params: TwoFactorAssertParams = body_params(req, &state)
+        .await
+        .map_err(|_| invalid_request("The request body is malformed."))?;
     let pending = require_pending_login(&state, &params.mfa_token).await?;
     let credential: webauthn_rs::prelude::PublicKeyCredential =
         serde_json::from_str(&params.credential)

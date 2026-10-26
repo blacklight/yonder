@@ -43,11 +43,11 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
             "domain_count": row.get::<i64, _>("domain_count"),
         },
         "languages": config.instance.languages,
-        "registrations": {
-            "enabled": !matches!(mode, RegistrationMode::Closed),
-            "approval_required": matches!(mode, RegistrationMode::ApprovalRequired),
-            "message": config.auth.registration_message,
-        },
+        // Mastodon's v1 Instance entity uses scalar booleans; the
+        // object-shaped `registrations` block lives on /api/v2/instance.
+        "registrations": !matches!(mode, RegistrationMode::Closed),
+        "approval_required": matches!(mode, RegistrationMode::ApprovalRequired),
+        "invites_enabled": config.auth.invite_links_enabled(),
         "configuration": {
             "statuses": {
                 "max_characters": config.content.max_post_length,

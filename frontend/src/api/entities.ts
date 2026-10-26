@@ -371,9 +371,9 @@ export interface WebauthnCredential {
   [key: string]: unknown;
 }
 
-/** `GET /api/v1/instance` — only the fields the SPA consumes. */
+/** `GET /api/v2/instance` — only the fields the SPA consumes. */
 export interface InstanceEntity {
-  uri?: string;
+  domain?: string;
   title?: string;
   version?: string;
   description?: string;

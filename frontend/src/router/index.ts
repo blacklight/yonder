@@ -40,6 +40,15 @@ export const router = createRouter({
       component: () => import("@/pages/RegisterPage.vue"),
     },
     {
+      // OAuth consent for client apps — the backend serves the SPA
+      // here for `Accept: text/html`; anonymous visitors bounce to
+      // sign-in and come back with the query intact.
+      path: "/oauth/authorize",
+      name: "oauth-authorize",
+      component: () => import("@/pages/OAuthAuthorizePage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       path: "/home",
       name: "home-timeline",
       component: () => import("@/pages/TimelinePage.vue"),

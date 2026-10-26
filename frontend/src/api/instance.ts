@@ -1,9 +1,9 @@
 import { request } from "./client";
 import type { InstanceEntity } from "./entities";
 
-/** `GET /api/v1/instance` — anonymous; instance metadata + limits. */
+/** `GET /api/v2/instance` — anonymous; instance metadata + limits. */
 export function getInstance(): Promise<InstanceEntity> {
-  return request<InstanceEntity>({ path: "/instance", skipAuth: true });
+  return request<InstanceEntity>({ path: "/api/v2/instance", skipAuth: true });
 }
 
 export interface ComposeLimits {

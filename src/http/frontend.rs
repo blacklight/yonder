@@ -146,6 +146,15 @@ fn serve_file(frontend: &Frontend, rel: &Path) -> Option<Response> {
     Some(response)
 }
 
+/// The active frontend's entry document for routes that *are* defined
+/// but should still answer browsers with the app shell — e.g.
+/// `GET /oauth/authorize` serves this when `Accept: text/html` so the
+/// SPA's consent page mounts, while API clients get the route's JSON.
+pub fn spa_index(state: &AppState) -> Response {
+    let frontend = frontends::resolve_active(&state.config(), None);
+    tag(&frontend.name, serve_entry(&frontend))
+}
+
 /// SPA entry: the frontend's `index.html` for any unmatched path, or
 /// the embedded placeholder when the builtin hasn't been built.
 fn serve_entry(frontend: &Frontend) -> Response {

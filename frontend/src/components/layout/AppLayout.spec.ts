@@ -16,7 +16,7 @@ function layout() {
           JSON.stringify({
             title: "Testville",
             version: "Yonder/9.9.9",
-            uri: "testville.example",
+            domain: "testville.example",
           }),
           { status: 200 },
         ),
@@ -122,8 +122,8 @@ describe("AppLayout", () => {
     const w = layout();
     await flushPromises();
     const aside = w.get(".layout__aside");
-    expect(aside.get("input[type='search']").exists()).toBe(true);
-    expect(aside.get("select.layout__locale").exists()).toBe(true);
+    expect(aside.find("input[type='search']").exists()).toBe(true);
+    expect(aside.find("select.layout__locale").exists()).toBe(true);
     expect(aside.text()).toContain("Yonder/9.9.9");
     expect(aside.text()).toContain("testville.example");
     const links = aside.findAll(".layout__meta-links a");
@@ -134,12 +134,12 @@ describe("AppLayout", () => {
     const w = layout();
     expect(
       w
-        .get(".layout__sidebar .layout__search--sidebar input[type='search']")
+        .find(".layout__sidebar .layout__search--sidebar input[type='search']")
         .exists(),
     ).toBe(true);
     expect(
       w
-        .get(
+        .find(
           ".layout__sidebar .layout__controls--sidebar select.layout__locale",
         )
         .exists(),

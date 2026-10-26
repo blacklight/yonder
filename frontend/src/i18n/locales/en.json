@@ -199,6 +199,9 @@
     },
     "register": {
       "title": "Create an account"
+    },
+    "oauth-authorize": {
+      "title": "Authorize app"
     }
   },
   "not_found": {
@@ -751,5 +754,18 @@
   "footer": {
     "links": "Links",
     "source": "Source code"
+  },
+  "oauth": {
+    "title": "Authorize application",
+    "wantsAccess": "would like permission to access your account",
+    "scopesTitle": "It will be able to:",
+    "signedInAs": "Signed in as {'@'}{acct}",
+    "authorize": "Authorize",
+    "deny": "Deny",
+    "denied": "Access denied — you can close this window.",
+    "failed": "Authorization failed.",
+    "invalidRequest": "This authorization link is incomplete — required parameters are missing or invalid.",
+    "unknownApp": "Unknown application. Check that the app is registered on this server.",
+    "loadFailed": "Couldn't load the application's details."
   }
 }

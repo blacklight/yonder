@@ -257,9 +257,11 @@ fn is_loopback_host(host: &str) -> bool {
         .is_ok_and(|ip| ip.is_loopback())
 }
 
-/// Validate a redirect URI per the Songhive rules plus Mastodon's OOB
-/// targets: `urn:` OOB placeholders, `https`, or `http` for
-/// loopback/localhost only; no fragments.
+/// Validate a redirect URI the way doorkeeper does for Mastodon: any
+/// absolute URI is accepted — native clients register custom schemes
+/// (`moshidon://`, `tusky://`, …) alongside `https` and the `urn:` OOB
+/// placeholders. The only hard rules are no fragment, and `http` only
+/// for loopback/localhost.
 fn validate_redirect_uri(uri: &str) -> Result<()> {
     if uri.len() > MAX_REDIRECT_URI_LENGTH {
         return Err(Error::Validation("redirect URI too long".to_string()));
@@ -269,22 +271,15 @@ fn validate_redirect_uri(uri: &str) -> Result<()> {
     }
     let parsed = url::Url::parse(uri)
         .map_err(|_| Error::Validation(format!("invalid redirect URI '{uri}'")))?;
-    match parsed.scheme() {
-        "https" => {}
-        "http" if parsed.host_str().is_some_and(is_loopback_host) => {}
-        scheme => {
-            return Err(Error::Validation(format!(
-                "redirect URI scheme '{scheme}' not allowed (https, or http for loopback)"
-            )))
-        }
+    if parsed.scheme() == "http" && !parsed.host_str().is_some_and(is_loopback_host) {
+        return Err(Error::Validation(
+            "http redirect URIs are only allowed for loopback hosts".to_string(),
+        ));
     }
     if parsed.fragment().is_some() {
         return Err(Error::Validation(
             "redirect URIs must not contain fragments".to_string(),
         ));
-    }
-    if parsed.domain().is_none() && parsed.host_str().is_none() {
-        return Err(Error::Validation(format!("invalid redirect URI '{uri}'")));
     }
     Ok(())
 }

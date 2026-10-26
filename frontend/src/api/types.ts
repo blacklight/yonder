@@ -2936,6 +2936,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v2/instance": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v2/instance` — public, `MaybeAuth`-eligible. */
+    get: operations["instance_2"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v2/media": {
     parameters: {
       query?: never;
@@ -3019,7 +3036,7 @@ export interface components {
       client_name: string;
       /** @description `false` marks a public client (PKCE-required, no secret use). */
       confidential?: boolean | null;
-      redirect_uris: string[];
+      redirect_uris: components["schemas"]["RedirectUrisParam"];
       scopes?: string | null;
       website?: string | null;
     };
@@ -3122,6 +3139,12 @@ export interface components {
       multiple?: boolean | null;
       options: string[];
     };
+    /**
+     * @description `redirect_uris` per the Mastodon API is a single string — multiple
+     *     URIs are whitespace-separated, doorkeeper-style. Some clients send
+     *     a JSON array instead; both normalize to a list.
+     */
+    RedirectUrisParam: string | string[];
     /** @description Validated `POST /api/v1/accounts` input. */
     RegisterParams: {
       agreement?: boolean | null;
@@ -10582,6 +10605,24 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ErrorBody"];
         };
+      };
+    };
+  };
+  instance_2: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Instance information (v2 shape) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

@@ -360,6 +360,61 @@ async fn registration_validation_and_modes() {
 }
 
 #[tokio::test]
+async fn create_app_accepts_mastodon_client_shapes() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    // Mastodon clients (Moshidon, Tusky, …) send `redirect_uris` as a
+    // plain string and register custom URI schemes for the OAuth
+    // redirect — both must be accepted (previously a 422).
+    let (status, body) = request(
+        &env.app,
+        json_req(
+            "POST",
+            "/api/v1/apps",
+            json!({
+                "client_name": "Moshidon",
+                "redirect_uris": "moshidon://oauth",
+                "scopes": "read write push",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["redirect_uri"], "moshidon://oauth");
+    // Whitespace-separated URIs inside one string (doorkeeper style).
+    let (status, body) = request(
+        &env.app,
+        json_req(
+            "POST",
+            "/api/v1/apps",
+            json!({
+                "client_name": "Multi",
+                "redirect_uris": "https://app.example/cb\napp://oauth",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["redirect_uri"], "https://app.example/cb");
+    // Plain http is still refused off-loopback.
+    let (status, _) = request(
+        &env.app,
+        json_req(
+            "POST",
+            "/api/v1/apps",
+            json!({
+                "client_name": "Bad",
+                "redirect_uris": "http://evil.example/cb",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn oauth_apps_authorization_code_and_revocation() {
     let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {
@@ -439,6 +494,42 @@ async fn oauth_apps_authorization_code_and_revocation() {
     let (status, body) = password_login(&env.app, "g@x.com", "wrongpassword").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(body["error"], "invalid_grant");
+
+    // GET /oauth/authorize negotiates on `Accept`: browsers get the
+    // SPA shell (the consent page), API callers get metadata JSON.
+    let authz_uri =
+        format!("/oauth/authorize?client_id={client_id}&redirect_uri=urn:ietf:wg:oauth:2.0:oob");
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&authz_uri)
+                .header("accept", "text/html,application/xhtml+xml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
+    let (status, body) = request(
+        &env.app,
+        Request::builder()
+            .method("GET")
+            .uri(&authz_uri)
+            .header("accept", "application/json")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["client_name"], "TestApp");
+    assert_eq!(body["scopes"], json!(["read", "write"]));
 
     // Authorization-code flow: authorize → code → exchange → token.
     let (status, body) = request(
@@ -888,9 +979,18 @@ async fn instance_endpoint() {
     };
     let (status, body) = request(&env.app, json_req("GET", "/api/v1/instance", json!({}))).await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    // The v1 entity uses Mastodon's scalar booleans — clients like
+    // Moshidon fail to parse an object here.
+    assert_eq!(body["registrations"], true);
+    assert_eq!(body["approval_required"], false);
+    assert_eq!(body["invites_enabled"], true);
+    assert_eq!(body["uri"], env.state.config().instance.domain);
+    // The v2 entity carries the object-shaped registrations block.
+    let (status, body) = request(&env.app, json_req("GET", "/api/v2/instance", json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["registrations"]["enabled"], true);
     assert_eq!(body["registrations"]["approval_required"], false);
-    assert_eq!(body["uri"], env.state.config().instance.domain);
+    assert_eq!(body["domain"], env.state.config().instance.domain);
     assert_eq!(
         body["configuration"]["media_attachments"]["image_size_limit"],
         env.state.config().media.max_upload_size

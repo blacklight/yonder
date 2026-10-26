@@ -103,6 +103,110 @@ export function passwordToken(params: {
   });
 }
 
+/** The authorization-request params carried in `/oauth/authorize`'s query. */
+export interface AuthorizeQuery {
+  client_id: string;
+  redirect_uri: string;
+  response_type?: string;
+  scope?: string;
+  state?: string;
+  code_challenge?: string;
+  code_challenge_method?: string;
+}
+
+/** `GET /oauth/authorize` metadata — the client app's identity. */
+export interface AuthorizeInfo {
+  client_name: string;
+  website: string | null;
+  /** The app's registered scopes (not the request's). */
+  scopes: string[];
+  redirect_uri: string;
+}
+
+/** `POST /oauth/authorize` result — `redirect_to` carries `code`/`state`. */
+export interface AuthorizeResult {
+  code: string;
+  state: string | null;
+  redirect_to: string;
+}
+
+function authorizeParams(q: AuthorizeQuery): URLSearchParams {
+  const params = new URLSearchParams({ client_id: q.client_id });
+  for (const [key, value] of Object.entries({
+    redirect_uri: q.redirect_uri,
+    response_type: q.response_type ?? "code",
+    scope: q.scope,
+    state: q.state,
+    code_challenge: q.code_challenge,
+    code_challenge_method: q.code_challenge_method,
+  })) {
+    if (value) params.set(key, value);
+  }
+  return params;
+}
+
+async function errorFrom(response: Response): Promise<ApiError> {
+  const text = await response.text();
+  let message = response.statusText;
+  try {
+    const body = JSON.parse(text) as Record<string, unknown>;
+    if (typeof body.error === "string") message = body.error;
+    if (typeof body.error_description === "string")
+      message = body.error_description;
+  } catch {
+    /* non-JSON error body — keep the status text */
+  }
+  return new ApiError(message, response.status);
+}
+
+/**
+ * `GET /oauth/authorize` — consent metadata for a client app. Needs
+ * `Accept: application/json`: the same URL answers browsers with the
+ * SPA shell (the consent page itself).
+ */
+export async function authorizeInfo(
+  q: AuthorizeQuery,
+): Promise<AuthorizeInfo> {
+  const response = await fetch(`/oauth/authorize?${authorizeParams(q)}`, {
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) throw await errorFrom(response);
+  return (await response.json()) as AuthorizeInfo;
+}
+
+/**
+ * `POST /oauth/authorize` — consent grant: issues the authorization
+ * code the client exchanges at `/oauth/token`. Bearer-auth (the
+ * signed-in user consents), form-encoded like the rest of `/oauth/*`;
+ * errors use the `{error}` API shape, not doorkeeper's.
+ */
+export async function authorizeApp(
+  q: AuthorizeQuery,
+): Promise<AuthorizeResult> {
+  const { useAuthStore } = await import("@/stores/auth");
+  const token = useAuthStore().token;
+  const response = await fetch("/oauth/authorize", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: authorizeParams(q),
+  });
+  if (!response.ok) throw await errorFrom(response);
+  return (await response.json()) as AuthorizeResult;
+}
+
+/**
+ * Hand the browser to a client app's redirect URI — custom schemes
+ * (`moshidon-android-auth://…`) are resolved by the platform's intent
+ * filters, http(s) by ordinary navigation. Extracted so specs can
+ * stub it (jsdom can't spy on `location.assign`).
+ */
+export function navigateTo(url: string) {
+  window.location.assign(url);
+}
+
 /**
  * `POST /oauth/2fa/verify` — finish an `mfa_required` login with a TOTP
  * or backup code. Returns the same token entity as the password grant.

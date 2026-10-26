@@ -2,6 +2,7 @@
 //! e.g. `/api/v2/instance` in epic 06/22).
 
 pub mod filters;
+pub mod instance;
 pub mod media;
 pub mod search;
 
@@ -23,6 +24,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "media")),
         )
         .route("/api/v2/media/{id}", axum::routing::get(media::show))
+        // Unlayered public read, like `/api/v1/instance`.
+        .route(
+            "/api/v2/instance",
+            axum::routing::get(instance::instance),
+        )
         .route(
             "/api/v2/search",
             axum::routing::get(search::search_v2).route_layer(ratelimit::layer(state, "search")),
@@ -71,6 +77,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
 /// OpenAPI fragment merged into the root document.
 #[derive(utoipa::OpenApi)]
 #[openapi(paths(
+    instance::instance,
     media::upload,
     media::show,
     search::search_v2,

@@ -411,8 +411,8 @@ function search() {
           <span v-if="instance?.version" class="layout__meta-version">{{
             instance.version
           }}</span>
-          <span v-if="instance?.uri" class="layout__meta-domain">{{
-            instance.uri
+          <span v-if="instance?.domain" class="layout__meta-domain">{{
+            instance.domain
           }}</span>
         </div>
         <nav class="layout__meta-links" :aria-label="t('footer.links')">

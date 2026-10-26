@@ -1,16 +1,29 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import { useNotificationsStore } from "@/stores/notifications";
+import type { Account, Notification } from "@/api/entities";
 import NotificationsPage from "./NotificationsPage.vue";
 
-const BOB = {
+const BOB: Account = {
   id: "9",
   acct: "bob@remote.example",
   username: "bob",
   display_name: "Bob Loblaw",
+  note: "",
+  url: "https://remote.example/@bob",
   avatar: "https://cdn.example/bob.png",
+  header: "",
+  locked: false,
+  bot: false,
+  created_at: "2026-01-01T00:00:00Z",
+  followers_count: 0,
+  following_count: 0,
+  statuses_count: 0,
+  fields: [],
+  emojis: [],
 };
 
 function setup(items: unknown[]) {
@@ -20,7 +33,7 @@ function setup(items: unknown[]) {
   useAuthStore().setToken("tk");
 }
 
-function notif(extra: Record<string, unknown> = {}) {
+function notif(extra: Record<string, unknown> = {}): Notification {
   return {
     id: "1",
     type: "follow",
@@ -104,7 +117,7 @@ describe("NotificationsPage", () => {
     const { wrapper } = mountWith(NotificationsPage);
     await flushPromises();
     useNotificationsStore().items.unshift(notif({ id: "live" }));
-    await wrapper.vm.$nextTick();
+    await nextTick();
     expect(wrapper.findAll(".notif")).toHaveLength(1);
   });
 });

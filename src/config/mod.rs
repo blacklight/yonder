@@ -750,10 +750,10 @@ impl Default for RateLimitConfig {
             timeline: RateLimit {
                 limit: 5,
                 period_seconds: 10,
-                authenticated_limit: Some(30),
+                authenticated_limit: Some(60),
             },
             account_creation: RateLimit {
-                limit: 5,
+                limit: 15,
                 period_seconds: 60,
                 authenticated_limit: None,
             },
@@ -773,12 +773,15 @@ impl Default for RateLimitConfig {
                 authenticated_limit: None,
             },
             authentication: RateLimit {
-                limit: 5,
+                // OAuth app/authorize/token steps plus verify-
+                // credentials land on every third-party-client
+                // sign-in — Mastodon's own throttles are far looser.
+                limit: 30,
                 period_seconds: 60,
                 // Verify-credentials and the streaming handshake run
-                // on every app boot; the anonymous ceiling stays at
-                // the anti-brute-force 5/min.
-                authenticated_limit: Some(60),
+                // on every app boot; the anonymous ceiling stays as
+                // the anti-brute-force knob.
+                authenticated_limit: Some(300),
             },
             federation_inbox: RateLimit {
                 limit: 300,

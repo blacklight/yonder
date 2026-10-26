@@ -145,6 +145,8 @@
     "remove": "Rimuovi",
     "noSecurityKeys": "Nessuna chiave di sicurezza registrata.",
     "addKey": "Aggiungi una chiave di sicurezza",
+    "keyArmed": "Tocca la chiave ora",
+    "keyArmedHint": "Clicca di nuovo e tocca la chiave di sicurezza quando il browser lo richiede.",
     "webauthnUnsupported": "Questo browser non supporta le chiavi di sicurezza.",
     "disableAll": "Disattiva l'autenticazione a due fattori",
     "passwordConfirm": "Conferma con la tua password",

@@ -367,7 +367,7 @@ impl StatusBatch {
         let accounts_f = account_mapper::load_many_incl_suspended(db, &author_ids);
         let pins_f = async {
             sqlx::query_as::<_, (i64, i64)>(
-                "SELECT status_id, account_id FROM status_pins WHERE status_id = ANY($1)",
+                "SELECT account_id, status_id FROM status_pins WHERE status_id = ANY($1)",
             )
             .bind(&all_ids)
             .fetch_all(db)

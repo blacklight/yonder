@@ -145,6 +145,8 @@
     "remove": "Remove",
     "noSecurityKeys": "No security keys registered.",
     "addKey": "Add a security key",
+    "keyArmed": "Touch the key now",
+    "keyArmedHint": "Click again, then touch your security key when the browser prompts.",
     "webauthnUnsupported": "This browser doesn't support security keys.",
     "disableAll": "Disable two-factor authentication",
     "passwordConfirm": "Confirm with your password",
@@ -551,7 +553,10 @@
       "authorize": "Authorize",
       "remove": "Remove",
       "confirmRemove": "Remove relay {url}?",
-      "states": { "pending": "Pending", "accepted": "Accepted" }
+      "states": {
+        "pending": "Pending",
+        "accepted": "Accepted"
+      }
     },
     "domainBlocks": {
       "hint": "Silence hides a domain from public timelines; suspend blocks it entirely.",
@@ -644,7 +649,11 @@
       "lookup": "Look up",
       "viewProfile": "View public profile",
       "remote": "Remote",
-      "roles": { "user": "User", "moderator": "Moderator", "admin": "Admin" },
+      "roles": {
+        "user": "User",
+        "moderator": "Moderator",
+        "admin": "Admin"
+      },
       "state": {
         "suspended": "Suspended",
         "limited": "Limited",

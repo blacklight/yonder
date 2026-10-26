@@ -145,6 +145,8 @@
     "remove": "Eliminar",
     "noSecurityKeys": "No hay llaves de seguridad registradas.",
     "addKey": "Añadir una llave de seguridad",
+    "keyArmed": "Toca la llave ahora",
+    "keyArmedHint": "Haz clic de nuevo y toca tu llave de seguridad cuando el navegador lo pida.",
     "webauthnUnsupported": "Este navegador no admite llaves de seguridad.",
     "disableAll": "Desactivar la autenticación de dos factores",
     "passwordConfirm": "Confirma con tu contraseña",

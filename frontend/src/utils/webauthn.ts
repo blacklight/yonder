@@ -58,9 +58,16 @@ export function webauthnSupported(): boolean {
 export async function createSecurityKey(options: unknown): Promise<unknown> {
   const wire = options as CreationOptionsWire;
   const { publicKey: pk } = wire;
+  // `hints` and `extensions` (credProtect/uvm/credProps) are advisory
+  // browser hints — the server doesn't verify them, and Firefox-family
+  // browsers abort the ceremony with NotAllowedError on the credProtect
+  // policy webauthn-rs requests. Pass through everything else verbatim.
+  const rest = { ...pk } as Record<string, unknown>;
+  delete rest.hints;
+  delete rest.extensions;
   const credential = (await navigator.credentials.create({
     publicKey: {
-      ...pk,
+      ...rest,
       challenge: b64urlToBuffer(pk.challenge),
       user: { ...pk.user, id: b64urlToBuffer(pk.user.id) },
       excludeCredentials: (pk.excludeCredentials ?? []).map((c) => ({

@@ -145,27 +145,52 @@ async function confirmTotp() {
   }
 }
 
-// WebAuthn
+// WebAuthn — the ceremony is split in two steps because
+// `navigator.credentials.create()` requires fresh transient user
+// activation: awaiting the `register/begin` fetch inside the same
+// click consumes it (Firefox/LibreWolf then instantly reject the
+// prompt with NotAllowedError). First click fetches options and arms
+// the dialog; the armed click calls `create()` synchronously.
 const newKeyName = ref("");
-const keyPending = ref(false);
+const keyStage = ref<"idle" | "arming" | "armed" | "creating">("idle");
 const keyError = ref("");
+let pendingOptions: unknown = null;
 const renaming = ref<string | null>(null);
 const renameValue = ref("");
 
 async function addSecurityKey() {
-  keyPending.value = true;
   keyError.value = "";
-  try {
-    const options = await webauthnRegisterBegin();
-    const credential = await createSecurityKey(options);
-    await webauthnRegister(credential, newKeyName.value.trim() || undefined);
-    newKeyName.value = "";
-    await refreshTwoFactor();
-  } catch (e) {
-    keyError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    keyPending.value = false;
+  if (keyStage.value === "armed" && pendingOptions) {
+    keyStage.value = "creating";
+    try {
+      const credential = await createSecurityKey(pendingOptions);
+      await webauthnRegister(credential, newKeyName.value.trim() || undefined);
+      newKeyName.value = "";
+      pendingOptions = null;
+      keyStage.value = "idle";
+      await refreshTwoFactor();
+    } catch (e) {
+      // A failed finish consumes the staged ceremony — re-arm is
+      // required; a browser-side cancel leaves it valid for retry.
+      keyStage.value = "armed";
+      keyError.value = e instanceof Error ? e.message : String(e);
+    }
+    return;
   }
+  keyStage.value = "arming";
+  try {
+    pendingOptions = await webauthnRegisterBegin();
+    keyStage.value = "armed";
+  } catch (e) {
+    keyStage.value = "idle";
+    keyError.value = e instanceof Error ? e.message : String(e);
+  }
+}
+
+function cancelKey() {
+  pendingOptions = null;
+  keyStage.value = "idle";
+  keyError.value = "";
 }
 
 function startRename(id: string, name: string) {
@@ -569,14 +594,28 @@ onMounted(async () => {
               />
               <Button
                 type="submit"
+                :variant="keyStage === 'armed' ? 'primary' : 'secondary'"
+                size="sm"
+                :loading="keyStage === 'arming' || keyStage === 'creating'"
+                :disabled="keyStage === 'arming' || keyStage === 'creating'"
+                >{{
+                  keyStage === "armed"
+                    ? t("settingsSecurity.keyArmed")
+                    : t("settingsSecurity.addKey")
+                }}</Button
+              >
+              <Button
+                v-if="keyStage === 'armed'"
                 variant="secondary"
                 size="sm"
-                :loading="keyPending"
-                :disabled="keyPending"
-                >{{ t("settingsSecurity.addKey") }}</Button
+                @click="cancelKey"
+                >{{ t("settingsSecurity.cancel") }}</Button
               >
             </form>
-            <p v-else class="security__hint">
+            <p v-if="keyStage === 'armed'" class="security__hint">
+              {{ t("settingsSecurity.keyArmedHint") }}
+            </p>
+            <p v-else-if="!webauthnSupported()" class="security__hint">
               {{ t("settingsSecurity.webauthnUnsupported") }}
             </p>
             <p v-if="keyError" class="security__error" role="alert">

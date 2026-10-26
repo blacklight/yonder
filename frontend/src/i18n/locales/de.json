@@ -145,6 +145,8 @@
     "remove": "Entfernen",
     "noSecurityKeys": "Keine Sicherheitsschlüssel registriert.",
     "addKey": "Sicherheitsschlüssel hinzufügen",
+    "keyArmed": "Schlüssel jetzt berühren",
+    "keyArmedHint": "Klicke erneut und berühre deinen Sicherheitsschlüssel, wenn der Browser dazu auffordert.",
     "webauthnUnsupported": "Dieser Browser unterstützt keine Sicherheitsschlüssel.",
     "disableAll": "Zwei-Faktor-Authentifizierung deaktivieren",
     "passwordConfirm": "Mit deinem Passwort bestätigen",

@@ -180,3 +180,43 @@ pub async fn delete_account(
     let id = deletion::schedule_account_deletion(&state, auth.account_id, None, delay).await?;
     Ok(Json(json!({ "deletion_id": id.to_string() })))
 }
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct ChangePasswordParams {
+    /// Current password (re-authentication).
+    pub current_password: String,
+    /// New password (minimum 8 characters).
+    pub new_password: String,
+}
+
+/// `POST /api/v1/yonder/account/password` — change the account
+/// password. Re-authenticates with the current password, then rotates
+/// the hash and revokes every session/token but the caller's.
+#[utoipa::path(
+    post,
+    path = "/api/v1/yonder/account/password",
+    tag = "account",
+    request_body = ChangePasswordParams,
+    responses(
+        (status = 200, description = "Password changed; other sessions revoked"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "Wrong password", body = crate::error::ErrorBody),
+        (status = 422, description = "New password fails validation", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn change_password(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Json(params): Json<ChangePasswordParams>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:accounts")?;
+    crate::auth::password::change_password(
+        &state.db,
+        auth.user_id,
+        &params.current_password,
+        &params.new_password,
+        auth.token_id,
+    )
+    .await?;
+    Ok(Json(json!({ "ok": true })))
+}

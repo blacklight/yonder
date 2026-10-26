@@ -301,10 +301,10 @@ export interface CreatedToken {
 /** `sessions::list_sessions` row. */
 export interface SessionEntity {
   id: string;
+  browser?: string | null;
   ip?: string | null;
-  user_agent?: string | null;
   created_at?: string;
-  last_seen_at?: string | null;
+  last_activity_at?: string | null;
   current?: boolean;
   [key: string]: unknown;
 }
@@ -357,9 +357,11 @@ export interface Preferences {
 /** `two_factor::status` response. */
 export interface TwoFactorStatus {
   enabled: boolean;
-  totp: boolean;
-  webauthn: boolean;
-  backup_codes_remaining?: number;
+  /** Factors able to complete a login: "totp" | "webauthn" | "backup_code". */
+  methods: string[];
+  totp: { enabled: boolean; last_verified_at: string | null };
+  webauthn: WebauthnCredential[];
+  backup_codes_remaining: number;
   [key: string]: unknown;
 }
 /** `webauthn_credentials` row. */

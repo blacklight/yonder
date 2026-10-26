@@ -24,6 +24,12 @@
     "messages": "الرسائل",
     "signUp": "إنشاء حساب"
   },
+  "settingsNav": {
+    "label": "أقسام الإعدادات",
+    "preferences": "التفضيلات",
+    "profile": "الملف الشخصي",
+    "security": "الحساب والأمان"
+  },
   "settings": {
     "title": "الإعدادات",
     "theme": "السمة",
@@ -38,6 +44,36 @@
     "frontend_default": "استخدام افتراضي الخادم",
     "groupAppearance": "المظهر",
     "groupInterface": "الواجهة",
+    "groupPosting": "الإعدادات الافتراضية للنشر",
+    "visibility": "الرؤية الافتراضية للمنشورات",
+    "vis_public": "عام",
+    "vis_unlisted": "غير مدرج",
+    "vis_followers": "المتابِعون فقط",
+    "vis_private": "خاص",
+    "postingLanguage": "لغة النشر الافتراضية",
+    "postingLanguage_auto": "مثل لغة الواجهة",
+    "defaultSensitive": "وضع علامة حساس على المنشورات افتراضيًا",
+    "groupReading": "القراءة",
+    "cwAlwaysExpand": "توسيع المنشورات ذات تحذير المحتوى دائمًا",
+    "showAppDisplay": "إظهار التطبيق الذي نُشرت به المشاركة",
+    "filterLanguages": "إخفاء المنشورات بهذه اللغات",
+    "filterLanguagesHint": "وسوم لغة مفصولة بفواصل (مثل en، ar). اتركها فارغة لعرض كل اللغات.",
+    "groupNotifications": "الإشعارات",
+    "blockStranger": "حظر الإشعارات من أشخاص لا تتابعهم",
+    "emailNotifications": "إشعارات البريد الإلكتروني",
+    "email_follow": "شخص ما تابعني",
+    "email_follow_request": "شخص ما طلب متابعتي",
+    "email_reblog": "شخص ما أعاد نشر منشوري",
+    "email_favourite": "شخص ما أضاف منشوري إلى المفضلة",
+    "email_mention": "شخص ما ذكرني",
+    "email_quote": "شخص ما اقتبس منشوري",
+    "groupPrivacy": "الخصوصية والاكتشاف",
+    "directoryOptIn": "إظهار هذا الحساب في دليل الملفات الشخصية",
+    "includePublicInSearch": "تضمين المنشورات العامة في نتائج البحث",
+    "groupAccount": "الحساب",
+    "scheduledDeletion": "حذف المنشورات تلقائيًا بعد",
+    "scheduledDeletionUnit": "يومًا",
+    "scheduledDeletionHint": "القيمة 0 تعطل الحذف المجدول (بحد أقصى 3650 يومًا).",
     "save": "حفظ",
     "saved": "تم الحفظ"
   },
@@ -69,6 +105,60 @@
     "indexableHint": "تضمين المنشورات العامة في نتائج محركات البحث",
     "save": "حفظ التغييرات",
     "saved": "تم حفظ الملف الشخصي"
+  },
+  "settingsSecurity": {
+    "title": "الحساب والأمان",
+    "groupPassword": "تغيير كلمة المرور",
+    "currentPassword": "كلمة المرور الحالية",
+    "newPassword": "كلمة المرور الجديدة",
+    "confirmPassword": "تأكيد كلمة المرور الجديدة",
+    "passwordHint": "يؤدي تغيير كلمة المرور إلى تسجيل الخروج من جميع الجلسات الأخرى وإبطال رموز API الأخرى.",
+    "passwordTooShort": "يجب أن تتكون كلمة المرور الجديدة من 8 أحرف على الأقل.",
+    "passwordMismatch": "كلمتا المرور الجديدتان غير متطابقتين.",
+    "changePassword": "تغيير كلمة المرور",
+    "passwordSaved": "تم تغيير كلمة المرور",
+    "group2fa": "المصادقة الثنائية",
+    "twoFaEnabled": "المصادقة الثنائية مفعّلة — تبقى {count} رمزًا احتياطيًا.",
+    "twoFaDisabled": "المصادقة الثنائية معطّلة.",
+    "totp": "تطبيق المصادقة (TOTP)",
+    "enabled": "مفعّل",
+    "totpQrAlt": "رمز QR لمسحه بتطبيق المصادقة",
+    "totpCode": "رمز التحقق",
+    "totpConfirm": "تأكيد وتفعيل",
+    "totpSetup": "إعداد تطبيق مصادقة",
+    "totpRemove": "إزالة تطبيق المصادقة",
+    "confirm": "تأكيد",
+    "cancel": "إلغاء",
+    "save": "حفظ",
+    "backupCodes": "رموز النسخ الاحتياطي",
+    "backupCodesRemaining": "تبقى {count}",
+    "backupCodesHint": "احفظها في مكان آمن — كل رمز يعمل مرة واحدة ولن يُعرض مرة أخرى.",
+    "backupCodesRegenerate": "إعادة إنشاء رموز النسخ الاحتياطي",
+    "codesSaved": "لقد حفظت هذه الرموز",
+    "securityKeys": "مفاتيح الأمان",
+    "keyName": "اسم المفتاح",
+    "keyNamePlaceholder": "مثل YubiKey 5",
+    "keyUnnamed": "مفتاح بدون اسم",
+    "lastUsed": "آخر استخدام {when}",
+    "added": "أُضيف {when}",
+    "rename": "إعادة تسمية",
+    "remove": "إزالة",
+    "noSecurityKeys": "لا توجد مفاتيح أمان مسجلة.",
+    "addKey": "إضافة مفتاح أمان",
+    "webauthnUnsupported": "هذا المتصفح لا يدعم مفاتيح الأمان.",
+    "disableAll": "تعطيل المصادقة الثنائية",
+    "passwordConfirm": "أكّد بكلمة مرورك",
+    "groupSessions": "الجلسات",
+    "session": "جلسة غير معروفة",
+    "currentSession": "الحالية",
+    "noSessions": "لا توجد جلسات نشطة.",
+    "revoke": "إبطال",
+    "groupApps": "التطبيقات المصرّح بها",
+    "noApps": "لا توجد تطبيقات مصرّح بها.",
+    "groupDanger": "منطقة الخطر",
+    "deleteHint": "حذف حسابك يعطّله فورًا؛ تُمحى المنشورات والملف الشخصي بعد فترة السماح التي يحددها الخادم.",
+    "deleteAcknowledge": "أدرك أن هذا يعطّل حسابي ويحذفه نهائيًا.",
+    "deleteAccount": "حذف حسابي"
   },
   "route": {
     "moderation-report": {
@@ -137,6 +227,9 @@
     "settings-profile": {
       "title": "تعديل الملف الشخصي"
     },
+    "settings-security": {
+      "title": "الحساب والأمان"
+    },
     "not-found": {
       "title": "غير موجود"
     },
@@ -199,6 +292,9 @@
     },
     "register": {
       "title": "إنشاء حساب"
+    },
+    "oauth-authorize": {
+      "title": "تفويض التطبيق"
     }
   },
   "not_found": {
@@ -227,6 +323,19 @@
     "mfaHintTotp": "أدخل الرمز من تطبيق المصادقة أو رمزاً احتياطياً.",
     "mfaHintWebauthn": "هذا الحساب يسجّل الدخول بمفتاح مرور؛ تسجيل الدخول بمفتاح المرور غير مدعوم في هذا المتصفح بعد.",
     "verificationPending": "لم يتم التحقق من بريدك الإلكتروني بعد. لن يكون النشر وإجراءات أخرى متاحة حتى تؤكده — تحقق من بريدك الوارد."
+  },
+  "oauth": {
+    "title": "تفويض التطبيق",
+    "wantsAccess": "يريد إذنًا للوصول إلى حسابك",
+    "scopesTitle": "سيتمكن من:",
+    "signedInAs": "سجلت الدخول بوصفك {'@'}{acct}",
+    "authorize": "تفويض",
+    "deny": "رفض",
+    "denied": "رُفض الوصول — يمكنك إغلاق هذه النافذة.",
+    "failed": "فشل التفويض.",
+    "invalidRequest": "رابط التفويض هذا غير مكتمل — المعاملات المطلوبة مفقودة أو غير صالحة.",
+    "unknownApp": "تطبيق غير معروف. تحقق من أن التطبيق مسجّل على هذا الخادم.",
+    "loadFailed": "تعذّر تحميل تفاصيل التطبيق."
   },
   "menu": {
     "title": "القائمة",
@@ -455,7 +564,10 @@
       "authorize": "تفويض",
       "remove": "إزالة",
       "confirmRemove": "إزالة المرحّل {url}؟",
-      "states": { "pending": "معلَّق", "accepted": "مقبول" }
+      "states": {
+        "pending": "معلَّق",
+        "accepted": "مقبول"
+      }
     },
     "domainBlocks": {
       "hint": "الكتم يُخفي النطاق من الخطوط العامة؛ الإيقاف يحجبه كليًا.",
@@ -548,7 +660,11 @@
       "lookup": "بحث",
       "viewProfile": "عرض الملف العام",
       "remote": "بعيد",
-      "roles": { "user": "مستخدم", "moderator": "مشرف", "admin": "مسؤول" },
+      "roles": {
+        "user": "مستخدم",
+        "moderator": "مشرف",
+        "admin": "مسؤول"
+      },
       "state": {
         "suspended": "موقوف",
         "limited": "محدود",

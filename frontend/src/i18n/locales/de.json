@@ -24,6 +24,12 @@
     "messages": "Nachrichten",
     "signUp": "Registrieren"
   },
+  "settingsNav": {
+    "label": "Einstellungsbereiche",
+    "preferences": "Einstellungen",
+    "profile": "Profil",
+    "security": "Konto & Sicherheit"
+  },
   "settings": {
     "title": "Einstellungen",
     "theme": "Design",
@@ -38,6 +44,36 @@
     "frontend_default": "Instanz-Standard verwenden",
     "groupAppearance": "Darstellung",
     "groupInterface": "Oberfläche",
+    "groupPosting": "Standardeinstellungen fürs Posten",
+    "visibility": "Standard-Sichtbarkeit von Beiträgen",
+    "vis_public": "Öffentlich",
+    "vis_unlisted": "Ungelistet",
+    "vis_followers": "Nur Follower",
+    "vis_private": "Privat",
+    "postingLanguage": "Standard-Beitragssprache",
+    "postingLanguage_auto": "Wie die Oberflächensprache",
+    "defaultSensitive": "Beiträge standardmäßig als sensibel markieren",
+    "groupReading": "Lesen",
+    "cwAlwaysExpand": "Beiträge hinter Inhaltswarnungen immer aufklappen",
+    "showAppDisplay": "Anzeigen, mit welcher App ein Beitrag veröffentlicht wurde",
+    "filterLanguages": "Beiträge in diesen Sprachen ausblenden",
+    "filterLanguagesHint": "Kommagetrennte Sprach-Tags (z. B. en, de). Leer zeigt alle Sprachen.",
+    "groupNotifications": "Benachrichtigungen",
+    "blockStranger": "Benachrichtigungen von Personen blockieren, denen du nicht folgst",
+    "emailNotifications": "E-Mail-Benachrichtigungen",
+    "email_follow": "Jemand folgt mir",
+    "email_follow_request": "Jemand möchte mir folgen",
+    "email_reblog": "Jemand teilt meinen Beitrag",
+    "email_favourite": "Jemand favorisiert meinen Beitrag",
+    "email_mention": "Jemand erwähnt mich",
+    "email_quote": "Jemand zitiert mich",
+    "groupPrivacy": "Privatsphäre & Auffindbarkeit",
+    "directoryOptIn": "Dieses Konto im Profilverzeichnis anzeigen",
+    "includePublicInSearch": "Öffentliche Beiträge in Suchergebnisse aufnehmen",
+    "groupAccount": "Konto",
+    "scheduledDeletion": "Beiträge automatisch löschen nach",
+    "scheduledDeletionUnit": "Tagen",
+    "scheduledDeletionHint": "0 deaktiviert die geplante Löschung (max. 3650 Tage).",
     "save": "Speichern",
     "saved": "Gespeichert"
   },
@@ -69,6 +105,60 @@
     "indexableHint": "Öffentliche Beiträge in Suchmaschinenergebnissen anzeigen",
     "save": "Änderungen speichern",
     "saved": "Profil gespeichert"
+  },
+  "settingsSecurity": {
+    "title": "Konto & Sicherheit",
+    "groupPassword": "Passwort ändern",
+    "currentPassword": "Aktuelles Passwort",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "passwordHint": "Beim Ändern des Passworts werden alle anderen Sitzungen abgemeldet und andere API-Tokens widerrufen.",
+    "passwordTooShort": "Das neue Passwort muss mindestens 8 Zeichen lang sein.",
+    "passwordMismatch": "Die neuen Passwörter stimmen nicht überein.",
+    "changePassword": "Passwort ändern",
+    "passwordSaved": "Passwort geändert",
+    "group2fa": "Zwei-Faktor-Authentifizierung",
+    "twoFaEnabled": "Die Zwei-Faktor-Authentifizierung ist aktiv — {count} Backup-Code(s) übrig.",
+    "twoFaDisabled": "Die Zwei-Faktor-Authentifizierung ist deaktiviert.",
+    "totp": "Authenticator-App (TOTP)",
+    "enabled": "Aktiviert",
+    "totpQrAlt": "QR-Code zum Scannen mit deiner Authenticator-App",
+    "totpCode": "Bestätigungscode",
+    "totpConfirm": "Bestätigen und aktivieren",
+    "totpSetup": "Authenticator-App einrichten",
+    "totpRemove": "Authenticator-App entfernen",
+    "confirm": "Bestätigen",
+    "cancel": "Abbrechen",
+    "save": "Speichern",
+    "backupCodes": "Backup-Codes",
+    "backupCodesRemaining": "{count} übrig",
+    "backupCodesHint": "Bewahre sie an einem sicheren Ort auf — jeder funktioniert nur einmal und wird nicht erneut angezeigt.",
+    "backupCodesRegenerate": "Backup-Codes neu generieren",
+    "codesSaved": "Ich habe diese Codes gespeichert",
+    "securityKeys": "Sicherheitsschlüssel",
+    "keyName": "Schlüsselname",
+    "keyNamePlaceholder": "z. B. YubiKey 5",
+    "keyUnnamed": "Unbenannter Schlüssel",
+    "lastUsed": "Zuletzt verwendet {when}",
+    "added": "Hinzugefügt {when}",
+    "rename": "Umbenennen",
+    "remove": "Entfernen",
+    "noSecurityKeys": "Keine Sicherheitsschlüssel registriert.",
+    "addKey": "Sicherheitsschlüssel hinzufügen",
+    "webauthnUnsupported": "Dieser Browser unterstützt keine Sicherheitsschlüssel.",
+    "disableAll": "Zwei-Faktor-Authentifizierung deaktivieren",
+    "passwordConfirm": "Mit deinem Passwort bestätigen",
+    "groupSessions": "Sitzungen",
+    "session": "Unbekannte Sitzung",
+    "currentSession": "Aktuell",
+    "noSessions": "Keine aktiven Sitzungen.",
+    "revoke": "Widerrufen",
+    "groupApps": "Autorisierte Anwendungen",
+    "noApps": "Keine autorisierten Anwendungen.",
+    "groupDanger": "Gefahrenzone",
+    "deleteHint": "Das Löschen deines Kontos deaktiviert es sofort; Beiträge und Profil werden nach der Karenzzeit der Instanz endgültig entfernt.",
+    "deleteAcknowledge": "Ich verstehe, dass dadurch mein Konto deaktiviert und dauerhaft gelöscht wird.",
+    "deleteAccount": "Mein Konto löschen"
   },
   "route": {
     "moderation-report": {
@@ -137,6 +227,9 @@
     "settings-profile": {
       "title": "Profil bearbeiten"
     },
+    "settings-security": {
+      "title": "Konto & Sicherheit"
+    },
     "not-found": {
       "title": "Nicht gefunden"
     },
@@ -199,6 +292,9 @@
     },
     "register": {
       "title": "Konto erstellen"
+    },
+    "oauth-authorize": {
+      "title": "App autorisieren"
     }
   },
   "not_found": {
@@ -227,6 +323,19 @@
     "mfaHintTotp": "Gib den Code aus deiner Authenticator-App oder einen Backup-Code ein.",
     "mfaHintWebauthn": "Dieses Konto meldet sich mit einem Passkey an; Passkey-Anmeldung wird in diesem Browser noch nicht unterstützt.",
     "verificationPending": "Deine E-Mail-Adresse ist noch nicht bestätigt. Beiträge und andere Aktionen sind erst nach der Bestätigung verfügbar — sieh in dein Postfach."
+  },
+  "oauth": {
+    "title": "Anwendung autorisieren",
+    "wantsAccess": "möchte Zugriff auf dein Konto erhalten",
+    "scopesTitle": "Sie kann:",
+    "signedInAs": "Angemeldet als {'@'}{acct}",
+    "authorize": "Autorisieren",
+    "deny": "Ablehnen",
+    "denied": "Zugriff verweigert — du kannst dieses Fenster schließen.",
+    "failed": "Autorisierung fehlgeschlagen.",
+    "invalidRequest": "Dieser Autorisierungslink ist unvollständig — erforderliche Parameter fehlen oder sind ungültig.",
+    "unknownApp": "Unbekannte Anwendung. Prüfe, ob die App auf diesem Server registriert ist.",
+    "loadFailed": "Die Details der Anwendung konnten nicht geladen werden."
   },
   "menu": {
     "title": "Menü",
@@ -455,7 +564,10 @@
       "authorize": "Autorisieren",
       "remove": "Entfernen",
       "confirmRemove": "Relay {url} entfernen?",
-      "states": { "pending": "Ausstehend", "accepted": "Akzeptiert" }
+      "states": {
+        "pending": "Ausstehend",
+        "accepted": "Akzeptiert"
+      }
     },
     "domainBlocks": {
       "hint": "Stummschalten versteckt eine Domain aus öffentlichen Zeitleisten; Sperren blockiert sie vollständig.",

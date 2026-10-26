@@ -495,10 +495,7 @@ watch([tab, showReplies, showBoosts], () => {
             </i18n-t>
           </router-link>
           <span class="profile__counter">
-            <i18n-t
-              keypath="profile.statuses"
-              :plural="account.statuses_count"
-            >
+            <i18n-t keypath="profile.statuses" :plural="account.statuses_count">
               <template #count>
                 <strong class="profile__counter-num">{{
                   account.statuses_count

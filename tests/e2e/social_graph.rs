@@ -1655,13 +1655,12 @@ async fn remote_actor_fetch_syncs_moved_to() {
 
     // `dest` was unknown locally — the job fetched and upserted it,
     // then verified its `alsoKnownAs` and marked the move.
-    let dest_id: i64 = sqlx::query_scalar(
-        "SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NOT NULL",
-    )
-    .bind(format!("{base}/users/dest"))
-    .fetch_one(&env.state.db)
-    .await
-    .unwrap();
+    let dest_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NOT NULL")
+            .bind(format!("{base}/users/dest"))
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
     let moved_to: Option<i64> =
         sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE id = $1")
             .bind(moved_id)
@@ -1680,7 +1679,11 @@ async fn remote_actor_fetch_syncs_moved_to() {
     )
     .await;
     assert_eq!(code, StatusCode::OK, "{entity}");
-    assert_eq!(entity["moved"]["id"].as_str(), Some(dest_id.to_string().as_str()), "{entity}");
+    assert_eq!(
+        entity["moved"]["id"].as_str(),
+        Some(dest_id.to_string().as_str()),
+        "{entity}"
+    );
 
     // `liar` claims `dave` without an `alsoKnownAs` back — unmarked.
     let liar = format!("{base}/users/liar");

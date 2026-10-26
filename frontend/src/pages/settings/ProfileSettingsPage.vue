@@ -8,6 +8,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import SettingsNav from "@/components/settings/SettingsNav.vue";
 import { FontAwesomeIcon } from "@/icons";
 
 const { t } = useI18n();
@@ -184,201 +185,202 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Card>
-    <template #header>{{ t("settingsProfile.title") }}</template>
-    <p v-if="state === 'error'" class="profile-edit__error" role="alert">
-      {{ error || t("settingsProfile.loadError") }}
-    </p>
-    <form
-      v-else-if="state === 'ok'"
-      class="profile-edit"
-      @submit.prevent="save"
-    >
-      <section class="profile-edit__group">
-        <h3 class="profile-edit__group-title">
-          {{ t("settingsProfile.groupIdentity") }}
-        </h3>
-        <div class="profile-edit__row">
-          <span>{{ t("settingsProfile.avatar") }}</span>
-          <div class="profile-edit__media">
-            <Avatar
-              :src="avatarPreview"
-              :name="displayName || acct"
-              size="lg"
-            />
-            <div class="profile-edit__media-actions">
-              <Button
-                variant="secondary"
-                size="sm"
-                @click="pick('avatar')"
-                >{{ t("settingsProfile.change") }}</Button
-              >
-              <Button
-                v-if="avatarPreview"
-                variant="secondary"
-                size="sm"
-                @click="clearImage('avatar')"
-                >{{ t("settingsProfile.remove") }}</Button
-              >
+  <div>
+    <SettingsNav />
+    <Card>
+      <template #header>{{ t("settingsProfile.title") }}</template>
+      <p v-if="state === 'error'" class="profile-edit__error" role="alert">
+        {{ error || t("settingsProfile.loadError") }}
+      </p>
+      <form
+        v-else-if="state === 'ok'"
+        class="profile-edit"
+        @submit.prevent="save"
+      >
+        <section class="profile-edit__group">
+          <h3 class="profile-edit__group-title">
+            {{ t("settingsProfile.groupIdentity") }}
+          </h3>
+          <div class="profile-edit__row">
+            <span>{{ t("settingsProfile.avatar") }}</span>
+            <div class="profile-edit__media">
+              <Avatar
+                :src="avatarPreview"
+                :name="displayName || acct"
+                size="lg"
+              />
+              <div class="profile-edit__media-actions">
+                <Button variant="secondary" size="sm" @click="pick('avatar')">{{
+                  t("settingsProfile.change")
+                }}</Button>
+                <Button
+                  v-if="avatarPreview"
+                  variant="secondary"
+                  size="sm"
+                  @click="clearImage('avatar')"
+                  >{{ t("settingsProfile.remove") }}</Button
+                >
+              </div>
+              <input
+                ref="avatarInput"
+                type="file"
+                accept="image/*"
+                class="profile-edit__file"
+                :aria-label="t('settingsProfile.avatar')"
+                @change="onFile('avatar', $event)"
+              />
             </div>
-            <input
-              ref="avatarInput"
-              type="file"
-              accept="image/*"
-              class="profile-edit__file"
-              :aria-label="t('settingsProfile.avatar')"
-              @change="onFile('avatar', $event)"
-            />
           </div>
-        </div>
-        <div class="profile-edit__row">
-          <span>{{ t("settingsProfile.header") }}</span>
-          <div class="profile-edit__media">
-            <img
-              v-if="headerPreview"
-              :src="headerPreview"
-              class="profile-edit__header"
-              alt=""
-            />
-            <div v-else class="profile-edit__header-placeholder" />
-            <div class="profile-edit__media-actions">
-              <Button
-                variant="secondary"
-                size="sm"
-                @click="pick('header')"
-                >{{ t("settingsProfile.change") }}</Button
-              >
-              <Button
+          <div class="profile-edit__row">
+            <span>{{ t("settingsProfile.header") }}</span>
+            <div class="profile-edit__media">
+              <img
                 v-if="headerPreview"
-                variant="secondary"
-                size="sm"
-                @click="clearImage('header')"
-                >{{ t("settingsProfile.remove") }}</Button
-              >
+                :src="headerPreview"
+                class="profile-edit__header"
+                alt=""
+              />
+              <div v-else class="profile-edit__header-placeholder" />
+              <div class="profile-edit__media-actions">
+                <Button variant="secondary" size="sm" @click="pick('header')">{{
+                  t("settingsProfile.change")
+                }}</Button>
+                <Button
+                  v-if="headerPreview"
+                  variant="secondary"
+                  size="sm"
+                  @click="clearImage('header')"
+                  >{{ t("settingsProfile.remove") }}</Button
+                >
+              </div>
+              <input
+                ref="headerInput"
+                type="file"
+                accept="image/*"
+                class="profile-edit__file"
+                :aria-label="t('settingsProfile.header')"
+                @change="onFile('header', $event)"
+              />
             </div>
-            <input
-              ref="headerInput"
-              type="file"
-              accept="image/*"
-              class="profile-edit__file"
-              :aria-label="t('settingsProfile.header')"
-              @change="onFile('header', $event)"
+          </div>
+          <div class="profile-edit__row profile-edit__row--top">
+            <span>{{ t("settingsProfile.displayName") }}</span>
+            <Input
+              v-model="displayName"
+              :label="t('settingsProfile.displayName')"
+              class="profile-edit__sr-label"
+              :maxlength="MAX_DISPLAY_NAME"
             />
           </div>
-        </div>
-        <div class="profile-edit__row profile-edit__row--top">
-          <span>{{ t("settingsProfile.displayName") }}</span>
-          <Input
-            v-model="displayName"
-            :label="t('settingsProfile.displayName')"
-            class="profile-edit__sr-label"
-            :maxlength="MAX_DISPLAY_NAME"
-          />
-        </div>
-        <div class="profile-edit__row profile-edit__row--top">
-          <span>{{ t("settingsProfile.bio") }}</span>
-          <textarea
-            v-model="note"
-            class="profile-edit__bio"
-            rows="5"
-            :maxlength="MAX_BIO"
-            :aria-label="t('settingsProfile.bio')"
-          />
-        </div>
-      </section>
+          <div class="profile-edit__row profile-edit__row--top">
+            <span>{{ t("settingsProfile.bio") }}</span>
+            <textarea
+              v-model="note"
+              class="profile-edit__bio"
+              rows="5"
+              :maxlength="MAX_BIO"
+              :aria-label="t('settingsProfile.bio')"
+            />
+          </div>
+        </section>
 
-      <section class="profile-edit__group">
-        <h3 class="profile-edit__group-title">
-          {{ t("settingsProfile.fields") }}
-        </h3>
-        <div
-          v-for="(field, i) in fields"
-          :key="i"
-          class="profile-edit__field-row"
-        >
-          <Input
-            v-model="field.name"
-            :label="t('settingsProfile.fieldName')"
-            :disabled="pending"
-          />
-          <Input
-            v-model="field.value"
-            :label="t('settingsProfile.fieldValue')"
-            :disabled="pending"
-          />
+        <section class="profile-edit__group">
+          <h3 class="profile-edit__group-title">
+            {{ t("settingsProfile.fields") }}
+          </h3>
+          <div
+            v-for="(field, i) in fields"
+            :key="i"
+            class="profile-edit__field-row"
+          >
+            <Input
+              v-model="field.name"
+              :label="t('settingsProfile.fieldName')"
+              :disabled="pending"
+            />
+            <Input
+              v-model="field.value"
+              :label="t('settingsProfile.fieldValue')"
+              :disabled="pending"
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              class="profile-edit__field-remove"
+              :aria-label="t('settingsProfile.removeField')"
+              @click="removeField(i)"
+            >
+              <FontAwesomeIcon icon="trash-can" aria-hidden="true" />
+            </Button>
+          </div>
           <Button
+            v-if="fields.length < MAX_FIELDS"
             variant="secondary"
             size="sm"
-            class="profile-edit__field-remove"
-            :aria-label="t('settingsProfile.removeField')"
-            @click="removeField(i)"
+            @click="addField"
           >
-            <FontAwesomeIcon icon="trash-can" aria-hidden="true" />
+            <FontAwesomeIcon icon="plus" aria-hidden="true" />
+            {{ t("settingsProfile.addField") }}
           </Button>
+        </section>
+
+        <section class="profile-edit__group">
+          <h3 class="profile-edit__group-title">
+            {{ t("settingsProfile.groupFlags") }}
+          </h3>
+          <label class="profile-edit__flag">
+            <input v-model="locked" type="checkbox" :disabled="pending" />
+            <span>
+              {{ t("settingsProfile.locked") }}
+              <small>{{ t("settingsProfile.lockedHint") }}</small>
+            </span>
+          </label>
+          <label class="profile-edit__flag">
+            <input v-model="bot" type="checkbox" :disabled="pending" />
+            <span>
+              {{ t("settingsProfile.bot") }}
+              <small>{{ t("settingsProfile.botHint") }}</small>
+            </span>
+          </label>
+          <label class="profile-edit__flag">
+            <input v-model="discoverable" type="checkbox" :disabled="pending" />
+            <span>
+              {{ t("settingsProfile.discoverable") }}
+              <small>{{ t("settingsProfile.discoverableHint") }}</small>
+            </span>
+          </label>
+          <label class="profile-edit__flag">
+            <input
+              v-model="hideCollections"
+              type="checkbox"
+              :disabled="pending"
+            />
+            <span>
+              {{ t("settingsProfile.hideCollections") }}
+              <small>{{ t("settingsProfile.hideCollectionsHint") }}</small>
+            </span>
+          </label>
+          <label class="profile-edit__flag">
+            <input v-model="indexable" type="checkbox" :disabled="pending" />
+            <span>
+              {{ t("settingsProfile.indexable") }}
+              <small>{{ t("settingsProfile.indexableHint") }}</small>
+            </span>
+          </label>
+        </section>
+
+        <p v-if="error" class="profile-edit__error" role="alert">{{ error }}</p>
+        <div class="profile-edit__footer">
+          <Button type="submit" :loading="pending" :disabled="pending">
+            {{ t("settingsProfile.save") }}
+          </Button>
+          <p v-if="saved" class="profile-edit__saved">
+            {{ t("settingsProfile.saved") }}
+          </p>
         </div>
-        <Button
-          v-if="fields.length < MAX_FIELDS"
-          variant="secondary"
-          size="sm"
-          @click="addField"
-        >
-          <FontAwesomeIcon icon="plus" aria-hidden="true" />
-          {{ t("settingsProfile.addField") }}
-        </Button>
-      </section>
-
-      <section class="profile-edit__group">
-        <h3 class="profile-edit__group-title">
-          {{ t("settingsProfile.groupFlags") }}
-        </h3>
-        <label class="profile-edit__flag">
-          <input v-model="locked" type="checkbox" :disabled="pending" />
-          <span>
-            {{ t("settingsProfile.locked") }}
-            <small>{{ t("settingsProfile.lockedHint") }}</small>
-          </span>
-        </label>
-        <label class="profile-edit__flag">
-          <input v-model="bot" type="checkbox" :disabled="pending" />
-          <span>
-            {{ t("settingsProfile.bot") }}
-            <small>{{ t("settingsProfile.botHint") }}</small>
-          </span>
-        </label>
-        <label class="profile-edit__flag">
-          <input v-model="discoverable" type="checkbox" :disabled="pending" />
-          <span>
-            {{ t("settingsProfile.discoverable") }}
-            <small>{{ t("settingsProfile.discoverableHint") }}</small>
-          </span>
-        </label>
-        <label class="profile-edit__flag">
-          <input v-model="hideCollections" type="checkbox" :disabled="pending" />
-          <span>
-            {{ t("settingsProfile.hideCollections") }}
-            <small>{{ t("settingsProfile.hideCollectionsHint") }}</small>
-          </span>
-        </label>
-        <label class="profile-edit__flag">
-          <input v-model="indexable" type="checkbox" :disabled="pending" />
-          <span>
-            {{ t("settingsProfile.indexable") }}
-            <small>{{ t("settingsProfile.indexableHint") }}</small>
-          </span>
-        </label>
-      </section>
-
-      <p v-if="error" class="profile-edit__error" role="alert">{{ error }}</p>
-      <div class="profile-edit__footer">
-        <Button type="submit" :loading="pending" :disabled="pending">
-          {{ t("settingsProfile.save") }}
-        </Button>
-        <p v-if="saved" class="profile-edit__saved">
-          {{ t("settingsProfile.saved") }}
-        </p>
-      </div>
-    </form>
-  </Card>
+      </form>
+    </Card>
+  </div>
 </template>
 
 <style scoped>

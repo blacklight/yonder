@@ -566,9 +566,9 @@ impl StatusBatch {
         let followed: HashSet<i64> = followed.into_iter().collect();
         let mut visible = HashSet::new();
         for o in originals.values() {
-            let ok = if Some(o.account_id) == viewer {
-                true
-            } else if matches!(o.visibility.as_str(), "public" | "unlisted") {
+            let ok = if Some(o.account_id) == viewer
+                || matches!(o.visibility.as_str(), "public" | "unlisted")
+            {
                 true
             } else if viewer.is_none() {
                 false

@@ -529,8 +529,7 @@ impl JobHandler for RemoteActorFetchJob {
                 // markers so reads and the sweep stop re-enqueueing,
                 // and ack the job instead of dead-lettering it.
                 tracing::info!(actor = %actor_url, "remote actor gone; marking");
-                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor", "actor_gone"])
-                    .await;
+                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor", "actor_gone"]).await;
                 Ok(())
             }
             super::lookup::RemoteFetch::Failed => {
@@ -595,19 +594,18 @@ async fn ensure_move_target(ctx: &ApContext, actor_id: &str, doc: &Value) {
     if target == actor_id {
         return;
     }
-    let known: bool = match sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)",
-    )
-    .bind(&target)
-    .fetch_one(&ctx.core.db)
-    .await
-    {
-        Ok(known) => known,
-        Err(e) => {
-            tracing::warn!(actor = %actor_id, error = %e, "movedTo target lookup failed");
-            return;
-        }
-    };
+    let known: bool =
+        match sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)")
+            .bind(&target)
+            .fetch_one(&ctx.core.db)
+            .await
+        {
+            Ok(known) => known,
+            Err(e) => {
+                tracing::warn!(actor = %actor_id, error = %e, "movedTo target lookup failed");
+                return;
+            }
+        };
     if known {
         return;
     }

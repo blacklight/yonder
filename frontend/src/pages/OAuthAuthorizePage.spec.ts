@@ -22,11 +22,19 @@ const QUERY =
   "&redirect_uri=moshidon-android-auth%3A%2F%2Fcallback" +
   "&response_type=code&scope=read+write+push&state=xyz";
 
-function button(wrapper: { findAll: (s: string) => { text: () => string; trigger: (e: string) => Promise<void> }[] }, label: string) {
-  const b = wrapper
-    .findAll("button")
-    .find((x) => x.text().includes(label));
-  if (!b) throw new Error(`no ${label} button: ${wrapper.findAll("button").map((x) => x.text())}`);
+function button(
+  wrapper: {
+    findAll: (
+      s: string,
+    ) => { text: () => string; trigger: (e: string) => Promise<void> }[];
+  },
+  label: string,
+) {
+  const b = wrapper.findAll("button").find((x) => x.text().includes(label));
+  if (!b)
+    throw new Error(
+      `no ${label} button: ${wrapper.findAll("button").map((x) => x.text())}`,
+    );
   return b;
 }
 

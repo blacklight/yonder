@@ -24,6 +24,12 @@
     "messages": "Mensajes",
     "signUp": "Registrarse"
   },
+  "settingsNav": {
+    "label": "Secciones de ajustes",
+    "preferences": "Preferencias",
+    "profile": "Perfil",
+    "security": "Cuenta y seguridad"
+  },
   "settings": {
     "title": "Ajustes",
     "theme": "Tema",
@@ -38,6 +44,36 @@
     "frontend_default": "Usar predeterminado de la instancia",
     "groupAppearance": "Apariencia",
     "groupInterface": "Interfaz",
+    "groupPosting": "Valores predeterminados de publicación",
+    "visibility": "Visibilidad predeterminada de las publicaciones",
+    "vis_public": "Pública",
+    "vis_unlisted": "No listada",
+    "vis_followers": "Solo seguidores",
+    "vis_private": "Privada",
+    "postingLanguage": "Idioma de publicación predeterminado",
+    "postingLanguage_auto": "El mismo que el idioma de la interfaz",
+    "defaultSensitive": "Marcar las publicaciones como sensibles de forma predeterminada",
+    "groupReading": "Lectura",
+    "cwAlwaysExpand": "Expandir siempre las publicaciones con aviso de contenido",
+    "showAppDisplay": "Mostrar con qué aplicación se publicó una entrada",
+    "filterLanguages": "Ocultar publicaciones en estos idiomas",
+    "filterLanguagesHint": "Etiquetas de idioma separadas por comas (p. ej. en, es). Vacío muestra todos los idiomas.",
+    "groupNotifications": "Notificaciones",
+    "blockStranger": "Bloquear notificaciones de personas que no sigues",
+    "emailNotifications": "Notificaciones por correo electrónico",
+    "email_follow": "Alguien me sigue",
+    "email_follow_request": "Alguien solicita seguirme",
+    "email_reblog": "Alguien comparte mi publicación",
+    "email_favourite": "Alguien marca como favorita mi publicación",
+    "email_mention": "Alguien me menciona",
+    "email_quote": "Alguien me cita",
+    "groupPrivacy": "Privacidad y descubrimiento",
+    "directoryOptIn": "Destacar esta cuenta en el directorio de perfiles",
+    "includePublicInSearch": "Incluir publicaciones públicas en los resultados de búsqueda",
+    "groupAccount": "Cuenta",
+    "scheduledDeletion": "Eliminar publicaciones automáticamente después de",
+    "scheduledDeletionUnit": "días",
+    "scheduledDeletionHint": "0 desactiva la eliminación programada (máx. 3650 días).",
     "save": "Guardar",
     "saved": "Guardado"
   },
@@ -69,6 +105,60 @@
     "indexableHint": "Incluye las publicaciones públicas en los resultados de búsqueda",
     "save": "Guardar cambios",
     "saved": "Perfil guardado"
+  },
+  "settingsSecurity": {
+    "title": "Cuenta y seguridad",
+    "groupPassword": "Cambiar contraseña",
+    "currentPassword": "Contraseña actual",
+    "newPassword": "Nueva contraseña",
+    "confirmPassword": "Confirmar nueva contraseña",
+    "passwordHint": "Al cambiar la contraseña se cierran todas las demás sesiones y se revocan los demás tokens de API.",
+    "passwordTooShort": "La nueva contraseña debe tener al menos 8 caracteres.",
+    "passwordMismatch": "Las nuevas contraseñas no coinciden.",
+    "changePassword": "Cambiar contraseña",
+    "passwordSaved": "Contraseña cambiada",
+    "group2fa": "Autenticación de dos factores",
+    "twoFaEnabled": "La autenticación de dos factores está activada — quedan {count} códigos de respaldo.",
+    "twoFaDisabled": "La autenticación de dos factores está desactivada.",
+    "totp": "Aplicación de autenticación (TOTP)",
+    "enabled": "Activada",
+    "totpQrAlt": "Código QR para escanear con tu aplicación de autenticación",
+    "totpCode": "Código de verificación",
+    "totpConfirm": "Confirmar y activar",
+    "totpSetup": "Configurar una aplicación de autenticación",
+    "totpRemove": "Eliminar aplicación de autenticación",
+    "confirm": "Confirmar",
+    "cancel": "Cancelar",
+    "save": "Guardar",
+    "backupCodes": "Códigos de respaldo",
+    "backupCodesRemaining": "quedan {count}",
+    "backupCodesHint": "Guárdalos en un lugar seguro: cada uno funciona una sola vez y no se volverán a mostrar.",
+    "backupCodesRegenerate": "Regenerar códigos de respaldo",
+    "codesSaved": "Ya guardé estos códigos",
+    "securityKeys": "Llaves de seguridad",
+    "keyName": "Nombre de la llave",
+    "keyNamePlaceholder": "p. ej. YubiKey 5",
+    "keyUnnamed": "Llave sin nombre",
+    "lastUsed": "Último uso {when}",
+    "added": "Añadida {when}",
+    "rename": "Renombrar",
+    "remove": "Eliminar",
+    "noSecurityKeys": "No hay llaves de seguridad registradas.",
+    "addKey": "Añadir una llave de seguridad",
+    "webauthnUnsupported": "Este navegador no admite llaves de seguridad.",
+    "disableAll": "Desactivar la autenticación de dos factores",
+    "passwordConfirm": "Confirma con tu contraseña",
+    "groupSessions": "Sesiones",
+    "session": "Sesión desconocida",
+    "currentSession": "Actual",
+    "noSessions": "No hay sesiones activas.",
+    "revoke": "Revocar",
+    "groupApps": "Aplicaciones autorizadas",
+    "noApps": "No hay aplicaciones autorizadas.",
+    "groupDanger": "Zona de peligro",
+    "deleteHint": "Eliminar tu cuenta la desactiva de inmediato; las publicaciones y el perfil se purgan tras el período de gracia de la instancia.",
+    "deleteAcknowledge": "Entiendo que esto desactiva y elimina permanentemente mi cuenta.",
+    "deleteAccount": "Eliminar mi cuenta"
   },
   "route": {
     "moderation-report": {
@@ -137,6 +227,9 @@
     "settings-profile": {
       "title": "Editar perfil"
     },
+    "settings-security": {
+      "title": "Cuenta y seguridad"
+    },
     "not-found": {
       "title": "No encontrado"
     },
@@ -199,6 +292,9 @@
     },
     "register": {
       "title": "Crear una cuenta"
+    },
+    "oauth-authorize": {
+      "title": "Autorizar aplicación"
     }
   },
   "not_found": {
@@ -227,6 +323,19 @@
     "mfaHintTotp": "Introduce el código de tu aplicación de autenticación o un código de respaldo.",
     "mfaHintWebauthn": "Esta cuenta inicia sesión con una passkey; el inicio de sesión con passkey aún no es compatible con este navegador.",
     "verificationPending": "Tu dirección de correo aún no está verificada. Publicar y otras acciones no estarán disponibles hasta que la confirmes — revisa tu bandeja de entrada."
+  },
+  "oauth": {
+    "title": "Autorizar aplicación",
+    "wantsAccess": "quiere permiso para acceder a tu cuenta",
+    "scopesTitle": "Podrá:",
+    "signedInAs": "Sesión iniciada como {'@'}{acct}",
+    "authorize": "Autorizar",
+    "deny": "Denegar",
+    "denied": "Acceso denegado — puedes cerrar esta ventana.",
+    "failed": "La autorización falló.",
+    "invalidRequest": "Este enlace de autorización está incompleto: faltan parámetros obligatorios o no son válidos.",
+    "unknownApp": "Aplicación desconocida. Comprueba que la aplicación esté registrada en este servidor.",
+    "loadFailed": "No se pudieron cargar los datos de la aplicación."
   },
   "menu": {
     "title": "Menú",
@@ -455,7 +564,10 @@
       "authorize": "Autorizar",
       "remove": "Eliminar",
       "confirmRemove": "¿Eliminar el retransmisor {url}?",
-      "states": { "pending": "Pendiente", "accepted": "Aceptado" }
+      "states": {
+        "pending": "Pendiente",
+        "accepted": "Aceptado"
+      }
     },
     "domainBlocks": {
       "hint": "Silenciar oculta el dominio de las cronologías públicas; suspender lo bloquea por completo.",

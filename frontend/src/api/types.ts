@@ -2418,6 +2418,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/yonder/account/password": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/yonder/account/password` — change the account
+     *     password. Re-authenticates with the current password, then rotates
+     *     the hash and revokes every session/token but the caller's.
+     */
+    post: operations["change_password"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/yonder/admin/email/test": {
     parameters: {
       query?: never;
@@ -3031,6 +3052,12 @@ export interface components {
     AliasParams: {
       /** @description `user@domain` handle or actor URI to add/remove. */
       acct: string;
+    };
+    ChangePasswordParams: {
+      /** @description Current password (re-authentication). */
+      current_password: string;
+      /** @description New password (minimum 8 characters). */
+      new_password: string;
     };
     CreateAppParams: {
       client_name: string;
@@ -8979,6 +9006,55 @@ export interface operations {
       };
       /** @description Wrong password */
       403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  change_password: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ChangePasswordParams"];
+      };
+    };
+    responses: {
+      /** @description Password changed; other sessions revoked */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Wrong password */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description New password fails validation */
+      422: {
         headers: {
           [name: string]: unknown;
         };

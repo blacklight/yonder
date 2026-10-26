@@ -31,6 +31,10 @@ use crate::{http::AppState, Error, Result};
 /// The authenticated principal attached to a request.
 #[derive(Debug, Clone)]
 pub struct AuthContext {
+    /// `oauth_access_tokens.id` backing this request — lets mutations
+    /// (e.g. password change) spare the caller's own token while
+    /// revoking the rest.
+    pub token_id: i64,
     /// `users.id` owning the token.
     pub user_id: i64,
     /// `accounts.id` backing the user.
@@ -106,6 +110,7 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
         return Err(Error::Unauthorized);
     };
     let auth = AuthContext {
+        token_id: row.get("token_id"),
         user_id: row.get("user_id"),
         account_id: row.get("account_id"),
         scopes: row.get("scopes"),

@@ -54,9 +54,9 @@ describe("ProfileSettingsPage", () => {
     const name = wrapper.get<HTMLInputElement>(".profile-edit__sr-label input");
     expect(name.element.value).toBe("Alice A.");
     // Raw `source.note`, not the rendered HTML in `account.note`.
-    expect(wrapper.get<HTMLTextAreaElement>(".profile-edit__bio").element.value).toBe(
-      "raw bio",
-    );
+    expect(
+      wrapper.get<HTMLTextAreaElement>(".profile-edit__bio").element.value,
+    ).toBe("raw bio");
     const fieldInputs = wrapper.findAll(".profile-edit__field-row input");
     expect(fieldInputs).toHaveLength(2);
     expect((fieldInputs[0].element as HTMLInputElement).value).toBe("Site");
@@ -78,9 +78,7 @@ describe("ProfileSettingsPage", () => {
     mockedUpdate.mockResolvedValue(updated as never);
     const { wrapper } = await mountOk();
 
-    await wrapper
-      .get(".profile-edit__sr-label input")
-      .setValue("Alice B.");
+    await wrapper.get(".profile-edit__sr-label input").setValue("Alice B.");
     await wrapper.get("form").trigger("submit");
     await flushPromises();
 

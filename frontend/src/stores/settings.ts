@@ -9,6 +9,17 @@ interface YonderSettings {
   theme: ThemeMode;
   accent: string | null;
   frontend: string | null;
+  default_visibility?: string | null;
+  default_posting_language?: string | null;
+  default_sensitive?: boolean;
+  cw_always_expand?: boolean;
+  show_app_display?: boolean;
+  filter_languages?: string[];
+  block_stranger_notifications?: boolean;
+  email_notifications?: Record<string, boolean>;
+  directory_opt_in?: boolean;
+  include_public_posts_in_search?: boolean;
+  scheduled_deletion_days?: number;
   [key: string]: unknown;
 }
 

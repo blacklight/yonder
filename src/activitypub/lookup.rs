@@ -143,10 +143,7 @@ pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Opt
 /// the instance actor signs, so `authorized_fetch` servers answer
 /// too. `RemoteFetch::Failed` when the instance actor lacks key
 /// material or signing fails.
-pub(crate) async fn fetch_remote_object_detailed(
-    ap: &ApContext,
-    url: &str,
-) -> Result<RemoteFetch> {
+pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> Result<RemoteFetch> {
     let actor = super::actors::load_local_actor(&ap.core.db, super::actors::INSTANCE_USERNAME)
         .await?
         .ok_or_else(|| Error::Internal("instance actor missing".to_string()))?;

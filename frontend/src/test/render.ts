@@ -14,6 +14,16 @@ export const stubRoutes: RouteRecordRaw[] = [
   { path: "/login", name: "sign-in", component: stub },
   { path: "/register", name: "register", component: stub },
   { path: "/settings", name: "settings", component: stub },
+  {
+    path: "/settings/profile",
+    name: "settings-profile",
+    component: stub,
+  },
+  {
+    path: "/settings/security",
+    name: "settings-security",
+    component: stub,
+  },
   { path: "/compose", name: "compose", component: stub },
   { path: "/local", name: "local", component: stub },
   { path: "/explore", name: "explore", component: stub },

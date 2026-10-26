@@ -96,7 +96,11 @@ async function load() {
 
 // The route's query IS the authorization request — re-evaluate if it
 // changes (account switch, a second client hop) rather than once.
-watch(() => route.query, () => void load(), { immediate: true });
+watch(
+  () => route.query,
+  () => void load(),
+  { immediate: true },
+);
 void auth.restore();
 
 async function authorize() {

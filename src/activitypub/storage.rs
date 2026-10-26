@@ -333,12 +333,11 @@ async fn sync_remote_move_inner(
             return Ok(());
         }
     };
-    let row: Option<(i64, bool, Value)> = sqlx::query_as(
-        "SELECT id, domain IS NULL, actor_data FROM accounts WHERE actor_id = $1",
-    )
-    .bind(&target)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(i64, bool, Value)> =
+        sqlx::query_as("SELECT id, domain IS NULL, actor_data FROM accounts WHERE actor_id = $1")
+            .bind(&target)
+            .fetch_optional(pool)
+            .await?;
     let Some((target_id, target_local, target_data)) = row else {
         // Unknown target — `RemoteActorFetch`'s `ensure_move_target`
         // resolves it before the upsert; other callers leave the move

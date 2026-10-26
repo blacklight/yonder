@@ -126,7 +126,11 @@ export function revokeToken(id: string): Promise<unknown> {
 export function twoFactorStatus(): Promise<TwoFactorStatus> {
   return request<TwoFactorStatus>({ path: "/2fa" });
 }
-export function totpSetup(): Promise<{ secret: string; otpauth_url: string }> {
+export function totpSetup(): Promise<{
+  secret: string;
+  otpauth_uri: string;
+  qr_data_uri: string;
+}> {
   return request({ path: "/2fa/totp/setup", method: "POST" });
 }
 export function totpConfirm(code: string): Promise<{ backup_codes: string[] }> {
@@ -288,6 +292,21 @@ export function cancelMove(password: string): Promise<unknown> {
     path: "/yonder/move",
     method: "DELETE",
     body: { password },
+  });
+}
+
+/**
+ * `POST /api/v1/yonder/account/password` — change the account
+ * password. Revokes every session/token but the caller's.
+ */
+export function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>({
+    path: "/yonder/account/password",
+    method: "POST",
+    body: { current_password: currentPassword, new_password: newPassword },
   });
 }
 

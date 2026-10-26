@@ -24,6 +24,12 @@
     "messages": "Messaggi",
     "signUp": "Registrati"
   },
+  "settingsNav": {
+    "label": "Sezioni delle impostazioni",
+    "preferences": "Preferenze",
+    "profile": "Profilo",
+    "security": "Account e sicurezza"
+  },
   "settings": {
     "title": "Impostazioni",
     "theme": "Tema",
@@ -38,6 +44,36 @@
     "frontend_default": "Usa predefinito dell'istanza",
     "groupAppearance": "Aspetto",
     "groupInterface": "Interfaccia",
+    "groupPosting": "Impostazioni predefinite di pubblicazione",
+    "visibility": "Visibilità predefinita dei post",
+    "vis_public": "Pubblico",
+    "vis_unlisted": "Non in elenco",
+    "vis_followers": "Solo follower",
+    "vis_private": "Privato",
+    "postingLanguage": "Lingua di pubblicazione predefinita",
+    "postingLanguage_auto": "Uguale alla lingua dell'interfaccia",
+    "defaultSensitive": "Contrassegna i post come sensibili per impostazione predefinita",
+    "groupReading": "Lettura",
+    "cwAlwaysExpand": "Espandi sempre i post con avviso di contenuto",
+    "showAppDisplay": "Mostra con quale app è stato pubblicato un post",
+    "filterLanguages": "Nascondi i post in queste lingue",
+    "filterLanguagesHint": "Tag di lingua separati da virgole (es. en, es). Vuoto mostra tutte le lingue.",
+    "groupNotifications": "Notifiche",
+    "blockStranger": "Blocca le notifiche da persone che non segui",
+    "emailNotifications": "Notifiche email",
+    "email_follow": "Qualcuno inizia a seguirmi",
+    "email_follow_request": "Qualcuno chiede di seguirmi",
+    "email_reblog": "Qualcuno condivide il mio post",
+    "email_favourite": "Qualcuno aggiunge il mio post ai preferiti",
+    "email_mention": "Qualcuno mi menziona",
+    "email_quote": "Qualcuno mi cita",
+    "groupPrivacy": "Privacy e scoperta",
+    "directoryOptIn": "Inserisci questo account nella directory dei profili",
+    "includePublicInSearch": "Includi i post pubblici nei risultati di ricerca",
+    "groupAccount": "Account",
+    "scheduledDeletion": "Elimina automaticamente i post dopo",
+    "scheduledDeletionUnit": "giorni",
+    "scheduledDeletionHint": "0 disattiva l'eliminazione programmata (max 3650 giorni).",
     "save": "Salva",
     "saved": "Salvato"
   },
@@ -69,6 +105,60 @@
     "indexableHint": "Includi i post pubblici nei risultati dei motori di ricerca",
     "save": "Salva modifiche",
     "saved": "Profilo salvato"
+  },
+  "settingsSecurity": {
+    "title": "Account e sicurezza",
+    "groupPassword": "Cambia password",
+    "currentPassword": "Password attuale",
+    "newPassword": "Nuova password",
+    "confirmPassword": "Conferma nuova password",
+    "passwordHint": "Cambiando la password si chiudono tutte le altre sessioni e si revocano gli altri token API.",
+    "passwordTooShort": "La nuova password deve contenere almeno 8 caratteri.",
+    "passwordMismatch": "Le nuove password non corrispondono.",
+    "changePassword": "Cambia password",
+    "passwordSaved": "Password cambiata",
+    "group2fa": "Autenticazione a due fattori",
+    "twoFaEnabled": "L'autenticazione a due fattori è attiva — restano {count} codici di riserva.",
+    "twoFaDisabled": "L'autenticazione a due fattori è disattivata.",
+    "totp": "App di autenticazione (TOTP)",
+    "enabled": "Attiva",
+    "totpQrAlt": "Codice QR da scansionare con la tua app di autenticazione",
+    "totpCode": "Codice di verifica",
+    "totpConfirm": "Conferma e attiva",
+    "totpSetup": "Configura un'app di autenticazione",
+    "totpRemove": "Rimuovi app di autenticazione",
+    "confirm": "Conferma",
+    "cancel": "Annulla",
+    "save": "Salva",
+    "backupCodes": "Codici di riserva",
+    "backupCodesRemaining": "ne restano {count}",
+    "backupCodesHint": "Conservali in un luogo sicuro: ognuno funziona una sola volta e non verrà più mostrato.",
+    "backupCodesRegenerate": "Rigenera codici di riserva",
+    "codesSaved": "Ho salvato questi codici",
+    "securityKeys": "Chiavi di sicurezza",
+    "keyName": "Nome della chiave",
+    "keyNamePlaceholder": "es. YubiKey 5",
+    "keyUnnamed": "Chiave senza nome",
+    "lastUsed": "Ultimo utilizzo {when}",
+    "added": "Aggiunta {when}",
+    "rename": "Rinomina",
+    "remove": "Rimuovi",
+    "noSecurityKeys": "Nessuna chiave di sicurezza registrata.",
+    "addKey": "Aggiungi una chiave di sicurezza",
+    "webauthnUnsupported": "Questo browser non supporta le chiavi di sicurezza.",
+    "disableAll": "Disattiva l'autenticazione a due fattori",
+    "passwordConfirm": "Conferma con la tua password",
+    "groupSessions": "Sessioni",
+    "session": "Sessione sconosciuta",
+    "currentSession": "Corrente",
+    "noSessions": "Nessuna sessione attiva.",
+    "revoke": "Revoca",
+    "groupApps": "Applicazioni autorizzate",
+    "noApps": "Nessuna applicazione autorizzata.",
+    "groupDanger": "Zona pericolosa",
+    "deleteHint": "Eliminare l'account lo disattiva immediatamente; i post e il profilo vengono eliminati dopo il periodo di grazia dell'istanza.",
+    "deleteAcknowledge": "Comprendo che questo disattiva ed elimina definitivamente il mio account.",
+    "deleteAccount": "Elimina il mio account"
   },
   "route": {
     "moderation-report": {
@@ -137,6 +227,9 @@
     "settings-profile": {
       "title": "Modifica profilo"
     },
+    "settings-security": {
+      "title": "Account e sicurezza"
+    },
     "not-found": {
       "title": "Non trovato"
     },
@@ -199,6 +292,9 @@
     },
     "register": {
       "title": "Crea un account"
+    },
+    "oauth-authorize": {
+      "title": "Autorizza app"
     }
   },
   "not_found": {
@@ -227,6 +323,19 @@
     "mfaHintTotp": "Inserisci il codice della tua app di autenticazione o un codice di backup.",
     "mfaHintWebauthn": "Questo account accede con una passkey; l'accesso con passkey non è ancora supportato in questo browser.",
     "verificationPending": "Il tuo indirizzo email non è ancora verificato. Pubblicare e altre azioni non saranno disponibili finché non lo confermi — controlla la casella di posta."
+  },
+  "oauth": {
+    "title": "Autorizza applicazione",
+    "wantsAccess": "vorrebbe il permesso di accedere al tuo account",
+    "scopesTitle": "Potrà:",
+    "signedInAs": "Accesso effettuato come {'@'}{acct}",
+    "authorize": "Autorizza",
+    "deny": "Nega",
+    "denied": "Accesso negato — puoi chiudere questa finestra.",
+    "failed": "Autorizzazione non riuscita.",
+    "invalidRequest": "Questo link di autorizzazione è incompleto: mancano parametri obbligatori o non sono validi.",
+    "unknownApp": "Applicazione sconosciuta. Verifica che l'app sia registrata su questo server.",
+    "loadFailed": "Impossibile caricare i dettagli dell'applicazione."
   },
   "menu": {
     "title": "Menu",
@@ -455,7 +564,10 @@
       "authorize": "Autorizza",
       "remove": "Rimuovi",
       "confirmRemove": "Rimuovere il relay {url}?",
-      "states": { "pending": "In sospeso", "accepted": "Accettato" }
+      "states": {
+        "pending": "In sospeso",
+        "accepted": "Accettato"
+      }
     },
     "domainBlocks": {
       "hint": "Silenziare nasconde un dominio dalle timeline pubbliche; sospendere lo blocca del tutto.",

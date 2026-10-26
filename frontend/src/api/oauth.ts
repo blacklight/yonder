@@ -164,9 +164,7 @@ async function errorFrom(response: Response): Promise<ApiError> {
  * `Accept: application/json`: the same URL answers browsers with the
  * SPA shell (the consent page itself).
  */
-export async function authorizeInfo(
-  q: AuthorizeQuery,
-): Promise<AuthorizeInfo> {
+export async function authorizeInfo(q: AuthorizeQuery): Promise<AuthorizeInfo> {
   const response = await fetch(`/oauth/authorize?${authorizeParams(q)}`, {
     headers: { Accept: "application/json" },
   });

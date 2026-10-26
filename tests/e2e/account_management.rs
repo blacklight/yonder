@@ -1344,3 +1344,146 @@ async fn import_overwrite_removes_absent_entries() {
         "overwrite unfollows entries absent from the file"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Password change
+// ---------------------------------------------------------------------------
+
+fn form_req(path: &str, form: &[(&str, &str)]) -> Request<Body> {
+    let encoded = form
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencoding(k), urlencoding(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(encoded))
+        .unwrap()
+}
+
+fn urlencoding(s: &str) -> String {
+    s.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// Second factor of the login pair — a real `/oauth/token` password
+/// grant so the extra credential carries a session + refresh token.
+async fn password_login(app: &Router, email: &str, password: &str) -> (StatusCode, Value) {
+    request(
+        app,
+        form_req(
+            "/oauth/token",
+            &[
+                ("grant_type", "password"),
+                ("username", email),
+                ("password", password),
+            ],
+        ),
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn change_password_rotates_and_revokes_other_sessions() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (status, token) = register(&env, "changer", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A second credential riding a password grant (session row +
+    // refresh token) — this is the one the change must kill.
+    let (status, body) = password_login(&env.app, "changer@example.com", "correct-horse").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let other_token = body["access_token"].as_str().unwrap().to_string();
+
+    // Wrong current password → 403, nothing changes.
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req(
+                "POST",
+                "/api/v1/yonder/account/password",
+                json!({ "current_password": "nope", "new_password": "fresh-secret" }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Too-short replacement → 422.
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req(
+                "POST",
+                "/api/v1/yonder/account/password",
+                json!({ "current_password": "correct-horse", "new_password": "short" }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // The real change.
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "POST",
+                "/api/v1/yonder/account/password",
+                json!({ "current_password": "correct-horse", "new_password": "fresh-secret" }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The caller's token survives; the password-grant credential is dead.
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/accounts/verify_credentials", json!(null)),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/accounts/verify_credentials", json!(null)),
+            &other_token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let sessions: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sessions s JOIN users u ON u.id = s.user_id \
+         JOIN accounts a ON a.id = u.account_id WHERE a.username = 'changer')",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(!sessions, "the revoked session row must be gone");
+
+    // The hash rotated: the old password no longer signs in, the new one does.
+    let (status, body) = password_login(&env.app, "changer@example.com", "correct-horse").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
+    let (status, body) = password_login(&env.app, "changer@example.com", "fresh-secret").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}

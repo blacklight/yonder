@@ -291,6 +291,10 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             post(account_management::delete_account),
         )
         .route(
+            "/api/v1/yonder/account/password",
+            post(account_management::change_password),
+        )
+        .route(
             "/api/v1/yonder/invites",
             post(invites::create_invite).get(invites::list_invites),
         )
@@ -716,6 +720,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     account_management::move_account,
     account_management::cancel_move,
     account_management::delete_account,
+    account_management::change_password,
     invites::create_invite,
     invites::list_invites,
     invites::revoke_invite,

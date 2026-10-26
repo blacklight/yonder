@@ -52,7 +52,11 @@ const threads = computed<Status[][]>(() => {
     // The head opens the thread; the rest unfold chronologically.
     const head = g[0];
     g.sort((a, b) =>
-      a.id === head.id ? -1 : b.id === head.id ? 1 : Number(a.id) - Number(b.id),
+      a.id === head.id
+        ? -1
+        : b.id === head.id
+          ? 1
+          : Number(a.id) - Number(b.id),
     );
   }
   return [...groups.values()];

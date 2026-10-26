@@ -25,10 +25,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route("/api/v2/media/{id}", axum::routing::get(media::show))
         // Unlayered public read, like `/api/v1/instance`.
-        .route(
-            "/api/v2/instance",
-            axum::routing::get(instance::instance),
-        )
+        .route("/api/v2/instance", axum::routing::get(instance::instance))
         .route(
             "/api/v2/search",
             axum::routing::get(search::search_v2).route_layer(ratelimit::layer(state, "search")),

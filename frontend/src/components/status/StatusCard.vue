@@ -307,11 +307,7 @@ async function onReact(emoji: string) {
 </script>
 
 <template>
-  <article
-    class="status-card"
-    :data-status-id="status.id"
-    @click="onCardClick"
-  >
+  <article class="status-card" :data-status-id="status.id" @click="onCardClick">
     <p v-if="booster" class="status-card__boost">
       <FontAwesomeIcon icon="retweet" />
       {{

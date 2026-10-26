@@ -27,6 +27,17 @@ Inbound `Move`s are never trusted: the inbox enqueues
 requires `alsoKnownAs ∋ origin` before any write. No `account_aliases`
 rows are created from inbound activity.
 
+## Credentials
+
+- `POST /api/v1/yonder/account/password` `{current_password,
+  new_password}` — self-service password change. Re-authenticates
+  with the current password (403 on mismatch), enforces the
+  registration minimum length (422), then rotates
+  `users.password_hash` and revokes every other access token along
+  with its refresh tokens and session rows. The caller's own token
+  survives so the active session isn't dropped — the Mastodon web
+  behaviour.
+
 ## Deletion
 
 - `POST /api/v1/yonder/account/delete` `{password}` — schedules

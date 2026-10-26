@@ -357,6 +357,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: "/settings/security",
+      name: "settings-security",
+      component: () => import("@/pages/settings/SecuritySettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Invite links land on registration with the code prefilled —
       // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",

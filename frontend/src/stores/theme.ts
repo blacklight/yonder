@@ -50,9 +50,10 @@ function contrastRatio(a: number, b: number): number {
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
-// Foreground for text/icons on an accent fill. The 0.3 threshold
-// keeps dark ink for genuinely light accents only — both theme
-// defaults land on it: #14b8a6→dark (lum≈0.37), #2dd4bf→dark (≈0.51).
+// Foreground for text/icons on an accent fill. The 0.375 threshold
+// keeps dark ink for genuinely light accents only — the dark-theme
+// default #2dd4bf (lum≈0.51) gets dark ink, while the light-theme
+// default #24a8a0 (≈0.31) and brand teal #14b8a6 (≈0.37) get white.
 export function accentForeground(hex: string): string {
   const rgb = parseColor(hex);
   return rgb && luminance(rgb) > 0.375 ? "#1a1a1a" : "#ffffff";
@@ -66,7 +67,7 @@ export function accentForeground(hex: string): string {
 // are derived the same way and hardcoded in tokens.css.
 const LINK_MIN_CONTRAST = 4.5;
 
-function accentLink(accent: string, bg: string): string {
+export function accentLink(accent: string, bg: string): string {
   const a = parseColor(accent);
   const b = parseColor(bg);
   if (!a || !b) return accent;
@@ -134,17 +135,25 @@ export const useThemeStore = defineStore("theme", {
       const meta = document.querySelector<HTMLMetaElement>(
         'meta[name="theme-color"]:not([media])',
       );
+      const root = document.documentElement.style;
+      // --accent must settle before the computed read below so a
+      // just-cleared override doesn't leak into the derived trio.
+      if (this.accent) root.setProperty("--accent", this.accent);
+      else root.removeProperty("--accent");
       const light = getComputedStyle(document.documentElement);
       const color = light.getPropertyValue("--bg").trim();
       if (meta && color) meta.content = color;
-      const root = document.documentElement.style;
-      if (this.accent) {
-        root.setProperty("--accent", this.accent);
-        root.setProperty("--accent-fg", accentForeground(this.accent));
-        root.setProperty("--accent-soft", `${this.accent}22`);
-        root.setProperty("--accent-link", accentLink(this.accent, color));
+      // The trio follows the *effective* accent — a stored override
+      // or the per-theme default — so --accent-fg is right on first
+      // paint too, not only after picking a swatch.
+      const accent = this.accent ?? light.getPropertyValue("--accent").trim();
+      const rgb = parseColor(accent);
+      if (rgb || this.accent) {
+        const hex = rgb ? toHex(rgb) : accent;
+        root.setProperty("--accent-fg", accentForeground(accent));
+        root.setProperty("--accent-soft", `${hex}22`);
+        root.setProperty("--accent-link", accentLink(accent, color));
       } else {
-        root.removeProperty("--accent");
         root.removeProperty("--accent-fg");
         root.removeProperty("--accent-soft");
         root.removeProperty("--accent-link");

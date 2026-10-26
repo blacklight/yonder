@@ -63,9 +63,12 @@ describe("theme store", () => {
     ["#1565c0", "#ffffff"],
     ["#7c3aed", "#ffffff"],
     ["#808080", "#ffffff"],
-    // Genuinely light accents get dark ink — #14b8a6 and #2dd4bf are
-    // the light/dark theme defaults and must keep dark-text pairing.
-    ["#14b8a6", "#1a1a1a"],
+    // The light-theme default #24a8a0 and the brand teal #14b8a6 land
+    // just under the 0.375 threshold — light text.
+    ["#24a8a0", "#ffffff"],
+    ["#14b8a6", "#ffffff"],
+    // Genuinely light accents get dark ink — #2dd4bf is the dark
+    // theme default and must keep dark-text pairing.
     ["#2dd4bf", "#1a1a1a"],
     ["#ffc107", "#1a1a1a"],
     ["#ffffff", "#1a1a1a"],
@@ -75,6 +78,23 @@ describe("theme store", () => {
     expect(document.documentElement.style.getPropertyValue("--accent-fg")).toBe(
       expected,
     );
+  });
+
+  it("derives the accent trio for the theme default too", () => {
+    // No stored accent — apply() must still derive --accent-fg/-soft/
+    // -link from the stylesheet's --accent, not leave a stale CSS
+    // default in place.
+    const sheet = document.createElement("style");
+    sheet.textContent = ":root{--accent:#24a8a0;--bg:#f9f8f7}";
+    document.head.appendChild(sheet);
+    const store = useThemeStore();
+    store.setAccent(null);
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--accent-fg")).toBe("#ffffff");
+    expect(style.getPropertyValue("--accent-soft")).toBe("#24a8a022");
+    expect(style.getPropertyValue("--accent-link")).toBe("#1b7f79");
+    sheet.remove();
+    store.setAccent(null);
   });
 
   it("derives --accent-link toward readable contrast against --bg", () => {

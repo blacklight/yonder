@@ -184,6 +184,20 @@ async fn create_and_show_plain_status() {
     .await;
     assert_eq!(status, StatusCode::OK, "{shown}");
     assert_eq!(shown["id"], id);
+
+    // The author's `statuses_count` moved with the insert.
+    let count: i32 = sqlx::query_scalar("SELECT statuses_count FROM accounts WHERE id = $1")
+        .bind(
+            body["account"]["id"]
+                .as_str()
+                .unwrap()
+                .parse::<i64>()
+                .unwrap(),
+        )
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -500,6 +514,7 @@ async fn edit_and_delete_status() {
     )
     .await;
     let id = body["id"].as_str().unwrap().to_string();
+    let account_id: i64 = body["account"]["id"].as_str().unwrap().parse().unwrap();
 
     let (status, body) = request(
         &env.app,
@@ -535,6 +550,13 @@ async fn edit_and_delete_status() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    // The author's `statuses_count` released with the tombstone.
+    let count: i32 = sqlx::query_scalar("SELECT statuses_count FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1199,7 +1221,8 @@ async fn remote_reply_counts_and_surfaces_in_context() {
         "https://remote.test/objects/reply-1"
     );
 
-    // A redelivered Create must not double-count.
+    // A redelivered Create must not double-count — on the parent nor
+    // on the remote author's `statuses_count`.
     let create = remote_reply_create(1, &parent_uri);
     assert!(remote::handle(&core, &create, &create.to_json()).await);
     let count: i32 = sqlx::query_scalar("SELECT replies_count FROM statuses WHERE id = $1::bigint")
@@ -1208,6 +1231,17 @@ async fn remote_reply_counts_and_surfaces_in_context() {
         .await
         .unwrap();
     assert_eq!(count, 1, "redelivery must not double-count");
+    let author_posts: i32 = sqlx::query_scalar(
+        "SELECT statuses_count FROM accounts a \
+         JOIN statuses s ON s.account_id = a.id WHERE s.uri = 'https://remote.test/objects/reply-1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        author_posts, 1,
+        "remote ingest must bump the author's counter once"
+    );
 
     // Remote Delete releases the counter and drops the descendant.
     let delete = pubby_sdk::Activity {
@@ -1227,6 +1261,16 @@ async fn remote_reply_counts_and_surfaces_in_context() {
         .await
         .unwrap();
     assert_eq!(count, 0, "remote delete must release the counter");
+    let author_posts: i32 = sqlx::query_scalar(
+        "SELECT statuses_count FROM accounts WHERE actor_id = 'https://remote.test/users/eve'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        author_posts, 0,
+        "remote delete must release the author's counter"
+    );
     let (status, ctx) = request(
         &env.app,
         "GET",

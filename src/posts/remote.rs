@@ -486,6 +486,14 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
                 .await?;
         }
     }
+    // The author's post counter moves only when a brand-new row was
+    // materialized — Update redeliveries are a no-op.
+    if existing.is_none() {
+        sqlx::query("UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1")
+            .bind(account_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     // Quote counters: only moves when the target changed. The prior
     // row's `quote_of_id` was read before the upsert.
     let old_quote: Option<i64> = existing.as_ref().and_then(|e| e.quote_of_id);
@@ -714,8 +722,15 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .bind(existing.id)
     .execute(&core.db)
     .await?;
-    // A deleted reply releases its parent's counter; same for a
-    // deleted quote post's target.
+    // The deletion releases the author's post counter; a deleted reply
+    // releases its parent's counter; same for a deleted quote post's
+    // target.
+    sqlx::query(
+        "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+    )
+    .bind(existing.account_id)
+    .execute(&core.db)
+    .await?;
     if let Some(parent) = existing.in_reply_to_id {
         sqlx::query(
             "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",

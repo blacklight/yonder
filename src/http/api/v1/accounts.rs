@@ -263,7 +263,10 @@ async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::Accoun
     let stale = fresh
         .map(|t| (chrono::Utc::now() - t).num_seconds() > REMOTE_REFRESH_AFTER_SECONDS)
         .unwrap_or(true);
-    if !stale || !claim_refresh_slot(state, &account.actor_id).await {
+    if !stale && !counters_refresh_due(&state.db, account.id).await {
+        return;
+    }
+    if !claim_refresh_slot(state, &account.actor_id).await {
         return;
     }
     if let Err(e) = state
@@ -279,6 +282,34 @@ async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::Accoun
         // read retries instead of waiting out the throttle TTL.
         clear_refresh_slot(state, &account.actor_id).await;
     }
+}
+
+/// Whether the remote counters refresh is due: the `counters` marker
+/// (stamped by `RemoteActorFetch`) is absent or older than the network
+/// TTL. Counters live on their own cadence — a fresh `actor_cache` row
+/// does not imply `totalItems` were ever read, so first-seen accounts
+/// would otherwise show zeroed followers/following/posts counters for
+/// the whole actor-refresh window. `true` on error — the benign
+/// direction is an extra enqueue.
+async fn counters_refresh_due(db: &sqlx::PgPool, account_id: i64) -> bool {
+    let t: Option<chrono::DateTime<chrono::Utc>> = match sqlx::query_scalar(
+        "SELECT synced_at FROM remote_network_syncs \
+         WHERE account_id = $1 AND direction = 'counters'",
+    )
+    .bind(account_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(account_id, error = %e, "counters marker lookup failed");
+            None
+        }
+    };
+    t.map(|t| {
+        (chrono::Utc::now() - t).num_seconds() > crate::social::follows::REMOTE_NETWORK_TTL_SECONDS
+    })
+    .unwrap_or(true)
 }
 
 /// Claim the throttle flag for `actor_id`: `true` when this caller

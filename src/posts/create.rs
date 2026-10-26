@@ -477,6 +477,10 @@ pub async fn insert_status_tx(
         .execute(&mut **tx)
         .await?;
 
+    sqlx::query("UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1")
+        .bind(account_id)
+        .execute(&mut **tx)
+        .await?;
     if let Some(parent) = v.in_reply_to_id {
         sqlx::query("UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1")
             .bind(parent)
@@ -967,8 +971,15 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
-    // A deleted reply releases its parent's counter; same for a
-    // deleted quote post's target.
+    // The deletion releases the author's post counter; a deleted reply
+    // releases its parent's counter; same for a deleted quote post's
+    // target.
+    sqlx::query(
+        "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
+    )
+    .bind(status.account_id)
+    .execute(&ctx.db)
+    .await?;
     if let Some(parent) = status.in_reply_to_id {
         sqlx::query(
             "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",

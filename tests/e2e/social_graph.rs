@@ -1071,6 +1071,7 @@ async fn mock_actor_doc(
         "preferredUsername": name,
         "name": name,
         "inbox": format!("{}/users/{name}/inbox", m.base),
+        "outbox": format!("{}/collections/{name}-outbox", m.base),
         "followers": format!("{}/collections/{name}-followers", m.base),
         "following": format!("{}/collections/{name}-following", m.base),
     }))
@@ -1086,14 +1087,31 @@ async fn mock_collection(
         "carol-followers" => json!({
             "id": format!("{b}/collections/{name}"),
             "type": "OrderedCollection",
-            "totalItems": 2,
+            "totalItems": 3,
             "first": {
                 "type": "OrderedCollectionPage",
                 "orderedItems": [
                     format!("{b}/users/dave"),
                     format!("{b}/users/erin"),
                 ],
+                "next": format!("{b}/collections/carol-followers-2"),
             },
+        }),
+        "carol-followers-2" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollectionPage",
+            "orderedItems": [format!("{b}/users/frank")],
+        }),
+        "carol-outbox" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollection",
+            "totalItems": 17,
+        }),
+        // Pleroma-style outbox: document serves fine but no
+        // `totalItems` — `statuses_count` falls back to the local index.
+        "erin-outbox" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollection",
         }),
         "carol-following" => json!({
             "id": format!("{b}/collections/{name}"),
@@ -1113,6 +1131,15 @@ async fn mock_collection(
         }),
     };
     axum::Json(body)
+}
+
+fn job_ctx(state: &AppState) -> JobContext {
+    JobContext {
+        db: state.db.clone(),
+        redis: state.redis.clone(),
+        config: state.config().clone(),
+        media: state.media.clone(),
+    }
 }
 
 async fn mock_remote() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
@@ -1158,8 +1185,8 @@ async fn remote_network_listings_sync_from_remote_collections() {
     .await
     .unwrap();
 
-    // Followers — the embedded first page is materialized and remote
-    // order is preserved.
+    // Followers — the embedded first page plus its `next` page are
+    // materialized and remote order is preserved.
     let (code, list) = request(
         &env.app,
         "GET",
@@ -1175,7 +1202,7 @@ async fn remote_network_listings_sync_from_remote_collections() {
         .iter()
         .filter_map(|a| a["username"].as_str())
         .collect();
-    assert_eq!(names, ["dave", "erin"], "{list}");
+    assert_eq!(names, ["dave", "erin", "frank"], "{list}");
     assert_eq!(list[0]["acct"], "dave@localhost");
 
     // The members materialized as accounts, and the edge cache holds
@@ -1188,15 +1215,25 @@ async fn remote_network_listings_sync_from_remote_collections() {
     .fetch_one(&env.state.db)
     .await
     .unwrap();
-    assert_eq!(edges, 2);
+    assert_eq!(edges, 3);
     let member_rows: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM accounts \
-         WHERE domain = 'localhost' AND username IN ('dave', 'erin')",
+         WHERE domain = 'localhost' AND username IN ('dave', 'erin', 'frank')",
     )
     .fetch_one(&env.state.db)
     .await
     .unwrap();
-    assert_eq!(member_rows, 2);
+    assert_eq!(member_rows, 3);
+
+    // The collection's `totalItems` landed as the account's public
+    // counter (remote actor docs carry no `*Count` fields).
+    let followers_count: i32 =
+        sqlx::query_scalar("SELECT followers_count FROM accounts WHERE id = $1")
+            .bind(carol_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(followers_count, 3);
 
     // Following — `first` is a page URL, fetched one hop deeper.
     let (code, list) = request(
@@ -1215,6 +1252,13 @@ async fn remote_network_listings_sync_from_remote_collections() {
         .filter_map(|a| a["username"].as_str())
         .collect();
     assert_eq!(names, ["dave"], "{list}");
+    let following_count: i32 =
+        sqlx::query_scalar("SELECT following_count FROM accounts WHERE id = $1")
+            .bind(carol_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(following_count, 1);
 
     // Repeat reads inside the TTL are served from the edge cache —
     // the claim row must stop remote re-fetches.
@@ -1228,12 +1272,72 @@ async fn remote_network_listings_sync_from_remote_collections() {
     )
     .await;
     assert_eq!(code, StatusCode::OK);
-    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(list.as_array().unwrap().len(), 3);
     assert_eq!(
         hits.load(std::sync::atomic::Ordering::SeqCst),
         before,
         "repeat read re-fetched remote collections"
     );
+
+    // The RemoteActorFetch job (enqueued on a stale profile read)
+    // refreshes counters the listing sync didn't cover — here the
+    // outbox `totalItems` becomes `statuses_count`.
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": carol}))
+        .await
+        .unwrap();
+    let (statuses_count, followers_count, following_count): (i32, i32, i32) = sqlx::query_as(
+        "SELECT statuses_count, followers_count, following_count \
+         FROM accounts WHERE id = $1",
+    )
+    .bind(carol_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(statuses_count, 17);
+    assert_eq!((followers_count, following_count), (3, 1));
+
+    // The job stamped the `counters` marker — profile reads won't
+    // re-enqueue refreshes until it ages out.
+    let markers: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM remote_network_syncs \
+         WHERE account_id = $1 AND direction = 'counters'",
+    )
+    .bind(carol_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(markers, 1);
+
+    // An outbox without `totalItems` (Pleroma-style) falls back to the
+    // locally-indexed post count — erin has one indexed status.
+    let erin_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM accounts WHERE domain = 'localhost' AND username = 'erin'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO statuses (account_id, content, visibility, uri, local) \
+         VALUES ($1, 'hi', 'public', 'https://localhost/users/erin/statuses/1', false)",
+    )
+    .bind(erin_id)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    job.run(
+        &job_ctx(&env.state),
+        &json!({"actor_url": format!("{base}/users/erin")}),
+    )
+    .await
+    .unwrap();
+    let erin_posts: i32 = sqlx::query_scalar("SELECT statuses_count FROM accounts WHERE id = $1")
+        .bind(erin_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(erin_posts, 1);
 }
 
 /// A remote account whose instance is unreachable degrades cleanly:

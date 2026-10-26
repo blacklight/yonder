@@ -66,12 +66,21 @@ Remote accounts' counts come from their actor documents:
 - Remote accounts' followers/following listings are synced
   best-effort from the remote `followers`/`following` collections on
   first read and hourly thereafter (`remote_network_edges` /
-  `remote_network_syncs`, migration 0025). Members materialize as
-  `accounts` rows — the first page's worth inline (bounded
-  concurrency), the rest as stubs enriched by `RemoteActorFetch` jobs.
-  Local `follows` edges the remote list omits are appended; when the
-  remote collection can't be fetched the listing falls back to those
-  local rows.
+  `remote_network_syncs`, migrations 0025-0026). The sync walks `next`
+  page links up to a 400-member cap, so deeper pages paginate locally.
+  Members materialize as `accounts` rows — the first page's worth
+  inline (bounded concurrency), the rest as stubs enriched by
+  `RemoteActorFetch` jobs (a bounded subset; deeper stubs enrich
+  lazily on profile reads). Local `follows` edges the remote list
+  omits are appended; when the remote collection can't be fetched the
+  listing falls back to those local rows. A failed sync backdates its
+  marker to retry after ~5 minutes rather than a full TTL.
+- Remote counters live on their own cadence: actor documents carry no
+  `*Count` fields on Mastodon-style servers, so `followers_count` and
+  `following_count` come from the listing sync's `totalItems`, while
+  `RemoteActorFetch` (enqueued on stale profile reads — gated by the
+  `counters` sync marker, not just `actor_cache` freshness) also reads
+  the `outbox` collection's `totalItems` into `statuses_count`.
 
 ## Yonder extension
 

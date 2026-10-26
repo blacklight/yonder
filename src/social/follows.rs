@@ -154,16 +154,24 @@ pub async fn visible_target(db: &PgPool, account_id: i64) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// How long a synced remote followers/following list is served before
-/// the next read re-fetches the remote collection.
-const REMOTE_NETWORK_TTL_SECONDS: i64 = 60 * 60;
-/// Members persisted per (account, direction) — the remote first page,
-/// capped. Deeper remote pages are not followed; the listing stays
-/// best-effort.
-const REMOTE_NETWORK_CAP: usize = 80;
+/// the next read re-fetches the remote collection. `pub(crate)` —
+/// `accounts::maybe_refresh_remote` reuses it for the counters marker.
+pub(crate) const REMOTE_NETWORK_TTL_SECONDS: i64 = 60 * 60;
+/// A *failed* sync is retried after this much shorter delay — the
+/// marker is backdated so a transient remote error doesn't leave an
+/// empty listing for the whole TTL.
+const REMOTE_NETWORK_RETRY_SECONDS: i64 = 5 * 60;
+/// Members persisted per (account, direction) — remote collection
+/// pages are followed via `next` up to this cap so paging stays local.
+const REMOTE_NETWORK_CAP: usize = 400;
+/// `next`-page hops per sync, on top of the collection + first page.
+const REMOTE_NETWORK_PAGE_HOPS: usize = 8;
 /// Unknown member actors fetched synchronously per sync — the rest get
-/// a stub `accounts` row plus a `RemoteActorFetch` job so the request
-/// stays bounded.
+/// a stub `accounts` row so the request stays bounded.
 const REMOTE_NETWORK_SYNC_FETCH: usize = 24;
+/// `RemoteActorFetch` jobs enqueued per sync for stub members beyond
+/// the synchronous window; deeper stubs enrich lazily on profile view.
+const REMOTE_NETWORK_STUB_JOBS: usize = 64;
 /// Parallel remote actor fetches — pubby's client is synchronous.
 const REMOTE_NETWORK_FETCH_CONCURRENCY: usize = 8;
 
@@ -198,15 +206,21 @@ pub async fn ensure_remote_network(
     };
     match claim_network_sync(&state.db, account_id, direction).await {
         Ok(true) => {
-            if let Err(e) =
-                sync_remote_network(state, ap, account_id, direction, &actor_id, actor_data).await
+            match sync_remote_network(state, ap, account_id, direction, &actor_id, actor_data).await
             {
-                tracing::warn!(
-                    account_id,
-                    direction,
-                    error = %e,
-                    "remote network sync failed"
-                );
+                Ok(true) => {}
+                Ok(false) => {
+                    // The remote fetch failed or returned nothing readable —
+                    // backdate the marker so the next read retries soon
+                    // instead of waiting out the full TTL on an empty list.
+                    if let Err(e) = mark_sync_retry_soon(&state.db, account_id, direction).await {
+                        tracing::warn!(account_id, direction, error = %e, "network retry stamp failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(account_id, direction, error = %e, "remote network sync failed");
+                    let _ = mark_sync_retry_soon(&state.db, account_id, direction).await;
+                }
             }
         }
         Ok(false) => {}
@@ -215,6 +229,22 @@ pub async fn ensure_remote_network(
         }
     }
     true
+}
+
+/// Roll a claimed sync marker back so the next read re-claims it
+/// after [`REMOTE_NETWORK_RETRY_SECONDS`] rather than the full TTL.
+async fn mark_sync_retry_soon(db: &PgPool, account_id: i64, direction: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE remote_network_syncs \
+         SET synced_at = now() - make_interval(secs => $3) \
+         WHERE account_id = $1 AND direction = $2",
+    )
+    .bind(account_id)
+    .bind(direction)
+    .bind(REMOTE_NETWORK_TTL_SECONDS - REMOTE_NETWORK_RETRY_SECONDS)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Claim the (account, direction) sync slot: `true` when the listing
@@ -235,20 +265,6 @@ async fn claim_network_sync(db: &PgPool, account_id: i64, direction: &str) -> Re
     .fetch_optional(db)
     .await?;
     Ok(claimed.is_some())
-}
-
-/// The actor document's `followers`/`following` collection URL —
-/// plain string or `{id: …}` reference.
-fn collection_uri(actor_data: &Value, direction: &str) -> Option<String> {
-    match actor_data.get(direction) {
-        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-        Some(Value::Object(m)) => m
-            .get("id")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(String::from),
-        _ => None,
-    }
 }
 
 /// Actor URIs out of a collection/page document: `orderedItems`/`items`
@@ -282,6 +298,10 @@ fn collection_member_uris(doc: &Value) -> Option<Vec<String>> {
 /// collection document, materialize the member actors it names, then
 /// atomically replace the stored edges — remote members in remote
 /// order, then local `follows` edges the remote list omitted.
+///
+/// Returns `false` when the remote fetch failed or yielded no readable
+/// items — the caller backdates the sync marker so the next read
+/// retries soon instead of waiting out the full TTL.
 async fn sync_remote_network(
     state: &AppState,
     ap: &ApContext,
@@ -289,10 +309,10 @@ async fn sync_remote_network(
     direction: &'static str,
     actor_id: &str,
     actor_data: Value,
-) -> Result<()> {
+) -> Result<bool> {
     // 1. Collection URL — cached actor docs and fresh stub rows may
     // lack it; refetch the actor once before giving up.
-    let mut collection = collection_uri(&actor_data, direction);
+    let mut collection = lookup::actor_collection_uri(&actor_data, direction);
     if collection.is_none() {
         let handler = ap.multi.instance.clone();
         let url = actor_id.to_string();
@@ -300,31 +320,71 @@ async fn sync_remote_network(
             tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&url)).await
         {
             crate::activitypub::storage::upsert_remote_actor_row(&state.db, actor_id, &doc).await?;
-            collection = collection_uri(&doc, direction);
+            collection = lookup::actor_collection_uri(&doc, direction);
         }
     }
     let Some(collection) = collection else {
-        return Ok(());
+        // The remote actor document exposes no such collection — a
+        // permanent answer, not a transient failure.
+        return Ok(true);
     };
-
-    // 2. The collection's first page of member URIs. `first` may be a
-    // URL to a page document instead of an embedded page — one extra
-    // fetch, no deeper traversal. A failed fetch (or a count-only
-    // document) leaves the previous edges alone.
+    // 2. The collection's member URIs. `first` may embed the first
+    // page or link to it; pages chain through `next` — followed up to
+    // the cap so deeper paging stays local. A mid-chain fetch failure
+    // keeps what landed; a document with no readable items at all
+    // (count-only, or the first fetch failed) leaves the previous
+    // edges alone and reports failure for a sooner retry.
     let Some(doc) = lookup::fetch_remote_object(ap, &collection).await? else {
-        return Ok(());
+        return Ok(false);
     };
-    let mut uris = collection_member_uris(&doc);
-    if uris.is_none() {
-        if let Some(first) = doc.get("first").and_then(|f| f.as_str()) {
-            if let Some(page) = lookup::fetch_remote_object(ap, first).await? {
-                uris = collection_member_uris(&page);
-            }
-        }
+    // The collection's `totalItems` is the counter's source of truth —
+    // Mastodon-style actor documents carry no `*Count` fields.
+    if let Some(total) = lookup::total_items(&doc) {
+        let col = match direction {
+            "followers" => "followers_count",
+            _ => "following_count",
+        };
+        sqlx::query(&format!("UPDATE accounts SET {col} = $2 WHERE id = $1"))
+            .bind(account_id)
+            .bind(total as i32)
+            .execute(&state.db)
+            .await?;
     }
-    let Some(uris) = uris else {
-        return Ok(());
+    let mut page = match doc.get("first") {
+        Some(Value::Object(_)) => doc.get("first").cloned(),
+        Some(Value::String(u)) => {
+            // The make-or-break fetch of the list — one retry for a
+            // transient failure before giving up on the sync.
+            let mut p = lookup::fetch_remote_object(ap, u).await?;
+            if p.is_none() {
+                p = lookup::fetch_remote_object(ap, u).await?;
+            }
+            p
+        }
+        _ => collection_member_uris(&doc).map(|_| doc.clone()),
     };
+    let mut uris: Vec<String> = Vec::new();
+    let mut saw_items = false;
+    let mut hops = 0;
+    while let Some(p) = page {
+        if let Some(items) = collection_member_uris(&p) {
+            saw_items = true;
+            uris.extend(items);
+        }
+        if uris.len() >= REMOTE_NETWORK_CAP || hops >= REMOTE_NETWORK_PAGE_HOPS {
+            break;
+        }
+        page = match p.get("next").and_then(|v| v.as_str()) {
+            Some(u) => {
+                hops += 1;
+                lookup::fetch_remote_object(ap, u).await?
+            }
+            None => None,
+        };
+    }
+    if !saw_items {
+        return Ok(false);
+    }
 
     // 3. Drop suspended domains and duplicate URIs (order preserved),
     // then cap the persisted page.
@@ -408,8 +468,17 @@ async fn sync_remote_network(
         .collect()
         .await;
     ids.extend(fetched);
-    for uri in stub_later {
-        match lookup::upsert_remote_stub(&state.db, &state.dispatcher, uri).await {
+    // Stubs past the synchronous window: the first ones also get a
+    // `RemoteActorFetch` job; deeper stubs skip the enqueue so a large
+    // remote list can't flood the queue — they enrich lazily via the
+    // stale-actor refresh on their next profile read.
+    for (i, uri) in stub_later.iter().enumerate() {
+        let stub = if i < REMOTE_NETWORK_STUB_JOBS {
+            lookup::upsert_remote_stub(&state.db, &state.dispatcher, uri).await
+        } else {
+            lookup::upsert_remote_stub_row(&state.db, uri).await
+        };
+        match stub {
             Ok(id) => {
                 ids.insert(uri.clone(), id);
             }
@@ -478,7 +547,7 @@ async fn sync_remote_network(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(())
+    Ok(true)
 }
 
 /// `(account_id, cursor)` page over a remote account's cached network

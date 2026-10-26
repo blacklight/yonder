@@ -434,12 +434,78 @@ impl JobHandler for RemoteActorFetchJob {
                     .map_err(crate::Error::Federation)?;
                 super::storage::upsert_remote_actor_row(&self.ctx.core.db, &actor_url, &doc)
                     .await?;
+                refresh_remote_counters(&self.ctx, &actor_url, &doc).await;
                 Ok(())
             }
             None => Err(crate::Error::Internal(format!(
                 "remote actor fetch failed: {actor_url}"
             ))),
         }
+    }
+}
+
+/// Best-effort counter refresh for a remote actor: Mastodon-style
+/// actor documents carry no `followersCount`/`statusesCount`, so the
+/// `followers`/`following`/`outbox` collections' `totalItems` are the
+/// public source. Each collection is one signed GET; failures only
+/// log, never fail the job.
+async fn refresh_remote_counters(ctx: &ApContext, actor_id: &str, doc: &Value) {
+    for (key, col) in [
+        ("followers", "followers_count"),
+        ("following", "following_count"),
+        ("outbox", "statuses_count"),
+    ] {
+        let Some(uri) = super::lookup::actor_collection_uri(doc, key) else {
+            continue;
+        };
+        let Ok(Some(coll)) = super::lookup::fetch_remote_object(ctx, &uri).await else {
+            continue;
+        };
+        let Some(total) = super::lookup::total_items(&coll) else {
+            // Pleroma-style outboxes expose no `totalItems` — the
+            // honest `statuses_count` is what we've indexed locally.
+            // (A failed fetch still skips, so a transient outage
+            // doesn't clobber a good remote value.)
+            if key == "outbox" {
+                if let Err(e) = sqlx::query(
+                    "UPDATE accounts SET statuses_count = ( \
+                         SELECT count(*)::int FROM statuses s \
+                         WHERE s.account_id = accounts.id AND NOT s.tombstone) \
+                     WHERE actor_id = $1",
+                )
+                .bind(actor_id)
+                .execute(&ctx.core.db)
+                .await
+                {
+                    tracing::warn!(actor = %actor_id, error = %e, "local posts count fallback failed");
+                }
+            }
+            continue;
+        };
+        if let Err(e) = sqlx::query(&format!(
+            "UPDATE accounts SET {col} = $2 WHERE actor_id = $1"
+        ))
+        .bind(actor_id)
+        .bind(total as i32)
+        .execute(&ctx.core.db)
+        .await
+        {
+            tracing::warn!(actor = %actor_id, key, error = %e, "remote counter refresh failed");
+        }
+    }
+    // Stamp the marker so profile reads stop re-enqueueing this job
+    // for the TTL — the attempt itself counts (a dead remote must not
+    // re-trigger a refresh on every page view).
+    if let Err(e) = sqlx::query(
+        "INSERT INTO remote_network_syncs (account_id, direction, synced_at) \
+         SELECT id, 'counters', now() FROM accounts WHERE actor_id = $1 \
+         ON CONFLICT (account_id, direction) DO UPDATE SET synced_at = now()",
+    )
+    .bind(actor_id)
+    .execute(&ctx.core.db)
+    .await
+    {
+        tracing::warn!(actor = %actor_id, error = %e, "counters sync stamp failed");
     }
 }
 

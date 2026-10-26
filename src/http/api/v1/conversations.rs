@@ -173,7 +173,12 @@ pub async fn list_conversations(
     let data = load_page_data(&state, auth.account_id, &groups).await?;
     let mut out = Vec::with_capacity(groups.len());
     for g in &groups {
-        out.push(conversation_json(auth.account_id, g, markers.get(&g.key), &data));
+        out.push(conversation_json(
+            auth.account_id,
+            g,
+            markers.get(&g.key),
+            &data,
+        ));
     }
     let cursors: Vec<i64> = groups.iter().map(|g| g.newest_id).collect();
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);

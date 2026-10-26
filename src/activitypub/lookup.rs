@@ -43,13 +43,11 @@ pub(crate) async fn resolve_actor_url(
 }
 
 /// Bare `accounts` upsert for a freshly-resolved remote actor — the
-/// `handle_flag` shape (no network I/O), with a `RemoteActorFetch`
-/// job enqueued to enrich it. Returns the account id.
-pub(crate) async fn upsert_remote_stub(
-    db: &PgPool,
-    dispatcher: &Dispatcher,
-    actor_url: &str,
-) -> Result<i64> {
+/// `handle_flag` shape (no network I/O, no enrichment job). Returns
+/// the account id. Callers wanting the row enriched either enqueue
+/// `RemoteActorFetch` themselves ([`upsert_remote_stub`]) or rely on
+/// the lazy refresh on the next profile read.
+pub(crate) async fn upsert_remote_stub_row(db: &PgPool, actor_url: &str) -> Result<i64> {
     let domain = crate::activitypub::moderation::actor_domain(actor_url)
         .unwrap_or_else(|| "unknown".to_string());
     let username = actor_url
@@ -68,13 +66,20 @@ pub(crate) async fn upsert_remote_stub(
     .bind(actor_url)
     .execute(db)
     .await?;
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
+    sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
         .bind(actor_url)
         .fetch_optional(db)
-        .await?;
-    let Some(id) = id else {
-        return Err(Error::Internal("account upsert failed".to_string()));
-    };
+        .await?
+        .ok_or_else(|| Error::Internal("account upsert failed".to_string()))
+}
+
+/// `upsert_remote_stub_row` + a `RemoteActorFetch` job to enrich it.
+pub(crate) async fn upsert_remote_stub(
+    db: &PgPool,
+    dispatcher: &Dispatcher,
+    actor_url: &str,
+) -> Result<i64> {
+    let id = upsert_remote_stub_row(db, actor_url).await?;
     dispatcher
         .enqueue(
             JobKind::RemoteActorFetch,
@@ -82,6 +87,27 @@ pub(crate) async fn upsert_remote_stub(
         )
         .await?;
     Ok(id)
+}
+
+/// An actor document's collection URL (`followers`, `following`,
+/// `outbox`, …) — plain string or `{id: …}` reference.
+pub(crate) fn actor_collection_uri(actor_data: &Value, key: &str) -> Option<String> {
+    match actor_data.get(key) {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Object(m)) => m
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(String::from),
+        _ => None,
+    }
+}
+
+/// An AP `totalItems`-style count — integer or numeric string.
+pub(crate) fn total_items(doc: &Value) -> Option<i64> {
+    doc.get("totalItems")
+        .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
+        .map(|n| n.clamp(0, i32::MAX as i64))
 }
 
 /// Signed GET of a remote ActivityPub document (actor, Note, …) —

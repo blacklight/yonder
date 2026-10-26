@@ -65,6 +65,8 @@ async function toggle(
       type="button"
       class="status-footer__btn"
       :aria-label="t('status.reply')"
+      :disabled="!auth.isLoggedIn"
+      data-testid="reply"
       @click="emit('reply', status)"
     >
       <FontAwesomeIcon icon="reply" />
@@ -101,6 +103,7 @@ async function toggle(
       class="status-footer__btn"
       :aria-label="t('status.quote')"
       :disabled="!auth.isLoggedIn"
+      data-testid="quote"
       @click="emit('quote', status)"
     >
       <FontAwesomeIcon icon="quote-left" />

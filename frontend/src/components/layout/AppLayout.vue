@@ -6,6 +6,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import NavMenu, { type NavItem } from "./NavMenu.vue";
 import MobileMenu from "./MobileMenu.vue";
+import QuoteComposeModal from "@/components/compose/QuoteComposeModal.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
 import { getInstance } from "@/api/instance";
@@ -422,6 +423,11 @@ function search() {
         </nav>
       </div>
     </aside>
+
+    <QuoteComposeModal
+      v-if="compose.quoteTarget"
+      :status="compose.quoteTarget"
+    />
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
@@ -105,6 +105,11 @@ const VISIBILITIES: StatusVisibility[] = [
 const CONTENT_TYPES = ["text/plain", "text/markdown"];
 
 onMounted(async () => {
+  // Embedded composers (inline reply, quote modal) mount *after* the
+  // open signal fired, so the watcher below can't focus them. After
+  // nextTick the parent's mount hooks (e.g. Modal's focus) have run.
+  await nextTick();
+  textarea.value?.focus();
   try {
     limits.value = composeLimits(await getInstance());
   } catch {
@@ -362,6 +367,8 @@ async function submit() {
       @input="
         compose.update({ text: ($event.target as HTMLTextAreaElement).value })
       "
+      @keydown.ctrl.enter.prevent="submit"
+      @keydown.meta.enter.prevent="submit"
     />
 
     <div v-if="media.length" class="compose__media">

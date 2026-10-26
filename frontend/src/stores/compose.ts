@@ -65,12 +65,21 @@ function loadDraft(): ComposeDraft {
  * The compose draft — persisted to localStorage so a reload (or an
  * auth round-trip in epic 25) doesn't lose it. Reply/quote/DM context
  * is set by `open*` actions and shown as a banner in ComposeBox.
+ *
+ * `replyTargetId`/`quoteTarget` coordinate the *embedded* composers —
+ * the inline reply form unwrapped under a status card and the quote
+ * modal. They're ephemeral on purpose: at most one embedded composer
+ * is open at a time, and a reload never re-opens one.
  */
 export const useComposeStore = defineStore("compose", {
   state: () => ({
     draft: loadDraft() as ComposeDraft,
     /** Bumped to force the compose box open (reply from a card). */
     openSignal: 0,
+    /** Id of the status whose card shows the inline reply form. */
+    replyTargetId: null as string | null,
+    /** Status displayed (as a card) inside the quote compose modal. */
+    quoteTarget: null as Status | null,
   }),
   getters: {
     /** Anything worth keeping — reply/quote/DM openers confirm first. */
@@ -93,7 +102,8 @@ export const useComposeStore = defineStore("compose", {
     },
 
     /** Reply — the server carries over the parent's mentions; the
-     * client only seeds the `@author` prefix for context. */
+     * client only seeds the `@author` prefix for context. The form
+     * unwraps inline under the card (`replyTargetId`). */
     openReply(status: Status) {
       const target = status.reblog ?? status;
       const acct = target.account.acct;
@@ -103,9 +113,12 @@ export const useComposeStore = defineStore("compose", {
         replyToAcct: acct,
         text: `@${acct} `,
       });
+      this.replyTargetId = target.id;
       this.openSignal++;
     },
 
+    /** Quote — the composer opens in a modal showing the quoted
+     * card (`quoteTarget`). */
     openQuote(status: Status) {
       const target = status.reblog ?? status;
       this.reset();
@@ -113,6 +126,7 @@ export const useComposeStore = defineStore("compose", {
         quoteId: target.id,
         quotedAcct: target.account.acct,
       });
+      this.quoteTarget = target;
       this.openSignal++;
     },
 
@@ -163,6 +177,15 @@ export const useComposeStore = defineStore("compose", {
     reset() {
       this.draft = emptyDraft();
       this.persist();
+      // Posting (or cancelling) also dismisses any embedded composer.
+      this.closeEmbed();
+    },
+
+    /** Close the inline reply form / quote modal without touching the
+     * draft — the text survives for the `/compose` page or a reopen. */
+    closeEmbed() {
+      this.replyTargetId = null;
+      this.quoteTarget = null;
     },
 
     /**

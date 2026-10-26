@@ -10,13 +10,15 @@ function status(id: string, acct: string): Status {
 describe("compose store", () => {
   beforeEach(() => localStorage.removeItem("yonder.compose.draft"));
 
-  it("openReply sets in_reply_to and seeds @author", () => {
+  it("openReply sets in_reply_to, seeds @author and targets the card", () => {
     const c = useComposeStore();
     c.openReply(status("10", "bob@remote.test"));
     expect(c.draft.inReplyToId).toBe("10");
     expect(c.draft.replyToAcct).toBe("bob@remote.test");
     expect(c.draft.text).toBe("@bob@remote.test ");
     expect(c.openSignal).toBe(1);
+    expect(c.replyTargetId).toBe("10");
+    expect(c.quoteTarget).toBeNull();
   });
 
   it("openReply unwraps a boost", () => {
@@ -27,11 +29,46 @@ describe("compose store", () => {
     expect(c.draft.replyToAcct).toBe("carol");
   });
 
-  it("openQuote sets quote_id", () => {
+  it("openQuote sets quote_id and opens the modal on the target", () => {
     const c = useComposeStore();
     c.openQuote(status("7", "dan"));
     expect(c.draft.quoteId).toBe("7");
     expect(c.draft.quotedAcct).toBe("dan");
+    // Pinia wraps state in a reactive proxy — compare by id.
+    expect(c.quoteTarget?.id).toBe("7");
+    expect(c.replyTargetId).toBeNull();
+  });
+
+  it("openReply and openQuote displace each other's embed", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob"));
+    c.openQuote(status("7", "dan"));
+    expect(c.replyTargetId).toBeNull();
+    expect(c.quoteTarget?.id).toBe("7");
+    c.openReply(status("10", "bob"));
+    expect(c.quoteTarget).toBeNull();
+    expect(c.replyTargetId).toBe("10");
+  });
+
+  it("closeEmbed hides embedded composers but keeps the draft", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob"));
+    c.update({ text: "@bob still typing" });
+    c.closeEmbed();
+    expect(c.replyTargetId).toBeNull();
+    expect(c.quoteTarget).toBeNull();
+    expect(c.draft.text).toBe("@bob still typing");
+    expect(c.draft.inReplyToId).toBe("10");
+  });
+
+  it("reset clears the embedded composers", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob"));
+    c.reset();
+    expect(c.replyTargetId).toBeNull();
+    c.openQuote(status("7", "dan"));
+    c.reset();
+    expect(c.quoteTarget).toBeNull();
   });
 
   it("openMention seeds @acct and stays public", () => {

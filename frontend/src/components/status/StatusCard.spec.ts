@@ -245,6 +245,53 @@ describe("StatusCard", () => {
     expect(compose.draft.text).toBe("@alice ");
   });
 
+  it("reply unwraps an inline compose form under the card", async () => {
+    useAuthStore().setToken("t");
+    mockApi(200, {});
+    const { useComposeStore } = await import("@/stores/compose");
+    const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
+    expect(wrapper.find("[data-testid='compose']").exists()).toBe(false);
+    await wrapper.get("[data-testid='reply']").trigger("click");
+    await flushPromises();
+    const compose = useComposeStore();
+    expect(compose.replyTargetId).toBe("1");
+    expect(compose.draft.inReplyToId).toBe("1");
+    const form = wrapper.get("[data-testid='compose']");
+    expect(form.text()).toContain("Replying to");
+    // Cancelling the reply context dismisses the form again.
+    compose.reset();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='compose']").exists()).toBe(false);
+  });
+
+  it("quote opens the compose modal on the quoted status", async () => {
+    useAuthStore().setToken("t");
+    const { useComposeStore } = await import("@/stores/compose");
+    const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
+    await wrapper.get("[data-testid='quote']").trigger("click");
+    await flushPromises();
+    const compose = useComposeStore();
+    expect(compose.quoteTarget?.id).toBe("1");
+    expect(compose.draft.quoteId).toBe("1");
+    // No inline reply form — the composer lives in the modal.
+    expect(wrapper.find("[data-testid='compose']").exists()).toBe(false);
+  });
+
+  it("directReply retargets the thread composer as a DM, no inline form", async () => {
+    useAuthStore().setToken("t");
+    const { useComposeStore } = await import("@/stores/compose");
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: status(), directReply: true },
+    });
+    await wrapper.get("[data-testid='reply']").trigger("click");
+    await flushPromises();
+    const compose = useComposeStore();
+    expect(compose.draft.visibility).toBe("direct");
+    expect(compose.draft.inReplyToId).toBe("1");
+    expect(compose.replyTargetId).toBeNull();
+    expect(wrapper.find("[data-testid='compose']").exists()).toBe(false);
+  });
+
   it("react/unreact via picker and existing chips", async () => {
     useAuthStore().setToken("t");
     const spy = mockApi(200, {});

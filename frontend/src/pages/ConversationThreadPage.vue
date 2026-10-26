@@ -48,6 +48,7 @@ onMounted(async () => {
         v-for="s in store.activeThread.statuses"
         :key="s.id"
         :status="s"
+        direct-reply
       />
       <Button
         v-if="store.activeThread.next"

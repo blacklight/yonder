@@ -56,6 +56,43 @@ describe("ComposeBox", () => {
     expect(useComposeStore().draft.text).toBe("");
   });
 
+  it("Ctrl+Enter submits from the textarea, plain Enter does not", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("hello world");
+    await text.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(spy).not.toHaveBeenCalled();
+    await text.trigger("keydown", { key: "Enter", ctrlKey: true });
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.status).toBe("hello world");
+  });
+
+  it("Cmd+Enter (macOS) also submits", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("meta submit");
+    await text.trigger("keydown", { key: "Enter", metaKey: true });
+    await flushPromises();
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("Ctrl+Enter does not bypass posting limits", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("x".repeat(501));
+    await text.trigger("keydown", { key: "Enter", ctrlKey: true });
+    await flushPromises();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("disables post over the character limit", async () => {
     mockPost();
     const { wrapper } = mountWith(ComposeBox);

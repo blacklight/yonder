@@ -12,6 +12,7 @@ import StatusQuote from "./StatusQuote.vue";
 import StatusPoll from "./StatusPoll.vue";
 import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
+import ComposeBox from "@/components/compose/ComposeBox.vue";
 import { sanitizeHtml } from "@/utils/sanitize";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
@@ -25,7 +26,12 @@ import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import type { Status } from "@/api/entities";
 
-const props = defineProps<{ status: Status }>();
+const props = defineProps<{
+  status: Status;
+  /** DM threads reply through the page's own composer as a direct
+   * message — no inline form and never a public reply to a DM. */
+  directReply?: boolean;
+}>();
 const emit = defineEmits<{ removed: [id: string] }>();
 const { t } = useI18n();
 const router = useRouter();
@@ -388,22 +394,22 @@ async function onReact(emoji: string) {
         :status="shown"
         @reply="
           (s) =>
-            guardDraft(() => {
-              compose.openReply(s);
-              void router.push('/compose');
-            })
+            guardDraft(() =>
+              props.directReply
+                ? compose.openDirectReply(s)
+                : compose.openReply(s),
+            )
         "
-        @quote="
-          (s) =>
-            guardDraft(() => {
-              compose.openQuote(s);
-              void router.push('/compose');
-            })
-        "
+        @quote="(s) => guardDraft(() => compose.openQuote(s))"
         @react="pickerOpen = !pickerOpen"
       />
       <ReactionPicker v-if="pickerOpen" @select="onReact" />
     </div>
+
+    <ComposeBox
+      v-if="!directReply && compose.replyTargetId === shown.id"
+      class="status-card__reply"
+    />
 
     <Modal
       v-if="pendingAction"
@@ -569,6 +575,11 @@ async function onReact(emoji: string) {
 }
 .status-card__footer-wrap {
   position: relative;
+}
+.status-card__reply {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 .status-card__error {
   color: #c0392b;

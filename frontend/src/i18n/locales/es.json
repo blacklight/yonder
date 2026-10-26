@@ -262,6 +262,11 @@
     "cwHide": "Mostrar menos",
     "showSensitive": "Contenido sensible — clic para mostrar",
     "altText": "Texto alternativo",
+    "media": {
+      "view": "Ver multimedia",
+      "previous": "Adjunto anterior",
+      "next": "Adjunto siguiente"
+    },
     "quoteUnavailable": "Post citado no disponible",
     "vote": "Votar",
     "pollVotes": "{count} votos",

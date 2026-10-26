@@ -3595,6 +3595,8 @@ dependencies = [
 [[package]]
 name = "pubby-sdk"
 version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a26f3c7678b373265e362e5783ce0b08a3ecd0a181f6759efe11f5079744be71"
 dependencies = [
  "axum",
  "base64 0.22.1",

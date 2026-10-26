@@ -262,6 +262,11 @@
     "cwHide": "Show less",
     "showSensitive": "Sensitive content — click to show",
     "altText": "Alt text",
+    "media": {
+      "view": "View media",
+      "previous": "Previous attachment",
+      "next": "Next attachment"
+    },
     "quoteUnavailable": "Quoted post unavailable",
     "vote": "Vote",
     "pollVotes": "{count} votes",

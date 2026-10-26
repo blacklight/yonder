@@ -262,6 +262,11 @@
     "cwHide": "إظهار أقل",
     "showSensitive": "محتوى حساس — انقر للإظهار",
     "altText": "النص البديل",
+    "media": {
+      "view": "عرض الوسائط",
+      "previous": "المرفق السابق",
+      "next": "المرفق التالي"
+    },
     "quoteUnavailable": "المنشور المقتبس غير متاح",
     "vote": "تصويت",
     "pollVotes": "{count} أصوات | {count} صوت | {count} صوتان | {count} أصوات | {count} صوتًا | {count} صوت",

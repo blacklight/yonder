@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import Modal from "@/components/ui/Modal.vue";
+import MediaModal from "@/components/status/MediaModal.vue";
 import type { MediaAttachment } from "@/api/entities";
 
 defineProps<{
@@ -12,6 +13,7 @@ const { t } = useI18n();
 
 const revealed = ref(false);
 const altModal = ref<MediaAttachment | null>(null);
+const viewerIndex = ref<number | null>(null);
 </script>
 
 <template>
@@ -34,13 +36,20 @@ const altModal = ref<MediaAttachment | null>(null);
       class="status-media__grid"
       :class="`status-media__grid--${media.length}`"
     >
-      <figure v-for="m in media" :key="m.id" class="status-media__item">
-        <img
+      <figure v-for="(m, i) in media" :key="m.id" class="status-media__item">
+        <button
           v-if="m.type === 'image' || m.type === 'gifv'"
-          :src="m.preview_url ?? m.url"
-          :alt="m.description ?? ''"
-          class="status-media__img"
-        />
+          type="button"
+          class="status-media__img-btn"
+          :aria-label="m.description ?? t('status.media.view')"
+          @click="viewerIndex = i"
+        >
+          <img
+            :src="m.preview_url ?? m.url"
+            :alt="m.description ?? ''"
+            class="status-media__img"
+          />
+        </button>
         <video
           v-else-if="m.type === 'video'"
           :src="m.url"
@@ -68,6 +77,12 @@ const altModal = ref<MediaAttachment | null>(null);
     >
       <p>{{ altModal?.description }}</p>
     </Modal>
+    <MediaModal
+      v-if="viewerIndex !== null"
+      :media="media"
+      :initial-index="viewerIndex"
+      @close="viewerIndex = null"
+    />
   </div>
 </template>
 
@@ -98,6 +113,14 @@ const altModal = ref<MediaAttachment | null>(null);
 .status-media__item {
   margin: 0;
   position: relative;
+}
+.status-media__img-btn {
+  display: block;
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: zoom-in;
 }
 .status-media__img {
   width: 100%;

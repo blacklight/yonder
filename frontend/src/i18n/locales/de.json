@@ -262,6 +262,11 @@
     "cwHide": "Weniger anzeigen",
     "showSensitive": "Sensible Inhalte — Klicken zum Anzeigen",
     "altText": "Alt-Text",
+    "media": {
+      "view": "Medien ansehen",
+      "previous": "Vorheriger Anhang",
+      "next": "Nächster Anhang"
+    },
     "quoteUnavailable": "Zitierter Beitrag nicht verfügbar",
     "vote": "Abstimmen",
     "pollVotes": "{count} Stimmen",

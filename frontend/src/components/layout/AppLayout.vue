@@ -523,6 +523,7 @@ function search() {
 }
 .layout__compose {
   width: 100%;
+  margin: 1rem 0;
 }
 .layout__sidebar-footer {
   margin-top: auto;

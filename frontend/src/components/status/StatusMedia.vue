@@ -72,6 +72,9 @@ const altModal = ref<MediaAttachment | null>(null);
 </template>
 
 <style scoped>
+.status-media {
+  max-height: 30rem;
+}
 .status-media__cover {
   padding: var(--space-5);
   background: var(--bg-sunken);
@@ -98,6 +101,9 @@ const altModal = ref<MediaAttachment | null>(null);
 }
 .status-media__img {
   width: 100%;
+  max-height: 30rem;
+  /* fix the ratio */
+  object-fit: cover;
   border-radius: var(--radius-md);
   display: block;
 }

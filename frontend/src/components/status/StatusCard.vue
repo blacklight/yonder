@@ -450,6 +450,7 @@ async function onReact(emoji: string) {
 
 <style scoped>
 .status-card {
+  background: var(--bg-raised);
   padding: var(--space-4);
   border-bottom: 1px solid var(--border);
 }

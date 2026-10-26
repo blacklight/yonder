@@ -117,6 +117,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.timeline {
+  background: var(--bg);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
 .timeline__pending {
   width: 100%;
   margin-bottom: var(--space-2);

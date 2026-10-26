@@ -153,7 +153,7 @@ onUnmounted(() =>
   align-items: center;
   justify-content: center;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text);
@@ -163,9 +163,12 @@ onUnmounted(() =>
   background: var(--bg-sunken);
 }
 .menu__list {
+  width: fit-content;
+  max-width: 20rem;
   position: absolute;
   top: 100%;
   left: 0;
+  font-size: var(--text-sm);
   margin: var(--space-1) 0 0;
   padding: var(--space-1);
   list-style: none;
@@ -180,6 +183,9 @@ onUnmounted(() =>
   outline: var(--focus-ring);
 }
 .menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;

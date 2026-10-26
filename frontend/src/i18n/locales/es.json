@@ -323,8 +323,11 @@
     "register": "Crear una cuenta",
     "codeRequired": "Introduce tu código de dos factores.",
     "mfaHintTotp": "Introduce el código de tu aplicación de autenticación o un código de respaldo.",
-    "mfaHintWebauthn": "Esta cuenta inicia sesión con una passkey; el inicio de sesión con passkey aún no es compatible con este navegador.",
-    "verificationPending": "Tu dirección de correo aún no está verificada. Publicar y otras acciones no estarán disponibles hasta que la confirmes — revisa tu bandeja de entrada."
+    "mfaHintWebauthn": "Esta cuenta inicia sesión con una passkey — usa tu llave de seguridad para continuar.",
+    "verificationPending": "Tu dirección de correo aún no está verificada. Publicar y otras acciones no estarán disponibles hasta que la confirmes — revisa tu bandeja de entrada.",
+    "mfaOr": "o",
+    "useSecurityKey": "Usar una llave de seguridad",
+    "touchKey": "Toca la llave ahora"
   },
   "oauth": {
     "title": "Autorizar aplicación",

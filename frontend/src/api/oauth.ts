@@ -218,3 +218,31 @@ export function twoFactorVerify(params: {
     code: params.code,
   });
 }
+
+/**
+ * `POST /oauth/2fa/webauthn/assert/begin` — assertion options for the
+ * pending login's registered security keys.
+ */
+export async function webauthnAssertBegin(mfaToken: string): Promise<unknown> {
+  const response = await fetch("/oauth/2fa/webauthn/assert/begin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mfa_token: mfaToken }),
+  });
+  if (!response.ok) throw await errorFrom(response);
+  return response.json();
+}
+
+/**
+ * `POST /oauth/2fa/webauthn/assert` — verify the assertion and issue
+ * the token pair (`credential` is the serialized PublicKeyCredential).
+ */
+export function webauthnAssert(params: {
+  mfaToken: string;
+  credential: unknown;
+}): Promise<TokenBody> {
+  return postForm("/oauth/2fa/webauthn/assert", {
+    mfa_token: params.mfaToken,
+    credential: JSON.stringify(params.credential),
+  });
+}

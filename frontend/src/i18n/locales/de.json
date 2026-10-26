@@ -323,8 +323,11 @@
     "register": "Konto erstellen",
     "codeRequired": "Gib deinen Zwei-Faktor-Code ein.",
     "mfaHintTotp": "Gib den Code aus deiner Authenticator-App oder einen Backup-Code ein.",
-    "mfaHintWebauthn": "Dieses Konto meldet sich mit einem Passkey an; Passkey-Anmeldung wird in diesem Browser noch nicht unterstützt.",
-    "verificationPending": "Deine E-Mail-Adresse ist noch nicht bestätigt. Beiträge und andere Aktionen sind erst nach der Bestätigung verfügbar — sieh in dein Postfach."
+    "mfaHintWebauthn": "Dieses Konto meldet sich mit einem Passkey an — verwende deinen Sicherheitsschlüssel.",
+    "verificationPending": "Deine E-Mail-Adresse ist noch nicht bestätigt. Beiträge und andere Aktionen sind erst nach der Bestätigung verfügbar — sieh in dein Postfach.",
+    "mfaOr": "oder",
+    "useSecurityKey": "Sicherheitsschlüssel verwenden",
+    "touchKey": "Schlüssel jetzt berühren"
   },
   "oauth": {
     "title": "Anwendung autorisieren",

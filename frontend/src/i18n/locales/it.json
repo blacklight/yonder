@@ -323,8 +323,11 @@
     "register": "Crea un account",
     "codeRequired": "Inserisci il tuo codice a due fattori.",
     "mfaHintTotp": "Inserisci il codice della tua app di autenticazione o un codice di backup.",
-    "mfaHintWebauthn": "Questo account accede con una passkey; l'accesso con passkey non è ancora supportato in questo browser.",
-    "verificationPending": "Il tuo indirizzo email non è ancora verificato. Pubblicare e altre azioni non saranno disponibili finché non lo confermi — controlla la casella di posta."
+    "mfaHintWebauthn": "Questo account accede con una passkey — usa la tua chiave di sicurezza per continuare.",
+    "verificationPending": "Il tuo indirizzo email non è ancora verificato. Pubblicare e altre azioni non saranno disponibili finché non lo confermi — controlla la casella di posta.",
+    "mfaOr": "oppure",
+    "useSecurityKey": "Usa una chiave di sicurezza",
+    "touchKey": "Tocca la chiave ora"
   },
   "oauth": {
     "title": "Autorizza applicazione",

@@ -89,3 +89,51 @@ export async function createSecurityKey(options: unknown): Promise<unknown> {
     },
   };
 }
+
+interface RequestOptionsWire {
+  publicKey: {
+    challenge: string;
+    allowCredentials?: CredentialDescriptor[];
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Run `navigator.credentials.get` for an `assert/begin` response and
+ * return the assertion in the JSON shape `assert` verifies.
+ */
+export async function getAssertion(options: unknown): Promise<unknown> {
+  const wire = options as RequestOptionsWire;
+  const { publicKey: pk } = wire;
+  // Same rationale as `createSecurityKey`: drop advisory extensions
+  // Firefox-family builds choke on.
+  const rest = { ...pk } as Record<string, unknown>;
+  delete rest.hints;
+  delete rest.extensions;
+  const credential = (await navigator.credentials.get({
+    publicKey: {
+      ...rest,
+      challenge: b64urlToBuffer(pk.challenge),
+      allowCredentials: (pk.allowCredentials ?? []).map((c) => ({
+        ...c,
+        type: "public-key",
+        id: b64urlToBuffer(c.id),
+      })),
+    } as PublicKeyCredentialRequestOptions,
+  })) as PublicKeyCredential | null;
+  if (!credential) throw new Error("the security key ceremony was cancelled");
+  const response = credential.response as AuthenticatorAssertionResponse;
+  return {
+    id: credential.id,
+    rawId: bufferToB64url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: bufferToB64url(response.authenticatorData),
+      clientDataJSON: bufferToB64url(response.clientDataJSON),
+      signature: bufferToB64url(response.signature),
+      userHandle: response.userHandle
+        ? bufferToB64url(response.userHandle)
+        : null,
+    },
+  };
+}

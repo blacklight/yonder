@@ -235,11 +235,14 @@ cors_enabled = false
 [rate_limit.search]
 limit = 20
 period_seconds = 60
-# authenticated_limit = 60
+authenticated_limit = 60
 
 [rate_limit.timeline]
 limit = 5
 period_seconds = 10
+# Higher ceiling for signed-in clients — a page load fires several
+# timeline-bucket reads (timeline + conversations + profile + emojis).
+authenticated_limit = 30
 
 [rate_limit.account_creation]
 limit = 5
@@ -263,6 +266,10 @@ period_seconds = 300
 [rate_limit.authentication]
 limit = 5
 period_seconds = 60
+# verify_credentials and the streaming handshake run on every app
+# boot; signed-in users get a workable ceiling while the anonymous
+# 5/min still guards token/credential probing.
+authenticated_limit = 60
 
 # Inbound ActivityPub inbox POSTs (per remote IP).
 [rate_limit.federation_inbox]

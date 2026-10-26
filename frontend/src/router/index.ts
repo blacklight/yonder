@@ -302,6 +302,20 @@ export const router = createRouter({
       meta: { dynamicTitle: true },
     },
     {
+      path: "/@:acct/followers",
+      name: "profile-followers",
+      component: () => import("@/pages/FollowListPage.vue"),
+      props: { direction: "followers" },
+      meta: { dynamicTitle: true },
+    },
+    {
+      path: "/@:acct/following",
+      name: "profile-following",
+      component: () => import("@/pages/FollowListPage.vue"),
+      props: { direction: "following" },
+      meta: { dynamicTitle: true },
+    },
+    {
       // Numeric ids resolve on this alias only — `/@123` is a valid handle.
       path: "/accounts/:id",
       name: "profile-id",

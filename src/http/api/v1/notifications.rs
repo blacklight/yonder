@@ -148,10 +148,7 @@ pub async fn list(
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     let ctx = PostContext::new(&state);
-    let mut out = Vec::with_capacity(rows.len());
-    for row in &rows {
-        out.push(notifications::entity(&ctx, row, &rules).await?);
-    }
+    let out = notifications::entities(&ctx, &rows, &rules).await?;
     Ok((headers, Json(Value::Array(out))))
 }
 

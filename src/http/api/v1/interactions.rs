@@ -113,10 +113,8 @@ pub async fn favourites_list(
     let page = paginate::parse(&params);
     let rows = favourite::list(&ctx, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
-    let mut items = Vec::with_capacity(rows.len());
-    for (status, _) in rows {
-        items.push(status_json(&ctx, &status, auth.account_id).await?);
-    }
+    let statuses: Vec<crate::posts::StatusRow> = rows.into_iter().map(|(s, _)| s).collect();
+    let items = entity::status_entities(&ctx, &statuses, Some(auth.account_id)).await?;
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(items))))
 }
@@ -350,10 +348,8 @@ pub async fn bookmarks_list(
     let page = paginate::parse(&params);
     let rows = bookmark::list(&ctx, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
-    let mut items = Vec::with_capacity(rows.len());
-    for (status, _) in rows {
-        items.push(status_json(&ctx, &status, auth.account_id).await?);
-    }
+    let statuses: Vec<crate::posts::StatusRow> = rows.into_iter().map(|(s, _)| s).collect();
+    let items = entity::status_entities(&ctx, &statuses, Some(auth.account_id)).await?;
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(items))))
 }

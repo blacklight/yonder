@@ -284,13 +284,41 @@ pub async fn followers(
     let rows = if follows::network_hidden(&state.db, id, viewer).await? {
         Vec::new()
     } else {
-        follows::followers(&state.db, id, &page).await?
+        network_page(&state, id, "followers", &page).await?
     };
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
+}
+
+/// Cached remote edges when the account is remote (with a `follows`
+/// fallback when nothing has been synced — e.g. federation off, or a
+/// remote that doesn't expose its collection), the plain `follows`
+/// page for local accounts. The fallback only applies to the first
+/// page: a cursor-paged request past the synced list must not wrap
+/// around into duplicate local rows.
+async fn network_page(
+    state: &AppState,
+    id: i64,
+    direction: &'static str,
+    page: &paginate::Page,
+) -> Result<Vec<(i64, i64)>> {
+    if !follows::ensure_remote_network(state, id, direction).await {
+        return match direction {
+            "followers" => follows::followers(&state.db, id, page).await,
+            _ => follows::following(&state.db, id, page).await,
+        };
+    }
+    let rows = follows::remote_edge_page(&state.db, id, direction, page).await?;
+    if rows.is_empty() && page.max_id.is_none() && page.since_id.is_none() {
+        return match direction {
+            "followers" => follows::followers(&state.db, id, page).await,
+            _ => follows::following(&state.db, id, page).await,
+        };
+    }
+    Ok(rows)
 }
 
 /// `GET /api/v1/accounts/{id}/following` — public; same
@@ -321,7 +349,7 @@ pub async fn following(
     let rows = if follows::network_hidden(&state.db, id, viewer).await? {
         Vec::new()
     } else {
-        follows::following(&state.db, id, &page).await?
+        network_page(&state, id, "following", &page).await?
     };
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();

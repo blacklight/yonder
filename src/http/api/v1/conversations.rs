@@ -57,6 +57,8 @@ async fn require_participant(state: &AppState, caller: i64, key: &str) -> Result
 /// keyed by account id.
 struct PageData {
     statuses: HashMap<i64, posts::StatusRow>,
+    /// `statuses` rendered for the caller — one shared batch.
+    rendered: HashMap<i64, Value>,
     participants: HashMap<String, Vec<i64>>,
     accounts: HashMap<i64, Value>,
 }
@@ -85,8 +87,17 @@ async fn load_page_data(
             Some((id, v))
         })
         .collect();
+    let status_rows: Vec<posts::StatusRow> = statuses.values().cloned().collect();
+    let rendered: HashMap<i64, Value> =
+        posts::entity::status_entities(&ctx, &status_rows, Some(caller))
+            .await?
+            .into_iter()
+            .zip(status_rows.iter().map(|s| s.id))
+            .map(|(v, id)| (id, v))
+            .collect();
     Ok(PageData {
         statuses,
+        rendered,
         participants,
         accounts,
     })
@@ -95,19 +106,18 @@ async fn load_page_data(
 /// Render one Conversation entity: `id` (the key), `unread`, the other
 /// participants' Account entities, and `last_status` (newest visible —
 /// tombstoned last messages fall back by construction).
-async fn conversation_json(
-    state: &AppState,
+fn conversation_json(
     caller: i64,
     group: &conv::ConversationGroup,
     marker: Option<&(Option<i64>, Option<i64>)>,
     data: &PageData,
-) -> Result<Value> {
-    let ctx = PostContext::new(state);
+) -> Value {
     let last = data.statuses.get(&group.newest_id);
-    let last_status = match last {
-        Some(row) => posts::entity::status_entity(&ctx, row, Some(caller)).await?,
-        None => Value::Null,
-    };
+    let last_status = data
+        .rendered
+        .get(&group.newest_id)
+        .cloned()
+        .unwrap_or(Value::Null);
     let account_json: Vec<Value> = data
         .participants
         .get(&group.key)
@@ -121,12 +131,12 @@ async fn conversation_json(
     let unread = last.is_some_and(|s| s.account_id != caller)
         && group.newest_id > read.unwrap_or(0)
         && group.newest_id > hidden.unwrap_or(0);
-    Ok(json!({
+    json!({
         "id": group.key,
         "unread": unread,
         "accounts": account_json,
         "last_status": last_status,
-    }))
+    })
 }
 
 /// `GET /api/v1/conversations` — the caller's DM conversations,
@@ -163,7 +173,7 @@ pub async fn list_conversations(
     let data = load_page_data(&state, auth.account_id, &groups).await?;
     let mut out = Vec::with_capacity(groups.len());
     for g in &groups {
-        out.push(conversation_json(&state, auth.account_id, g, markers.get(&g.key), &data).await?);
+        out.push(conversation_json(auth.account_id, g, markers.get(&g.key), &data));
     }
     let cursors: Vec<i64> = groups.iter().map(|g| g.newest_id).collect();
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
@@ -204,10 +214,7 @@ pub async fn conversation_statuses(
     let page = paginate::parse(&params);
     let rows = conv::thread(&state.db, auth.account_id, key, &page).await?;
     let ctx = PostContext::new(&state);
-    let mut out = Vec::with_capacity(rows.len());
-    for row in &rows {
-        out.push(posts::entity::status_entity(&ctx, row, Some(auth.account_id)).await?);
-    }
+    let out = posts::entity::status_entities(&ctx, &rows, Some(auth.account_id)).await?;
     let cursors = crate::timelines::query::cursors(&rows);
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(out))))
@@ -255,9 +262,12 @@ pub async fn mark_conversation_read(
     };
     let marker = conv::markers(&state.db, auth.account_id, &[key.to_string()]).await?;
     let data = load_page_data(&state, auth.account_id, std::slice::from_ref(&group)).await?;
-    Ok(Json(
-        conversation_json(&state, auth.account_id, &group, marker.get(key), &data).await?,
-    ))
+    Ok(Json(conversation_json(
+        auth.account_id,
+        &group,
+        marker.get(key),
+        &data,
+    )))
 }
 
 /// `DELETE /api/v1/conversations/{id}` — caller-only hide: sets

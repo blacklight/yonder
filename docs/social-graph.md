@@ -63,6 +63,15 @@ Remote accounts' counts come from their actor documents:
   Relationship render.
 - `hide_network` (Mastodon `hide_collections`) empties public
   followers/following lists for non-owner viewers.
+- Remote accounts' followers/following listings are synced
+  best-effort from the remote `followers`/`following` collections on
+  first read and hourly thereafter (`remote_network_edges` /
+  `remote_network_syncs`, migration 0025). Members materialize as
+  `accounts` rows — the first page's worth inline (bounded
+  concurrency), the rest as stubs enriched by `RemoteActorFetch` jobs.
+  Local `follows` edges the remote list omits are appended; when the
+  remote collection can't be fetched the listing falls back to those
+  local rows.
 
 ## Yonder extension
 

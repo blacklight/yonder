@@ -1043,3 +1043,227 @@ async fn blockers_visible_shows_blocked_by_and_delete_cascades() {
     .unwrap();
     assert_eq!(orphan, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Remote network listings (best-effort remote collection sync)
+// ---------------------------------------------------------------------------
+
+/// Loopback mock remote instance: actor docs under `/users/{name}`
+/// (carrying `followers`/`following` collection URLs) and collections
+/// under `/collections/{name}` — `carol-followers` embeds its first
+/// page, `carol-following` links to a page URL (the one-hop `first`
+/// fetch). Collection hits are counted so tests can prove reads are
+/// served from the cache inside the sync TTL.
+#[derive(Clone)]
+struct MockRemote {
+    base: String,
+    hits: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+async fn mock_actor_doc(
+    axum::extract::State(m): axum::extract::State<MockRemote>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::Json<Value> {
+    axum::Json(json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{}/users/{name}", m.base),
+        "type": "Person",
+        "preferredUsername": name,
+        "name": name,
+        "inbox": format!("{}/users/{name}/inbox", m.base),
+        "followers": format!("{}/collections/{name}-followers", m.base),
+        "following": format!("{}/collections/{name}-following", m.base),
+    }))
+}
+
+async fn mock_collection(
+    axum::extract::State(m): axum::extract::State<MockRemote>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::Json<Value> {
+    m.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let b = &m.base;
+    let body = match name.as_str() {
+        "carol-followers" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollection",
+            "totalItems": 2,
+            "first": {
+                "type": "OrderedCollectionPage",
+                "orderedItems": [
+                    format!("{b}/users/dave"),
+                    format!("{b}/users/erin"),
+                ],
+            },
+        }),
+        "carol-following" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollection",
+            "totalItems": 1,
+            "first": format!("{b}/collections/carol-following-page"),
+        }),
+        "carol-following-page" => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollectionPage",
+            "orderedItems": [format!("{b}/users/dave")],
+        }),
+        _ => json!({
+            "id": format!("{b}/collections/{name}"),
+            "type": "OrderedCollection",
+            "totalItems": 0,
+        }),
+    };
+    axum::Json(body)
+}
+
+async fn mock_remote() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://localhost:{port}");
+    let state = MockRemote {
+        base: base.clone(),
+        hits: hits.clone(),
+    };
+    let app = axum::Router::new()
+        .route("/users/{name}", axum::routing::get(mock_actor_doc))
+        .route("/collections/{name}", axum::routing::get(mock_collection))
+        .with_state(state);
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (base, hits)
+}
+
+/// A remote account seen for the first time (bare stub, no cached
+/// actor document) gets its followers/following listings synced from
+/// the remote collections on first read — members are materialized,
+/// remote order is kept, and repeat reads inside the TTL don't
+/// re-fetch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_network_listings_sync_from_remote_collections() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (base, hits) = mock_remote().await;
+
+    // First-seen remote account: a stub row with `actor_data = {}`,
+    // the `upsert_remote_stub` shape — the sync must refetch the actor
+    // document itself to learn the collection URLs.
+    let carol = format!("{base}/users/carol");
+    let carol_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'carol', $1, $1, '') RETURNING id",
+    )
+    .bind(&carol)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    // Followers — the embedded first page is materialized and remote
+    // order is preserved.
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}/followers"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    let names: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["username"].as_str())
+        .collect();
+    assert_eq!(names, ["dave", "erin"], "{list}");
+    assert_eq!(list[0]["acct"], "dave@localhost");
+
+    // The members materialized as accounts, and the edge cache holds
+    // the remote ordering.
+    let edges: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM remote_network_edges \
+         WHERE account_id = $1 AND direction = 'followers'",
+    )
+    .bind(carol_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(edges, 2);
+    let member_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM accounts \
+         WHERE domain = 'localhost' AND username IN ('dave', 'erin')",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(member_rows, 2);
+
+    // Following — `first` is a page URL, fetched one hop deeper.
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}/following"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    let names: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["username"].as_str())
+        .collect();
+    assert_eq!(names, ["dave"], "{list}");
+
+    // Repeat reads inside the TTL are served from the edge cache —
+    // the claim row must stop remote re-fetches.
+    let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}/followers"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(list.as_array().unwrap().len(), 2);
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "repeat read re-fetched remote collections"
+    );
+}
+
+/// A remote account whose instance is unreachable degrades cleanly:
+/// the endpoint still answers with whatever the local `follows` table
+/// knows (here, nothing) instead of failing the request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_network_listing_degrades_when_remote_is_down() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    // Port 1 is unreachable — every remote fetch fails fast.
+    let ghost = "http://localhost:1/users/ghost";
+    let ghost_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'ghost', $1, $1, '') RETURNING id",
+    )
+    .bind(ghost)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{ghost_id}/followers"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert_eq!(list.as_array().unwrap().len(), 0);
+}

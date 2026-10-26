@@ -515,6 +515,7 @@ async function onReact(emoji: string) {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  cursor: pointer;
 }
 .status-card__display {
   font-weight: 600;

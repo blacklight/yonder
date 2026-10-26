@@ -545,10 +545,7 @@ pub async fn account_statuses(
         crate::timelines::query::fetch(&state.db, &scope, &filters, &page).await?
     };
     let ctx = crate::posts::PostContext::new(&state);
-    let mut out = Vec::with_capacity(rows.len());
-    for row in &rows {
-        out.push(crate::posts::entity::status_entity(&ctx, row, viewer).await?);
-    }
+    let mut out = crate::posts::entity::status_entities(&ctx, &rows, viewer).await?;
     crate::filters::apply::attach_filtered(&state.db, &rules, &rows, &mut out).await?;
     let headers = if pinned {
         HeaderMap::new()

@@ -179,6 +179,25 @@ pub async fn load_many(pool: &sqlx::PgPool, ids: &[i64]) -> Result<Vec<AccountRo
     Ok(rows.iter().map(account_row).collect())
 }
 
+/// [`load`] for a set of ids in one round-trip — same `deleted_at`
+/// filter as `load` but *no* `suspended_at` exclusion: suspended
+/// accounts still render, exactly like the single-row path. Result
+/// order is unspecified; callers index by `id`.
+pub(crate) async fn load_many_incl_suspended(
+    pool: &sqlx::PgPool,
+    ids: &[i64],
+) -> Result<Vec<AccountRow>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {ACCOUNT_COLS} \
+         FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
+         WHERE a.id = ANY($1) AND a.deleted_at IS NULL"
+    ))
+    .bind(ids)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(account_row).collect())
+}
+
 fn account_row(r: &sqlx::postgres::PgRow) -> AccountRow {
     AccountRow {
         id: r.get("id"),

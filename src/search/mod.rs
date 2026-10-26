@@ -214,10 +214,7 @@ pub async fn render(
         );
     }
 
-    let mut statuses = Vec::with_capacity(results.statuses.len());
-    for status in &results.statuses {
-        statuses.push(posts::entity::status_entity(&ctx, status, viewer).await?);
-    }
+    let mut statuses = posts::entity::status_entities(&ctx, &results.statuses, viewer).await?;
     crate::filters::apply::attach_filtered(
         &state.db,
         &results.rules,

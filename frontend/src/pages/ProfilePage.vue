@@ -464,12 +464,20 @@ watch([tab, showReplies, showBoosts], () => {
           {{ t("profile.blockedYou") }}
         </p>
         <div class="profile__counters">
-          <span>{{
-            t("profile.followers", { count: account.followers_count })
-          }}</span>
-          <span>{{
-            t("profile.following", { count: account.following_count })
-          }}</span>
+          <router-link
+            :to="`/@${account.acct}/followers`"
+            class="profile__counter"
+            >{{
+              t("profile.followers", { count: account.followers_count })
+            }}</router-link
+          >
+          <router-link
+            :to="`/@${account.acct}/following`"
+            class="profile__counter"
+            >{{
+              t("profile.following", { count: account.following_count })
+            }}</router-link
+          >
           <span>{{
             t("profile.statuses", { count: account.statuses_count })
           }}</span>
@@ -619,6 +627,14 @@ watch([tab, showReplies, showBoosts], () => {
   margin-top: var(--space-3);
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+.profile__counter {
+  color: inherit;
+  text-decoration: none;
+}
+.profile__counter:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 .profile__alert {
   margin: var(--space-3) 0 0;

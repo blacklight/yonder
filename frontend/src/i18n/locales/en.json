@@ -191,6 +191,12 @@
     "profile": {
       "title": "Profile"
     },
+    "profile-followers": {
+      "title": "Followers"
+    },
+    "profile-following": {
+      "title": "Following"
+    },
     "register": {
       "title": "Create an account"
     }
@@ -703,6 +709,7 @@
     "statuses": "{count} posts",
     "verified": "Verified",
     "tabs": "Profile sections",
+    "networkTabs": "Followers and following",
     "posts": "Posts",
     "media": "Media",
     "showReplies": "Show replies",

@@ -191,6 +191,12 @@
     "profile": {
       "title": "الملف الشخصي"
     },
+    "profile-followers": {
+      "title": "المتابِعون"
+    },
+    "profile-following": {
+      "title": "المتابَعون"
+    },
     "register": {
       "title": "إنشاء حساب"
     }
@@ -703,6 +709,7 @@
     "statuses": "لا منشورات | منشور واحد | منشوران | {count} منشورات | {count} منشورًا | {count} منشور",
     "verified": "موثّق",
     "tabs": "أقسام الملف الشخصي",
+    "networkTabs": "المتابِعون والمتابَعون",
     "posts": "المنشورات",
     "media": "الوسائط",
     "showReplies": "إظهار الردود",

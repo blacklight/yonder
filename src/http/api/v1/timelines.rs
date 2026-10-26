@@ -82,10 +82,7 @@ async fn render(
     limit: i64,
 ) -> Result<(HeaderMap, Json<Value>)> {
     let ctx = PostContext::new(state);
-    let mut out = Vec::with_capacity(rows.len());
-    for row in &rows {
-        out.push(posts::entity::status_entity(&ctx, row, viewer).await?);
-    }
+    let mut out = posts::entity::status_entities(&ctx, &rows, viewer).await?;
     content_filters::apply::attach_filtered(&state.db, rules, &rows, &mut out).await?;
     let cursors = timelines::query::cursors(&rows);
     let headers = paginate::headers(uri, params, &cursors, limit);

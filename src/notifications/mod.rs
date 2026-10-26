@@ -342,118 +342,188 @@ pub async fn dismiss(db: &PgPool, account_id: i64, id: i64) -> Result<bool> {
         .map_err(Into::into)
 }
 
-/// The Mastodon `Notification` entity for a row. Missing referenced
-/// objects degrade to absent/`null` fields rather than failing the
-/// render — a deleted status or purged actor should not 500 a
-/// notifications page.
+/// The Mastodon `Notification` entity for a row — the single-row
+/// form of [`entities`].
 pub async fn entity(
     ctx: &PostContext,
     row: &NotificationRow,
     rules: &[crate::filters::Rule],
 ) -> Result<Value> {
+    Ok(entities(ctx, std::slice::from_ref(row), rules)
+        .await?
+        .into_iter()
+        .next()
+        .expect("one entity per notification"))
+}
+
+/// [`entity`] for a page of notifications. Every per-row lookup the
+/// naive loop made — actor account, embedded status (+ its full
+/// render), report, filtered attach — is batched across the page:
+/// ~20 rows cost a handful of `try_join!` waves instead of ~10
+/// sequential queries each. Missing referenced objects degrade to
+/// absent/`null` fields rather than failing the page — a deleted
+/// status or purged actor should not 500 a notifications page.
+pub async fn entities(
+    ctx: &PostContext,
+    rows: &[NotificationRow],
+    rules: &[crate::filters::Rule],
+) -> Result<Vec<Value>> {
+    use std::collections::{BTreeMap, HashMap};
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
     let base_url = ctx.base_url();
-    let account = match crate::users::account::load(&ctx.db, row.from_account_id).await? {
-        Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "notification account render failed");
-                Value::Null
-            }),
-        None => Value::Null,
-    };
-    let mut out = json!({
-        "id": row.id.to_string(),
-        "type": row.kind.as_str(),
-        "created_at": row.created_at.to_rfc3339(),
-        "read": row.read,
-        "account": account,
-    });
-    if let Some(status_id) = row.status_id {
-        if let Some(status) = crate::posts::load(&ctx.db, status_id).await? {
-            if !status.tombstone {
-                let rendered = crate::posts::entity::status_entity(
-                    ctx,
-                    &status,
-                    Some(row.account_id),
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(status_id, error = %e, "notification status render failed");
-                    Value::Null
-                });
-                if rendered.is_object() {
-                    let mut entities = vec![rendered];
-                    crate::filters::apply::attach_filtered(
-                        &ctx.db,
-                        rules,
-                        std::slice::from_ref(&status),
-                        &mut entities,
-                    )
+
+    // Embedded statuses rendered with the notification's owner as
+    // viewer — a page is single-owner in practice, but group anyway
+    // so the function stays correct for arbitrary row sets.
+    let mut by_owner: BTreeMap<i64, Vec<i64>> = BTreeMap::new();
+    for r in rows {
+        if let Some(sid) = r.status_id {
+            let ids = by_owner.entry(r.account_id).or_default();
+            if !ids.contains(&sid) {
+                ids.push(sid);
+            }
+        }
+    }
+    let mut status_entities: HashMap<i64, Value> = HashMap::new();
+    for (owner, ids) in by_owner {
+        let statuses = crate::posts::load_many(&ctx.db, &ids).await?;
+        let status_rows: Vec<crate::posts::StatusRow> = ids
+            .iter()
+            .filter_map(|id| statuses.get(id))
+            .cloned()
+            .collect();
+        match crate::posts::entity::status_entities(ctx, &status_rows, Some(owner)).await {
+            Ok(mut ents) => {
+                crate::filters::apply::attach_filtered(&ctx.db, rules, &status_rows, &mut ents)
                     .await
-                    .unwrap_or_else(
-                        |e| tracing::warn!(status_id, error = %e, "filtered attach failed"),
-                    );
-                    out["status"] = entities.into_iter().next().unwrap_or(Value::Null);
-                } else {
-                    out["status"] = rendered;
+                    .unwrap_or_else(|e| tracing::warn!(error = %e, "filtered attach failed"));
+                for (row, e) in status_rows.iter().zip(ents) {
+                    status_entities.insert(row.id, e);
+                }
+            }
+            Err(e) => {
+                // The old per-row render degraded failures to
+                // `"status": null` — keep the page alive the same way.
+                tracing::warn!(error = %e, "notification status render failed");
+                for row in &status_rows {
+                    status_entities.insert(row.id, Value::Null);
                 }
             }
         }
     }
-    if let Some(report_id) = row.report_id {
-        out["report"] = report_entity(ctx, report_id).await?;
-    }
-    Ok(out)
-}
 
-/// The `report` object Mastodon attaches to `admin.report`
-/// notifications.
-async fn report_entity(ctx: &PostContext, report_id: i64) -> Result<Value> {
-    let Some(report) = sqlx::query(
-        "SELECT id, account_id, target_account_id, status_id, category, comment, forward, \
-                action_taken_at, assigned_account_id, created_at \
-         FROM reports WHERE id = $1",
-    )
-    .bind(report_id)
-    .fetch_optional(&ctx.db)
-    .await?
-    else {
-        return Ok(Value::Null);
+    // Reports and every account the page references, in one batch.
+    let mut report_ids: Vec<i64> = rows.iter().filter_map(|r| r.report_id).collect();
+    report_ids.sort_unstable();
+    report_ids.dedup();
+    let reports = if report_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query(
+            "SELECT id, account_id, target_account_id, status_id, category, comment, forward, \
+                    action_taken_at, assigned_account_id, created_at \
+             FROM reports WHERE id = ANY($1)",
+        )
+        .bind(&report_ids)
+        .fetch_all(&ctx.db)
+        .await?
     };
-    let base_url = ctx.base_url();
-    let target = match crate::users::account::load(&ctx.db, report.get("target_account_id")).await?
-    {
-        Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
+    let mut account_ids: Vec<i64> = rows.iter().map(|r| r.from_account_id).collect();
+    for rep in &reports {
+        account_ids.push(rep.get("target_account_id"));
+        if let Some(a) = rep.get::<Option<i64>, _>("assigned_account_id") {
+            account_ids.push(a);
+        }
+    }
+    account_ids.sort_unstable();
+    account_ids.dedup();
+    let accounts = crate::users::account::load_many_incl_suspended(&ctx.db, &account_ids).await?;
+    let account_values: HashMap<i64, Value> =
+        match crate::users::account::account_entities(&ctx.db, &ctx.config, &base_url, &accounts)
             .await
-            .unwrap_or(Value::Null),
-        None => Value::Null,
-    };
-    let assigned: Option<i64> = report.get("assigned_account_id");
-    let assigned = match assigned {
-        Some(id) => match crate::users::account::load(&ctx.db, id).await? {
-            Some(a) => crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, &a)
-                .await
-                .unwrap_or(Value::Null),
-            None => Value::Null,
-        },
-        None => Value::Null,
-    };
-    let status_id: Option<i64> = report.get("status_id");
-    let taken: Option<DateTime<Utc>> = report.get("action_taken_at");
-    Ok(json!({
-        "id": report.get::<i64, _>("id").to_string(),
-        "action_taken": taken.is_some(),
-        "action_taken_at": taken.map(|t| t.to_rfc3339()),
-        "category": report.get::<String, _>("category"),
-        "comment": report.get::<String, _>("comment"),
-        "forwarded": report.get::<bool, _>("forward"),
-        "created_at": report.get::<DateTime<Utc>, _>("created_at").to_rfc3339(),
-        "account_id": report.get::<i64, _>("account_id").to_string(),
-        "target_account": target,
-        "assigned_account": assigned,
-        "status_ids": status_id.map(|id| vec![id.to_string()]).unwrap_or_default(),
-        "rule_ids": [],
-    }))
+        {
+            Ok(ents) => accounts.iter().map(|a| a.id).zip(ents).collect(),
+            // The batch emoji/moved pass failing shouldn't blank the
+            // page — fall back to per-account renders, which degrade
+            // individually to `null` exactly like the old loop did.
+            Err(e) => {
+                tracing::warn!(error = %e, "notification account batch render failed");
+                let mut map = HashMap::new();
+                for a in &accounts {
+                    let v =
+                        crate::users::account::account_entity(&ctx.db, &ctx.config, &base_url, a)
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(error = %e, "notification account render failed");
+                                Value::Null
+                            });
+                    map.insert(a.id, v);
+                }
+                map
+            }
+        };
+
+    let mut report_values: HashMap<i64, Value> = HashMap::new();
+    for rep in &reports {
+        let rid: i64 = rep.get("id");
+        let target = account_values
+            .get(&rep.get::<i64, _>("target_account_id"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let assigned = rep
+            .get::<Option<i64>, _>("assigned_account_id")
+            .and_then(|id| account_values.get(&id).cloned())
+            .unwrap_or(Value::Null);
+        let status_id: Option<i64> = rep.get("status_id");
+        let taken: Option<DateTime<Utc>> = rep.get("action_taken_at");
+        report_values.insert(
+            rid,
+            json!({
+                "id": rid.to_string(),
+                "action_taken": taken.is_some(),
+                "action_taken_at": taken.map(|t| t.to_rfc3339()),
+                "category": rep.get::<String, _>("category"),
+                "comment": rep.get::<String, _>("comment"),
+                "forwarded": rep.get::<bool, _>("forward"),
+                "created_at": rep.get::<DateTime<Utc>, _>("created_at").to_rfc3339(),
+                "account_id": rep.get::<i64, _>("account_id").to_string(),
+                "target_account": target,
+                "assigned_account": assigned,
+                "status_ids": status_id.map(|id| vec![id.to_string()]).unwrap_or_default(),
+                "rule_ids": [],
+            }),
+        );
+    }
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let mut out = json!({
+                "id": row.id.to_string(),
+                "type": row.kind.as_str(),
+                "created_at": row.created_at.to_rfc3339(),
+                "read": row.read,
+                "account": account_values
+                    .get(&row.from_account_id)
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            });
+            if let Some(status_id) = row.status_id {
+                if let Some(rendered) = status_entities.get(&status_id) {
+                    out["status"] = rendered.clone();
+                }
+            }
+            if let Some(report_id) = row.report_id {
+                out["report"] = report_values
+                    .get(&report_id)
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
+            out
+        })
+        .collect())
 }
 
 /// Publish a `StreamEvent` through the Redis relay channel — the

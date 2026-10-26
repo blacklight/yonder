@@ -200,7 +200,7 @@ pub fn addressing(
 // ---------------------------------------------------------------------------
 
 /// The `statuses` row shape the services and entity mapper share.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StatusRow {
     pub id: i64,
     pub account_id: i64,
@@ -281,6 +281,27 @@ pub async fn load(db: &PgPool, status_id: i64) -> Result<Option<StatusRow>> {
     .fetch_optional(db)
     .await?;
     Ok(row.as_ref().map(row_to_status))
+}
+
+/// [`load`] for a set of ids in one round-trip — same `NOT tombstone`
+/// filter. Returns a map keyed by status id.
+pub async fn load_many(
+    db: &PgPool,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, StatusRow>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {STATUS_COLS} FROM statuses WHERE id = ANY($1) AND NOT tombstone"
+    ))
+    .bind(ids)
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let s = row_to_status(r);
+            (s.id, s)
+        })
+        .collect())
 }
 
 /// Load a status including tombstoned rows (delete/object-serve paths).

@@ -2,12 +2,14 @@
 //! MediaAttachment — plus the `yonder` extension block (raw `source`,
 //! `content_type`, quote data) the PROMPT asks for.
 
+use std::collections::{HashMap, HashSet};
+
 use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::{media, users::account as account_mapper, Result};
 
-use super::{polls, wire_visibility, PostContext, StatusRow};
+use super::{wire_visibility, PostContext, StatusRow, STATUS_COLS};
 
 /// A `media_attachments` row.
 #[derive(Debug)]
@@ -137,84 +139,857 @@ pub fn media_entity(config: &crate::config::Config, base_url: &str, row: &MediaR
     })
 }
 
-/// The `mentions[]` entries for a status (`{id, username, url, acct}`).
-async fn mention_entities(ctx: &PostContext, status_id: i64) -> Result<Vec<Value>> {
-    let rows = sqlx::query(
-        "SELECT a.id, a.username, a.domain, a.url, a.actor_id \
-         FROM status_mentions sm JOIN accounts a ON a.id = sm.account_id \
-         WHERE sm.status_id = $1 ORDER BY a.id",
-    )
-    .bind(status_id)
-    .fetch_all(&ctx.db)
-    .await?;
-    Ok(rows
-        .iter()
-        .map(|r| {
+/// Everything [`StatusBatch::render`] needs, fetched once per page in
+/// a few `try_join!` waves instead of ~8 sequential queries per row —
+/// on a high-RTT database link the per-row lookups dominate request
+/// latency (a 20-status page issued ~150 round-trips).
+///
+/// Maps are keyed by status id unless noted. One level of reblog/quote
+/// originals is included (`originals`/`visible`), matching the depth
+/// bound the old recursive render applied.
+struct StatusBatch {
+    /// Status authors (incl. originals' authors) by `accounts.id` —
+    /// the `account::load` projection per id.
+    accounts: HashMap<i64, account_mapper::AccountRow>,
+    /// `moved` entity per author id.
+    moved: HashMap<i64, Value>,
+    /// Emoji map per author domain — present only for domains some
+    /// rendered text could reference (the `EmojiMap::for_author_texts`
+    /// short-circuit, applied once per domain).
+    emoji_maps: HashMap<Option<String>, crate::emoji::render::EmojiMap>,
+    empty_map: crate::emoji::render::EmojiMap,
+    /// Non-tombstoned reblog/quote originals by status id.
+    originals: HashMap<i64, StatusRow>,
+    /// Ids of `originals` the viewer may see — `posts::can_see` batched.
+    visible: HashSet<i64>,
+    media: HashMap<i64, Vec<MediaRow>>,
+    /// `mentions[]` entity values per status.
+    mentions: HashMap<i64, Vec<Value>>,
+    /// Tag names per status (entity shape needs `base_url` at render).
+    tags: HashMap<i64, Vec<String>>,
+    /// First `preview_cards` row per status, as the `card` entity.
+    cards: HashMap<i64, Value>,
+    /// Poll entity values by `polls.id`.
+    polls: HashMap<i64, Value>,
+    /// Pleroma reaction summary per status.
+    reactions: HashMap<i64, Vec<Value>>,
+    /// `(account_id, status_id)` pairs present in `status_pins`.
+    pinned: HashSet<(i64, i64)>,
+    /// status id → `(favourited, bookmarked, reblogged)` for the viewer.
+    flags: HashMap<i64, (bool, bool, bool)>,
+}
+
+impl StatusBatch {
+    async fn load(ctx: &PostContext, rows: &[StatusRow], viewer: Option<i64>) -> Result<Self> {
+        use sqlx::postgres::PgRow;
+        let db = &ctx.db;
+        let base_url = ctx.base_url();
+        let to_err = |e: sqlx::Error| crate::Error::from(e);
+
+        // Reblog/quote originals render one level deep — load them up
+        // front. Children are fetched over rows ∪ referenced ids;
+        // missing or tombstoned originals simply produce no rows.
+        let mut nested_ids = Vec::new();
+        for s in rows {
+            if let Some(id) = s.reblog_of_id {
+                nested_ids.push(id);
+            }
+            if let Some(id) = s.quote_of_id {
+                nested_ids.push(id);
+            }
+        }
+        nested_ids.sort_unstable();
+        nested_ids.dedup();
+        let mut all_ids: Vec<i64> = rows.iter().map(|s| s.id).collect();
+        all_ids.extend_from_slice(&nested_ids);
+        all_ids.sort_unstable();
+        all_ids.dedup();
+
+        // ── Wave 1: everything keyed only by status ids / viewer ──
+        let originals_f = async {
+            if nested_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query(&format!(
+                "SELECT {STATUS_COLS} FROM statuses WHERE id = ANY($1) AND NOT tombstone"
+            ))
+            .bind(&nested_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let media_f = async {
+            sqlx::query(&format!(
+                "SELECT {MEDIA_COLS} FROM media_attachments \
+                 WHERE status_id = ANY($1) ORDER BY status_id, id"
+            ))
+            .bind(&all_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let mentions_f = async {
+            sqlx::query(
+                "SELECT sm.status_id, a.id, a.username, a.domain, a.url, a.actor_id \
+                 FROM status_mentions sm JOIN accounts a ON a.id = sm.account_id \
+                 WHERE sm.status_id = ANY($1) ORDER BY sm.status_id, a.id",
+            )
+            .bind(&all_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let tags_f = async {
+            sqlx::query_as::<_, (i64, String)>(
+                "SELECT st.status_id, t.name FROM status_tags st JOIN tags t ON t.id = st.tag_id \
+                 WHERE st.status_id = ANY($1) ORDER BY st.status_id, t.name",
+            )
+            .bind(&all_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let cards_f = async {
+            sqlx::query(
+                "SELECT status_id, url, title, description, image_path, author_name, author_url, \
+                        provider_name, provider_url FROM preview_cards \
+                 WHERE status_id = ANY($1) ORDER BY status_id, id",
+            )
+            .bind(&all_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let reactions_f = async {
+            sqlx::query_as::<_, (i64, String, Option<i64>, i64, Option<bool>)>(
+                "SELECT status_id, emoji, custom_emoji_id, count(*)::bigint, \
+                        CASE WHEN $2::bigint IS NULL THEN NULL \
+                             ELSE bool_or(account_id = $2) END AS me \
+                 FROM emoji_reactions WHERE status_id = ANY($1) \
+                 GROUP BY status_id, emoji, custom_emoji_id \
+                 ORDER BY status_id, min(created_at)",
+            )
+            .bind(&all_ids)
+            .bind(viewer)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let faved_f = async {
+            match viewer {
+                Some(v) => sqlx::query_scalar::<_, i64>(
+                    "SELECT status_id FROM favourites \
+                     WHERE account_id = $1 AND status_id = ANY($2)",
+                )
+                .bind(v)
+                .bind(&all_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                None => Ok(Vec::new()),
+            }
+        };
+        let marked_f = async {
+            match viewer {
+                Some(v) => sqlx::query_scalar::<_, i64>(
+                    "SELECT status_id FROM bookmarks \
+                     WHERE account_id = $1 AND status_id = ANY($2)",
+                )
+                .bind(v)
+                .bind(&all_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                None => Ok(Vec::new()),
+            }
+        };
+        let boosted_f = async {
+            match viewer {
+                Some(v) => sqlx::query_scalar::<_, i64>(
+                    "SELECT reblog_of_id FROM statuses WHERE account_id = $1 \
+                     AND reblog_of_id = ANY($2) AND NOT tombstone",
+                )
+                .bind(v)
+                .bind(&all_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                None => Ok(Vec::new()),
+            }
+        };
+        let (
+            orig_rows,
+            media_rows,
+            mention_rows,
+            tag_rows,
+            card_rows,
+            reaction_rows,
+            faved,
+            marked,
+            boosted,
+        ) = tokio::try_join!(
+            originals_f,
+            media_f,
+            mentions_f,
+            tags_f,
+            cards_f,
+            reactions_f,
+            faved_f,
+            marked_f,
+            boosted_f
+        )?;
+
+        let originals: HashMap<i64, StatusRow> = orig_rows
+            .iter()
+            .map(|r: &PgRow| {
+                let s = super::row_to_status(r);
+                (s.id, s)
+            })
+            .collect();
+
+        // ── Wave 2: inputs that depend on the originals ──
+        let mut author_ids: Vec<i64> = rows
+            .iter()
+            .map(|s| s.account_id)
+            .chain(originals.values().map(|s| s.account_id))
+            .collect();
+        author_ids.sort_unstable();
+        author_ids.dedup();
+
+        // The pin check is the exact (author, status) pair — a loose
+        // `account_id = ANY` could cross-attribute a pin between two
+        // rendered authors, so pairs are filtered client-side.
+        let pair_set: HashSet<(i64, i64)> = rows
+            .iter()
+            .chain(originals.values())
+            .map(|s| (s.account_id, s.id))
+            .collect();
+        let accounts_f = account_mapper::load_many_incl_suspended(db, &author_ids);
+        let pins_f = async {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT status_id, account_id FROM status_pins WHERE status_id = ANY($1)",
+            )
+            .bind(&all_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let mut poll_ids: Vec<i64> = rows
+            .iter()
+            .chain(originals.values())
+            .filter_map(|s| s.poll_id)
+            .collect();
+        poll_ids.sort_unstable();
+        poll_ids.dedup();
+        let polls_f = async {
+            if poll_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query(
+                "SELECT id, expires_at, multiple, hide_totals, created_at \
+                 FROM polls WHERE id = ANY($1)",
+            )
+            .bind(&poll_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let options_f = async {
+            if poll_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query_as::<_, (i64, i32, String, i32)>(
+                "SELECT poll_id, idx, title, votes_count FROM poll_options \
+                 WHERE poll_id = ANY($1) ORDER BY poll_id, idx",
+            )
+            .bind(&poll_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let votes_f = async {
+            if poll_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT poll_id, count(*)::bigint FROM poll_votes \
+                 WHERE poll_id = ANY($1) GROUP BY poll_id",
+            )
+            .bind(&poll_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let voters_f = async {
+            if poll_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT poll_id, count(DISTINCT account_id)::bigint FROM poll_votes \
+                 WHERE poll_id = ANY($1) GROUP BY poll_id",
+            )
+            .bind(&poll_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let own_f = async {
+            match (viewer, poll_ids.is_empty()) {
+                (Some(v), false) => sqlx::query_as::<_, (i64, i32)>(
+                    "SELECT poll_id, option_idx FROM poll_votes \
+                     WHERE poll_id = ANY($1) AND account_id = $2 \
+                     ORDER BY poll_id, option_idx",
+                )
+                .bind(&poll_ids)
+                .bind(v)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                _ => Ok(Vec::new()),
+            }
+        };
+        // `posts::can_see` on the originals, batched: the cheap cases
+        // (own, public/unlisted, anonymous) resolve in memory; direct
+        // and follower-gated rows each need one lookup.
+        let mut direct_ids = Vec::new();
+        let mut follow_targets = Vec::new();
+        if viewer.is_some() {
+            for o in originals.values() {
+                if Some(o.account_id) == viewer
+                    || matches!(o.visibility.as_str(), "public" | "unlisted")
+                {
+                    continue;
+                }
+                if o.visibility == "direct" {
+                    direct_ids.push(o.id);
+                } else {
+                    follow_targets.push(o.account_id);
+                }
+            }
+        }
+        let direct_f = async {
+            match (viewer, direct_ids.is_empty()) {
+                (Some(v), false) => sqlx::query_scalar::<_, i64>(
+                    "SELECT status_id FROM status_mentions \
+                     WHERE status_id = ANY($1) AND account_id = $2",
+                )
+                .bind(&direct_ids)
+                .bind(v)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                _ => Ok(Vec::new()),
+            }
+        };
+        let follows_f = async {
+            match (viewer, follow_targets.is_empty()) {
+                (Some(v), false) => sqlx::query_scalar::<_, i64>(
+                    "SELECT target_account_id FROM follows \
+                     WHERE account_id = $1 AND target_account_id = ANY($2)",
+                )
+                .bind(v)
+                .bind(&follow_targets)
+                .fetch_all(db)
+                .await
+                .map_err(to_err),
+                _ => Ok(Vec::new()),
+            }
+        };
+        let (
+            author_rows,
+            pin_rows,
+            poll_rows,
+            option_rows,
+            vote_rows,
+            voter_rows,
+            own_rows,
+            direct_seen,
+            followed,
+        ) = tokio::try_join!(
+            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, direct_f, follows_f
+        )?;
+
+        let accounts: HashMap<i64, account_mapper::AccountRow> =
+            author_rows.into_iter().map(|a| (a.id, a)).collect();
+        let pinned: HashSet<(i64, i64)> = pin_rows
+            .into_iter()
+            .filter(|p| pair_set.contains(p))
+            .collect();
+
+        // `polls::entity` semantics in batch: a referenced poll row
+        // that vanished is a hard error, same as the single-status path.
+        if poll_rows.len() != poll_ids.len() {
+            return Err(crate::Error::NotFound("poll".into()));
+        }
+        let mut options_by_poll: HashMap<i64, Vec<(i32, String, i32)>> = HashMap::new();
+        for (pid, idx, title, votes_count) in option_rows {
+            options_by_poll
+                .entry(pid)
+                .or_default()
+                .push((idx, title, votes_count));
+        }
+        let votes_by_poll: HashMap<i64, i64> = vote_rows.into_iter().collect();
+        let voters_by_poll: HashMap<i64, i64> = voter_rows.into_iter().collect();
+        let mut own_by_poll: HashMap<i64, Vec<i32>> = HashMap::new();
+        for (pid, idx) in own_rows {
+            own_by_poll.entry(pid).or_default().push(idx);
+        }
+        let mut polls = HashMap::with_capacity(poll_rows.len());
+        for pr in &poll_rows {
+            let pid: i64 = pr.get("id");
+            let expires_at: Option<chrono::DateTime<chrono::Utc>> = pr.get("expires_at");
+            let expired = expires_at.is_some_and(|e| e <= chrono::Utc::now());
+            let hide_totals: bool = pr.get("hide_totals");
+            let show_totals = !hide_totals || expired;
+            let own_votes = own_by_poll.remove(&pid).unwrap_or_default();
+            let options = options_by_poll.remove(&pid).unwrap_or_default();
+            polls.insert(
+                pid,
+                json!({
+                    "id": pid.to_string(),
+                    "expires_at": expires_at.map(|e| e.to_rfc3339()),
+                    "expired": expired,
+                    "multiple": pr.get::<bool, _>("multiple"),
+                    "votes_count": votes_by_poll.get(&pid).copied().unwrap_or(0),
+                    "voters_count": voters_by_poll.get(&pid).copied().unwrap_or(0),
+                    "voted": !own_votes.is_empty(),
+                    "own_votes": own_votes,
+                    "options": options.iter().map(|(_, title, votes_count)| json!({
+                        "title": title,
+                        "votes_count": if show_totals { Value::from(*votes_count) } else { Value::Null },
+                    })).collect::<Vec<_>>(),
+                }),
+            );
+        }
+
+        let direct_seen: HashSet<i64> = direct_seen.into_iter().collect();
+        let followed: HashSet<i64> = followed.into_iter().collect();
+        let mut visible = HashSet::new();
+        for o in originals.values() {
+            let ok = if Some(o.account_id) == viewer {
+                true
+            } else if matches!(o.visibility.as_str(), "public" | "unlisted") {
+                true
+            } else if viewer.is_none() {
+                false
+            } else if o.visibility == "direct" {
+                direct_seen.contains(&o.id)
+            } else {
+                followed.contains(&o.account_id)
+            };
+            if ok {
+                visible.insert(o.id);
+            }
+        }
+
+        let mut flags: HashMap<i64, (bool, bool, bool)> = HashMap::new();
+        for id in faved {
+            flags.entry(id).or_default().0 = true;
+        }
+        for id in marked {
+            flags.entry(id).or_default().1 = true;
+        }
+        for id in boosted {
+            flags.entry(id).or_default().2 = true;
+        }
+
+        // ── Wave 3: moved targets + reaction emoji URLs ──
+        let mut moved_ids: Vec<i64> = accounts
+            .values()
+            .filter_map(|a| a.moved_to_account_id)
+            .collect();
+        moved_ids.sort_unstable();
+        moved_ids.dedup();
+        let mut custom_emoji_ids: Vec<i64> = reaction_rows
+            .iter()
+            .filter_map(|(_, _, ce, _, _)| *ce)
+            .collect();
+        custom_emoji_ids.sort_unstable();
+        custom_emoji_ids.dedup();
+        let moved_f = async {
+            if moved_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            match account_mapper::load_many_incl_suspended(db, &moved_ids).await {
+                Ok(v) => Ok(v),
+                // `moved_account_json` degrades to `moved: null` on any
+                // failure — keep that contract for the whole page.
+                Err(e) => {
+                    tracing::warn!(error = %e, "moved-account batch load failed");
+                    Ok(Vec::new())
+                }
+            }
+        };
+        let ce_f = async {
+            if custom_emoji_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            sqlx::query_as::<_, (i64, Option<String>, Option<String>)>(
+                "SELECT id, remote_url, image_path FROM custom_emojis WHERE id = ANY($1)",
+            )
+            .bind(&custom_emoji_ids)
+            .fetch_all(db)
+            .await
+            .map_err(to_err)
+        };
+        let (moved_rows, ce_rows) = tokio::try_join!(moved_f, ce_f)?;
+        let moved_targets: HashMap<i64, account_mapper::AccountRow> =
+            moved_rows.into_iter().map(|a| (a.id, a)).collect();
+        let ce_urls: HashMap<i64, (Option<String>, Option<String>)> = ce_rows
+            .into_iter()
+            .map(|(id, remote_url, image_path)| (id, (remote_url, image_path)))
+            .collect();
+
+        // ── Wave 4: emoji maps per needed author domain ──
+        let mut needed: HashSet<Option<String>> = HashSet::new();
+        for s in rows.iter().chain(originals.values()) {
+            let Some(author) = accounts.get(&s.account_id) else {
+                continue;
+            };
+            let mut texts: Vec<&str> = vec![
+                s.content.as_str(),
+                s.spoiler_text.as_deref().unwrap_or_default(),
+            ];
+            texts.extend(account_mapper::emoji_texts(author));
+            if texts
+                .iter()
+                .any(|t| crate::emoji::render::has_shortcode_candidate(t))
+            {
+                needed.insert(author.domain.clone());
+            }
+        }
+        for target in moved_targets.values() {
+            if account_mapper::emoji_texts(target)
+                .iter()
+                .any(|t| crate::emoji::render::has_shortcode_candidate(t))
+            {
+                needed.insert(target.domain.clone());
+            }
+        }
+        let mut emoji_maps = HashMap::with_capacity(needed.len());
+        for domain in needed {
+            emoji_maps.insert(
+                domain.clone(),
+                crate::emoji::render::EmojiMap::for_author(
+                    db,
+                    &ctx.config,
+                    &base_url,
+                    domain.as_deref(),
+                )
+                .await?,
+            );
+        }
+
+        // `moved` entities render after the maps — the target's account
+        // gets the same one-level emoji pass `moved_account_json` runs.
+        let empty_map = crate::emoji::render::EmojiMap::empty();
+        let mut moved = HashMap::new();
+        for (aid, account) in &accounts {
+            let Some(target) = account
+                .moved_to_account_id
+                .and_then(|id| moved_targets.get(&id))
+            else {
+                continue;
+            };
+            let mut entity = account_mapper::to_account(target, &base_url, &ctx.config);
+            let texts = account_mapper::emoji_texts(target);
+            let map = if texts
+                .iter()
+                .any(|t| crate::emoji::render::has_shortcode_candidate(t))
+            {
+                emoji_maps.get(&target.domain).unwrap_or(&empty_map)
+            } else {
+                &empty_map
+            };
+            crate::emoji::render::apply_account_with_map(&mut entity, map);
+            moved.insert(*aid, entity);
+        }
+
+        // Remaining maps — pure grouping work, no more I/O.
+        let mut media: HashMap<i64, Vec<MediaRow>> = HashMap::new();
+        for r in &media_rows {
+            if let Some(sid) = r.get::<Option<i64>, _>("status_id") {
+                media.entry(sid).or_default().push(media_from_row(r));
+            }
+        }
+        let mut mentions: HashMap<i64, Vec<Value>> = HashMap::new();
+        for r in &mention_rows {
             let username: String = r.get("username");
             let domain: Option<String> = r.get("domain");
             let url: Option<String> = r.get("url");
             let actor_id: String = r.get("actor_id");
-            json!({
-                "id": r.get::<i64, _>("id").to_string(),
-                "username": username,
-                "acct": match &domain {
-                    Some(d) => format!("{username}@{d}"),
-                    None => username.clone(),
-                },
-                "url": url.filter(|u| !u.is_empty()).unwrap_or(actor_id),
-            })
-        })
-        .collect())
-}
-
-/// The `tags[]` entries (`{name, url}`) for a status.
-async fn tag_entities(ctx: &PostContext, status_id: i64, base_url: &str) -> Result<Vec<Value>> {
-    let rows = sqlx::query_scalar::<_, String>(
-        "SELECT t.name FROM status_tags st JOIN tags t ON t.id = st.tag_id \
-         WHERE st.status_id = $1 ORDER BY t.name",
-    )
-    .bind(status_id)
-    .fetch_all(&ctx.db)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|name| {
-            json!({
-                "name": name,
-                "url": format!("{}/tags/{name}", base_url.trim_end_matches('/')),
-            })
-        })
-        .collect())
-}
-
-/// The `card` (link preview) entity when a `preview_cards` row exists.
-async fn card_entity(ctx: &PostContext, status_id: i64, base_url: &str) -> Result<Value> {
-    let row = sqlx::query(
-        "SELECT url, title, description, image_path, author_name, author_url, \
-                provider_name, provider_url FROM preview_cards WHERE status_id = $1 \
-         ORDER BY id LIMIT 1",
-    )
-    .bind(status_id)
-    .fetch_optional(&ctx.db)
-    .await?;
-    Ok(match row {
-        Some(r) => {
-            let image: Option<String> = r.get("image_path");
-            json!({
-                "url": r.get::<String, _>("url"),
-                "title": r.get::<String, _>("title"),
-                "description": r.get::<String, _>("description"),
-                "type": "link",
-                "author_name": r.get::<String, _>("author_name"),
-                "author_url": r.get::<String, _>("author_url"),
-                "provider_name": r.get::<String, _>("provider_name"),
-                "provider_url": r.get::<String, _>("provider_url"),
-                "image": image.map(|k| media::public_url(&ctx.config, base_url, &k)),
-                "blurhash": Value::Null,
-            })
+            mentions
+                .entry(r.get::<i64, _>("status_id"))
+                .or_default()
+                .push(json!({
+                    "id": r.get::<i64, _>("id").to_string(),
+                    "username": username,
+                    "acct": match &domain {
+                        Some(d) => format!("{username}@{d}"),
+                        None => username.clone(),
+                    },
+                    "url": url.filter(|u| !u.is_empty()).unwrap_or(actor_id),
+                }));
         }
-        None => Value::Null,
-    })
+        let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
+        for (sid, name) in tag_rows {
+            tags.entry(sid).or_default().push(name);
+        }
+        // Rows arrive ordered — first `preview_cards` row per status wins.
+        let mut cards: HashMap<i64, Value> = HashMap::new();
+        for r in &card_rows {
+            let image: Option<String> = r.get("image_path");
+            cards
+                .entry(r.get::<i64, _>("status_id"))
+                .or_insert_with(|| {
+                    json!({
+                        "url": r.get::<String, _>("url"),
+                        "title": r.get::<String, _>("title"),
+                        "description": r.get::<String, _>("description"),
+                        "type": "link",
+                        "author_name": r.get::<String, _>("author_name"),
+                        "author_url": r.get::<String, _>("author_url"),
+                        "provider_name": r.get::<String, _>("provider_name"),
+                        "provider_url": r.get::<String, _>("provider_url"),
+                        "image": image.map(|k| media::public_url(&ctx.config, &base_url, &k)),
+                        "blurhash": Value::Null,
+                    })
+                });
+        }
+        let mut reactions: HashMap<i64, Vec<Value>> = HashMap::new();
+        for (sid, emoji, custom_emoji_id, count, me) in reaction_rows {
+            let mut entry = json!({
+                "name": emoji,
+                "count": count,
+                "me": me.unwrap_or(false),
+            });
+            if let Some(ce) = custom_emoji_id {
+                if let Some((remote_url, image_path)) = ce_urls.get(&ce) {
+                    entry["url"] = remote_url
+                        .clone()
+                        .filter(|u| !u.is_empty())
+                        .or_else(|| {
+                            image_path
+                                .clone()
+                                .map(|k| crate::media::public_url(&ctx.config, &base_url, &k))
+                        })
+                        .map(Value::String)
+                        .unwrap_or(Value::Null);
+                }
+            }
+            reactions.entry(sid).or_default().push(entry);
+        }
+
+        Ok(Self {
+            accounts,
+            moved,
+            emoji_maps,
+            empty_map,
+            originals,
+            visible,
+            media,
+            mentions,
+            tags,
+            cards,
+            polls,
+            reactions,
+            pinned,
+            flags,
+        })
+    }
+
+    /// The author's domain-scoped emoji map for one status, or the
+    /// shared empty map — the same short-circuit
+    /// `EmojiMap::for_author_texts` applies per status.
+    fn emoji_map<'a>(
+        &'a self,
+        status: &StatusRow,
+        account: &'a account_mapper::AccountRow,
+    ) -> &'a crate::emoji::render::EmojiMap {
+        let mut texts: Vec<&str> = vec![
+            status.content.as_str(),
+            status.spoiler_text.as_deref().unwrap_or_default(),
+        ];
+        texts.extend(account_mapper::emoji_texts(account));
+        if texts
+            .iter()
+            .all(|t| !crate::emoji::render::has_shortcode_candidate(t))
+        {
+            return &self.empty_map;
+        }
+        self.emoji_maps
+            .get(&account.domain)
+            .unwrap_or(&self.empty_map)
+    }
+
+    /// The Mastodon-4.4 quote block from batch state — the depth-0
+    /// `quoted_status` renders through [`Self::render`]; past one level
+    /// it is `null`, exactly as `interactions::entity::quote_json`
+    /// produced.
+    fn quote_block(
+        &self,
+        ctx: &PostContext,
+        status: &StatusRow,
+        viewer: Option<i64>,
+        depth: u8,
+    ) -> Result<Value> {
+        let (id, uri, quoted_status, state) = match (status.quote_of_id, &status.quote_uri) {
+            (Some(qid), _) => {
+                let quoted_status = match self.originals.get(&qid) {
+                    Some(q) if depth == 0 && self.visible.contains(&qid) => {
+                        Some(self.render(ctx, q, viewer, 1)?)
+                    }
+                    _ => None,
+                };
+                (json!(qid.to_string()), None, quoted_status, "accepted")
+            }
+            (None, Some(uri)) => (Value::Null, Some(uri.clone()), None, "pending"),
+            (None, None) => return Ok(Value::Null),
+        };
+        Ok(json!({
+            "quote_id": id,
+            "quote": {
+                "state": state,
+                "quoted_status": quoted_status,
+            },
+            "yonder_quote_uri": uri,
+        }))
+    }
+
+    /// Assemble one Status entity purely from batch state. `depth`
+    /// bounds reblog/quote nesting to one level — [`Self::render`]
+    /// calls itself at depth 1 and cannot go deeper.
+    fn render(
+        &self,
+        ctx: &PostContext,
+        status: &StatusRow,
+        viewer: Option<i64>,
+        depth: u8,
+    ) -> Result<Value> {
+        let base_url = ctx.base_url();
+        let account = self
+            .accounts
+            .get(&status.account_id)
+            .ok_or_else(|| crate::Error::NotFound("account".into()))?;
+        let mut account_json = account_mapper::to_account(account, &base_url, &ctx.config);
+        account_json["moved"] = self
+            .moved
+            .get(&status.account_id)
+            .cloned()
+            .unwrap_or(Value::Null);
+        let emoji_map = self.emoji_map(status, account);
+        crate::emoji::render::apply_account_with_map(&mut account_json, emoji_map);
+        let media_json: Vec<Value> = self
+            .media
+            .get(&status.id)
+            .into_iter()
+            .flatten()
+            .map(|m| media_entity(&ctx.config, &base_url, m))
+            .collect();
+        let poll_json = status
+            .poll_id
+            .and_then(|id| self.polls.get(&id).cloned())
+            .unwrap_or(Value::Null);
+        let content = status
+            .content_html
+            .clone()
+            .unwrap_or_else(|| pubby_sdk::content::html_escape(&status.content));
+        let (faved, marked, boosted) = self.flags.get(&status.id).copied().unwrap_or_default();
+        let flags = json!({
+            "reblogged": boosted,
+            "favourited": faved,
+            "bookmarked": marked,
+            "pinned": self.pinned.contains(&(status.account_id, status.id)),
+        });
+        let quote_block = self.quote_block(ctx, status, viewer, depth)?;
+        let emoji_reactions = self.reactions.get(&status.id).cloned().unwrap_or_default();
+        let (reblog, content, spoiler, media_json, poll_json) = match (status.reblog_of_id, depth) {
+            (Some(orig), 0) => {
+                let nested = match self.originals.get(&orig) {
+                    Some(s) if self.visible.contains(&orig) => self.render(ctx, s, viewer, 1)?,
+                    _ => Value::Null,
+                };
+                // Mastodon renders "" for the boost wrapper's own text.
+                (
+                    nested,
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                    Vec::new(),
+                    Value::Null,
+                )
+            }
+            _ => (
+                Value::Null,
+                Value::String(crate::emoji::render::substitute(&content, emoji_map)),
+                Value::String(crate::emoji::render::substitute(
+                    &status.spoiler_text.clone().unwrap_or_default(),
+                    emoji_map,
+                )),
+                media_json,
+                poll_json,
+            ),
+        };
+        Ok(json!({
+            "id": status.id.to_string(),
+            "uri": status.uri,
+            "url": status.url,
+            "account": account_json,
+            "content": content,
+            "content_type": status.content_type,
+            "created_at": status.created_at.to_rfc3339(),
+            "edited_at": status.edited_at.map(|e| e.to_rfc3339()),
+            "visibility": wire_visibility(&status.visibility),
+            "sensitive": status.sensitive,
+            "spoiler_text": spoiler,
+            "media_attachments": media_json,
+            "mentions": self.mentions.get(&status.id).cloned().unwrap_or_default(),
+            "tags": self
+                .tags
+                .get(&status.id)
+                .into_iter()
+                .flatten()
+                .map(|name| json!({
+                    "name": name,
+                    "url": format!("{}/tags/{name}", base_url.trim_end_matches('/')),
+                }))
+                .collect::<Vec<_>>(),
+            "emojis": emoji_map.entities_in(&format!(
+                "{} {}",
+                status.content,
+                status.spoiler_text.clone().unwrap_or_default()
+            )),
+            "card": self.cards.get(&status.id).cloned().unwrap_or(Value::Null),
+            "poll": poll_json,
+            "application": Value::Null,
+            "language": status.language,
+            "in_reply_to_id": status.in_reply_to_id.map(|i| i.to_string()),
+            "in_reply_to_account_id": status.in_reply_to_account_id.map(|i| i.to_string()),
+            "reblog": reblog,
+            "replies_count": status.replies_count,
+            "reblogs_count": status.reblogs_count,
+            "favourites_count": status.favourites_count,
+            "quotes_count": status.quotes_count,
+            "quote_id": quote_block.get("quote_id").cloned().unwrap_or(Value::Null),
+            "quote": quote_block.get("quote").cloned().unwrap_or(Value::Null),
+            "reblogged": flags["reblogged"],
+            "favourited": flags["favourited"],
+            "bookmarked": flags["bookmarked"],
+            "pinned": flags["pinned"],
+            "muted": false,
+            "pleroma": {
+                "emoji_reactions": emoji_reactions,
+            },
+            "yonder": {
+                "source": status.content,
+                "content_type": status.content_type,
+                "quote": match (status.quote_of_id, &status.quote_uri) {
+                    (Some(id), _) => json!({"id": id.to_string(), "uri": quote_block.get("yonder_quote_uri").cloned().unwrap_or(Value::Null)}),
+                    (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
+                    _ => Value::Null,
+                },
+            },
+        }))
+    }
 }
 
 /// The Mastodon Status entity. `content` serves the sanitized
@@ -226,7 +1001,30 @@ pub async fn status_entity(
     status: &StatusRow,
     viewer: Option<i64>,
 ) -> Result<Value> {
-    status_entity_inner(ctx, status, viewer, 0).await
+    Ok(status_entities(ctx, std::slice::from_ref(status), viewer)
+        .await?
+        .into_iter()
+        .next()
+        .expect("one entity per status"))
+}
+
+/// A page of Status entities sharing one [`StatusBatch`] — order
+/// matches `rows`. This is the entry point every list surface
+/// (timelines, account statuses, search, context, conversations)
+/// should use: a page costs a fixed ~dozen queries in four `try_join!`
+/// waves instead of ~8 sequential round-trips per status.
+pub async fn status_entities(
+    ctx: &PostContext,
+    rows: &[StatusRow],
+    viewer: Option<i64>,
+) -> Result<Vec<Value>> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let batch = StatusBatch::load(ctx, rows, viewer).await?;
+    rows.iter()
+        .map(|s| batch.render(ctx, s, viewer, 0))
+        .collect()
 }
 
 /// `depth` bounds reblog/quote nesting to one level.
@@ -238,131 +1036,9 @@ pub(crate) async fn status_entity_inner(
     viewer: Option<i64>,
     depth: u8,
 ) -> Result<Value> {
-    let base_url = ctx.base_url();
-    let account = account_mapper::load(&ctx.db, status.account_id)
+    StatusBatch::load(ctx, std::slice::from_ref(status), viewer)
         .await?
-        .ok_or_else(|| crate::Error::NotFound("account".into()))?;
-    let mut account_json = account_mapper::to_account(&account, &base_url, &ctx.config);
-    account_json["moved"] =
-        crate::users::moves::moved_account_json(&ctx.db, &account, &base_url, &ctx.config).await;
-
-    // Epic 20 — one domain-scoped emoji map shared by the author
-    // entity, the content and the `emojis` array: remote authors
-    // resolve `:code:` against their own domain's recorded emoji.
-    // Skip the query entirely when no text could carry a shortcode.
-    let mut texts: Vec<&str> = vec![
-        status.content.as_str(),
-        status.spoiler_text.as_deref().unwrap_or_default(),
-    ];
-    texts.extend(account_mapper::emoji_texts(&account));
-    let emoji_map = crate::emoji::render::EmojiMap::for_author_texts(
-        &ctx.db,
-        &ctx.config,
-        &base_url,
-        account.domain.as_deref(),
-        &texts,
-    )
-    .await?;
-    crate::emoji::render::apply_account_with_map(&mut account_json, &emoji_map);
-    let media_rows = media_for_status(ctx, status.id).await?;
-    let media_json: Vec<Value> = media_rows
-        .iter()
-        .map(|m| media_entity(&ctx.config, &base_url, m))
-        .collect();
-    let poll_json = match status.poll_id {
-        Some(poll_id) => polls::entity(ctx, poll_id, viewer).await?,
-        None => Value::Null,
-    };
-    let content = status
-        .content_html
-        .clone()
-        .unwrap_or_else(|| pubby_sdk::content::html_escape(&status.content));
-    // Interaction state (epic 13): viewer flags, reblog nesting,
-    // the Mastodon-4.4 quote block and Pleroma reaction summary.
-    let flags = crate::interactions::entity::viewer_flags(ctx, status, viewer).await?;
-    let quote_block = crate::interactions::entity::quote_json(ctx, status, viewer, depth).await?;
-    let emoji_reactions =
-        crate::interactions::reactions::reaction_summary(ctx, status.id, viewer, false).await?;
-    let (reblog, content, spoiler, media_json, poll_json) = match (status.reblog_of_id, depth) {
-        (Some(orig), 0) => {
-            let inner = super::load(&ctx.db, orig).await?;
-            let nested = match &inner {
-                Some(s) if super::can_see(&ctx.db, s, viewer).await? => {
-                    Box::pin(status_entity_inner(ctx, s, viewer, 1)).await?
-                }
-                _ => Value::Null,
-            };
-            // Mastodon renders "" for the boost wrapper's own text.
-            (
-                nested,
-                Value::String(String::new()),
-                Value::String(String::new()),
-                Vec::new(),
-                Value::Null,
-            )
-        }
-        _ => (
-            Value::Null,
-            Value::String(crate::emoji::render::substitute(&content, &emoji_map)),
-            Value::String(crate::emoji::render::substitute(
-                &status.spoiler_text.clone().unwrap_or_default(),
-                &emoji_map,
-            )),
-            media_json,
-            poll_json,
-        ),
-    };
-    Ok(json!({
-        "id": status.id.to_string(),
-        "uri": status.uri,
-        "url": status.url,
-        "account": account_json,
-        "content": content,
-        "content_type": status.content_type,
-        "created_at": status.created_at.to_rfc3339(),
-        "edited_at": status.edited_at.map(|e| e.to_rfc3339()),
-        "visibility": wire_visibility(&status.visibility),
-        "sensitive": status.sensitive,
-        "spoiler_text": spoiler,
-        "media_attachments": media_json,
-        "mentions": mention_entities(ctx, status.id).await?,
-        "tags": tag_entities(ctx, status.id, &base_url).await?,
-        "emojis": emoji_map.entities_in(&format!(
-            "{} {}",
-            status.content,
-            status.spoiler_text.clone().unwrap_or_default()
-        )),
-        "card": card_entity(ctx, status.id, &base_url).await?,
-        "poll": poll_json,
-        "application": Value::Null,
-        "language": status.language,
-        "in_reply_to_id": status.in_reply_to_id.map(|i| i.to_string()),
-        "in_reply_to_account_id": status.in_reply_to_account_id.map(|i| i.to_string()),
-        "reblog": reblog,
-        "replies_count": status.replies_count,
-        "reblogs_count": status.reblogs_count,
-        "favourites_count": status.favourites_count,
-        "quotes_count": status.quotes_count,
-        "quote_id": quote_block.get("quote_id").cloned().unwrap_or(Value::Null),
-        "quote": quote_block.get("quote").cloned().unwrap_or(Value::Null),
-        "reblogged": flags["reblogged"],
-        "favourited": flags["favourited"],
-        "bookmarked": flags["bookmarked"],
-        "pinned": flags["pinned"],
-        "muted": false,
-        "pleroma": {
-            "emoji_reactions": emoji_reactions,
-        },
-        "yonder": {
-            "source": status.content,
-            "content_type": status.content_type,
-            "quote": match (status.quote_of_id, &status.quote_uri) {
-                (Some(id), _) => json!({"id": id.to_string(), "uri": quote_block.get("yonder_quote_uri").cloned().unwrap_or(Value::Null)}),
-                (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
-                _ => Value::Null,
-            },
-        },
-    }))
+        .render(ctx, status, viewer, depth)
 }
 
 /// A `scheduled_statuses` row.

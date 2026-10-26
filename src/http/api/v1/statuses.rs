@@ -116,14 +116,16 @@ pub async fn context(
     if !posts::can_see(&ctx.db, &status, viewer).await? {
         return Err(Error::NotFound("status".into()));
     }
-    let mut ancestors = Vec::new();
-    for s in posts::context::ancestors(&ctx.db, id, viewer).await? {
-        ancestors.push(entity::status_entity(&ctx, &s, viewer).await?);
-    }
-    let mut descendants = Vec::new();
-    for s in posts::context::descendants(&ctx.db, id, viewer).await? {
-        descendants.push(entity::status_entity(&ctx, &s, viewer).await?);
-    }
+    let ancestor_rows = posts::context::ancestors(&ctx.db, id, viewer).await?;
+    let descendant_rows = posts::context::descendants(&ctx.db, id, viewer).await?;
+    // Ancestors and descendants share one render batch — the whole
+    // thread is a single wave of lookups, not two.
+    let ancestor_len = ancestor_rows.len();
+    let mut all = ancestor_rows;
+    all.extend(descendant_rows);
+    let mut rendered = entity::status_entities(&ctx, &all, viewer).await?;
+    let descendants = rendered.split_off(ancestor_len);
+    let ancestors = rendered;
     Ok(Json(json!({
         "ancestors": ancestors,
         "descendants": descendants,

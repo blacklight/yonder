@@ -191,6 +191,12 @@
     "profile": {
       "title": "Perfil"
     },
+    "profile-followers": {
+      "title": "Seguidores"
+    },
+    "profile-following": {
+      "title": "Siguiendo"
+    },
     "register": {
       "title": "Crear una cuenta"
     }
@@ -707,6 +713,7 @@
     "statuses": "{count} publicaciones",
     "verified": "Verificado",
     "tabs": "Secciones del perfil",
+    "networkTabs": "Seguidores y siguiendo",
     "posts": "Publicaciones",
     "media": "Multimedia",
     "showReplies": "Mostrar respuestas",

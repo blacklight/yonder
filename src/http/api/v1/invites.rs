@@ -48,7 +48,7 @@ pub async fn create_invite(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:accounts")?;
     if !invites::may_create(&state.config(), &auth.role) {
-        return Err(crate::Error::Forbidden);
+        return Err(crate::Error::Forbidden("invite creation is disabled"));
     }
     if params.expires_at.is_some() && params.expires_in.is_some() {
         return Err(crate::Error::Validation(

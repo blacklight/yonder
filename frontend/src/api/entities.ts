@@ -43,6 +43,8 @@ export interface CredentialAccount extends Account {
   yonder?: {
     role?: string;
     settings?: YonderSettings;
+    /** Email confirmation outstanding — writes 403 until resolved. */
+    verification_pending?: boolean;
   };
 }
 

@@ -96,9 +96,10 @@ export function passwordToken(params: {
     grant_type: "password",
     username: params.username,
     password: params.password,
-    // No client app — first-party UI. `read write` is the same scope
-    // set anonymous registration receives.
-    scope: "read write",
+    // No client app — first-party UI. Request the full scope set so
+    // admin/moderation endpoints work for staff accounts (the role
+    // check still gates them for regular users).
+    scope: "read write follow push admin",
   });
 }
 

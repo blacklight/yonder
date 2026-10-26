@@ -146,6 +146,20 @@ describe("AppLayout", () => {
     ).toBe(true);
   });
 
+  it("shows a pending-verification notice only while the email is unconfirmed", () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = {
+      acct: "alice",
+      yonder: { verification_pending: true },
+    } as never;
+    let w = layout();
+    expect(w.get(".layout__notice").text()).toContain("isn't verified");
+    auth.account = { acct: "alice" } as never;
+    w = layout();
+    expect(w.find(".layout__notice").exists()).toBe(false);
+  });
+
   it("mobile menu closes on route change", async () => {
     const router = createRouter({
       history: createMemoryHistory(),

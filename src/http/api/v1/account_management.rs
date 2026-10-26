@@ -169,10 +169,10 @@ pub async fn delete_account(
             .fetch_one(&state.db)
             .await?;
     let Some(hash) = password_hash else {
-        return Err(crate::Error::Forbidden);
+        return Err(crate::Error::Forbidden("incorrect password"));
     };
     if !crate::auth::password::verify_password(&params.password, &hash) {
-        return Err(crate::Error::Forbidden);
+        return Err(crate::Error::Forbidden("incorrect password"));
     }
     let delay = std::time::Duration::from_secs(
         state.config().admin.account_deletion_grace_days as u64 * 86_400,

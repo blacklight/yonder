@@ -131,6 +131,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/2fa/webauthn/credentials/{id}",
             axum::routing::delete(two_factor::webauthn_delete),
         )
+        // The `authentication` bucket covers only the auth-adjacent
+        // endpoints registered above (credential verification, app and
+        // token management, sessions, 2FA). Everything below is either
+        // unlayered (cheap reads) or carries its own bucket — axum's
+        // `route_layer` wraps only routes registered *before* it.
+        .route_layer(ratelimit::layer(state, "authentication"))
         .route("/api/v1/instance", get(instance::instance))
         // Epic 21 — public moderated-instances listing.
         .route(
@@ -511,11 +517,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .put(scheduled_statuses::update)
                 .delete(scheduled_statuses::cancel),
         )
-        // The `authentication` bucket covers every auth-adjacent
-        // endpoint registered above.
-        .route_layer(ratelimit::layer(state, "authentication"))
         // Registration gets only the dedicated `account_creation`
-        // bucket — added after `route_layer` so it isn't double-counted.
+        // bucket — registered after the `authentication` route_layer
+        // above so it isn't double-counted.
         .route(
             "/api/v1/accounts",
             post(accounts::register).route_layer(ratelimit::layer(state, "account_creation")),

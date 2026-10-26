@@ -113,7 +113,9 @@ pub async fn apply(
     // Moderators can't act on staff — suspension-class powers over
     // admins and fellow moderators belong to admins alone.
     if actor_role == "moderator" && matches!(target_role.as_str(), "admin" | "moderator") {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden(
+            "moderators cannot take this action on staff accounts",
+        ));
     }
 
     // Suspending, freezing or deleting the last active local admin
@@ -272,7 +274,9 @@ pub async fn reverse(
         return Err(Error::NotFound("account".into()));
     };
     if actor_role == "moderator" && matches!(target_role.as_str(), "admin" | "moderator") {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden(
+            "moderators cannot take this action on staff accounts",
+        ));
     }
     sqlx::query(&format!(
         "UPDATE accounts SET {set}, updated_at = now() WHERE id = $1"
@@ -416,7 +420,9 @@ pub async fn reset_link(
         ));
     };
     if actor_role == "moderator" && matches!(target_role.as_str(), "admin" | "moderator") {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden(
+            "moderators cannot take this action on staff accounts",
+        ));
     }
     if inactive {
         return Err(Error::Validation("account is suspended or deleted".into()));

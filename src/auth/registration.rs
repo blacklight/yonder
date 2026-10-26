@@ -134,7 +134,9 @@ pub struct AdminCreateParams<'a> {
     pub password_hash: &'a str,
     pub role: &'a str,
     /// Skip the email-verification requirement: the account is
-    /// created already verified.
+    /// created already verified. Implied for `moderator`/`admin`
+    /// roles — staff are operator-provisioned, and an unverifiable
+    /// staff account would lock itself out of every write.
     pub skip_verification: bool,
     pub locale: Option<&'a str>,
     pub actor_id: Option<i64>,
@@ -168,8 +170,13 @@ pub async fn create_admin_account(
     if let Some(locale) = &locale {
         crate::users::settings::validate_supported_locale("locale", locale)?;
     }
-    let email_verified =
-        params.skip_verification || !crate::auth::scopes::requires_email_verification(config);
+    // Staff accounts skip the mailbox round-trip: the CLI is already
+    // the trust anchor, an admin can disable the requirement anyway,
+    // and an unverifiable first admin would silently lock the whole
+    // web app out of writes. Regular users keep proving ownership.
+    let email_verified = params.skip_verification
+        || params.role != "user"
+        || !crate::auth::scopes::requires_email_verification(config);
 
     // Same friendly pre-checks as `register`; the unique indexes
     // still guard the race.
@@ -317,7 +324,7 @@ pub async fn register(
         // An invite code bypasses the closed gate; its validity is
         // checked (and consumed atomically) inside the transaction.
         RegistrationMode::Closed if invite_code.is_none() => {
-            return Err(Error::Forbidden);
+            return Err(Error::Forbidden("registration is closed"));
         }
         RegistrationMode::ApprovalRequired if reason.is_none() && invite_code.is_none() => {
             return Err(Error::Validation(

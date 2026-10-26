@@ -17,7 +17,7 @@ pub fn exit_code(error: &Error) -> u8 {
         Error::Io(_)
         | Error::Internal(_)
         | Error::Federation(_)
-        | Error::Forbidden
+        | Error::Forbidden(_)
         | Error::Unauthorized
         | Error::RateLimited(_) => 1,
     }
@@ -48,7 +48,7 @@ mod tests {
             (Error::Database(sqlx::Error::RowNotFound), 6),
             (Error::Io(std::io::Error::other("x")), 1),
             (Error::Internal("x".into()), 1),
-            (Error::Forbidden, 1),
+            (Error::Forbidden("x"), 1),
             (Error::Unauthorized, 1),
             (Error::RateLimited("x".into()), 1),
         ];

@@ -42,8 +42,10 @@ pub enum Error {
     #[error("unauthorized")]
     Unauthorized,
 
-    #[error("forbidden")]
-    Forbidden,
+    /// Reason is client-facing: users are entitled to know *why* a
+    /// request was refused (scope, approval, unverified email, ...).
+    #[error("{0}")]
+    Forbidden(&'static str),
 
     #[error("bad request: {0}")]
     BadRequest(String),
@@ -91,7 +93,7 @@ impl Error {
             // Mastodon reports validation failures as 422.
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -114,7 +116,7 @@ impl Error {
         match self {
             Self::NotFound(_)
             | Self::Unauthorized
-            | Self::Forbidden
+            | Self::Forbidden(_)
             | Self::BadRequest(_)
             | Self::Validation(_)
             | Self::Conflict(_)
@@ -134,7 +136,7 @@ impl Error {
             Self::Io(_) => "io",
             Self::NotFound(_) => "not_found",
             Self::Unauthorized => "unauthorized",
-            Self::Forbidden => "forbidden",
+            Self::Forbidden(_) => "forbidden",
             Self::BadRequest(_) => "bad_request",
             Self::Validation(_) => "validation",
             Self::Conflict(_) => "conflict",

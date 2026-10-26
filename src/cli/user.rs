@@ -51,7 +51,8 @@ pub enum UserCommand {
         #[arg(long, default_value = "user", value_parser = ["user", "moderator", "admin"])]
         role: String,
         /// Create the account already verified, skipping the
-        /// email-verification requirement.
+        /// email-verification requirement (implied for
+        /// moderator/admin roles).
         #[arg(long)]
         skip_verification: bool,
         /// Interface locale for the new user.
@@ -326,6 +327,11 @@ async fn create(
             "created {} (id {})",
             args.username, registered.account_id
         ))?;
+        if registered.verification_pending {
+            out.emit_human(
+                "note: email verification pending — the user cannot post until verified",
+            )?;
+        }
     }
     Ok(0)
 }

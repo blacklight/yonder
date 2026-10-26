@@ -366,6 +366,14 @@ function search() {
     </MobileMenu>
 
     <main class="layout__main">
+      <div
+        v-if="auth.account?.yonder?.verification_pending"
+        class="layout__notice"
+        role="status"
+      >
+        <FontAwesomeIcon icon="envelope" />
+        {{ t("auth.verificationPending") }}
+      </div>
       <slot />
     </main>
 
@@ -457,6 +465,16 @@ function search() {
   max-width: 44rem;
   width: 100%;
   margin: 0 auto;
+}
+.layout__notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
 }
 
 @media (min-width: 768px) {

@@ -182,7 +182,7 @@ fn guard(key: &str) -> Result<()> {
         return Err(Error::NotFound(format!("unknown config key {key:?}")));
     }
     if !is_writable(key) {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("config key is read-only"));
     }
     Ok(())
 }

@@ -135,6 +135,11 @@ async fn credential_account(
     // modeled — the object is a name carrier). Mastodon serializes
     // the bitmask as a decimal string, so "0" rather than "".
     entity["yonder"]["role"] = json!(auth.role);
+    // Lets the SPA surface "confirm your email" before the first
+    // gated write 403s — `false` when verification isn't enforced.
+    entity["yonder"]["verification_pending"] = json!(
+        crate::auth::scopes::requires_email_verification(&state.config()) && !auth.email_verified
+    );
     entity["role"] = json!({
         "id": auth.role,
         "name": auth.role,

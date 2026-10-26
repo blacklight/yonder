@@ -428,6 +428,57 @@ async fn user_lifecycle() {
 }
 
 #[tokio::test]
+async fn user_create_staff_are_created_verified() {
+    let Some(infra) = harness::infra().await else {
+        return;
+    };
+    let _permit = harness::acquire().await;
+    let mut sb = sandbox(infra, &harness::test_slug()).await;
+    // A configured mailer flips require_email_verification on.
+    sb.extra_env
+        .push(("YONDER_EMAIL__SMTP_HOST".into(), "127.0.0.1".into()));
+    migrate(&sb);
+
+    // Staff skip the mailbox round-trip — the CLI is the trust
+    // anchor, and a pending admin would lock the web app out of
+    // every write.
+    let out = yonder(
+        &sb,
+        &[
+            "user",
+            "create",
+            "--username",
+            "admin",
+            "--email",
+            "admin@example.com",
+            "--generate-password",
+            "--role",
+            "admin",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout_json(&out)["email_verified"], true);
+
+    // Regular users still prove mailbox ownership.
+    let out = yonder(
+        &sb,
+        &[
+            "user",
+            "create",
+            "--username",
+            "bob",
+            "--email",
+            "bob@example.com",
+            "--generate-password",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout_json(&out)["email_verified"], false);
+}
+
+#[tokio::test]
 async fn domain_block_and_relay() {
     let Some(infra) = harness::infra().await else {
         return;

@@ -148,18 +148,23 @@ fn check_scope(
     let scopes = ScopeSet::parse(&auth.scopes)
         .map_err(|e| Error::Validation(format!("token has invalid scopes: {e}")))?;
     if !scopes.covers(required) {
-        return Err(Error::Forbidden);
+        // Mastodon's own wording for the scope gate.
+        return Err(Error::Forbidden(
+            "This action is outside the authorized scopes",
+        ));
     }
     let base = required.split(':').next().unwrap_or_default();
     if base == "admin" && !staff_roles.contains(&auth.role.as_str()) {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("This action requires a staff role"));
     }
     if !is_read_scope(required) {
         if !auth.approved {
-            return Err(Error::Forbidden);
+            return Err(Error::Forbidden("Your account is pending approval"));
         }
         if requires_email_verification(config) && !auth.email_verified {
-            return Err(Error::Forbidden);
+            return Err(Error::Forbidden(
+                "You must confirm your email address before you can perform this action",
+            ));
         }
     }
     Ok(())

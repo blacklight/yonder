@@ -166,13 +166,13 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
         return Err(Error::Validation("account is deleted".into()));
     }
     if suspended_at.is_some() {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("account is suspended"));
     }
     let Some(hash) = password_hash else {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("incorrect password"));
     };
     if !verify_password(password, &hash) {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("incorrect password"));
     }
     if let Some(at) = moved_at {
         let cooldown = chrono::Duration::days(MOVE_COOLDOWN_DAYS);
@@ -287,10 +287,10 @@ pub async fn cancel_move(state: &AppState, account_id: i64, password: &str) -> R
     .await?
     .ok_or_else(|| Error::NotFound("account".into()))?;
     let Some(hash) = password_hash else {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("incorrect password"));
     };
     if !verify_password(password, &hash) {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("incorrect password"));
     }
     sqlx::query("UPDATE accounts SET moved_to_account_id = NULL, updated_at = now() WHERE id = $1")
         .bind(account_id)

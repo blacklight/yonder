@@ -260,7 +260,9 @@ pub async fn check_media_claimable(
                 Ok(())
             }
         }
-        Some((owner, _)) if owner != account_id => Err(Error::Forbidden),
+        Some((owner, _)) if owner != account_id => Err(Error::Forbidden(
+            "media attachment belongs to a different account",
+        )),
         _ => Err(Error::NotFound("media".into())),
     }
 }
@@ -744,7 +746,7 @@ pub async fn edit_status(
         return Err(Error::NotFound("status".into()));
     }
     if !status.local {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("remote statuses cannot be edited"));
     }
     let validated = validate(ctx, auth, params, Some(status_id)).await?;
 

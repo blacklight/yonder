@@ -219,7 +219,8 @@
     "register": "Create an account",
     "codeRequired": "Enter your two-factor code.",
     "mfaHintTotp": "Enter the code from your authenticator app or a backup code.",
-    "mfaHintWebauthn": "This account signs in with a passkey; passkey sign-in is not supported in this browser yet."
+    "mfaHintWebauthn": "This account signs in with a passkey; passkey sign-in is not supported in this browser yet.",
+    "verificationPending": "Your email address isn't verified yet. Posting and other actions are unavailable until you confirm it — check your inbox."
   },
   "menu": {
     "title": "Menu",

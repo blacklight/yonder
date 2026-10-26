@@ -587,3 +587,128 @@ async fn database_outage_is_500_not_401() {
         json!({"error": "Internal server error"})
     );
 }
+
+/// Scope/state gate refusals name the failing gate in the body —
+/// a bare "forbidden" leaves the SPA unable to say *why* a write
+/// was refused (unconfirmed email, missing scope, pending approval).
+#[tokio::test]
+async fn forbidden_names_the_gate() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
+        c.email.smtp_host = Some("127.0.0.1".into());
+    })
+    .await
+    else {
+        return;
+    };
+    let app = http::build_router(state.clone());
+    let token = seed_token(&state).await;
+
+    let post_status = |token: &str| {
+        let app = app.clone();
+        let token = token.to_string();
+        async move {
+            app.oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/statuses")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    // The seeded token carries the default 'read' scope — a write
+    // endpoint refuses it on coverage first.
+    let resp = post_status(&token).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(resp).await["error"],
+        json!("This action is outside the authorized scopes")
+    );
+
+    // Broaden the token and approve the account — the email gate is
+    // the next refusal, and it names itself as well.
+    sqlx::query("UPDATE oauth_access_tokens SET scopes = 'read write'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE users SET approved_at = now()")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let resp = post_status(&token).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        body_json(resp).await["error"],
+        json!("You must confirm your email address before you can perform this action")
+    );
+}
+
+/// Regression: the `authentication` bucket must cover only the
+/// auth-adjacent routes — the blanket `route_layer` used to wrap
+/// nearly the whole API, so a page refresh could 429
+/// `verify_credentials`/`instance`/settings at the 5/min default.
+#[tokio::test]
+async fn authentication_bucket_scoped_to_auth_endpoints() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
+        c.rate_limit.authentication = RateLimit {
+            limit: 1,
+            period_seconds: 60,
+            authenticated_limit: Some(3),
+        };
+    })
+    .await
+    else {
+        return;
+    };
+    let app = http::build_router(state.clone());
+
+    // Routine reads that used to be swept into the bucket stay free:
+    // both calls pass instead of the second eating a 429.
+    assert_eq!(get(&app, "/api/v1/instance").await.status(), StatusCode::OK);
+    assert_eq!(get(&app, "/api/v1/instance").await.status(), StatusCode::OK);
+
+    // The bucket still guards auth endpoints. Anonymous callers get
+    // `limit` (1): the first call reaches the handler (401), the
+    // second is throttled.
+    let resp = get(&app, "/api/v1/apps/verify_credentials").await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = get(&app, "/api/v1/apps/verify_credentials").await;
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // A signed-in client gets `authenticated_limit` (3) instead —
+    // verify_credentials on every app boot no longer trips the
+    // anti-brute-force ceiling.
+    let token = seed_token(&state).await;
+    for i in 0..3 {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/tokens")
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "request {i}");
+    }
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/tokens")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+}

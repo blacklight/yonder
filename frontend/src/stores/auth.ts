@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import type { Account } from "@/api/entities";
+import type { CredentialAccount } from "@/api/entities";
 
 const TOKEN_KEY = "yonder.token";
 
@@ -13,7 +13,7 @@ export type Role = "user" | "moderator" | "admin";
 export const useAuthStore = defineStore("auth", {
   state: () => ({
     token: localStorage.getItem(TOKEN_KEY) as string | null,
-    account: null as Account | null,
+    account: null as CredentialAccount | null,
     role: null as Role | null,
   }),
   getters: {

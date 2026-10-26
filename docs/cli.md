@@ -39,6 +39,9 @@ yonder run-job <kind> [--payload JSON] [--inline] [--delay SECS]
 yonder user create --username U --email E
       (--password-stdin | --password-file PATH | --generate-password)
       [--role user|moderator|admin] [--skip-verification] [--locale L]
+                                   # staff roles are always created
+                                   # email-verified; the flag only
+                                   # matters for regular users
 yonder user delete <username> [--now] [--yes]
 yonder user list [--role R] [--suspended] [--limit N] [--search S]
 yonder user set-admin <username> [--revoke]

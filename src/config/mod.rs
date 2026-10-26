@@ -732,7 +732,7 @@ impl Default for RateLimitConfig {
             search: RateLimit {
                 limit: 20,
                 period_seconds: 60,
-                authenticated_limit: None,
+                authenticated_limit: Some(60),
             },
             feed: RateLimit {
                 limit: 30,
@@ -742,7 +742,7 @@ impl Default for RateLimitConfig {
             timeline: RateLimit {
                 limit: 5,
                 period_seconds: 10,
-                authenticated_limit: None,
+                authenticated_limit: Some(30),
             },
             account_creation: RateLimit {
                 limit: 5,
@@ -767,7 +767,10 @@ impl Default for RateLimitConfig {
             authentication: RateLimit {
                 limit: 5,
                 period_seconds: 60,
-                authenticated_limit: None,
+                // Verify-credentials and the streaming handshake run
+                // on every app boot; the anonymous ceiling stays at
+                // the anti-brute-force 5/min.
+                authenticated_limit: Some(60),
             },
             federation_inbox: RateLimit {
                 limit: 300,

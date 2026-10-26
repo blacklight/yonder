@@ -14,7 +14,7 @@ pub async fn pin(ctx: &PostContext, auth: &AuthContext, status_id: i64) -> Resul
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
     if status.account_id != auth.account_id {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("you can only pin your own statuses"));
     }
     if status.reblog_of_id.is_some() {
         return Err(Error::Validation("a boost cannot be pinned".to_string()));
@@ -61,7 +61,7 @@ pub async fn unpin(ctx: &PostContext, auth: &AuthContext, status_id: i64) -> Res
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
     if status.account_id != auth.account_id {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("you can only unpin your own statuses"));
     }
     sqlx::query("DELETE FROM status_pins WHERE account_id = $1 AND status_id = $2")
         .bind(auth.account_id)

@@ -54,7 +54,7 @@ pub async fn action(
     let ty = actions::normalize_action_type(&body.ty)
         .ok_or_else(|| Error::Validation(format!("unknown action type {:?}", body.ty)))?;
     if ty == "delete" && auth.role != "admin" {
-        return Err(Error::Forbidden);
+        return Err(Error::Forbidden("account deletion requires the admin role"));
     }
     if id == auth.account_id {
         return Err(Error::Validation(

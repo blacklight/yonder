@@ -26,7 +26,7 @@ describe("oauth api", () => {
     expect(body.get("grant_type")).toBe("password");
     expect(body.get("username")).toBe("alice");
     expect(body.get("password")).toBe("pw");
-    expect(body.get("scope")).toBe("read write");
+    expect(body.get("scope")).toBe("read write follow push admin");
     // No bearer — the token endpoint runs before any session exists.
     expect(
       (init.headers as Record<string, string>).Authorization,

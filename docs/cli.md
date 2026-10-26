@@ -35,6 +35,9 @@ yonder instance set-name <NAME>
 yonder instance show
 
 yonder run-job <kind> [--payload JSON] [--inline] [--delay SECS]
+                                   # remote_actor_fetch re-syncs a remote
+                                   # profile: --payload '{"actor_url": "…"}';
+                                   # '{}' sweeps every stale remote actor
 
 yonder user create --username U --email E
       (--password-stdin | --password-file PATH | --generate-password)

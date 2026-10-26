@@ -15,6 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
+    activitypub::REMOTE_ACTOR_STALE_SECONDS,
     auth::{registration, scopes::require_scope, tokens},
     http::{
         middleware::auth::{bearer_token, AuthContext, MaybeAuth},
@@ -212,8 +213,9 @@ pub async fn verify_email(
 /// Actor rows older than this get a background `RemoteActorFetch`
 /// enqueue — the stored row is served meanwhile (best-effort
 /// freshness, matching the rest of the codebase's eventual
-/// consistency for remote data).
-const REMOTE_REFRESH_AFTER_SECONDS: i64 = 24 * 60 * 60;
+/// consistency for remote data). The scheduled stale-actor sweep
+/// (`federation.remote_actor_refresh_schedule`) shares the window.
+const REMOTE_REFRESH_AFTER_SECONDS: i64 = REMOTE_ACTOR_STALE_SECONDS;
 
 /// One `RemoteActorFetch` enqueue per stale actor per this window —
 /// the flag covers the pending fetch so a burst of reads on a hot
@@ -264,6 +266,14 @@ async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::Accoun
         .map(|t| (chrono::Utc::now() - t).num_seconds() > REMOTE_REFRESH_AFTER_SECONDS)
         .unwrap_or(true);
     if !stale && !counters_refresh_due(&state.db, account.id).await {
+        return;
+    }
+    // The fetch job stamps `remote_network_syncs` on failure ('actor')
+    // and on 404/410 ('actor_gone'); a recent marker suppresses the
+    // re-enqueue so a dead actor doesn't spawn a new retry cycle on
+    // every profile read — the in-flight job's own retries cover
+    // transient failures.
+    if crate::activitypub::storage::fetch_markers_fresh(&state.db, account.id).await {
         return;
     }
     if !claim_refresh_slot(state, &account.actor_id).await {

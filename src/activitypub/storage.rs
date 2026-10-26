@@ -27,7 +27,7 @@ use pubby_sdk::{
     ActivityPubError, ActivityPubStorage, FollowRequest, Follower, Interaction, InteractionStatus,
     InteractionType,
 };
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use sqlx::{PgPool, Row};
 
 /// The crate-private result type for storage methods.
@@ -73,7 +73,7 @@ async fn local_account_id_for(pool: &PgPool, actor_id: &str) -> Result<Option<i6
 }
 
 /// Extract a flat string field out of a remote actor document.
-fn doc_str(doc: &Value, key: &str) -> Option<String> {
+pub(crate) fn doc_str(doc: &Value, key: &str) -> Option<String> {
     match doc.get(key) {
         Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
         Some(Value::Object(m)) => m.get("id").and_then(|v| v.as_str()).map(String::from),
@@ -86,6 +86,56 @@ fn url_domain(url: &str) -> Option<String> {
     url::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(String::from))
+}
+
+/// Bounds on the remote `attachment` → `profile_fields` extraction:
+/// the local-edit limits (`content.max_profile_fields` etc.) don't
+/// apply to inbound documents, but a hostile or broken actor doc
+/// must not bloat the JSONB column.
+const REMOTE_PROFILE_FIELDS_CAP: usize = 32;
+const REMOTE_FIELD_NAME_CHARS: usize = 255;
+const REMOTE_FIELD_VALUE_CHARS: usize = 4096;
+
+/// Remote actor `attachment[]` `PropertyValue` entries → the
+/// `profile_fields` JSONB shape. `None` when the document carries no
+/// `attachment` array — the caller treats absent as "leave stored
+/// fields alone" (a partial doc must not clobber), while a
+/// present-but-empty array clears them (the remote removed its
+/// fields). `value` arrives pre-rendered HTML — the same wire shape
+/// local entries store; `verified_at` stays null, a remote-claimed
+/// verification is never trusted.
+fn remote_profile_fields(actor_data: &Value) -> Option<Value> {
+    let attachments = actor_data.get("attachment")?.as_array()?;
+    Some(Value::Array(
+        attachments
+            .iter()
+            .filter(|a| match a.get("type").and_then(|t| t.as_str()) {
+                // `type` is often omitted; when present accept any
+                // `PropertyValue` spelling (plain, `schema:`-prefixed
+                // or the `http://schema.org#PropertyValue` IRI older
+                // Mastodon/Friendica emit).
+                None => true,
+                Some(t) => t
+                    .rsplit(['#', '/', ':'])
+                    .next()
+                    .map(|s| s.eq_ignore_ascii_case("propertyvalue"))
+                    .unwrap_or(false),
+            })
+            .filter_map(|a| {
+                let name = a.get("name")?.as_str()?.trim();
+                let value = a.get("value")?.as_str()?;
+                if name.is_empty() || value.is_empty() {
+                    return None;
+                }
+                Some(json!({
+                    "name": name.chars().take(REMOTE_FIELD_NAME_CHARS).collect::<String>(),
+                    "value": value.chars().take(REMOTE_FIELD_VALUE_CHARS).collect::<String>(),
+                    "verified_at": Value::Null,
+                }))
+            })
+            .take(REMOTE_PROFILE_FIELDS_CAP)
+            .collect(),
+    ))
 }
 
 /// Upsert a remote actor into `accounts`, returning its id.
@@ -151,6 +201,7 @@ async fn upsert_remote_account(
     let followers_count = count("followersCount");
     let following_count = count("followingCount");
     let statuses_count = count("statusesCount");
+    let profile_fields = remote_profile_fields(actor_data);
 
     let result = sqlx::query_scalar::<_, i64>(
         r#"
@@ -158,9 +209,11 @@ async fn upsert_remote_account(
             domain, username, actor_id, url, inbox, shared_inbox,
             outbox_url, public_key, actor_data, display_name, bio, bot,
             avatar_remote_url, banner_remote_url,
-            followers_count, following_count, statuses_count
+            followers_count, following_count, statuses_count,
+            profile_fields
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-                  COALESCE($15, 0), COALESCE($16, 0), COALESCE($17, 0))
+                  COALESCE($15, 0), COALESCE($16, 0), COALESCE($17, 0),
+                  COALESCE($18, '[]'::jsonb))
         ON CONFLICT (actor_id) DO UPDATE SET
             url = EXCLUDED.url,
             inbox = EXCLUDED.inbox,
@@ -176,6 +229,7 @@ async fn upsert_remote_account(
             bio = COALESCE(EXCLUDED.bio, accounts.bio),
             avatar_remote_url = COALESCE(EXCLUDED.avatar_remote_url, accounts.avatar_remote_url),
             banner_remote_url = COALESCE(EXCLUDED.banner_remote_url, accounts.banner_remote_url),
+            profile_fields = COALESCE($18, accounts.profile_fields),
             updated_at = now()
         RETURNING id
         "#,
@@ -197,6 +251,7 @@ async fn upsert_remote_account(
     .bind(followers_count)
     .bind(following_count)
     .bind(statuses_count)
+    .bind(&profile_fields)
     .fetch_one(pool)
     .await
     .map(Some)
@@ -232,7 +287,90 @@ async fn upsert_remote_account(
             }
         }
     }
+    // A `movedTo` claim travels with the actor document, so a plain
+    // refresh is how a move performed on the source instance reaches
+    // us when no `Move` activity was seen. Best-effort — logs its own
+    // failures.
+    if result.is_ok() {
+        sync_remote_move(pool, actor_id, actor_data).await;
+    }
     result
+}
+
+/// Sync `accounts.moved_to_account_id` from a remote actor document's
+/// `movedTo`. The move is honored only when the target's `alsoKnownAs`
+/// names the origin — the same contract inbound `Move` activities are
+/// verified against (`users::moves::migrate_remote`; for a *local*
+/// target the aliases live in `account_aliases`). A document without
+/// `movedTo` clears the marker — but only when the document looks
+/// complete (`inbox` present), so a partial record can't clobber a
+/// verified move. Never fails the caller's upsert.
+pub(crate) async fn sync_remote_move(pool: &PgPool, actor_id: &str, actor_data: &Value) {
+    if let Err(e) = sync_remote_move_inner(pool, actor_id, actor_data).await {
+        tracing::warn!(actor = %actor_id, error = %e, "remote move sync failed");
+    }
+}
+
+async fn sync_remote_move_inner(
+    pool: &PgPool,
+    actor_id: &str,
+    actor_data: &Value,
+) -> crate::Result<()> {
+    let target = match doc_str(actor_data, "movedTo") {
+        Some(t) if t.is_empty() || t == actor_id => return Ok(()),
+        Some(t) => t,
+        None => {
+            if actor_data.get("inbox").is_some() {
+                sqlx::query(
+                    "UPDATE accounts SET moved_to_account_id = NULL, updated_at = now() \
+                     WHERE actor_id = $1 AND domain IS NOT NULL \
+                     AND moved_to_account_id IS NOT NULL",
+                )
+                .bind(actor_id)
+                .execute(pool)
+                .await?;
+            }
+            return Ok(());
+        }
+    };
+    let row: Option<(i64, bool, Value)> = sqlx::query_as(
+        "SELECT id, domain IS NULL, actor_data FROM accounts WHERE actor_id = $1",
+    )
+    .bind(&target)
+    .fetch_optional(pool)
+    .await?;
+    let Some((target_id, target_local, target_data)) = row else {
+        // Unknown target — `RemoteActorFetch`'s `ensure_move_target`
+        // resolves it before the upsert; other callers leave the move
+        // unmarked until a refresh brings the target row in.
+        tracing::debug!(actor = %actor_id, %target, "movedTo target not resolved locally");
+        return Ok(());
+    };
+    let verified = if target_local {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM account_aliases WHERE account_id = $1 AND uri = $2)",
+        )
+        .bind(target_id)
+        .bind(actor_id)
+        .fetch_one(pool)
+        .await?
+    } else {
+        str_list(target_data.get("alsoKnownAs"))
+            .iter()
+            .any(|u| u == actor_id)
+    };
+    if verified {
+        sqlx::query(
+            "UPDATE accounts SET moved_to_account_id = $2, moved_at = now(), updated_at = now() \
+             WHERE actor_id = $1 AND domain IS NOT NULL \
+             AND moved_to_account_id IS DISTINCT FROM $2",
+        )
+        .bind(actor_id)
+        .bind(target_id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }
 
 /// Resolve the target account for a follower/request record: the local
@@ -898,6 +1036,37 @@ pub(crate) async fn upsert_remote_actor_row(
     actor_data: &Value,
 ) -> Result<Option<i64>> {
     upsert_remote_account(pool, actor_id, actor_data).await
+}
+
+/// Whether a `RemoteActorFetch` for `account_id` recently failed (the
+/// 'actor' marker — suppresses re-enqueue for the stale-refresh
+/// window) or the remote reported the actor gone ('actor_gone' —
+/// suppresses for the gone-recheck window). `false` on lookup error:
+/// the benign direction is an extra enqueue.
+pub(crate) async fn fetch_markers_fresh(pool: &PgPool, account_id: i64) -> bool {
+    let rows: Vec<(String, DateTime<Utc>)> = match sqlx::query_as(
+        "SELECT direction, synced_at FROM remote_network_syncs \
+         WHERE account_id = $1 AND direction IN ('actor', 'actor_gone')",
+    )
+    .bind(account_id)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!(account_id, error = %e, "fetch marker lookup failed");
+            return false;
+        }
+    };
+    let now = Utc::now();
+    rows.iter().any(|(direction, t)| {
+        let window = if direction == "actor_gone" {
+            super::GONE_RECHECK_SECONDS
+        } else {
+            super::REMOTE_ACTOR_STALE_SECONDS
+        };
+        (now - *t).num_seconds() < window
+    })
 }
 
 /// Convert a `follow_requests` joined row into a [`FollowRequest`].

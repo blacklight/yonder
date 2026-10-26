@@ -442,7 +442,7 @@ pub fn http_client(ctx: &ApContext) -> HttpClient {
 
 /// Errors that retries cannot fix: signing/key failures and SSRF
 /// rejections fail immediately instead of burning the retry budget.
-fn permanent_delivery_error(e: &ActivityPubError) -> bool {
+pub(crate) fn permanent_delivery_error(e: &ActivityPubError) -> bool {
     match e {
         ActivityPubError::InvalidValue(_) | ActivityPubError::SignatureVerification(_) => true,
         ActivityPubError::General(m) => m.contains("unsafe") || m.contains("private"),

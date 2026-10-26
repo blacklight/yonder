@@ -73,13 +73,19 @@ pub(crate) async fn upsert_remote_stub_row(db: &PgPool, actor_url: &str) -> Resu
         .ok_or_else(|| Error::Internal("account upsert failed".to_string()))
 }
 
-/// `upsert_remote_stub_row` + a `RemoteActorFetch` job to enrich it.
+/// `upsert_remote_stub_row` + a `RemoteActorFetch` job to enrich it —
+/// skipped while the actor's failure/gone markers are fresh, so a dead
+/// actor reappearing in remote collections doesn't keep spawning
+/// fetch jobs.
 pub(crate) async fn upsert_remote_stub(
     db: &PgPool,
     dispatcher: &Dispatcher,
     actor_url: &str,
 ) -> Result<i64> {
     let id = upsert_remote_stub_row(db, actor_url).await?;
+    if super::storage::fetch_markers_fresh(db, id).await {
+        return Ok(id);
+    }
     dispatcher
         .enqueue(
             JobKind::RemoteActorFetch,
@@ -110,17 +116,43 @@ pub(crate) fn total_items(doc: &Value) -> Option<i64> {
         .map(|n| n.clamp(0, i32::MAX as i64))
 }
 
+/// Outcome of a signed remote-document GET — split so callers can tell
+/// a *permanently* unfetchable object (deleted actor, dead instance
+/// route, SSRF-refused URL) from a transient failure worth retrying.
+pub(crate) enum RemoteFetch {
+    /// 2xx with a parseable JSON body.
+    Doc(Value),
+    /// 404/410, or the URL can never be fetched (SSRF guard) —
+    /// retrying won't help.
+    Gone,
+    /// Transport error, a non-2xx other than 404/410, or an
+    /// unparseable body — worth a retry.
+    Failed,
+}
+
+/// [`fetch_remote_object_detailed`] collapsed to `Option`: `Some` only
+/// on `RemoteFetch::Doc` — for callers that treat every failure alike.
+pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Option<Value>> {
+    Ok(match fetch_remote_object_detailed(ap, url).await? {
+        RemoteFetch::Doc(doc) => Some(doc),
+        _ => None,
+    })
+}
+
 /// Signed GET of a remote ActivityPub document (actor, Note, …) —
 /// the instance actor signs, so `authorized_fetch` servers answer
-/// too. `None` when the instance actor lacks key material, the fetch
-/// fails, or the body isn't JSON.
-pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Option<Value>> {
+/// too. `RemoteFetch::Failed` when the instance actor lacks key
+/// material or signing fails.
+pub(crate) async fn fetch_remote_object_detailed(
+    ap: &ApContext,
+    url: &str,
+) -> Result<RemoteFetch> {
     let actor = super::actors::load_local_actor(&ap.core.db, super::actors::INSTANCE_USERNAME)
         .await?
         .ok_or_else(|| Error::Internal("instance actor missing".to_string()))?;
     let Some(pem) = &actor.private_key_pem else {
         tracing::warn!("instance actor lacks key material; unsigned remote fetch skipped");
-        return Ok(None);
+        return Ok(RemoteFetch::Failed);
     };
     let private_key = pubby_sdk::crypto::keys::load_private_key(pem)
         .map_err(|e| Error::Validation(format!("invalid instance actor key: {e}")))?;
@@ -156,18 +188,35 @@ pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Opt
             }
             Err(e) => {
                 tracing::warn!(error = %e, url = %url, "remote object fetch signing failed");
-                return None;
+                return RemoteFetch::Failed;
             }
         };
         match http.get(&url, &headers) {
-            Ok(resp) if resp.is_success() => resp.json().ok(),
+            Ok(resp) if resp.is_success() => match resp.json() {
+                Ok(doc) => RemoteFetch::Doc(doc),
+                Err(e) => {
+                    tracing::warn!(error = %e, url = %url, "remote object fetch returned non-JSON");
+                    RemoteFetch::Failed
+                }
+            },
+            Ok(resp) if resp.status == 404 || resp.status == 410 => {
+                tracing::debug!(status = resp.status, url = %url, "remote object gone");
+                RemoteFetch::Gone
+            }
             Ok(resp) => {
                 tracing::debug!(status = resp.status, url = %url, "remote object fetch failed");
-                None
+                RemoteFetch::Failed
             }
             Err(e) => {
-                tracing::warn!(error = %e, url = %url, "remote object fetch error");
-                None
+                // The SSRF guard's refusal is permanent — the URL can
+                // never be fetched, same as a 410 on the wire.
+                if super::delivery::permanent_delivery_error(&e) {
+                    tracing::warn!(error = %e, url = %url, "remote object unfetchable");
+                    RemoteFetch::Gone
+                } else {
+                    tracing::warn!(error = %e, url = %url, "remote object fetch error");
+                    RemoteFetch::Failed
+                }
             }
         }
     }))

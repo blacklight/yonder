@@ -57,6 +57,16 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
                 .as_deref(),
             JobKind::VerifyProfileLinks,
         ),
+        // Stale-remote-actor sweep — only meaningful with the
+        // federation stack up (every fanned-out job is a signed GET).
+        (
+            if config.federation.enabled {
+                config.federation.remote_actor_refresh_schedule.as_deref()
+            } else {
+                None
+            },
+            JobKind::RemoteActorFetch,
+        ),
         // Only meaningful with the federation stack up — the ledger
         // this reconciles doesn't exist otherwise.
         (

@@ -66,6 +66,18 @@ clears the stamp; a transient failure keeps it. Writes go through
 `""` disables). Verification flips never emit an `Update` —
 `verified_at` doesn't reach the AP document.
 
+For **remote** accounts the same column is populated at ingest: the
+actor document's `attachment[]` `PropertyValue` entries (any spelling —
+plain, `schema:`-prefixed, or the schema.org IRI; a missing `type` also
+counts) map to `{name, value, verified_at}` — `value` is the remote's
+pre-rendered HTML and `verified_at` stays null, a remote-claimed
+verification is not trusted. A document with no `attachment` key leaves
+stored fields alone (partial docs must not clobber); a present-but-empty
+array clears them. The extraction is bounded to 32 entries with
+255/4096-char name/value caps. An inbound `Update{Person}` refreshes the
+row in place — the activity carries the full actor document and only
+applies when `object.id` equals the signer.
+
 ## ActivityPub propagation
 
 A profile change publishes `Update{actor}` via
@@ -90,10 +102,26 @@ count as verification, as Mastodon allows).
 | GET | `/api/v1/accounts/{id}/statuses` | optional | Profile tabs: `pinned`, `only_media`, `exclude_replies` (self-replies stay), `exclude_reblogs`; `max_id`/`min_id`/`since_id`/`limit` pagination with `Link` headers (`pinned` returns the whole pin set, unpaginated) |
 
 Missing, deleted and suspended accounts all return 404; moved accounts
-return 200 with `moved`. Remote accounts serve stored counters
+return 200 with `moved` — including remote accounts whose document
+carries `movedTo`: a refresh honors it only when the target's
+`alsoKnownAs` names the origin (the same contract inbound `Move`
+activities are verified against), and the target is fetched when
+unknown locally. Remote accounts serve stored counters
 (best-effort) and enqueue a `RemoteActorFetch` when `actor_cache` is
 stale (>24h) — a stale remote never blocks the read, and repeat reads
-are throttled to one enqueue per actor per five minutes. The
+are throttled to one enqueue per actor per five minutes. The fetch
+job records its outcome in `remote_network_syncs`: a failed attempt
+suppresses re-enqueueing for the stale window (the job's own retries
+cover transient outages) and a 404/410 marks the actor `actor_gone`,
+acked without retry and re-probed weekly. Rows already
+enriched before remote `attachment` → `profile_fields` projection
+existed are repaired by migration `0028_remote_profile_fields_backfill`
+(no network I/O — the stored `actor_data` is reprojected). Freshness
+beyond the read path: `federation.remote_actor_refresh_schedule`
+(unset by default) sweeps every stale remote actor on a cron — actors
+with a fresh failure/gone marker are skipped — and
+`yonder run-job remote_actor_fetch --payload '{"actor_url": "…"}'`
+re-syncs one account on demand. The
 account-statuses scope applies the viewer's visibility rules
 (blocks/mutes/domain blocks, follower-gated posts for followers);
 anonymous viewers see only `public`/`unlisted`. Two noted behaviors:

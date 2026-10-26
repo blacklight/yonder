@@ -194,6 +194,19 @@ pub async fn build(
     })
 }
 
+/// Remote actor rows whose `actor_cache` is older than this are
+/// treated as stale — profile reads enqueue a `RemoteActorFetch`
+/// (`http::api::v1::accounts::maybe_refresh_remote`) and the
+/// `remote_actor_refresh_schedule` sweep uses the same window.
+pub const REMOTE_ACTOR_STALE_SECONDS: i64 = 24 * 60 * 60;
+
+/// A remote actor confirmed gone (404/410, or an unfetchable URL) is
+/// re-probed after this window instead of the normal stale cadence —
+/// restores happen, but probing a dead actor every cycle is a wasted
+/// retry storm. Stamped as the `actor_gone` `remote_network_syncs`
+/// marker by `RemoteActorFetch`.
+pub const GONE_RECHECK_SECONDS: i64 = 7 * 24 * 60 * 60;
+
 /// The effective public base URL: `federation.base_url` when set,
 /// otherwise `https://{instance.domain}` (trimmed).
 pub fn federation_base_url(config: &Config) -> String {

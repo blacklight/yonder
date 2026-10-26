@@ -22,7 +22,7 @@ use pubby_sdk::handlers::inbox::{OnActivityReceived, OnInteractionReceived};
 use pubby_sdk::{Activity, ActivityDisposition, ActivityPubStorage, Interaction, InteractionType};
 use serde_json::{json, Value};
 
-use crate::jobs::{JobContext, JobHandler, JobKind};
+use crate::jobs::{Dispatcher, JobContext, JobHandler, JobKind, Queue};
 use crate::Result;
 
 use super::actors::{sync_block, sync_call};
@@ -157,6 +157,11 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
             // `handle` logs its own failures and never errors the
             // hook — PassThrough keeps pubby's dispatch intact.
             sync_block(crate::posts::remote::handle(&core, activity, raw));
+            if activity.activity_type == "Update" {
+                if let Err(e) = sync_block(handle_actor_update(&core, activity, raw)) {
+                    tracing::warn!(error = %e, "actor Update side-effect failed");
+                }
+            }
             return Ok(ActivityDisposition::PassThrough);
         }
         // Interactions (epic 13): Like/Announce/EmojiReact normalize
@@ -246,6 +251,29 @@ pub async fn handle_move(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -
             }),
         )
         .await?;
+    Ok(())
+}
+
+/// `Update{Person}` — the activity carries the full actor document,
+/// so a remote profile edit (fields, bio, avatar) refreshes the
+/// `accounts` row immediately instead of waiting out the actor-cache
+/// TTL. Ownership gate: `object.id` must equal the signer — anything
+/// else is a spoof attempt and is dropped.
+async fn handle_actor_update(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -> Result<()> {
+    let object = raw.get("object").cloned().unwrap_or(Value::Null);
+    let is_actor = object
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|t| crate::search::resolve::ACTOR_TYPES.contains(&t))
+        .unwrap_or(false);
+    if !is_actor {
+        return Ok(());
+    }
+    if object.get("id").and_then(|v| v.as_str()) != Some(activity.actor.as_str()) {
+        tracing::warn!(actor = %activity.actor, "spoofed actor Update dropped");
+        return Ok(());
+    }
+    super::storage::upsert_remote_actor_row(&core.db, &activity.actor, &object).await?;
     Ok(())
 }
 
@@ -402,31 +430,88 @@ pub fn on_interaction_fn(core: &Arc<ApCore>) -> OnInteractionReceived {
 /// `JobKind::RemoteActorFetch` — refresh a remote actor document into
 /// `actor_cache` and upsert the `accounts` row. Uses the instance
 /// actor's `fetch_actor` (signed fetch, SSRF-guarded).
+///
+/// Two payload shapes:
+///
+/// - `{"actor_url": "…"}` (or `actor_id`) — refresh one actor.
+/// - `{}` — the `federation.remote_actor_refresh_schedule` sweep:
+///   enqueue one fetch per remote account whose `actor_cache` row is
+///   absent or older than [`REMOTE_ACTOR_STALE_SECONDS`]. Catches
+///   profile edits whose `Update` activity never arrived.
 pub struct RemoteActorFetchJob {
     ctx: ApContext,
 }
+
+/// Per-run cap on the stale-actor sweep — one fan-out must not flood
+/// the queue unboundedly; the next firing picks up the remainder.
+const ACTOR_SWEEP_BATCH_CAP: i64 = 1000;
 
 impl RemoteActorFetchJob {
     /// Create the handler bound to `ctx`.
     pub fn new(ctx: ApContext) -> Self {
         RemoteActorFetchJob { ctx }
     }
+
+    /// Sweep mode: fan out one `RemoteActorFetch` per stale remote
+    /// account. Per-actor jobs (rather than inline fetches) keep
+    /// retry/dead-letter accounting and parallelism; `Bulk` keeps the
+    /// sweep off the interactive queue. Actors with a fresh
+    /// failure/gone marker are skipped — the fetch job stamps them so
+    /// the sweep can't respawn a retry cycle on every firing.
+    async fn sweep(&self, ctx: &JobContext) -> Result<()> {
+        let actor_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT a.actor_id FROM accounts a \
+             LEFT JOIN actor_cache c ON c.actor_id = a.actor_id \
+             WHERE a.domain IS NOT NULL AND a.deleted_at IS NULL \
+               AND a.suspended_at IS NULL \
+               AND (c.fetched_at IS NULL \
+                    OR c.fetched_at < now() - ($1::float8 * interval '1 second')) \
+               AND NOT EXISTS ( \
+                    SELECT 1 FROM remote_network_syncs s \
+                    WHERE s.account_id = a.id AND ( \
+                        (s.direction = 'actor' \
+                         AND s.synced_at > now() - ($1::float8 * interval '1 second')) \
+                        OR (s.direction = 'actor_gone' \
+                         AND s.synced_at > now() - ($2::float8 * interval '1 second')) \
+                    )) \
+             ORDER BY a.id LIMIT $3",
+        )
+        .bind(super::REMOTE_ACTOR_STALE_SECONDS as f64)
+        .bind(super::GONE_RECHECK_SECONDS as f64)
+        .bind(ACTOR_SWEEP_BATCH_CAP)
+        .fetch_all(&ctx.db)
+        .await?;
+        let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+        for actor_id in actor_ids {
+            dispatcher
+                .enqueue_on(
+                    Queue::Bulk,
+                    JobKind::RemoteActorFetch,
+                    json!({ "actor_url": actor_id }),
+                )
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl JobHandler for RemoteActorFetchJob {
-    async fn run(&self, _ctx: &JobContext, payload: &Value) -> Result<()> {
-        let actor_url = payload
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let Some(actor_url) = payload
             .get("actor_url")
             .or_else(|| payload.get("actor_id"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| crate::Error::Validation("actor fetch job lacks actor_url".to_string()))?
-            .to_string();
-        let handler = self.ctx.multi.instance.clone();
-        let url = actor_url.clone();
-        let doc = sync_call(move || handler.outbox.fetch_actor(&url));
-        match doc {
-            Some(doc) => {
+            .map(str::to_string)
+        else {
+            return self.sweep(ctx).await;
+        };
+        match super::lookup::fetch_remote_object_detailed(&self.ctx, &actor_url).await? {
+            super::lookup::RemoteFetch::Doc(doc) => {
+                // Resolve a `movedTo` target we don't know yet before
+                // the upsert — its move sync needs the target row (and
+                // the fresh `alsoKnownAs`) to mark the move.
+                ensure_move_target(&self.ctx, &actor_url, &doc).await;
                 self.ctx
                     .core
                     .storage
@@ -435,12 +520,107 @@ impl JobHandler for RemoteActorFetchJob {
                 super::storage::upsert_remote_actor_row(&self.ctx.core.db, &actor_url, &doc)
                     .await?;
                 refresh_remote_counters(&self.ctx, &actor_url, &doc).await;
+                clear_fetch_markers(&self.ctx.core.db, &actor_url).await;
                 Ok(())
             }
-            None => Err(crate::Error::Internal(format!(
-                "remote actor fetch failed: {actor_url}"
-            ))),
+            super::lookup::RemoteFetch::Gone => {
+                // The remote says the actor doesn't exist (or the URL
+                // is unfetchable) — a retry can't help. Stamp the
+                // markers so reads and the sweep stop re-enqueueing,
+                // and ack the job instead of dead-lettering it.
+                tracing::info!(actor = %actor_url, "remote actor gone; marking");
+                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor", "actor_gone"])
+                    .await;
+                Ok(())
+            }
+            super::lookup::RemoteFetch::Failed => {
+                // Stamp the attempt so reads can't pile fresh jobs on
+                // top of this one's retry cycle.
+                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor"]).await;
+                Err(crate::Error::Internal(format!(
+                    "remote actor fetch failed: {actor_url}"
+                )))
+            }
         }
+    }
+}
+
+/// Stamp `remote_network_syncs` markers for `actor_id` — the
+/// `(account_id, direction)` timestamp doubles as the "last attempt"
+/// record profile reads and the stale-actor sweep consult before
+/// re-enqueueing this job. Best-effort: a failed stamp just means the
+/// next read may enqueue again.
+async fn stamp_fetch_markers(db: &sqlx::PgPool, actor_id: &str, directions: &[&str]) {
+    for direction in directions {
+        if let Err(e) = sqlx::query(
+            "INSERT INTO remote_network_syncs (account_id, direction, synced_at) \
+             SELECT id, $2, now() FROM accounts WHERE actor_id = $1 \
+             ON CONFLICT (account_id, direction) DO UPDATE SET synced_at = now()",
+        )
+        .bind(actor_id)
+        .bind(direction)
+        .execute(db)
+        .await
+        {
+            tracing::warn!(actor = %actor_id, direction = %direction, error = %e, "fetch marker stamp failed");
+        }
+    }
+}
+
+/// Drop the failure/gone markers after a successful fetch — a
+/// resurrected actor resumes the normal refresh cadence.
+async fn clear_fetch_markers(db: &sqlx::PgPool, actor_id: &str) {
+    if let Err(e) = sqlx::query(
+        "DELETE FROM remote_network_syncs \
+         WHERE direction IN ('actor', 'actor_gone') \
+         AND account_id = (SELECT id FROM accounts WHERE actor_id = $1)",
+    )
+    .bind(actor_id)
+    .execute(db)
+    .await
+    {
+        tracing::warn!(actor = %actor_id, error = %e, "fetch marker clear failed");
+    }
+}
+
+/// Fetch a `movedTo` target that isn't a local `accounts` row yet, so
+/// the upsert's move sync can verify its `alsoKnownAs` and mark the
+/// move — the target row is needed anyway to render the `moved`
+/// banner. Best-effort: an unfetchable target leaves the move
+/// unmarked until a later refresh resolves it.
+async fn ensure_move_target(ctx: &ApContext, actor_id: &str, doc: &Value) {
+    let Some(target) = super::storage::doc_str(doc, "movedTo") else {
+        return;
+    };
+    if target == actor_id {
+        return;
+    }
+    let known: bool = match sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = $1)",
+    )
+    .bind(&target)
+    .fetch_one(&ctx.core.db)
+    .await
+    {
+        Ok(known) => known,
+        Err(e) => {
+            tracing::warn!(actor = %actor_id, error = %e, "movedTo target lookup failed");
+            return;
+        }
+    };
+    if known {
+        return;
+    }
+    let handler = ctx.multi.instance.clone();
+    let url = target.clone();
+    let Some(target_doc) = sync_call(move || handler.outbox.fetch_actor(&url)) else {
+        tracing::info!(actor = %actor_id, target = %target, "movedTo target fetch failed");
+        return;
+    };
+    if let Err(e) =
+        super::storage::upsert_remote_actor_row(&ctx.core.db, &target, &target_doc).await
+    {
+        tracing::warn!(actor = %actor_id, target = %target, error = %e, "movedTo target upsert failed");
     }
 }
 

@@ -87,7 +87,9 @@ pub enum JobKind {
     FederationDeliverySweep,
     /// Fetch and cache a remote media attachment.
     RemoteMediaFetch,
-    /// Fetch and cache a remote actor document.
+    /// Fetch and cache a remote actor document (`{"actor_url": …}`),
+    /// or sweep stale remote actors (`{}` — the
+    /// `remote_actor_refresh_schedule` fan-out).
     RemoteActorFetch,
     /// Fan a notification out to its recipients.
     NotificationFanout,

@@ -152,6 +152,11 @@ delivery_sweep_schedule = "*/15 * * * *"
 # sweep over local accounts. Set to "" to disable — verification on
 # profile edit is enqueued regardless.
 profile_link_verification_schedule = "0 4 * * *"
+# Optional 5-field cron for the stale-remote-actor sweep — re-fetches
+# remote actor documents whose cached copy is older than the profile
+# refresh window (24h), catching profile edits whose Update activity
+# never arrived. Profile reads self-refresh stale actors regardless.
+# remote_actor_refresh_schedule = "0 5 * * *"
 
 [media]
 # local | s3

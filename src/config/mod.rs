@@ -469,6 +469,13 @@ pub struct FederationConfig {
     /// URL-valued fields). Set to `""` to disable; edits always enqueue
     /// their own verification regardless of this schedule.
     pub profile_link_verification_schedule: Option<String>,
+    /// Cron expression for the stale-remote-actor sweep — one
+    /// `RemoteActorFetch` enqueued per remote account whose
+    /// `actor_cache` row is absent or older than the profile-read
+    /// refresh window. Catches profile edits whose `Update` activity
+    /// never arrived. Unset/`""` disables the sweep; profile reads
+    /// still self-refresh stale actors.
+    pub remote_actor_refresh_schedule: Option<String>,
 }
 
 impl Default for FederationConfig {
@@ -493,6 +500,7 @@ impl Default for FederationConfig {
             remote_activity_prune_schedule: None,
             delivery_sweep_schedule: Some("*/15 * * * *".to_string()),
             profile_link_verification_schedule: Some("0 4 * * *".to_string()),
+            remote_actor_refresh_schedule: None,
         }
     }
 }

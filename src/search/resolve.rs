@@ -22,7 +22,8 @@ use crate::Result;
 const NEG_TTL: Duration = Duration::from_secs(600);
 
 /// AP actor types an object fetch can materialize.
-const ACTOR_TYPES: &[&str] = &["Person", "Service", "Application", "Group", "Organization"];
+pub(crate) const ACTOR_TYPES: &[&str] =
+    &["Person", "Service", "Application", "Group", "Organization"];
 
 /// AP object types the inbound pipeline materializes as statuses —
 /// mirrors `posts::remote::NOTE_TYPES`.

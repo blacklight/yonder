@@ -12,6 +12,7 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     http::{Request, StatusCode},
+    response::IntoResponse,
     Router,
 };
 use serde_json::{json, Value};
@@ -1063,8 +1064,11 @@ struct MockRemote {
 async fn mock_actor_doc(
     axum::extract::State(m): axum::extract::State<MockRemote>,
     axum::extract::Path(name): axum::extract::Path<String>,
-) -> axum::Json<Value> {
-    axum::Json(json!({
+) -> axum::response::Response {
+    if name == "gone" {
+        return StatusCode::GONE.into_response();
+    }
+    let mut doc = json!({
         "@context": "https://www.w3.org/ns/activitystreams",
         "id": format!("{}/users/{name}", m.base),
         "type": "Person",
@@ -1074,7 +1078,26 @@ async fn mock_actor_doc(
         "outbox": format!("{}/collections/{name}-outbox", m.base),
         "followers": format!("{}/collections/{name}-followers", m.base),
         "following": format!("{}/collections/{name}-following", m.base),
-    }))
+        // Profile fields arrive as `PropertyValue` attachments; the
+        // type-less entry covers implementations that omit `type`, the
+        // `Image` proves non-field attachments are filtered out.
+        "attachment": [
+            {"type": "PropertyValue", "name": "Website",
+             "value": format!("<a href=\"https://example.com/{name}\">example.com/{name}</a>")},
+            {"name": "Pronouns", "value": "they/them"},
+            {"type": "Image", "name": "not-a-field", "value": "https://example.com/x.png"},
+        ],
+    });
+    match name.as_str() {
+        // `moved` declares a move to `dest`; `dest` acknowledges it in
+        // `alsoKnownAs` — the verified-move pair. `liar` claims `dave`
+        // without being named back — the unverified-move case.
+        "moved" => doc["movedTo"] = json!(format!("{}/users/dest", m.base)),
+        "dest" => doc["alsoKnownAs"] = json!([format!("{}/users/moved", m.base)]),
+        "liar" => doc["movedTo"] = json!(format!("{}/users/dave", m.base)),
+        _ => {}
+    }
+    axum::Json(doc).into_response()
 }
 
 async fn mock_collection(
@@ -1370,4 +1393,405 @@ async fn remote_network_listing_degrades_when_remote_is_down() {
     .await;
     assert_eq!(code, StatusCode::OK, "{list}");
     assert_eq!(list.as_array().unwrap().len(), 0);
+}
+
+/// A remote actor's `attachment` `PropertyValue` entries land in
+/// `accounts.profile_fields` on fetch and surface as the entity's
+/// `fields` — the upsert used to drop them, leaving remote profiles
+/// fieldless. The mock doc carries a type-less entry and an `Image`
+/// to prove the filtering.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_actor_profile_fields_materialize() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (base, _hits) = mock_remote().await;
+
+    let carol = format!("{base}/users/carol");
+    let carol_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'carol', $1, $1, '') RETURNING id",
+    )
+    .bind(&carol)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": carol}))
+        .await
+        .unwrap();
+
+    // The two PropertyValue entries landed; the Image attachment was
+    // filtered out.
+    let stored: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(carol_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    let names: Vec<&str> = stored
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Website", "Pronouns"], "{stored}");
+
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let fields = body["fields"].as_array().unwrap();
+    assert_eq!(fields.len(), 2, "{body}");
+    assert_eq!(fields[0]["name"], "Website");
+    assert_eq!(
+        fields[0]["value"],
+        "<a href=\"https://example.com/carol\">example.com/carol</a>"
+    );
+    assert!(fields[0]["verified_at"].is_null());
+    assert_eq!(fields[1]["name"], "Pronouns");
+    assert_eq!(fields[1]["value"], "they/them");
+
+    // An inbound Update{Person} refreshes the row in place: carol's
+    // new attachment list replaces the stored fields.
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let hook = activitypub::incoming::on_activity_fn(&core);
+    let updated_doc = json!({
+        "id": carol,
+        "type": "Person",
+        "preferredUsername": "carol",
+        "inbox": format!("{carol}/inbox"),
+        "attachment": [
+            {"type": "PropertyValue", "name": "Blog", "value": "https://blog.example"},
+        ],
+    });
+    let act = pubby_sdk::Activity {
+        id: format!("{carol}/activities/u1"),
+        activity_type: "Update".into(),
+        actor: carol.clone(),
+        object: updated_doc.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let raw = json!({"type": "Update", "actor": carol, "object": updated_doc});
+    let disp = hook(&act, &raw).unwrap();
+    assert!(matches!(disp, pubby_sdk::ActivityDisposition::PassThrough));
+    let stored: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(carol_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_array().unwrap().len(), 1, "{stored}");
+    assert_eq!(stored[0]["name"], "Blog");
+
+    // A spoofed Update (object id ≠ signer) leaves the row alone.
+    let evil_doc = json!({
+        "id": carol,
+        "type": "Person",
+        "preferredUsername": "carol",
+        "attachment": [
+            {"type": "PropertyValue", "name": "x", "value": "pwned"},
+        ],
+    });
+    let spoofed = pubby_sdk::Activity {
+        id: "https://evil.test/activities/1".into(),
+        activity_type: "Update".into(),
+        actor: "https://evil.test/users/mallory".into(),
+        object: evil_doc.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let raw =
+        json!({"type": "Update", "actor": "https://evil.test/users/mallory", "object": evil_doc});
+    hook(&spoofed, &raw).unwrap();
+    let stored: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(carol_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stored.as_array().unwrap().len(), 1, "{stored}");
+    assert_eq!(stored[0]["name"], "Blog");
+}
+
+/// `actor_url` payloads of `remote_actor_fetch` envelopes on `queue`.
+async fn queued_actor_fetches(env: &Env, queue: &str) -> Vec<String> {
+    let key = env.state.redis.key(&format!("queue:{queue}"));
+    let mut conn = env
+        .state
+        .redis
+        .client()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
+        .arg(&key)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    raw.iter()
+        .flat_map(|(_, fields)| {
+            fields
+                .chunks(2)
+                .filter(|pair| pair[0] == "job")
+                .map(|pair| pair[1].clone())
+                .collect::<Vec<_>>()
+        })
+        .filter_map(|job| serde_json::from_str::<Value>(&job).ok())
+        .filter(|env| env["kind"] == "remote_actor_fetch")
+        .filter_map(|env| env["payload"]["actor_url"].as_str().map(String::from))
+        .collect()
+}
+
+/// A remote actor answering 410 is recorded gone: the job acks
+/// without retry, stamps the `actor`/`actor_gone` markers, and both
+/// profile reads and the stale-actor sweep stop re-enqueueing fetches
+/// for it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_actor_fetch_marks_gone_actor() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (base, _hits) = mock_remote().await;
+
+    let gone = format!("{base}/users/gone");
+    let gone_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'gone', $1, $1, '') RETURNING id",
+    )
+    .bind(&gone)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": gone}))
+        .await
+        .unwrap();
+
+    let markers: Vec<String> = sqlx::query_scalar(
+        "SELECT direction FROM remote_network_syncs \
+         WHERE account_id = $1 ORDER BY direction",
+    )
+    .bind(gone_id)
+    .fetch_all(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(markers, ["actor", "actor_gone"], "{markers:?}");
+
+    // The profile read sees the fresh markers — no fetch enqueued.
+    let (code, entity) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{gone_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{entity}");
+    assert!(
+        !queued_actor_fetches(&env, "default").await.contains(&gone),
+        "gone actor re-enqueued"
+    );
+
+    // The sweep skips the marked actor but still picks up an unmarked
+    // stale one.
+    let live = "https://remote.test/users/live";
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('remote.test', 'live', $1, $1, '')",
+    )
+    .bind(live)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    job.run(&job_ctx(&env.state), &json!({})).await.unwrap();
+    let urls = queued_actor_fetches(&env, "bulk").await;
+    assert!(urls.contains(&live.to_string()), "{urls:?}");
+    assert!(!urls.contains(&gone), "{urls:?}");
+}
+
+/// A refreshed actor document's `movedTo` marks `moved_to_account_id`
+/// when the target's `alsoKnownAs` names the origin — the job fetches
+/// the unknown target first so verification has its document. An
+/// unverified `movedTo` (`liar` → `dave`) leaves the marker alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_actor_fetch_syncs_moved_to() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (base, _hits) = mock_remote().await;
+
+    let moved = format!("{base}/users/moved");
+    let moved_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'moved', $1, $1, '') RETURNING id",
+    )
+    .bind(&moved)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": moved}))
+        .await
+        .unwrap();
+
+    // `dest` was unknown locally — the job fetched and upserted it,
+    // then verified its `alsoKnownAs` and marked the move.
+    let dest_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NOT NULL",
+    )
+    .bind(format!("{base}/users/dest"))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let moved_to: Option<i64> =
+        sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE id = $1")
+            .bind(moved_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(moved_to, Some(dest_id));
+
+    // The Account entity renders the nested `moved` target.
+    let (code, entity) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{moved_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{entity}");
+    assert_eq!(entity["moved"]["id"].as_str(), Some(dest_id.to_string().as_str()), "{entity}");
+
+    // `liar` claims `dave` without an `alsoKnownAs` back — unmarked.
+    let liar = format!("{base}/users/liar");
+    let liar_id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'liar', $1, $1, '') RETURNING id",
+    )
+    .bind(&liar)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    job.run(&job_ctx(&env.state), &json!({"actor_url": liar}))
+        .await
+        .unwrap();
+    let moved_to: Option<i64> =
+        sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE id = $1")
+            .bind(liar_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(moved_to, None);
+}
+
+/// Migration 0028 backfills `profile_fields` from the stored
+/// `actor_data` for rows enriched before the projection existed, and
+/// the sweep-mode `RemoteActorFetch` (`{}` payload) enqueues a
+/// per-actor refresh for each stale remote account.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_profile_fields_backfill_and_refresh_sweep() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+
+    // A row shaped like the pre-projection era: full `actor_data`
+    // carrying attachments, `profile_fields` left at the default.
+    let actor_url = "https://remote.test/users/mira";
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox, actor_data) \
+         VALUES ('remote.test', 'mira', $1, $1, '', $2)",
+    )
+    .bind(actor_url)
+    .bind(json!({
+        "id": actor_url,
+        "type": "Person",
+        "attachment": [
+            {"type": "PropertyValue", "name": "Site", "value": "https://mira.example"},
+            {"type": "schema:PropertyValue", "name": "Team", "value": "red"},
+            {"type": "Image", "name": "x", "value": "https://x.example/i.png"},
+        ],
+    }))
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let sql = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations/0028_remote_profile_fields_backfill.up.sql"),
+    )
+    .unwrap();
+    sqlx::raw_sql(&sql).execute(&env.state.db).await.unwrap();
+
+    let fields: Value =
+        sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE actor_id = $1")
+            .bind(actor_url)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    let names: Vec<&str> = fields
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|f| f["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Site", "Team"], "{fields}");
+    assert_eq!(fields[0]["value"], "https://mira.example");
+    assert!(fields[0]["verified_at"].is_null());
+
+    // Sweep mode: the stale remote actor (no actor_cache row) gets a
+    // per-actor fetch on the bulk queue.
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({})).await.unwrap();
+
+    let key = env.state.redis.key("queue:bulk");
+    let mut conn = env
+        .state
+        .redis
+        .client()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
+        .arg(&key)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let urls: Vec<String> = raw
+        .iter()
+        .flat_map(|(_, fields)| {
+            fields
+                .chunks(2)
+                .filter(|pair| pair[0] == "job")
+                .map(|pair| pair[1].clone())
+                .collect::<Vec<_>>()
+        })
+        .filter_map(|job| serde_json::from_str::<Value>(&job).ok())
+        .filter(|env| env["kind"] == "remote_actor_fetch")
+        .filter_map(|env| env["payload"]["actor_url"].as_str().map(String::from))
+        .collect();
+    assert_eq!(urls, [actor_url.to_string()], "{urls:?}");
 }

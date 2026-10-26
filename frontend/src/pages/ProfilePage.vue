@@ -364,6 +364,19 @@ async function confirmRun() {
   if (item) await run(item.id);
 }
 
+watch([account, state], () => {
+  const app = t("app.name");
+  const a = account.value;
+  // Mastodon's profile title: `Display Name (@user@domain)`. A blank
+  // display name falls back to the username, matching the profile h1.
+  if (state.value === "ok" && a) {
+    const name = a.display_name || a.username;
+    document.title = `${name} (@${a.acct}) — ${app}`;
+  } else if (state.value !== "loading") {
+    document.title = `${t("route.profile.title")} — ${app}`;
+  }
+});
+
 watch(
   () => route.fullPath,
   () => {
@@ -392,12 +405,7 @@ watch([tab, showReplies, showBoosts], () => {
     </div>
     <template v-else-if="account">
       <header class="profile__header">
-        <img
-          v-if="headerUrl"
-          :src="headerUrl"
-          class="profile__banner"
-          alt=""
-        />
+        <img v-if="headerUrl" :src="headerUrl" class="profile__banner" alt="" />
         <div class="profile__top">
           <Avatar
             :src="avatarUrl"

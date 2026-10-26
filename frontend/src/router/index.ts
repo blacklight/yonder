@@ -8,6 +8,8 @@ declare module "vue-router" {
     requiresAuth?: boolean;
     /** Minimum staff role: `moderator` admits moderators and admins. */
     requiresRole?: "moderator" | "admin";
+    /** Page sets `document.title` itself once async data resolves. */
+    dynamicTitle?: boolean;
   }
 }
 
@@ -296,12 +298,15 @@ export const router = createRouter({
       path: "/@:acct",
       name: "profile-acct",
       component: () => import("@/pages/ProfilePage.vue"),
+      // Title is the account's display name, known only after lookup.
+      meta: { dynamicTitle: true },
     },
     {
       // Numeric ids resolve on this alias only — `/@123` is a valid handle.
       path: "/accounts/:id",
       name: "profile-id",
       component: () => import("@/pages/ProfilePage.vue"),
+      meta: { dynamicTitle: true },
     },
     {
       path: "/profile",
@@ -369,6 +374,9 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
+  if (to.meta.dynamicTitle) return;
   const key = `route.${String(to.name ?? "home")}.title`;
-  document.title = `${i18n.global.t(key)} — ${i18n.global.t("app.name")}`;
+  const app = i18n.global.t("app.name");
+  const page = i18n.global.te(key) ? i18n.global.t(key) : "";
+  document.title = page ? `${page} — ${app}` : app;
 });

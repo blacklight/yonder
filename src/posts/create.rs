@@ -890,6 +890,9 @@ pub async fn edit_status(
         }
         crate::activitypub::posts::invalidate_object(ap, status_id);
     }
+    // Stream the `update` event — subscribed timelines replace the row
+    // in place, so an edit reflects without a reload.
+    crate::timelines::stream::publish_update(ctx, &status).await;
     // When the edit kept the attachments (`media_ids` omitted), read
     // them back so the preview check still sees the effective set.
     let effective_media: Vec<i64> = match &validated.media_ids {
@@ -964,6 +967,24 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
+    // A deleted reply releases its parent's counter; same for a
+    // deleted quote post's target.
+    if let Some(parent) = status.in_reply_to_id {
+        sqlx::query(
+            "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",
+        )
+        .bind(parent)
+        .execute(&ctx.db)
+        .await?;
+    }
+    if let Some(quoted) = status.quote_of_id {
+        sqlx::query(
+            "UPDATE statuses SET quotes_count = GREATEST(quotes_count - 1, 0) WHERE id = $1",
+        )
+        .bind(quoted)
+        .execute(&ctx.db)
+        .await?;
+    }
     if let Some(ap) = &ctx.ap {
         if status.local {
             if let Err(e) = crate::activitypub::posts::publish_delete(ap, ctx, status).await {

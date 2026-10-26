@@ -1603,6 +1603,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/notifications/read": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/notifications/read` — mark the caller's rows read
+     *     (Yonder extension; the SPA drives it from the rendered viewport).
+     */
+    post: operations["mark_read"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/notifications/unread_count": {
     parameters: {
       query?: never;
@@ -1611,9 +1631,8 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * `GET /api/v1/notifications/unread_count` — Yonder extension:
-     *     Mastodon has no unread-count endpoint, so the badge count lives
-     *     here.
+     * `GET /api/v1/notifications/unread_count` — mirrors Mastodon's
+     *     `{count}` response shape; the badge count lives here.
      */
     get: operations["unread_count"];
     put?: never;
@@ -1974,6 +1993,28 @@ export interface paths {
     put?: never;
     /** `POST /api/v1/statuses/{id}/bookmark` — private, no notification. */
     post: operations["bookmark"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/statuses/{id}/context": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/statuses/{id}/context` — the thread context: visible ancestors
+     *     (root first) and descendants (flat, chronological). The status
+     *     itself must be `can_see`-visible to the viewer — otherwise the
+     *     whole context 404s, never leaking existence.
+     */
+    get: operations["context"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -3051,6 +3092,11 @@ export interface components {
       x: number;
       /** Format: float */
       y: number;
+    };
+    /** @description Body for `POST /notifications/read` — ids the client rendered. */
+    MarkReadBody: {
+      /** @description Notification ids to mark read (max [`MAX_MARK_READ_IDS`]). */
+      ids: number[];
     };
     /** @description OpenAPI shape of the media update body. */
     MediaUpdateSchema: {
@@ -7047,6 +7093,55 @@ export interface operations {
       };
     };
   };
+  mark_read: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["MarkReadBody"];
+      };
+    };
+    responses: {
+      /** @description The ids were marked read */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Too many ids */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   unread_count: {
     parameters: {
       query?: never;
@@ -7959,6 +8054,36 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ErrorBody"];
         };
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  context: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The status's ancestors and descendants */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Not found or not visible */
       404: {

@@ -65,6 +65,15 @@ pub(crate) async fn enqueue_delivery(
     inbox_url: &str,
     activity: &Value,
 ) -> Result<()> {
+    // Own inboxes never get an HTTP delivery — pubby's recipient
+    // collection resolves every `to`/`cc` actor URL, local ones
+    // included (mentioning a local user, or a self-mention). The
+    // local account's rows are written by the posting path itself,
+    // and an inbound self-POST would only hit the inbox dedupe.
+    let local_prefix = format!("{}/", ctx.base_url.trim_end_matches('/'));
+    if inbox_url.starts_with(&local_prefix) {
+        return Ok(());
+    }
     let activity_uri = activity
         .get("id")
         .and_then(|v| v.as_str())

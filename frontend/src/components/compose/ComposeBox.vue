@@ -305,15 +305,31 @@ async function submit() {
     let created: Status | ScheduledStatus;
     if (editId.value) {
       created = await editStatus(editId.value, body);
-      // The timeline row gets replaced in place (home only — other
-      // timelines refresh naturally on next load).
-      timelines.remove("home", created.id);
-      timelines.prepend("home", created);
+      // The edited row is replaced in place wherever it is displayed —
+      // an edit must not reorder it to the top of a feed.
+      timelines.replace(created as Status);
     } else {
       created = await createStatus(body, idemKey.value);
       if (!d.value.scheduledAt) {
         // `scheduled_at` was unset → the response is a `Status`.
-        timelines.prepend("home", created as Status);
+        // Surface it immediately in every timeline it belongs to —
+        // home (own posts) plus public/tag feeds for public posts.
+        const s = created as Status;
+        timelines.prepend("home", s);
+        if (s.visibility === "public") {
+          timelines.prepend("public", s);
+          timelines.prepend("public:local", s);
+          for (const key of Object.keys(timelines.timelines)) {
+            if (
+              key.startsWith("hashtag:") &&
+              s.tags.some(
+                (tag) => tag.name.toLowerCase() === key.slice(8).toLowerCase(),
+              )
+            ) {
+              timelines.prepend(key, s);
+            }
+          }
+        }
         done.value = t("compose.posted");
       } else {
         done.value = t("compose.scheduled");

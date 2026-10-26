@@ -11,7 +11,10 @@
 //! Replies carry the parent's author + its `status_mentions` into the
 //! new status's mention set (Mastodon semantics — also what makes
 //! `direct` replies reach the right audience), deduped and excluding
-//! the post's own author.
+//! the post's own author. An *explicit* self-mention typed in the
+//! source is kept though — Mastodon records it too: it linkifies in
+//! the content and lands in `status_mentions`/`Mention` tags, while
+//! `notifications::emit` already skips notifying the author.
 
 use serde_json::json;
 use sqlx::Row;
@@ -235,9 +238,9 @@ pub async fn resolve(
     let mut out: Vec<ResolvedMention> = Vec::new();
     for token in extract(source) {
         if let Some(m) = resolve_token(ctx, &token).await? {
-            if m.account_id != author_account_id
-                && !out.iter().any(|o| o.account_id == m.account_id)
-            {
+            // Explicit self-mentions are kept — Mastodon records and
+            // linkifies them (only notifications skip the author).
+            if !out.iter().any(|o| o.account_id == m.account_id) {
                 out.push(m);
             }
         }

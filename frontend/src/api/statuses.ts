@@ -6,6 +6,7 @@ import type {
   Poll,
   ScheduledStatus,
   Status,
+  StatusContext,
   StatusCreateBody,
   StatusVisibility,
 } from "./entities";
@@ -66,6 +67,13 @@ export function listTimeline(
 /** `GET /api/v1/statuses/{id}`. */
 export function getStatus(id: string): Promise<Status> {
   return request<Status>({ path: `/statuses/${encodeURIComponent(id)}` });
+}
+
+/** `GET /api/v1/statuses/{id}/context` — ancestors + descendants. */
+export function getStatusContext(id: string): Promise<StatusContext> {
+  return request<StatusContext>({
+    path: `/statuses/${encodeURIComponent(id)}/context`,
+  });
 }
 
 /**

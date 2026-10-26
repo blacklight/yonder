@@ -184,6 +184,14 @@ export interface Status {
   };
 }
 
+/** `statuses::context` — the Mastodon Context entity. */
+export interface StatusContext {
+  /** Reply chain above the status, root first. */
+  ancestors: Status[];
+  /** Every visible reply in the subtree, flat and chronological. */
+  descendants: Status[];
+}
+
 /** `posts::entity::scheduled_status_entity`. */
 export interface ScheduledStatus {
   id: string;

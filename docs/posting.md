@@ -9,6 +9,7 @@ scheduling, link previews and ActivityPub federation.
 | ------ | ---- | ----- | ----- |
 | POST | `/api/v1/statuses` | `write:statuses` | create; `Idempotency-Key` replays |
 | GET | `/api/v1/statuses/{id}` | — | `can_see` gated |
+| GET | `/api/v1/statuses/{id}/context` | — | ancestors + descendants, `can_see` gated |
 | PUT | `/api/v1/statuses/{id}` | `write:statuses` | owner edit → `Update` |
 | DELETE | `/api/v1/statuses/{id}` | `write:statuses` | owner → tombstone + `Delete` |
 | POST | `/api/v1/media` | `write:media` | multipart `file`/`description`/`focus` |

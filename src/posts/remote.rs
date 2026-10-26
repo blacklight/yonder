@@ -466,6 +466,26 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     if object.get("type").and_then(|v| v.as_str()) == Some("Question") {
         sync_poll(&mut tx, status_id, object).await?;
     }
+    // Reply counter on the parent: only moves when the linkage changed —
+    // a new reply bumps it, an Update reparenting shifts it, and a
+    // redelivered Create (same parent) is a no-op.
+    let old_reply: Option<i64> = existing.as_ref().and_then(|e| e.in_reply_to_id);
+    if old_reply != reply_id {
+        if let Some(old) = old_reply {
+            sqlx::query(
+                "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",
+            )
+            .bind(old)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if let Some(new_p) = reply_id {
+            sqlx::query("UPDATE statuses SET replies_count = replies_count + 1 WHERE id = $1")
+                .bind(new_p)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
     // Quote counters: only moves when the target changed. The prior
     // row's `quote_of_id` was read before the upsert.
     let old_quote: Option<i64> = existing.as_ref().and_then(|e| e.quote_of_id);
@@ -694,6 +714,24 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .bind(existing.id)
     .execute(&core.db)
     .await?;
+    // A deleted reply releases its parent's counter; same for a
+    // deleted quote post's target.
+    if let Some(parent) = existing.in_reply_to_id {
+        sqlx::query(
+            "UPDATE statuses SET replies_count = GREATEST(replies_count - 1, 0) WHERE id = $1",
+        )
+        .bind(parent)
+        .execute(&core.db)
+        .await?;
+    }
+    if let Some(quoted) = existing.quote_of_id {
+        sqlx::query(
+            "UPDATE statuses SET quotes_count = GREATEST(quotes_count - 1, 0) WHERE id = $1",
+        )
+        .bind(quoted)
+        .execute(&core.db)
+        .await?;
+    }
     crate::timelines::fanout::remove_quiet(
         &core.db,
         &core.redis,

@@ -162,5 +162,20 @@ export const useTimelineStore = defineStore("timeline", {
       tl.items = tl.items.filter((s) => s.id !== id);
       tl.pending = tl.pending.filter((s) => s.id !== id);
     },
+
+    /**
+     * Replace a status everywhere it is displayed — after an own edit
+     * the returned entity lands in every timeline that carries it
+     * (home, public, hashtag, list), not just the one it was edited
+     * from. Live `update` events reach the same slots via `buffer`.
+     */
+    replace(status: Status) {
+      for (const tl of Object.values(this.timelines)) {
+        const i = tl.items.findIndex((s) => s.id === status.id);
+        if (i !== -1) tl.items[i] = status;
+        const p = tl.pending.findIndex((s) => s.id === status.id);
+        if (p !== -1) tl.pending[p] = status;
+      }
+    },
   },
 });

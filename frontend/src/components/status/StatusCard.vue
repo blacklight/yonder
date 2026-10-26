@@ -40,6 +40,22 @@ const compose = useComposeStore();
 
 // Boosts wrap the inner status — display it, keep the booster line.
 const shown = computed(() => props.status.reblog ?? props.status);
+
+// The whole card is the permalink's click target, Mastodon-style —
+// except interactive elements (links, buttons, the composer) and an
+// in-progress text selection.
+function onCardClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  if (
+    target?.closest(
+      "a, button, input, textarea, select, label, audio, video, .status-card__reply, .modal__backdrop, .menu",
+    )
+  ) {
+    return;
+  }
+  if (window.getSelection()?.toString()) return;
+  void router.push(`/statuses/${shown.value.id}`);
+}
 const booster = computed(() =>
   props.status.reblog ? props.status.account : null,
 );
@@ -291,7 +307,11 @@ async function onReact(emoji: string) {
 </script>
 
 <template>
-  <article class="status-card" :data-status-id="status.id">
+  <article
+    class="status-card"
+    :data-status-id="status.id"
+    @click="onCardClick"
+  >
     <p v-if="booster" class="status-card__boost">
       <FontAwesomeIcon icon="retweet" />
       {{
@@ -461,6 +481,12 @@ async function onReact(emoji: string) {
   background: var(--bg-raised);
   padding: var(--space-4);
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.status-card a,
+.status-card button,
+.status-card .status-card__reply {
+  cursor: auto;
 }
 .status-card__boost {
   color: var(--text-muted);

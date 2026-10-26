@@ -513,11 +513,13 @@ watch([tab, showReplies, showBoosts], () => {
           {{ t("profile.showBoostsTab") }}</label
         >
       </div>
-      <StatusCard v-for="s in statuses" :key="s.id" :status="s" />
-      <div v-if="nextCursor" class="profile__more">
-        <Button variant="secondary" @click="loadStatuses(true)">
-          {{ t("common.loadMore") }}
-        </Button>
+      <div class="timeline">
+        <StatusCard v-for="s in statuses" :key="s.id" :status="s" />
+        <div v-if="nextCursor" class="profile__more">
+          <Button variant="secondary" @click="loadStatuses(true)">
+            {{ t("common.loadMore") }}
+          </Button>
+        </div>
       </div>
     </template>
     <Modal
@@ -657,6 +659,11 @@ watch([tab, showReplies, showBoosts], () => {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+}
+.timeline {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 .profile__more {
   margin-top: var(--space-4);

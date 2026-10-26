@@ -329,6 +329,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .delete(statuses::delete_status)
                 .route_layer(ratelimit::layer(state, "status")),
         )
+        .route("/api/v1/statuses/{id}/context", get(statuses::context))
         .route(
             "/api/v1/media",
             axum::routing::post(media::upload)
@@ -728,6 +729,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     transfer::get_import,
     statuses::create,
     statuses::show,
+    statuses::context,
     statuses::update,
     statuses::delete_status,
     interactions::favourite,

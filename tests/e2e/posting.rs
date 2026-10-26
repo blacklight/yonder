@@ -1122,3 +1122,324 @@ async fn edit_media_semantics() {
         "explicit empty media_ids must clear attachments: {body}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Thread context + reply counters
+// ---------------------------------------------------------------------------
+
+/// A remote `Create` for a Note replying to `parent_uri`; `n` keeps ids
+/// unique per fabricated object.
+fn remote_reply_create(n: i64, parent_uri: &str) -> pubby_sdk::Activity {
+    pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/reply-{n}"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!({
+            "id": format!("https://remote.test/objects/reply-{n}"),
+            "type": "Note",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": format!("<p>remote reply {n}</p>"),
+            "inReplyTo": parent_uri,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_reply_counts_and_surfaces_in_context() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "nora", "nora@example.com").await;
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    let (_, parent) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "root post"})),
+        &[],
+    )
+    .await;
+    let parent_id = parent["id"].as_str().unwrap().to_string();
+    let parent_uri = parent["uri"].as_str().unwrap().to_string();
+
+    // Remote reply materializes against the known parent and counts.
+    let create = remote_reply_create(1, &parent_uri);
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let count: i32 = sqlx::query_scalar("SELECT replies_count FROM statuses WHERE id = $1::bigint")
+        .bind(parent_id.parse::<i64>().unwrap())
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+
+    // The context endpoint surfaces it as a descendant.
+    let (status, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{parent_id}/context"),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ctx}");
+    let desc = ctx["descendants"].as_array().unwrap();
+    assert_eq!(desc.len(), 1, "{ctx}");
+    assert_eq!(
+        desc[0]["uri"].as_str().unwrap(),
+        "https://remote.test/objects/reply-1"
+    );
+
+    // A redelivered Create must not double-count.
+    let create = remote_reply_create(1, &parent_uri);
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let count: i32 = sqlx::query_scalar("SELECT replies_count FROM statuses WHERE id = $1::bigint")
+        .bind(parent_id.parse::<i64>().unwrap())
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 1, "redelivery must not double-count");
+
+    // Remote Delete releases the counter and drops the descendant.
+    let delete = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/del-reply-1"),
+        activity_type: "Delete".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!("https://remote.test/objects/reply-1"),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(remote::handle(&core, &delete, &delete.to_json()).await);
+    let count: i32 = sqlx::query_scalar("SELECT replies_count FROM statuses WHERE id = $1::bigint")
+        .bind(parent_id.parse::<i64>().unwrap())
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "remote delete must release the counter");
+    let (status, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{parent_id}/context"),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ctx}");
+    assert!(ctx["descendants"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn self_mention_is_linkified_and_recorded() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "olga", "olga@example.com").await;
+
+    // Replying to own post — the compose prefill seeds "@olga ".
+    let (_, parent) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "root"})),
+        &[],
+    )
+    .await;
+    let parent_id = parent["id"].as_str().unwrap().to_string();
+    let (_, reply) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "@olga talking to myself",
+            "in_reply_to_id": parent_id,
+        })),
+        &[],
+    )
+    .await;
+    let html = reply["content"].as_str().unwrap();
+    assert!(
+        html.contains(">@olga</a>") || html.contains(">olga</a>"),
+        "self-mention must linkify: {html}"
+    );
+    let mentions = reply["mentions"].as_array().unwrap();
+    assert_eq!(mentions.len(), 1, "{mentions:?}");
+    assert_eq!(mentions[0]["acct"].as_str().unwrap(), "olga");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_visibility_and_ancestors() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "pete", "pete@example.com").await;
+    let bob = register(&env.app, "quinn", "quinn@example.com").await;
+
+    let (_, root) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "thread root"})),
+        &[],
+    )
+    .await;
+    let root_id = root["id"].as_str().unwrap().to_string();
+
+    // Public reply (visible to all) + private reply (author/followers only).
+    let (_, pub_reply) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "public reply", "in_reply_to_id": root_id})),
+        &[],
+    )
+    .await;
+    let pub_reply_id = pub_reply["id"].as_str().unwrap().to_string();
+    let (_, priv_reply) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({
+            "status": "private reply",
+            "visibility": "private",
+            "in_reply_to_id": root_id,
+        })),
+        &[],
+    )
+    .await;
+    let priv_reply_id = priv_reply["id"].as_str().unwrap().to_string();
+    // Nested reply under the public one — exercises the recursive walk.
+    let (_, nested) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "nested", "in_reply_to_id": pub_reply_id})),
+        &[],
+    )
+    .await;
+    let nested_id = nested["id"].as_str().unwrap().to_string();
+
+    // Anonymous context: public descendants only, ancestors of the reply.
+    let (status, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{root_id}/context"),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ctx}");
+    let ids: Vec<&str> = ctx["descendants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert!(ids.contains(&pub_reply_id.as_str()), "{ids:?}");
+    assert!(ids.contains(&nested_id.as_str()), "{ids:?}");
+    assert!(
+        !ids.contains(&priv_reply_id.as_str()),
+        "private reply must not leak to anonymous: {ids:?}"
+    );
+
+    // The author sees everything, ancestors walk root→parent.
+    let (status, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{nested_id}/context"),
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ctx}");
+    let anc: Vec<&str> = ctx["ancestors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(anc, [root_id.as_str(), pub_reply_id.as_str()]);
+
+    // A non-follower still cannot see the private reply.
+    let (status, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{root_id}/context"),
+        Some(&bob),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ctx}");
+    let ids: Vec<&str> = ctx["descendants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&priv_reply_id.as_str()), "{ids:?}");
+
+    // Deleting the public reply releases the counter; the nested reply
+    // under it is pruned from the context too.
+    let (status, _) = request(
+        &env.app,
+        "DELETE",
+        &format!("/api/v1/statuses/{pub_reply_id}"),
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, shown) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{root_id}"),
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(
+        shown["replies_count"].as_i64().unwrap(),
+        1,
+        "only the private reply remains: {shown}"
+    );
+    let (_, ctx) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{root_id}/context"),
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    let ids: Vec<&str> = ctx["descendants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(ids, [priv_reply_id.as_str()]);
+}

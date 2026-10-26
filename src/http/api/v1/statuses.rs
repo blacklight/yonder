@@ -89,6 +89,47 @@ pub async fn show(
     Ok(Json(entity::status_entity(&ctx, &status, viewer).await?))
 }
 
+/// `GET /api/v1/statuses/{id}/context` — the thread context: visible ancestors
+/// (root first) and descendants (flat, chronological). The status
+/// itself must be `can_see`-visible to the viewer — otherwise the
+/// whole context 404s, never leaking existence.
+#[utoipa::path(
+    get,
+    path = "/api/v1/statuses/{id}/context",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "The status's ancestors and descendants"),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn context(
+    State(state): State<Arc<AppState>>,
+    auth: MaybeAuth,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    let ctx = PostContext::new(&state);
+    let status = posts::load(&ctx.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    let viewer = auth.0.as_ref().map(|a| a.account_id);
+    if !posts::can_see(&ctx.db, &status, viewer).await? {
+        return Err(Error::NotFound("status".into()));
+    }
+    let mut ancestors = Vec::new();
+    for s in posts::context::ancestors(&ctx.db, id, viewer).await? {
+        ancestors.push(entity::status_entity(&ctx, &s, viewer).await?);
+    }
+    let mut descendants = Vec::new();
+    for s in posts::context::descendants(&ctx.db, id, viewer).await? {
+        descendants.push(entity::status_entity(&ctx, &s, viewer).await?);
+    }
+    Ok(Json(json!({
+        "ancestors": ancestors,
+        "descendants": descendants,
+    })))
+}
+
 /// `PUT /api/v1/statuses/{id}` — owner edit; republishes `Update`.
 #[utoipa::path(
     put,

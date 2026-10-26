@@ -26,6 +26,7 @@
 //! - **Job due-time checks**: the scheduled-publish handler re-checks
 //!   `scheduled_at` under a row lock and refuses to publish early.
 
+pub mod context;
 pub mod conversations;
 pub mod create;
 pub mod entity;

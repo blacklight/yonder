@@ -314,6 +314,22 @@ pub async fn clear(db: &PgPool, account_id: i64) -> Result<u64> {
         .map_err(Into::into)
 }
 
+/// Mark the caller's notifications read in bulk (viewport-driven —
+/// the SPA posts the ids it rendered). Already-read rows are a no-op;
+/// returns how many rows flipped.
+pub async fn mark_read(db: &PgPool, account_id: i64, ids: &[i64]) -> Result<u64> {
+    sqlx::query(
+        "UPDATE notifications SET read = true \
+         WHERE account_id = $1 AND id = ANY($2) AND NOT read",
+    )
+    .bind(account_id)
+    .bind(ids)
+    .execute(db)
+    .await
+    .map(|r| r.rows_affected())
+    .map_err(Into::into)
+}
+
 /// Delete one notification owned by `account_id`. `false` when the row
 /// does not exist or belongs to someone else.
 pub async fn dismiss(db: &PgPool, account_id: i64, id: i64) -> Result<bool> {
@@ -349,6 +365,7 @@ pub async fn entity(
         "id": row.id.to_string(),
         "type": row.kind.as_str(),
         "created_at": row.created_at.to_rfc3339(),
+        "read": row.read,
         "account": account,
     });
     if let Some(status_id) = row.status_id {

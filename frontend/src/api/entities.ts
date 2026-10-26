@@ -217,6 +217,8 @@ export interface Notification {
   id: string;
   type: string;
   created_at: string;
+  /** Set once the row has been rendered — feeds `unread_count`. */
+  read?: boolean;
   account: Account | null;
   status?: Status | null;
   /** `admin.report` rows carry the referenced Report object. */

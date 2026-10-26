@@ -136,7 +136,7 @@ async function toggle(
 <style scoped>
 .status-footer {
   display: flex;
-  gap: var(--space-3);
+  gap: var(--space-5);
   padding-top: var(--space-2);
   margin-top: var(--space-2);
   border-top: 1px solid var(--border);
@@ -144,10 +144,10 @@ async function toggle(
 .status-footer__btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
   border: 0;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-faint);
   cursor: pointer;
   font: inherit;
   padding: var(--space-1);

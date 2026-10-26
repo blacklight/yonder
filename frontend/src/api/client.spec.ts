@@ -63,3 +63,25 @@ describe("api client", () => {
     expect(spy).toHaveBeenCalled();
   });
 });
+
+describe("error toasts", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
+  it("pushes an error toast on !ok responses", async () => {
+    const { useToastsStore } = await import("@/stores/toasts");
+    mockFetch(500, { error: "boom" });
+    await request({ path: "/instance" }).catch(() => {});
+    expect(useToastsStore().items).toHaveLength(1);
+    expect(useToastsStore().items[0]).toMatchObject({
+      text: "boom",
+      kind: "error",
+    });
+  });
+
+  it("silent suppresses the error toast", async () => {
+    const { useToastsStore } = await import("@/stores/toasts");
+    mockFetch(500, { error: "boom" });
+    await request({ path: "/instance", silent: true }).catch(() => {});
+    expect(useToastsStore().items).toHaveLength(0);
+  });
+});

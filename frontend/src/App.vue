@@ -2,6 +2,7 @@
 import { onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppLayout from "@/components/layout/AppLayout.vue";
+import Toasts from "@/components/ui/Toasts.vue";
 import { useTheme } from "@/composables/useTheme";
 import { useAuthStore } from "@/stores/auth";
 
@@ -34,4 +35,5 @@ watch(
   <AppLayout>
     <router-view />
   </AppLayout>
+  <Toasts />
 </template>

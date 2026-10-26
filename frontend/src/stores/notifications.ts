@@ -3,15 +3,19 @@ import { ref } from "vue";
 import {
   clearNotifications,
   dismissNotification,
+  markNotificationsRead,
   notifications as fetchNotifications,
   unreadCount,
 } from "@/api/notifications";
+import type { IconProp } from "@fortawesome/fontawesome-svg-core";
 import type { Notification } from "@/api/entities";
+import { i18n } from "@/i18n";
+import { router } from "@/router";
+import { sanitizeHtml } from "@/utils/sanitize";
 import { useAuthStore } from "./auth";
 import { resetOnUserChange } from "./perUser";
 import { useStreamingStore } from "./streaming";
-
-const REFETCH_DEBOUNCE_MS = 1000;
+import { useToastsStore } from "./toasts";
 
 /** Filter aliases → backend `types[]` values (`v1::notifications`). */
 export const FILTERS = {
@@ -24,12 +28,118 @@ export const FILTERS = {
 } as const;
 export type NotificationFilter = keyof typeof FILTERS;
 
+/** i18n key for a notification's label, `unknown` as the fallback. */
+export function notificationTypeKey(n: Notification): string {
+  const key = `notifications.type.${n.type.replace(".", "_")}`;
+  return i18n.global.te(key) ? key : "notifications.type.unknown";
+}
+
+const TYPE_ICONS: Record<string, IconProp> = {
+  follow: "user-plus",
+  follow_request: "user-plus",
+  mention: "at",
+  favourite: "star",
+  reblog: "retweet",
+  quote: "quote-left",
+  poll: "square-poll-vertical",
+  status: "bell",
+  update: "pen",
+  emoji_reaction: ["far", "face-smile"],
+  "admin.sign_up": "user-plus",
+  moderation_warning: "triangle-exclamation",
+  "admin.report": "flag",
+};
+
+/** The per-type icon shown on rows and toasts. */
+export function notificationIcon(n: Notification): IconProp {
+  return TYPE_ICONS[n.type] ?? "bell";
+}
+
+/** Flat label text for a notification (toast bodies). */
+function notificationLabel(n: Notification): string {
+  return i18n.global.t(notificationTypeKey(n), {
+    name: n.account?.display_name || n.account?.acct || "",
+  });
+}
+
+/** Where a notification toast should navigate on click. */
+function notificationTarget(n: Notification): string {
+  if (n.status?.id) return `/statuses/${n.status.id}`;
+  if (n.type === "admin.report" && n.report?.id)
+    return `/moderation/reports/${n.report.id}`;
+  if (n.account?.acct) return `/@${n.account.acct}`;
+  return "/notifications";
+}
+
+/** Plain-text excerpt of a status body for native notification text. */
+function statusExcerpt(n: Notification): string | undefined {
+  const html = n.status?.reblog?.content || n.status?.content;
+  if (!html) return undefined;
+  const doc = new DOMParser().parseFromString(sanitizeHtml(html), "text/html");
+  const text = (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
+  return text ? text.slice(0, 140) : undefined;
+}
+
+/** The pending one-shot gesture handler asking for permission. */
+let permListener: (() => void) | null = null;
+
+/**
+ * Browsers only honour `Notification.requestPermission()` inside a
+ * user-gesture handler, so the request is armed at `start()` and fires
+ * on the next pointer/key interaction. `denied` is sticky and never
+ * re-armed.
+ */
+function armPermissionRequest() {
+  if (permListener || !("Notification" in window)) return;
+  if (window.Notification.permission !== "default") return;
+  const ask = () => {
+    disarmPermissionRequest();
+    void window.Notification.requestPermission();
+  };
+  permListener = ask;
+  window.addEventListener("pointerdown", ask, { once: true });
+  window.addEventListener("keydown", ask, { once: true });
+}
+
+function disarmPermissionRequest() {
+  if (!permListener) return;
+  window.removeEventListener("pointerdown", permListener);
+  window.removeEventListener("keydown", permListener);
+  permListener = null;
+}
+
+/**
+ * Native notification for a live event. Only fires while the tab is
+ * hidden — a visible page already shows the in-app toast. `tag` keys
+ * off the notification id so repeated events replace rather than
+ * stack; clicking focuses the tab and navigates to the same target
+ * the toast would open.
+ */
+function browserNotify(n: Notification) {
+  if (!("Notification" in window)) return;
+  if (window.Notification.permission !== "granted") return;
+  if (document.visibilityState === "visible") return;
+  const target = notificationTarget(n);
+  const native = new window.Notification(notificationLabel(n), {
+    body: statusExcerpt(n),
+    icon: n.account?.avatar || "/favicon.svg",
+    tag: `yonder-notification-${n.id}`,
+    data: { url: target },
+  });
+  native.onclick = () => {
+    window.focus();
+    void router.push(target);
+    native.close();
+  };
+}
+
 /**
  * The unread-notification badge plus the page list. `start()` (called
  * once per app lifetime from the layout) fetches the count and
- * subscribes to the `user` stream: `notification` events refresh the
- * badge (debounced) and live-insert the row when it passes the
- * active filter. There is no mark-read endpoint — `clear` deletes.
+ * subscribes to the `user:notification` stream: `notification` events
+ * show a toast and live-insert the row when it passes the active
+ * filter, `notifications_count` events carry the authoritative badge
+ * value. There is no mark-read endpoint — `clear` deletes.
  */
 export const useNotificationsStore = defineStore("notifications", () => {
   const unread = ref(0);
@@ -39,7 +149,6 @@ export const useNotificationsStore = defineStore("notifications", () => {
   const loading = ref(false);
   const error = ref<string | null>(null);
   let off: (() => void) | null = null;
-  let debounce: ReturnType<typeof setTimeout> | null = null;
 
   function reset() {
     items.value = [];
@@ -104,32 +213,41 @@ export const useNotificationsStore = defineStore("notifications", () => {
   }
 
   function onEvent(ev: { event: string; payload: unknown }) {
+    // The fanout publishes the authoritative count alongside every
+    // notification (and on dismiss/clear) — no refetch needed.
+    if (ev.event === "notifications_count") {
+      const count = (ev.payload as { unread_count?: unknown })?.unread_count;
+      if (typeof count === "number") unread.value = count;
+      return;
+    }
     if (ev.event !== "notification") return;
     const n = ev.payload as Notification;
-    if (n && typeof n === "object" && n.id && passesFilter(n)) {
-      if (!items.value.some((i) => i.id === n.id)) items.value.unshift(n);
+    if (!n || typeof n !== "object" || !n.id) return;
+    if (passesFilter(n) && !items.value.some((i) => i.id === n.id)) {
+      items.value.unshift(n);
     }
-    if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      debounce = null;
-      void refresh();
-    }, REFETCH_DEBOUNCE_MS);
+    useToastsStore().push({
+      text: notificationLabel(n),
+      body: statusExcerpt(n),
+      to: notificationTarget(n),
+      image: n.account?.avatar || undefined,
+      icon: notificationIcon(n),
+    });
+    browserNotify(n);
   }
 
   /** Idempotent: begins the badge feed for a logged-in session. */
   function start() {
     if (off || !useAuthStore().isLoggedIn) return;
     void refresh();
-    off = useStreamingStore().subscribe("user", onEvent);
+    armPermissionRequest();
+    off = useStreamingStore().subscribe("user:notification", onEvent);
   }
 
   function stop() {
     off?.();
     off = null;
-    if (debounce) {
-      clearTimeout(debounce);
-      debounce = null;
-    }
+    disarmPermissionRequest();
     reset();
   }
 
@@ -147,6 +265,32 @@ export const useNotificationsStore = defineStore("notifications", () => {
     void refresh();
   }
 
+  /**
+   * `POST /notifications/read` — the page posts the ids its viewport
+   * rendered. Local rows flip `read` and the badge decrements
+   * optimistically; the backend's `notifications_count` push
+   * reconciles the exact value.
+   */
+  async function markRead(ids: string[]) {
+    const byId = new Map(items.value.map((n) => [n.id, n]));
+    // A missing `read` field (older server) counts as unread.
+    const fresh = ids.filter((id) => byId.has(id) && !byId.get(id)?.read);
+    if (!fresh.length) return;
+    const numeric = fresh.map(Number).filter((v) => Number.isFinite(v));
+    for (const id of fresh) {
+      const n = byId.get(id);
+      if (n) n.read = true;
+    }
+    unread.value = Math.max(0, unread.value - fresh.length);
+    if (!numeric.length) return;
+    try {
+      await markNotificationsRead(numeric);
+    } catch {
+      // Read state is cosmetic — a dropped call self-heals on the
+      // next count push or page reload.
+    }
+  }
+
   return {
     unread,
     items,
@@ -161,5 +305,6 @@ export const useNotificationsStore = defineStore("notifications", () => {
     stop,
     clear,
     dismiss,
+    markRead,
   };
 });

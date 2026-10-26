@@ -32,14 +32,28 @@ export async function notifications(
 }
 
 /**
- * `GET /api/v1/notifications/unread_count` — Yonder extension;
- * unwraps `{unread_count}`.
+ * `GET /api/v1/notifications/unread_count` — unwraps `{count}`
+ * (Mastodon's response shape for this endpoint).
  */
 export async function unreadCount(): Promise<number> {
-  const body = await request<{ unread_count: number }>({
+  const body = await request<{ count: number }>({
     path: "/notifications/unread_count",
+    // Badge refreshes are cosmetic — a transient failure keeps the
+    // last count rather than toasting.
+    silent: true,
   });
-  return body.unread_count;
+  return body.count;
+}
+
+/** `POST /api/v1/notifications/read` — mark rendered rows read. */
+export function markNotificationsRead(ids: number[]): Promise<void> {
+  return request<void>({
+    path: "/notifications/read",
+    method: "POST",
+    body: { ids },
+    // Cosmetic write — never worth an error toast.
+    silent: true,
+  });
 }
 
 /** `POST /api/v1/notifications/clear` — dismiss everything. */

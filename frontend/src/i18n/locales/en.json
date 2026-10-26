@@ -640,27 +640,28 @@
       "reports": "Reports"
     },
     "type": {
-      "follow": "{acct} followed you",
-      "follow_request": "{acct} requested to follow you",
-      "mention": "{acct} mentioned you",
-      "favourite": "{acct} liked your post",
-      "reblog": "{acct} boosted your post",
-      "quote": "{acct} quoted your post",
+      "follow": "{name} followed you",
+      "follow_request": "{name} requested to follow you",
+      "mention": "{name} mentioned you",
+      "favourite": "{name} liked your post",
+      "reblog": "{name} boosted your post",
+      "quote": "{name} quoted your post",
       "poll": "A poll you voted in ended",
-      "status": "{acct} published a post",
-      "update": "{acct} edited a post",
-      "emoji_reaction": "{acct} reacted to your post",
-      "admin_sign_up": "{acct} signed up",
+      "status": "{name} published a post",
+      "update": "{name} edited a post",
+      "emoji_reaction": "{name} reacted to your post",
+      "admin_sign_up": "{name} signed up",
       "moderation_warning": "You received a moderation warning",
       "admin_report": "A report was filed",
-      "unknown": "{acct} sent a notification"
+      "unknown": "{name} sent a notification"
     },
     "accept": "Accept",
     "reject": "Reject",
     "clear": "Clear",
     "dismiss": "Dismiss",
     "clearTitle": "Clear notifications",
-    "clearBody": "Delete all notifications? This cannot be undone."
+    "clearBody": "Delete all notifications? This cannot be undone.",
+    "viewReport": "View report"
   },
   "messages": {
     "title": "Direct messages",

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
-import { useI18n } from "vue-i18n";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { I18nT, useI18n } from "vue-i18n";
 import {
   useNotificationsStore,
+  notificationTypeKey,
+  notificationIcon,
   FILTERS,
   type NotificationFilter,
 } from "@/stores/notifications";
@@ -11,13 +13,16 @@ import {
   authorizeFollowRequest,
   rejectFollowRequest,
 } from "@/api/followRequests";
-import type { Notification } from "@/api/entities";
+import type { Account, Notification } from "@/api/entities";
+import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tabs from "@/components/ui/Tabs.vue";
+import Tooltip from "@/components/ui/Tooltip.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
+import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 
 const { t } = useI18n();
 const store = useNotificationsStore();
@@ -35,11 +40,14 @@ const tabs = computed(() =>
 );
 const actionError = ref<string | null>(null);
 
-function label(n: Notification): string {
-  const key = `notifications.type.${n.type.replace(".", "_")}`;
-  return t(key, { acct: n.account?.acct ?? "" }) === key
-    ? t("notifications.type.unknown", { acct: n.account?.acct ?? "" })
-    : t(key, { acct: n.account?.acct ?? "" });
+function displayName(a: Account | null): string {
+  return a?.display_name || a?.acct || "";
+}
+
+function reportLink(n: Notification): string | null {
+  return n.type === "admin.report" && n.report?.id
+    ? `/moderation/reports/${n.report.id}`
+    : null;
 }
 
 async function act(n: Notification, action: "authorize" | "reject") {
@@ -63,7 +71,69 @@ async function clearAll() {
   await store.clear();
 }
 
-onMounted(() => store.fetchPage(true));
+const listEl = ref<HTMLElement | null>(null);
+let observer: IntersectionObserver | null = null;
+const pendingRead = new Set<string>();
+let readTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushRead() {
+  readTimer = null;
+  if (!pendingRead.size) return;
+  const ids = [...pendingRead];
+  pendingRead.clear();
+  void store.markRead(ids);
+}
+
+/** Observe (or bulk-mark, without IO support) the unread rows. */
+function observeRows() {
+  const list = listEl.value;
+  if (!list) return;
+  const unread = new Set(store.items.filter((n) => !n.read).map((n) => n.id));
+  if (observer) {
+    for (const el of list.querySelectorAll<HTMLElement>("[data-notif-id]")) {
+      if (unread.has(el.dataset.notifId ?? "")) observer.observe(el);
+    }
+  } else if (unread.size) {
+    // Engines without IntersectionObserver treat the loaded list as
+    // fully rendered.
+    void store.markRead([...unread]);
+  }
+}
+
+watch(
+  () => store.items.length,
+  async () => {
+    await nextTick();
+    observeRows();
+  },
+);
+
+onMounted(() => {
+  if ("IntersectionObserver" in window) {
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const id = (e.target as HTMLElement).dataset.notifId;
+          if (!id) continue;
+          observer?.unobserve(e.target);
+          pendingRead.add(id);
+          readTimer ??= setTimeout(flushRead, 300);
+        }
+      },
+      { threshold: 0.5 },
+    );
+  }
+  void store.fetchPage(true);
+  // Rows may already be loaded (back-navigation) — the watcher only
+  // fires on length changes, so seed the observation pass here.
+  observeRows();
+});
+
+onUnmounted(() => {
+  observer?.disconnect();
+  if (readTimer) clearTimeout(readTimer);
+});
 </script>
 
 <template>
@@ -79,9 +149,72 @@ onMounted(() => store.fetchPage(true));
         {{ t("notifications.clear") }}
       </Button>
     </Tabs>
-    <ul class="notif-list">
+    <ul ref="listEl" class="notif-list">
       <li v-for="n in store.items" :key="n.id" class="notif" role="article">
-        <p class="notif-label">{{ label(n) }}</p>
+        <div class="notif-head" :data-notif-id="n.id">
+          <span
+            v-if="!n.read"
+            class="notif-dot"
+            :aria-label="t('messages.unread')"
+          />
+          <FontAwesomeIcon
+            :icon="notificationIcon(n)"
+            class="notif-icon"
+            fixed-width
+            aria-hidden="true"
+          />
+          <router-link
+            v-if="n.account"
+            :to="`/@${n.account.acct}`"
+            class="notif-avatar"
+            ><Avatar
+              :src="n.account.avatar"
+              :name="displayName(n.account)"
+              size="sm"
+          /></router-link>
+          <div class="notif-body">
+            <p class="notif-label">
+              <I18nT :keypath="notificationTypeKey(n)" tag="span">
+                <template #name>
+                  <router-link
+                    v-if="n.account"
+                    :to="`/@${n.account.acct}`"
+                    class="notif-name"
+                    >{{ displayName(n.account) }}</router-link
+                  >
+                </template>
+              </I18nT>
+              <Tooltip :text="formatAbsoluteDate(n.created_at)">
+                <router-link
+                  v-if="n.status"
+                  :to="`/statuses/${n.status.id}`"
+                  class="notif-when"
+                  >&nbsp;·
+                  <time :datetime="n.created_at">{{
+                    formatRelativeDate(n.created_at)
+                  }}</time></router-link
+                >
+                <time v-else class="notif-when" :datetime="n.created_at"
+                  >&nbsp;· {{ formatRelativeDate(n.created_at) }}</time
+                >
+              </Tooltip>
+            </p>
+            <p v-if="n.account" class="notif-acct">@{{ n.account.acct }}</p>
+            <router-link
+              v-if="reportLink(n)"
+              :to="reportLink(n)!"
+              class="notif-report"
+              >{{ t("notifications.viewReport") }}</router-link
+            >
+          </div>
+          <button
+            class="dismiss"
+            :aria-label="t('notifications.dismiss')"
+            @click="store.dismiss(n.id)"
+          >
+            <FontAwesomeIcon icon="xmark" />
+          </button>
+        </div>
         <StatusCard v-if="n.status" :status="n.status" />
         <div v-if="n.type === 'follow_request' && n.account" class="fr-actions">
           <Button size="sm" @click="act(n, 'authorize')">{{
@@ -91,13 +224,6 @@ onMounted(() => store.fetchPage(true));
             {{ t("notifications.reject") }}
           </Button>
         </div>
-        <button
-          class="dismiss"
-          :aria-label="t('notifications.dismiss')"
-          @click="store.dismiss(n.id)"
-        >
-          <FontAwesomeIcon icon="xmark" />
-        </button>
       </li>
     </ul>
     <p v-if="actionError" role="alert">{{ actionError }}</p>
@@ -122,3 +248,98 @@ onMounted(() => store.fetchPage(true));
     </Modal>
   </main>
 </template>
+
+<style scoped>
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.notif {
+  background: var(--bg-raised);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.notif-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.notif-icon {
+  color: var(--accent-link);
+  flex: none;
+}
+.notif-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+.notif-avatar {
+  flex: none;
+}
+.notif-body {
+  flex: 1;
+  min-width: 0;
+}
+.notif-label {
+  margin: 0;
+  overflow-wrap: break-word;
+}
+.notif-name {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.notif-name:hover {
+  color: var(--accent-link);
+}
+.notif-when {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.notif-when:hover {
+  text-decoration: underline;
+}
+.notif-acct {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notif-report {
+  font-size: var(--text-sm);
+}
+.dismiss {
+  flex: none;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.dismiss:hover {
+  color: var(--text);
+  background: var(--bg-hover, var(--bg));
+}
+.fr-actions {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+/* The embedded post keeps its own card chrome but drops the doubled
+   padding/border the notification row already provides. */
+.notif :deep(.status-card) {
+  font-size: var(--text-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+}
+</style>

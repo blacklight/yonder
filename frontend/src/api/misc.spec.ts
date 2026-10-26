@@ -92,8 +92,8 @@ describe("notifications api", () => {
     );
   });
 
-  it("unreadCount unwraps {unread_count}", async () => {
-    mockFetch(200, { unread_count: 7 });
+  it("unreadCount unwraps {count}", async () => {
+    mockFetch(200, { count: 7 });
     expect(await unreadCount()).toBe(7);
   });
 

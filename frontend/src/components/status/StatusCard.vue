@@ -294,17 +294,19 @@ async function onReact(emoji: string) {
     </p>
 
     <header class="status-card__header">
-      <Avatar
-        :src="account.avatar"
-        :name="account.display_name || account.username"
-        size="md"
-      />
-      <div class="status-card__names">
-        <span class="status-card__display">{{
-          account.display_name || account.username
-        }}</span>
-        <span class="status-card__acct">@{{ account.acct }}</span>
-      </div>
+      <router-link :to="`/@${account.acct}`" class="status-card__author">
+        <Avatar
+          :src="account.avatar"
+          :name="account.display_name || account.username"
+          size="md"
+        />
+        <div class="status-card__names">
+          <span class="status-card__display">{{
+            account.display_name || account.username
+          }}</span>
+          <span class="status-card__acct">@{{ account.acct }}</span>
+        </div>
+      </router-link>
       <img
         v-if="remoteDomain && !faviconFailed"
         :src="`https://${remoteDomain}/favicon.ico`"
@@ -465,11 +467,22 @@ async function onReact(emoji: string) {
   gap: var(--space-3);
   margin-bottom: var(--space-2);
 }
+.status-card__author {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  flex: 1;
+  color: var(--text);
+  text-decoration: none;
+}
+.status-card__author:hover .status-card__display {
+  text-decoration: underline;
+}
 .status-card__names {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1;
 }
 .status-card__display {
   font-weight: 600;

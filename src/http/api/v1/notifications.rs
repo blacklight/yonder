@@ -1,6 +1,5 @@
 //! `/api/v1` notification endpoints (epic 16) — list with type
-//! filters, single get, clear, dismiss, and the Yonder
-//! `unread_count` extension (Mastodon has none).
+//! filters, single get, clear, dismiss, and `unread_count`.
 //!
 //! Handlers stay thin: scope check → [`notifications`] service →
 //! entity JSON. `types[]`/`exclude_types[]` are repeated params, which
@@ -215,6 +214,45 @@ pub async fn clear(State(state): State<Arc<AppState>>, auth: AuthContext) -> Res
     Ok(Json(json!({})))
 }
 
+/// Body for `POST /notifications/read` — ids the client rendered.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+pub struct MarkReadBody {
+    /// Notification ids to mark read (max [`MAX_MARK_READ_IDS`]).
+    pub ids: Vec<i64>,
+}
+
+/// Upper bound on ids per `mark_read` call — the SPA batches viewport
+/// hits far below this.
+const MAX_MARK_READ_IDS: usize = 200;
+
+/// `POST /api/v1/notifications/read` — mark the caller's rows read
+/// (Yonder extension; the SPA drives it from the rendered viewport).
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/read",
+    tag = "notifications",
+    request_body = MarkReadBody,
+    responses(
+        (status = 200, description = "The ids were marked read"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "Scope gate", body = crate::error::ErrorBody),
+        (status = 422, description = "Too many ids", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn mark_read(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Json(body): Json<MarkReadBody>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:notifications")?;
+    if body.ids.len() > MAX_MARK_READ_IDS {
+        return Err(Error::Validation("too many notification ids".into()));
+    }
+    notifications::mark_read(&state.db, auth.account_id, &body.ids).await?;
+    publish_count(&state, auth.user_id, auth.account_id).await;
+    Ok(Json(json!({})))
+}
+
 /// `POST /api/v1/notifications/{id}/dismiss` — delete one notification.
 #[utoipa::path(
     post,
@@ -241,9 +279,8 @@ pub async fn dismiss(
     Ok(Json(json!({})))
 }
 
-/// `GET /api/v1/notifications/unread_count` — Yonder extension:
-/// Mastodon has no unread-count endpoint, so the badge count lives
-/// here.
+/// `GET /api/v1/notifications/unread_count` — mirrors Mastodon's
+/// `{count}` response shape; the badge count lives here.
 #[utoipa::path(
     get,
     path = "/api/v1/notifications/unread_count",

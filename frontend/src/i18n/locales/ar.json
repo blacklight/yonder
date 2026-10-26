@@ -640,27 +640,28 @@
       "reports": "البلاغات"
     },
     "type": {
-      "follow": "تابعك {acct}",
-      "follow_request": "طلب {acct} متابعتك",
-      "mention": "أشار {acct} إليك",
-      "favourite": "أعجب {acct} بمنشورك",
-      "reblog": "عزّز {acct} منشورك",
-      "quote": "اقتبس {acct} منشورك",
+      "follow": "تابعك {name}",
+      "follow_request": "طلب {name} متابعتك",
+      "mention": "أشار {name} إليك",
+      "favourite": "أعجب {name} بمنشورك",
+      "reblog": "عزّز {name} منشورك",
+      "quote": "اقتبس {name} منشورك",
       "poll": "انتهى تصويت شاركت فيه",
-      "status": "نشر {acct} منشورًا",
-      "update": "عدّل {acct} منشورًا",
-      "emoji_reaction": "تفاعل {acct} مع منشورك",
-      "admin_sign_up": "سجّل {acct} حسابًا",
+      "status": "نشر {name} منشورًا",
+      "update": "عدّل {name} منشورًا",
+      "emoji_reaction": "تفاعل {name} مع منشورك",
+      "admin_sign_up": "سجّل {name} حسابًا",
       "moderation_warning": "تلقيت تحذير إشراف",
       "admin_report": "قُدّم بلاغ",
-      "unknown": "أرسل {acct} إشعارًا"
+      "unknown": "أرسل {name} إشعارًا"
     },
     "accept": "قبول",
     "reject": "رفض",
     "clear": "مسح",
     "dismiss": "تجاهل",
     "clearTitle": "مسح الإشعارات",
-    "clearBody": "حذف جميع الإشعارات؟ لا يمكن التراجع."
+    "clearBody": "حذف جميع الإشعارات؟ لا يمكن التراجع.",
+    "viewReport": "عرض البلاغ"
   },
   "messages": {
     "title": "الرسائل المباشرة",

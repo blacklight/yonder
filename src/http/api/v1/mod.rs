@@ -658,6 +658,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // doesn't throttle these).
         .route("/api/v1/notifications", get(notifications::list))
         .route("/api/v1/notifications/clear", post(notifications::clear))
+        .route("/api/v1/notifications/read", post(notifications::mark_read))
         .route(
             "/api/v1/notifications/unread_count",
             get(notifications::unread_count),
@@ -785,6 +786,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     notifications::list,
     notifications::show,
     notifications::clear,
+    notifications::mark_read,
     notifications::dismiss,
     notifications::unread_count,
     scheduled_statuses::list,

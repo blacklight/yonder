@@ -1,4 +1,6 @@
 import { useAuthStore } from "@/stores/auth";
+import { useToastsStore } from "@/stores/toasts";
+import { i18n } from "@/i18n";
 import { API_PREFIX, buildUrl } from "./config";
 import { ApiError } from "./errors";
 
@@ -22,6 +24,21 @@ export interface RequestOptions {
   headers?: Record<string, string>;
   signal?: AbortSignal;
   skipAuth?: boolean;
+  /**
+   * Best-effort calls (badge refreshes, read markers) set this so a
+   * failure doesn't raise an error toast alongside their own catch.
+   */
+  silent?: boolean;
+}
+
+/** Surface a failed call as an error toast unless the caller opted out. */
+function failureToast(opts: RequestOptions, message?: string) {
+  if (opts.silent) return;
+  useToastsStore().push({
+    text: message || i18n.global.t("common.error"),
+    kind: "error",
+    icon: "triangle-exclamation",
+  });
 }
 
 export interface ApiResponse<T> {
@@ -62,12 +79,18 @@ export async function requestWithResponse<T>(
   const fullPath = opts.path.startsWith("/api/")
     ? opts.path
     : `${API_PREFIX}${opts.path}`;
-  const response = await fetch(buildUrl(fullPath, opts.query), {
-    method: opts.method ?? "GET",
-    headers,
-    body,
-    signal: opts.signal ?? null,
-  });
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(fullPath, opts.query), {
+      method: opts.method ?? "GET",
+      headers,
+      body,
+      signal: opts.signal ?? null,
+    });
+  } catch (e) {
+    failureToast(opts);
+    throw e;
+  }
   const text = await response.text();
   let data: unknown = null;
   if (text) {
@@ -84,7 +107,9 @@ export async function requestWithResponse<T>(
       const auth = useAuthStore();
       if (auth.token === sentToken) auth.setToken(null);
     }
-    throw await ApiError.fromResponse(response, data);
+    const error = await ApiError.fromResponse(response, data);
+    failureToast(opts, error.message);
+    throw error;
   }
   return { data: data as T, response };
 }
@@ -123,12 +148,18 @@ export async function requestBlob(opts: RequestOptions): Promise<BlobResult> {
   const fullPath = opts.path.startsWith("/api/")
     ? opts.path
     : `${API_PREFIX}${opts.path}`;
-  const response = await fetch(buildUrl(fullPath, opts.query), {
-    method: opts.method ?? "GET",
-    headers,
-    body,
-    signal: opts.signal ?? null,
-  });
+  let response: Response;
+  try {
+    response = await fetch(buildUrl(fullPath, opts.query), {
+      method: opts.method ?? "GET",
+      headers,
+      body,
+      signal: opts.signal ?? null,
+    });
+  } catch (e) {
+    failureToast(opts);
+    throw e;
+  }
   if (!response.ok) {
     if (response.status === 401 && sentToken) {
       const auth = useAuthStore();
@@ -143,7 +174,9 @@ export async function requestBlob(opts: RequestOptions): Promise<BlobResult> {
         data = text;
       }
     }
-    throw await ApiError.fromResponse(response, data);
+    const error = await ApiError.fromResponse(response, data);
+    failureToast(opts, error.message);
+    throw error;
   }
   return {
     blob: await response.blob(),

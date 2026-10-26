@@ -111,7 +111,7 @@ async fn resolve(db: &PgPool, payload: &Value) -> Result<Option<Target>> {
     else {
         return Ok(None);
     };
-    let Some((status_id, to)) = sqlx::query_as::<_, (i64, i64)>(
+    let Some((target_status_id, to)) = sqlx::query_as::<_, (i64, i64)>(
         "SELECT id, account_id FROM statuses WHERE uri = $1 AND NOT tombstone",
     )
     .bind(resource)
@@ -121,6 +121,25 @@ async fn resolve(db: &PgPool, payload: &Value) -> Result<Option<Target>> {
         // The interaction targets a remote or unknown object, or the
         // target was an actor URI — nothing local to notify.
         return Ok(None);
+    };
+    // `reply`/`quote` notifications key to the activity's own object
+    // (the reply/quoting status), like Mastodon and like the local
+    // `emit_for_status` mention — the dedupe index then collapses the
+    // pair into one row instead of producing a second notification on
+    // the parent. Fall back to the target when the object never
+    // materialized.
+    let status_id = match itype {
+        "reply" | "quote" => match payload.get("object_id").and_then(Value::as_str) {
+            Some(uri) => sqlx::query_scalar::<_, i64>(
+                "SELECT id FROM statuses WHERE uri = $1 AND NOT tombstone",
+            )
+            .bind(uri)
+            .fetch_optional(db)
+            .await?
+            .unwrap_or(target_status_id),
+            None => target_status_id,
+        },
+        _ => target_status_id,
     };
     Ok(Some(Target {
         kind,

@@ -1046,6 +1046,64 @@ async fn endpoints_list_filters_paginate_clear_dismiss() {
     assert_eq!(body.as_array().unwrap().len(), 0);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mark_read_updates_unread_count_but_keeps_rows() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+
+    let id = post(&env.app, &alice, json!({"status": "x"})).await;
+    request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&bob),
+        Some(json!({})),
+    )
+    .await;
+    run_pending_fanouts(&env).await;
+
+    let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
+    let nid = body[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(body[0]["read"], false);
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 1);
+
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/notifications/read",
+        Some(&alice),
+        Some(json!({ "ids": [nid.parse::<i64>().unwrap()] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 0);
+    // Read ≠ dismissed — the row stays in the list, now flagged read.
+    let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
+    assert_eq!(body.as_array().unwrap().len(), 1);
+    assert_eq!(body[0]["read"], true);
+}
+
 // ---------------------------------------------------------------------------
 // Live push
 // ---------------------------------------------------------------------------

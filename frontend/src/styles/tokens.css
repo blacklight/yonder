@@ -8,6 +8,7 @@
   --bg-sunken: #eef0ee;
   --text: #1c2422;
   --text-muted: #1e2c27;
+  --text-faint: #5c6a66;
   --border: #d8dfdc;
   /* Accent trio + --accent-link, the accent nudged to >=4.5:1
      against --bg for links and accent-colored text. Defaults come
@@ -63,6 +64,7 @@
   --bg-sunken: #171f1d;
   --text: #f2f5f4;
   --text-muted: #e0ece8;
+  --text-faint: #b8bfbc;
   --border: #3c4a46;
   --accent: #2dd4bf;
   --accent-fg: #1a1a1a;

@@ -34,9 +34,11 @@ export async function conversationStatuses(
 
 /** `POST /api/v1/conversations/{id}/read` — mark the thread read. */
 export function markConversationRead(id: string): Promise<Conversation> {
+  // Best-effort read marker — the caller swallows failures already.
   return request<Conversation>({
     path: `/conversations/${encodeURIComponent(id)}/read`,
     method: "POST",
+    silent: true,
   });
 }
 

@@ -644,27 +644,28 @@
       "reports": "Segnalazioni"
     },
     "type": {
-      "follow": "{acct} ti ha seguito",
-      "follow_request": "{acct} ha chiesto di seguirti",
-      "mention": "{acct} ti ha menzionato",
-      "favourite": "A {acct} è piaciuto il tuo post",
-      "reblog": "{acct} ha condiviso il tuo post",
-      "quote": "{acct} ha citato il tuo post",
+      "follow": "{name} ti ha seguito",
+      "follow_request": "{name} ha chiesto di seguirti",
+      "mention": "{name} ti ha menzionato",
+      "favourite": "A {name} è piaciuto il tuo post",
+      "reblog": "{name} ha condiviso il tuo post",
+      "quote": "{name} ha citato il tuo post",
       "poll": "Un sondaggio a cui hai votato è finito",
-      "status": "{acct} ha pubblicato",
-      "update": "{acct} ha modificato un post",
-      "emoji_reaction": "{acct} ha reagito al tuo post",
-      "admin_sign_up": "{acct} si è registrato",
+      "status": "{name} ha pubblicato",
+      "update": "{name} ha modificato un post",
+      "emoji_reaction": "{name} ha reagito al tuo post",
+      "admin_sign_up": "{name} si è registrato",
       "moderation_warning": "Hai ricevuto un avviso di moderazione",
       "admin_report": "È stata inviata una segnalazione",
-      "unknown": "{acct} ha inviato una notifica"
+      "unknown": "{name} ha inviato una notifica"
     },
     "accept": "Accetta",
     "reject": "Rifiuta",
     "clear": "Cancella",
     "dismiss": "Ignora",
     "clearTitle": "Cancella notifiche",
-    "clearBody": "Eliminare tutte le notifiche? Non si può annullare."
+    "clearBody": "Eliminare tutte le notifiche? Non si può annullare.",
+    "viewReport": "Vedi segnalazione"
   },
   "messages": {
     "title": "Messaggi diretti",

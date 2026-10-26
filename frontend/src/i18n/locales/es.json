@@ -644,27 +644,28 @@
       "reports": "Informes"
     },
     "type": {
-      "follow": "{acct} te siguió",
-      "follow_request": "{acct} solicitó seguirte",
-      "mention": "{acct} te mencionó",
-      "favourite": "A {acct} le gustó tu publicación",
-      "reblog": "{acct} impulsó tu publicación",
-      "quote": "{acct} citó tu publicación",
+      "follow": "{name} te siguió",
+      "follow_request": "{name} solicitó seguirte",
+      "mention": "{name} te mencionó",
+      "favourite": "A {name} le gustó tu publicación",
+      "reblog": "{name} impulsó tu publicación",
+      "quote": "{name} citó tu publicación",
       "poll": "Terminó una encuesta en la que votaste",
-      "status": "{acct} publicó",
-      "update": "{acct} editó una publicación",
-      "emoji_reaction": "{acct} reaccionó a tu publicación",
-      "admin_sign_up": "{acct} se registró",
+      "status": "{name} publicó",
+      "update": "{name} editó una publicación",
+      "emoji_reaction": "{name} reaccionó a tu publicación",
+      "admin_sign_up": "{name} se registró",
       "moderation_warning": "Recibiste una advertencia de moderación",
       "admin_report": "Se presentó un informe",
-      "unknown": "{acct} envió una notificación"
+      "unknown": "{name} envió una notificación"
     },
     "accept": "Aceptar",
     "reject": "Rechazar",
     "clear": "Limpiar",
     "dismiss": "Descartar",
     "clearTitle": "Limpiar notificaciones",
-    "clearBody": "¿Eliminar todas las notificaciones? No se puede deshacer."
+    "clearBody": "¿Eliminar todas las notificaciones? No se puede deshacer.",
+    "viewReport": "Ver informe"
   },
   "messages": {
     "title": "Mensajes directos",

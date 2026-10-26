@@ -119,6 +119,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .timeline {
   background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
 }

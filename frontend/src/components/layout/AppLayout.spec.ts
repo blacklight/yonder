@@ -23,7 +23,7 @@ function layout() {
       );
     if (url.includes("unread_count"))
       return Promise.resolve(
-        new Response(JSON.stringify({ unread_count: 0 }), { status: 200 }),
+        new Response(JSON.stringify({ count: 0 }), { status: 200 }),
       );
     return Promise.resolve(new Response("{}", { status: 200 }));
   });

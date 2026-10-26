@@ -644,27 +644,28 @@
       "reports": "Meldungen"
     },
     "type": {
-      "follow": "{acct} folgt dir",
-      "follow_request": "{acct} möchte dir folgen",
-      "mention": "{acct} hat dich erwähnt",
-      "favourite": "{acct} gefällt dein Beitrag",
-      "reblog": "{acct} hat deinen Beitrag geteilt",
-      "quote": "{acct} hat deinen Beitrag zitiert",
+      "follow": "{name} folgt dir",
+      "follow_request": "{name} möchte dir folgen",
+      "mention": "{name} hat dich erwähnt",
+      "favourite": "{name} gefällt dein Beitrag",
+      "reblog": "{name} hat deinen Beitrag geteilt",
+      "quote": "{name} hat deinen Beitrag zitiert",
       "poll": "Eine Umfrage, an der du teilnahmst, endete",
-      "status": "{acct} hat einen Beitrag veröffentlicht",
-      "update": "{acct} hat einen Beitrag bearbeitet",
-      "emoji_reaction": "{acct} hat auf deinen Beitrag reagiert",
-      "admin_sign_up": "{acct} hat sich registriert",
+      "status": "{name} hat einen Beitrag veröffentlicht",
+      "update": "{name} hat einen Beitrag bearbeitet",
+      "emoji_reaction": "{name} hat auf deinen Beitrag reagiert",
+      "admin_sign_up": "{name} hat sich registriert",
       "moderation_warning": "Du hast eine Moderationswarnung erhalten",
       "admin_report": "Eine Meldung wurde eingereicht",
-      "unknown": "{acct} hat eine Mitteilung gesendet"
+      "unknown": "{name} hat eine Mitteilung gesendet"
     },
     "accept": "Annehmen",
     "reject": "Ablehnen",
     "clear": "Leeren",
     "dismiss": "Verwerfen",
     "clearTitle": "Mitteilungen leeren",
-    "clearBody": "Alle Mitteilungen löschen? Kann nicht rückgängig gemacht werden."
+    "clearBody": "Alle Mitteilungen löschen? Kann nicht rückgängig gemacht werden.",
+    "viewReport": "Meldung ansehen"
   },
   "messages": {
     "title": "Direktnachrichten",

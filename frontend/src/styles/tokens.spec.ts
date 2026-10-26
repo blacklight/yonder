@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { accentForeground, accentLink } from "@/stores/theme";
 
 const css = readFileSync(
   resolve(process.cwd(), "src/styles/tokens.css"),
@@ -84,10 +85,23 @@ describe("design tokens", () => {
       expect(
         contrast(token("accent-link", theme), token("bg-raised", theme)),
       ).toBeGreaterThanOrEqual(4.5);
-      // Button text on the accent fill.
-      expect(
-        contrast(token("accent-fg", theme), token("accent", theme)),
-      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it.each(["light", "dark"] as const)(
+    "keeps the derived accent trio in sync with theme.ts on %s",
+    (theme) => {
+      // apply() re-derives the trio at runtime — the CSS values only
+      // guard first paint, but drift shows up as a text-color flip on
+      // load. --accent-fg/#ffffff on the light accent is ~2.9:1
+      // (below AA) — the ink pair accentForeground() picks, not a
+      // contrast guarantee.
+      const accent = token("accent", theme);
+      expect(token("accent-fg", theme)).toBe(accentForeground(accent));
+      expect(token("accent-soft", theme)).toBe(`${accent}22`);
+      expect(token("accent-link", theme)).toBe(
+        accentLink(accent, token("bg", theme)),
+      );
     },
   );
 

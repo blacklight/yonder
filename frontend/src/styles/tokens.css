@@ -12,12 +12,13 @@
   /* Accent trio + --accent-link, the accent nudged to >=4.5:1
      against --bg for links and accent-colored text. Defaults come
      from the logo palette (teal-500/-400 between #0d9488 and
-     #2dd4bf); --accent-link values are what accentLink() derives —
-     keep them in sync if the accents change. */
+     #2dd4bf); --accent-fg/-soft/-link are what accentForeground()/
+     accentLink() derive — apply() recomputes them at runtime, these
+     only guard first paint (tokens.spec.ts keeps them in sync). */
   --accent: #24a8a0;
-  --accent-fg: #122019;
-  --accent-soft: #14b8a622;
-  --accent-link: #0e8074;
+  --accent-fg: #ffffff;
+  --accent-soft: #24a8a022;
+  --accent-link: #1b7f79;
   --success: #2e7d4f;
   --warning: #a16207;
   --danger: #b3362b;
@@ -64,7 +65,7 @@
   --text-muted: #e0ece8;
   --border: #3c4a46;
   --accent: #2dd4bf;
-  --accent-fg: #122019;
+  --accent-fg: #1a1a1a;
   --accent-soft: #2dd4bf22;
   --accent-link: #2dd4bf;
   --success: #58c184;

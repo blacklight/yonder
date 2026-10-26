@@ -619,12 +619,13 @@ watch([tab, showReplies, showBoosts], () => {
   overflow-wrap: anywhere;
 }
 .profile__fields {
+  background: var(--bg-raised);
   display: grid;
   grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
   gap: var(--space-2) var(--space-4);
   margin: var(--space-4) 0 0;
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border);
+  padding: var(--space-4) var(--space-3);
+  border: 1px solid var(--border);
 }
 .profile__fields dt {
   font-weight: 600;

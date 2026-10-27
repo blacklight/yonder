@@ -14,6 +14,15 @@ const { t } = useI18n();
 const revealed = ref(false);
 const altModal = ref<MediaAttachment | null>(null);
 const viewerIndex = ref<number | null>(null);
+
+// The badge sits over the media's bottom-right corner, which is where native
+// <video controls> renders its fullscreen button. Move it out of the way for
+// media whose own UI occupies that spot.
+function altPlacement(type: MediaAttachment["type"]): string {
+  if (type === "video") return "status-media__alt--top";
+  if (type !== "image" && type !== "gifv") return "status-media__alt--below";
+  return "";
+}
 </script>
 
 <template>
@@ -64,6 +73,7 @@ const viewerIndex = ref<number | null>(null);
           v-if="m.description"
           type="button"
           class="status-media__alt"
+          :class="altPlacement(m.type)"
           @click="altModal = m"
         >
           ALT
@@ -142,5 +152,14 @@ const viewerIndex = ref<number | null>(null);
   font-weight: 700;
   padding: 2px 6px;
   cursor: pointer;
+}
+.status-media__alt--top {
+  top: var(--space-2);
+  bottom: auto;
+}
+.status-media__alt--below {
+  position: static;
+  display: block;
+  margin: var(--space-1) 0 0 auto;
 }
 </style>

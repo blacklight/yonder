@@ -87,6 +87,28 @@ describe("StatusMedia", () => {
     );
   });
 
+  it("moves the alt badge off the video controls", async () => {
+    const { wrapper } = mountWith(StatusMedia, {
+      props: {
+        media: [
+          attachment({ type: "video", description: "a clip" }),
+          attachment({ type: "audio", description: "a track", id: "2" }),
+          attachment({ description: "a pic", id: "3" }),
+        ],
+        sensitive: false,
+      },
+    });
+    const badges = wrapper.findAll(".status-media__alt");
+    expect(badges).toHaveLength(3);
+    expect(badges[0].classes()).toContain("status-media__alt--top");
+    expect(badges[1].classes()).toContain("status-media__alt--below");
+    expect(badges[2].classes()).not.toContain("status-media__alt--top");
+    expect(badges[2].classes()).not.toContain("status-media__alt--below");
+    await badges[0].trigger("click");
+    await flushPromises();
+    expect(document.body.textContent).toContain("a clip");
+  });
+
   it("keeps media hidden behind the sensitive cover", () => {
     const { wrapper } = mountWith(StatusMedia, {
       props: { media: [attachment()], sensitive: true },

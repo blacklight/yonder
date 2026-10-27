@@ -18,6 +18,10 @@ const activeIndex = ref(-1);
 const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const list = ref<HTMLUListElement | null>(null);
+// The list is teleported to <body> — ancestors with `overflow: hidden`
+// (status cards, layout shells) clip `position: absolute` menus no
+// matter the z-index. Fixed coords are computed from the trigger rect.
+const menuStyle = ref<Record<string, string>>({});
 const uid = useId();
 
 const itemId = (i: number) => `menu-${uid}-item-${i}`;
@@ -26,6 +30,26 @@ const enabledIndexes = () =>
     .map((item, idx) => ({ item, idx }))
     .filter((x) => !x.item.disabled);
 
+// Viewport-aware placement: drop-down under the trigger by default,
+// flip up when there isn't room below, and align/clamp horizontally so
+// the menu never overflows the canvas edge on small screens.
+function place() {
+  const rect = trigger.value?.getBoundingClientRect();
+  const el = list.value;
+  if (!rect || !el) return;
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  let left = rect.left;
+  if (left + w > vw - 8) left = rect.right - w;
+  left = Math.min(Math.max(8, left), Math.max(8, vw - w - 8));
+  let top = rect.bottom + 4;
+  if (top + h > vh - 8 && rect.top - 4 - h >= 8) top = rect.top - 4 - h;
+  top = Math.min(Math.max(8, top), Math.max(8, vh - h - 8));
+  menuStyle.value = { top: `${top}px`, left: `${left}px` };
+}
+
 async function openMenu(fromKey?: "down" | "up") {
   open.value = true;
   const enabled = enabledIndexes();
@@ -33,7 +57,14 @@ async function openMenu(fromKey?: "down" | "up") {
     ? (enabled[fromKey === "up" ? enabled.length - 1 : 0]?.idx ?? -1)
     : -1;
   await nextTick();
-  list.value?.focus();
+  place();
+  // Under VTU's teleport stub the ref may bind to a stub node —
+  // fall back to the live DOM list.
+  const focusTarget =
+    (list.value instanceof HTMLUListElement && list.value.isConnected
+      ? list.value
+      : null) ?? document.querySelector<HTMLElement>("[role='menu']");
+  focusTarget?.focus();
 }
 
 function closeMenu(refocus: boolean) {
@@ -79,16 +110,31 @@ function onKeydown(event: KeyboardEvent) {
 }
 
 function onDocumentPointerdown(event: Event) {
-  if (!root.value?.contains(event.target as Node)) closeMenu(false);
+  const target = event.target as Node;
+  if (!root.value?.contains(target) && !list.value?.contains(target))
+    closeMenu(false);
+}
+
+function onScrollClose(event: Event) {
+  if (list.value?.contains(event.target as Node)) return;
+  closeMenu(false);
 }
 
 watch(open, (v) => {
   const method = v ? "addEventListener" : "removeEventListener";
   document[method]("pointerdown", onDocumentPointerdown);
+  window[method]("resize", place);
+  // Fixed coords go stale when the page or any scroller moves —
+  // closing is cheaper than chasing every scroll container. Capture
+  // covers inner scrollers, which don't bubble.
+  if (v) window.addEventListener("scroll", onScrollClose, true);
+  else window.removeEventListener("scroll", onScrollClose, true);
 });
-onUnmounted(() =>
-  document.removeEventListener("pointerdown", onDocumentPointerdown),
-);
+onUnmounted(() => {
+  document.removeEventListener("pointerdown", onDocumentPointerdown);
+  window.removeEventListener("resize", place);
+  window.removeEventListener("scroll", onScrollClose, true);
+});
 </script>
 
 <template>
@@ -105,41 +151,45 @@ onUnmounted(() =>
     >
       <slot name="trigger"><FontAwesomeIcon icon="ellipsis" /></slot>
     </button>
-    <ul
-      v-if="open"
-      ref="list"
-      class="menu__list"
-      role="menu"
-      :aria-label="label"
-      tabindex="-1"
-      :aria-activedescendant="
-        activeIndex >= 0 ? itemId(activeIndex) : undefined
-      "
-      @keydown="onKeydown"
-    >
-      <li
-        v-for="(item, i) in items"
-        :id="itemId(i)"
-        :key="item.id"
-        role="menuitem"
-        class="menu__item"
-        :class="{
-          'menu__item--active': i === activeIndex,
-          'menu__item--disabled': item.disabled,
-        }"
-        :aria-disabled="item.disabled || undefined"
-        @click="choose(item, i)"
-        @mouseenter="activeIndex = i"
+    <Teleport to="body">
+      <ul
+        v-if="open"
+        :key="`menu-${uid}-list`"
+        ref="list"
+        class="menu__list"
+        :style="menuStyle"
+        role="menu"
+        :aria-label="label"
+        tabindex="-1"
+        :aria-activedescendant="
+          activeIndex >= 0 ? itemId(activeIndex) : undefined
+        "
+        @keydown="onKeydown"
       >
-        <FontAwesomeIcon
-          v-if="item.icon"
-          :icon="item.icon"
-          class="menu__icon"
-          fixed-width
-        />
-        {{ item.label }}
-      </li>
-    </ul>
+        <li
+          v-for="(item, i) in items"
+          :id="itemId(i)"
+          :key="item.id"
+          role="menuitem"
+          class="menu__item"
+          :class="{
+            'menu__item--active': i === activeIndex,
+            'menu__item--disabled': item.disabled,
+          }"
+          :aria-disabled="item.disabled || undefined"
+          @click="choose(item, i)"
+          @mouseenter="activeIndex = i"
+        >
+          <FontAwesomeIcon
+            v-if="item.icon"
+            :icon="item.icon"
+            class="menu__icon"
+            fixed-width
+          />
+          {{ item.label }}
+        </li>
+      </ul>
+    </Teleport>
   </div>
 </template>
 
@@ -164,10 +214,8 @@ onUnmounted(() =>
 }
 .menu__list {
   width: fit-content;
-  max-width: 20rem;
-  position: absolute;
-  top: 100%;
-  left: 0;
+  max-width: min(20rem, calc(100vw - 16px));
+  position: fixed;
   font-size: var(--text-sm);
   margin: var(--space-1) 0 0;
   padding: var(--space-1);
@@ -177,7 +225,7 @@ onUnmounted(() =>
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-  z-index: 50;
+  z-index: 300;
 }
 .menu__list:focus-visible {
   outline: var(--focus-ring);

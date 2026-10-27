@@ -3,7 +3,7 @@
 //! One binary, subcommand-driven: `serve` (default — HTTP plus the
 //! optional in-process worker), `worker` (standalone queue drain +
 //! scheduler), `migrate`, `config`, `instance`, `run-job`, `user`,
-//! `domain-block`, `relay`, `emoji`, `frontend` and `openapi` —
+//! `domain-block`, `relay`, `emoji`, `frontend`, `webpush` and `openapi` —
 //! thin adapters over the same service functions the HTTP API uses.
 //!
 //! Output contract: `--json` prints exactly one JSON value on
@@ -23,6 +23,7 @@ pub mod migrate;
 pub mod output;
 pub mod relay;
 pub mod user;
+pub mod webpush;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -124,6 +125,11 @@ pub enum Command {
         #[command(subcommand)]
         command: frontend::FrontendCommand,
     },
+    /// Manage WebPush VAPID keys.
+    Webpush {
+        #[command(subcommand)]
+        command: webpush::WebpushCommand,
+    },
     /// Print the OpenAPI document as JSON on stdout — the input the
     /// frontend's `npm run api:gen` consumes; needs no config or
     /// database.
@@ -171,6 +177,7 @@ async fn run(cli: Cli) -> Result<u8> {
         Command::Relay { command } => relay::run(path, command, &out, actor).await,
         Command::Emoji { command } => emoji::run(path, command, &out, actor).await,
         Command::Frontend { command } => frontend::run(path, command, &out).await,
+        Command::Webpush { command } => webpush::run(path, command, &out, actor).await,
     }
 }
 

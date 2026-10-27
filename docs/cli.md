@@ -74,6 +74,12 @@ yonder frontend install <SOURCE> [--name N] [--version V] [--ref R]
                                    # or dir under install_from_path_root
 yonder frontend remove <NAME> [--yes]
 yonder frontend list
+
+yonder webpush generate-keys [--store]
+                                   # bare: print a fresh VAPID pair — no
+                                   # config/DB needed; --store: write the
+                                   # http.vapid_* overlays + audit (same
+                                   # path as the admin "generate keys")
 ```
 
 ## Exit codes
@@ -97,6 +103,11 @@ yonder frontend list
 - **`user reset-password`** mints the one-time reset URL through the
   audited `reset_link` flow and prints it to stderr only — it is a
   credential and never appears on stdout, in JSON, or in logs.
+- **`webpush generate-keys`** prints the private key to stderr only
+  (or inside the `--json` value on stdout, where the caller opted
+  into machine-readable output). With `--store` the private key is
+  never printed — it goes straight into the `http.vapid_private_key`
+  overlay.
 - **Sensitive config** (`auth.secret_key`, `email.smtp_password`,
   S3/API credentials, connection strings) is redacted by
   `config get`/`show` unless `--reveal`; `config set` accepts them

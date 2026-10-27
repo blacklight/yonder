@@ -227,6 +227,6 @@ pub async fn generate_webpush_keys(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "admin")?;
     Ok(Json(
-        webpush::generate_and_store(&state, auth.account_id).await?,
+        webpush::generate_and_store(&state, Some(auth.account_id)).await?,
     ))
 }

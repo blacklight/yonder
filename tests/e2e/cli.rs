@@ -814,8 +814,95 @@ async fn instance_sugar_and_help() {
         vec!["domain-block", "--help"],
         vec!["run-job", "--help"],
         vec!["migrate", "status", "--help"],
+        vec!["webpush", "generate-keys", "--help"],
     ] {
         let out = yonder(&sb, &args);
         assert_eq!(code(&out), 0, "--help failed for {args:?}");
     }
+}
+
+#[tokio::test]
+async fn webpush_generate_keys() {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+
+    let Some(infra) = harness::infra().await else {
+        return;
+    };
+    let _permit = harness::acquire().await;
+    let sb = sandbox(infra, &harness::test_slug()).await;
+
+    // Bare mint needs no database at all — works pre-bootstrap.
+    let out = yonder(&sb, &["webpush", "generate-keys"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let stdout_text = stdout(&out);
+    let public = stdout_text
+        .trim()
+        .strip_prefix("public key:")
+        .unwrap()
+        .trim();
+    let raw = URL_SAFE_NO_PAD.decode(public).unwrap();
+    assert_eq!(raw.len(), 65);
+    assert_eq!(raw[0], 0x04);
+    // The private half is a credential: stderr only, never stdout.
+    let stderr_text = stderr(&out);
+    let private = stderr_text
+        .lines()
+        .find_map(|l| l.strip_prefix("private key: "))
+        .expect("private key on stderr");
+    assert_eq!(URL_SAFE_NO_PAD.decode(private).unwrap().len(), 32);
+    assert!(!stdout(&out).contains(private));
+
+    // --json carries both halves in the single stdout value.
+    let out = yonder(&sb, &["--json", "webpush", "generate-keys"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let body = stdout_json(&out);
+    assert_eq!(
+        URL_SAFE_NO_PAD
+            .decode(body["public_key"].as_str().unwrap())
+            .unwrap()
+            .len(),
+        65
+    );
+    assert_eq!(
+        URL_SAFE_NO_PAD
+            .decode(body["private_key"].as_str().unwrap())
+            .unwrap()
+            .len(),
+        32
+    );
+
+    // --store writes the overlays and audits; the private key is
+    // never printed on either stream.
+    migrate(&sb);
+    let out = yonder(&sb, &["webpush", "generate-keys", "--store"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(stdout(&out).contains("public key:"), "{}", stdout(&out));
+    assert!(!stderr(&out).contains("private key:"));
+
+    let pool = db_pool(&sb).await;
+    let stored_public: String = sqlx::query_scalar(
+        "SELECT value #>> '{}' FROM config_overlays WHERE key = 'http.vapid_public_key'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let stored_private: String = sqlx::query_scalar(
+        "SELECT value #>> '{}' FROM config_overlays WHERE key = 'http.vapid_private_key'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(URL_SAFE_NO_PAD.decode(&stored_public).unwrap().len(), 65);
+    assert_eq!(URL_SAFE_NO_PAD.decode(&stored_private).unwrap().len(), 32);
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'webpush.generate_keys'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(audited, 1);
+
+    // The effective config sees the overlay.
+    let out = yonder(&sb, &["config", "get", "http.vapid_public_key"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert_eq!(stdout(&out).trim(), stored_public);
 }

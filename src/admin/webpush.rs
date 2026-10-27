@@ -29,7 +29,7 @@ pub fn generate() -> (String, String) {
 /// effective config and audit the rotation. The response carries only
 /// the public key and the configured `mailto:` subject — the private
 /// key is write-only everywhere.
-pub async fn generate_and_store(state: &AppState, actor_account_id: i64) -> Result<Value> {
+pub async fn generate_and_store(state: &AppState, actor_account_id: Option<i64>) -> Result<Value> {
     let (public, private) = generate();
     db::config_overlays::upsert_many(
         &state.db,
@@ -42,7 +42,7 @@ pub async fn generate_and_store(state: &AppState, actor_account_id: i64) -> Resu
     state.reload_config().await?;
     crate::moderation::audit::record(
         &state.db,
-        Some(actor_account_id),
+        actor_account_id,
         "webpush.generate_keys",
         "config",
         None,

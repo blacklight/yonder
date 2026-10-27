@@ -110,7 +110,11 @@ but not retried.
 `POST /api/v1/yonder/admin/webpush/generate_keys` mints a VAPID P-256
 pair, stores it as `http.vapid_public_key`/`http.vapid_private_key`
 overlays, and returns the public key. Rotation invalidates existing
-push subscriptions' encryption.
+push subscriptions' encryption. The same mint-and-store path is
+available offline as `yonder webpush generate-keys --store`; a bare
+`yonder webpush generate-keys` only prints a pair (private half on
+stderr) for manual install via `config.toml`, env vars, or
+`yonder config set` — useful before the server has ever run.
 
 ## Frontend
 

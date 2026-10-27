@@ -9,13 +9,14 @@
 //! frontend has not been built yet a small embedded placeholder
 //! page answers instead, so the server always has a landing page.
 
+use std::net::SocketAddr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::State,
-    http::{header, HeaderValue, Method, StatusCode, Uri},
+    extract::{ConnectInfo, State},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri},
     response::{IntoResponse, Response},
     Json,
 };
@@ -34,7 +35,13 @@ const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 /// [`crate::http::build_router`] — the fallback must sit on the
 /// `Router<Arc<AppState>>` before `.with_state` for the `State`
 /// extractor to resolve.
-pub async fn fallback(State(state): State<Arc<AppState>>, method: Method, uri: Uri) -> Response {
+pub async fn fallback(
+    State(state): State<Arc<AppState>>,
+    method: Method,
+    uri: Uri,
+    headers: HeaderMap,
+    parts: axum::http::request::Parts,
+) -> Response {
     if method != Method::GET && method != Method::HEAD {
         return (StatusCode::METHOD_NOT_ALLOWED, "method not allowed").into_response();
     }
@@ -49,6 +56,37 @@ pub async fn fallback(State(state): State<Arc<AppState>>, method: Method, uri: U
             }),
         )
             .into_response();
+    }
+
+    // Federation dereference: a remote instance resolving one of our
+    // web permalinks asks for `application/activity+json` — answer
+    // with the document, not the SPA shell (a 200 HTML response is a
+    // silent miss in remote search). Unresolved paths and every
+    // non-AP accept keep the file/entry behaviour below.
+    if crate::activitypub::permalinks::wants_document(&headers) {
+        let not_found = || {
+            (
+                StatusCode::NOT_FOUND,
+                Json(crate::error::ErrorBody {
+                    error: "not found".to_string(),
+                }),
+            )
+                .into_response()
+        };
+        return match crate::activitypub::permalinks::resolve(
+            &state,
+            &uri,
+            &headers,
+            parts
+                .extensions
+                .get::<ConnectInfo<SocketAddr>>()
+                .map(|c| c.0),
+        )
+        .await
+        {
+            Some(response) => response,
+            None => not_found(),
+        };
     }
 
     let config = state.config();

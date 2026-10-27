@@ -22,6 +22,7 @@ pub mod inbox;
 pub mod incoming;
 pub(crate) mod lookup;
 pub mod moderation;
+pub mod permalinks;
 pub mod posts;
 pub mod storage;
 

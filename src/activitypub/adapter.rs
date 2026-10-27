@@ -30,7 +30,7 @@ use super::actors::sync_call;
 /// Body cap matching pubby's `MAX_INBOX_BODY`.
 const MAX_BODY: usize = 8 * 1024 * 1024;
 
-fn headers_to_map(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
+pub(crate) fn headers_to_map(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
         .map(|(k, v)| {
@@ -92,12 +92,20 @@ async fn make_request(req: Request) -> std::result::Result<DispatchRequest, Box<
 /// The AP GET fallback: `/.well-known/*`, `/nodeinfo/*` and every
 /// `/ap/*` GET route land here and fan into `dispatch_multi`.
 pub async fn serve(state: Arc<AppState>, req: Request) -> Response {
-    let Some(ap) = &state.ap else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
     let dreq = match make_request(req).await {
         Ok(r) => r,
         Err(resp) => return *resp,
+    };
+    dispatch(&state, &dreq)
+}
+
+/// Fan a [`DispatchRequest`] into `dispatch_multi` with the standard
+/// options. Shared with `permalinks` — web permalinks route a
+/// synthesized request on the canonical `/ap/*` path while
+/// `request_target` keeps the signed web path for authorized-fetch.
+pub(crate) fn dispatch(state: &Arc<AppState>, dreq: &DispatchRequest) -> Response {
+    let Some(ap) = &state.ap else {
+        return StatusCode::NOT_FOUND.into_response();
     };
     let options = DispatchOptions {
         authorized_fetch: state.config().federation.authorized_fetch,
@@ -107,6 +115,6 @@ pub async fn serve(state: Arc<AppState>, req: Request) -> Response {
         ..DispatchOptions::default()
     };
     let multi = ap.multi.clone();
-    let resp = sync_call(move || dispatch_multi(&multi, &dreq, "/ap", &options));
+    let resp = sync_call(move || dispatch_multi(&multi, dreq, "/ap", &options));
     into_response(resp)
 }

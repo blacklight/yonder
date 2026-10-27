@@ -110,6 +110,18 @@ are injected into the emitted object. `GET
 the shared doc-cache under `authorized_fetch`; followers-only/direct
 require a verified signer passing `can_see`.
 
+The **web permalinks** — `/@{acct}` (`accounts.url`), `/@{acct}/{id}`
+(`statuses.url`) and the SPA's `/statuses/{id}` — content-negotiate on
+`Accept`: `application/activity+json`, `application/ld+json` or plain
+`application/json` get the AP document (status object through the same
+visibility-gated path; actor document via a `dispatch_multi` routed on
+the canonical actor path while `request_target` keeps the signed web
+URL), every other accept gets the SPA. This is what makes a post URL
+searchable on remote instances — a 200 HTML reply is a silent miss in
+their resolver. The status acct segment is decorative (id is
+authoritative, like Mastodon); `/@{u}@{domain}` serves only when the
+domain names this instance.
+
 Inbound `Create`/`Update`/`Delete` for Note/Question materializes
 `statuses` rows (`local = false`): sanitized `content_html`, explicit
 visibility inference from combined activity+object addressing, and

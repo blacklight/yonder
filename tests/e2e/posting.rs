@@ -1193,6 +1193,105 @@ async fn private_object_get_returns_404() {
     assert_eq!(doc["type"], "Note");
 }
 
+/// Remote-instance URL search dereferences our web permalinks with
+/// `Accept: application/activity+json` — they must answer the AP
+/// document, not the SPA shell (a 200 HTML reply is a silent miss).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_permalinks_serve_ap_documents() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "olga", "olga@example.com").await;
+    let (_, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "permalink me", "visibility": "public"})),
+        &[],
+    )
+    .await;
+    let id = body["id"].as_str().unwrap();
+
+    let get = |path: String, accept: &'static str| {
+        let app = env.app.clone();
+        async move {
+            app.oneshot(
+                Request::get(path)
+                    .header("accept", accept)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let json_doc = |resp: axum::response::Response| async move {
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice::<Value>(&body).unwrap()
+    };
+
+    // The SPA route and the stored `statuses.url` shape both serve the
+    // Note; the acct segment is decorative.
+    let canonical = format!("{BASE}/ap/users/olga/statuses/{id}");
+    for path in [
+        format!("/statuses/{id}"),
+        format!("/@olga/{id}"),
+        format!("/@anybody/{id}"),
+    ] {
+        let resp = get(path.clone(), "application/activity+json").await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(
+            resp.headers().get("content-type").unwrap(),
+            "application/activity+json"
+        );
+        let doc = json_doc(resp).await;
+        assert_eq!(doc["type"], "Note", "{path}");
+        assert_eq!(doc["id"], canonical, "{path}");
+    }
+
+    // `ld+json` with the ActivityStreams profile negotiates too.
+    let resp = get(
+        format!("/statuses/{id}"),
+        r#"application/ld+json; profile="https://www.w3.org/ns/activitystreams""#,
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(json_doc(resp).await["type"], "Note");
+
+    // The profile permalink serves the actor document.
+    let resp = get("/@olga".to_string(), "application/activity+json").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let doc = json_doc(resp).await;
+    assert_eq!(doc["type"], "Person");
+    assert_eq!(doc["id"], format!("{BASE}/ap/users/olga"));
+
+    // Misses are JSON 404s, never the SPA shell: unknown user, foreign
+    // domain acct, non-numeric id, non-permalink path.
+    for path in [
+        "/@nobody".to_string(),
+        "/@olga@elsewhere.example".to_string(),
+        format!("/statuses/{id}9"),
+        "/compose".to_string(),
+    ] {
+        let resp = get(path.clone(), "application/activity+json").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(json_doc(resp).await["error"], "not found");
+    }
+
+    // Browser accepts still get the SPA shell (the test env has no
+    // frontend/dist, so it's the embedded placeholder — text/html).
+    let resp = get(format!("/statuses/{id}"), "text/html").await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "text/html; charset=utf-8"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orphan_cleanup_respects_scheduled_reservation() {
     let _permit = harness::acquire().await;

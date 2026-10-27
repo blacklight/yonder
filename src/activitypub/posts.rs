@@ -405,7 +405,20 @@ pub async fn serve_object(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
-    match serve_object_inner(&state, &username, status_id, &headers, &uri).await {
+    serve_named_object(&state, &username, status_id, &headers, &uri).await
+}
+
+/// [`serve_object`] with the author's username already resolved —
+/// web-permalink callers (`permalinks::status`) treat the path's acct
+/// as decorative.
+pub(crate) async fn serve_named_object(
+    state: &Arc<AppState>,
+    username: &str,
+    status_id: i64,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Response {
+    match serve_object_inner(state, username, status_id, headers, uri).await {
         Ok(doc) => json_response(doc),
         Err(Error::Unauthorized) => StatusCode::UNAUTHORIZED.into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),

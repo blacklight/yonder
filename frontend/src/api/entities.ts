@@ -169,8 +169,8 @@ export interface Status {
   favourites_count: number;
   quotes_count: number;
   quote_id: string | null;
-  /** The materialized quoted status, when resolvable. */
-  quote: Status | null;
+  /** The Mastodon-4.4 quote block — `quoted_status` when materialized. */
+  quote: { state: string; quoted_status: Status | null } | null;
   reblogged: boolean;
   favourited: boolean;
   bookmarked: boolean;

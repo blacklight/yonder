@@ -40,6 +40,17 @@ const compose = useComposeStore();
 
 // Boosts wrap the inner status — display it, keep the booster line.
 const shown = computed(() => props.status.reblog ?? props.status);
+// The federated `RE:` paragraph stays in the HTML for Pleroma-family
+// renderers that don't read the quote field — when our embedded card
+// renders the target it would only duplicate it.
+const shownContent = computed(() =>
+  shown.value.quote?.quoted_status
+    ? shown.value.content.replace(
+        /<p>\s*RE:\s*<a\b[^>]*>[\s\S]*?<\/a>\s*<\/p>\s*$/,
+        "",
+      )
+    : shown.value.content,
+);
 
 // The whole card is the permalink's click target, Mastodon-style —
 // except interactive elements (links, buttons, the composer) and an
@@ -349,13 +360,24 @@ async function onReact(emoji: string) {
 
     <CwBlock :spoiler-text="shown.spoiler_text">
       <!-- eslint-disable-next-line vue/no-v-html -->
-      <div class="status-card__content" v-html="sanitizeHtml(shown.content)" />
+      <div class="status-card__content" v-html="sanitizeHtml(shownContent)" />
 
       <StatusMedia
         :media="shown.media_attachments"
         :sensitive="shown.sensitive && !shown.spoiler_text"
       />
-      <StatusQuote :status="shown" />
+      <StatusQuote
+        :status="shown"
+        @reply="
+          (s) =>
+            guardDraft(() =>
+              props.directReply
+                ? compose.openDirectReply(s)
+                : compose.openReply(s),
+            )
+        "
+        @quote="(s) => guardDraft(() => compose.openQuote(s))"
+      />
       <StatusPoll :status="shown" />
     </CwBlock>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { flushPromises } from "@vue/test-utils";
+import { DOMWrapper, flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import StatusCard from "./StatusCard.vue";
@@ -8,6 +8,12 @@ import type { Status } from "@/api/entities";
 vi.mock("@/api/emojis", () => ({
   customEmojis: vi.fn().mockResolvedValue([]),
 }));
+
+// The menu list teleports to <body> — query it at document level.
+const menuItems = () =>
+  [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].map(
+    (el) => new DOMWrapper(el),
+  );
 
 function status(over: Partial<Status> = {}): Status {
   return {
@@ -165,7 +171,7 @@ describe("StatusCard", () => {
     const spy = mockApi(200, {});
     const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
     await wrapper.get(".menu__trigger").trigger("click");
-    const items = wrapper.findAll("[role='menuitem']");
+    const items = menuItems();
     const texts = items.map((i) => i.text());
     expect(texts.some((x) => x.includes("Copy"))).toBe(true);
     expect(texts.some((x) => x.includes("Mark sensitive"))).toBe(true);
@@ -187,8 +193,7 @@ describe("StatusCard", () => {
     const spy = mockApi(200, {});
     const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
     await wrapper.get(".menu__trigger").trigger("click");
-    await wrapper
-      .findAll("[role='menuitem']")
+    await menuItems()
       .find((i) => i.text().includes("Delete"))!
       .trigger("click");
     await flushPromises();
@@ -211,8 +216,7 @@ describe("StatusCard", () => {
     const spy = mockApi(200, {});
     const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
     await wrapper.get(".menu__trigger").trigger("click");
-    await wrapper
-      .findAll("[role='menuitem']")
+    await menuItems()
       .find((i) => i.text().includes("Limit author"))!
       .trigger("click");
     await flushPromises();
@@ -232,8 +236,7 @@ describe("StatusCard", () => {
     compose.update({ text: "work in progress" });
     const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
     await wrapper.get(".menu__trigger").trigger("click");
-    await wrapper
-      .findAll("[role='menuitem']")
+    await menuItems()
       .find((i) => i.text().includes("Mention"))!
       .trigger("click");
     await flushPromises();

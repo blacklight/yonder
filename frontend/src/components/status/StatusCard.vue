@@ -529,6 +529,9 @@ async function onReact(emoji: string) {
 .status-card__author:hover .status-card__display {
   text-decoration: underline;
 }
+.status-card__author .avatar {
+  cursor: pointer;
+}
 .status-card__names {
   display: flex;
   flex-direction: column;

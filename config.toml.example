@@ -107,7 +107,14 @@ require_email_verification = true
 # master key encrypting TOTP secrets at rest — TOTP enrollment fails
 # with a 500 while this is unset.
 # secret_key = ""
-access_token_expiry_minutes = 120
+# OAuth access-token lifetime in minutes. 0 = tokens never expire —
+# the Mastodon behaviour: web and mobile sessions stay valid until
+# revoked (Security → Sessions / authorized apps), and /oauth/token
+# responses omit expires_in. Set a positive value to force expiry
+# (clients then need the refresh-token grant to stay logged in).
+access_token_expiry_minutes = 0
+# Refresh-token lifetime in days; only relevant when
+# access_token_expiry_minutes is non-zero.
 refresh_token_expiry_days = 30
 
 [federation]

@@ -25,6 +25,13 @@ unset — that's a server misconfiguration, not a client error.
 flow (`/oauth/device_code` + `/oauth/device/authorize`). Grant errors
 use the doorkeeper JSON shape (`{"error", "error_description"}`).
 
+Access tokens never expire by default (`auth.access_token_expiry_minutes
+= 0`) — the Mastodon doorkeeper behaviour: sessions stay valid until
+revoked, and `expires_in` is omitted from token responses. Setting a
+positive value restores hard expiry; refresh tokens
+(`auth.refresh_token_expiry_days`, default 30 days) then keep clients
+logged in via the `refresh_token` grant.
+
 Interactive grants create a `sessions` row wrapping the access token;
 `GET /api/v1/sessions` lists them and `DELETE /api/v1/sessions/{id}`
 revokes a login (killing its token).

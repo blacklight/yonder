@@ -40,7 +40,9 @@ pub struct IssuedTokens {
     pub scope: String,
     /// Unix timestamp for the Mastodon Token entity.
     pub created_at: i64,
-    pub expires_in: u64,
+    /// `None` when access tokens don't expire — the entity then omits
+    /// `expires_in`, matching doorkeeper's `access_token_expires_in nil`.
+    pub expires_in: Option<u64>,
 }
 
 /// Mastodon Token entity returned by `/oauth/token` and registration.
@@ -50,12 +52,26 @@ pub fn token_entity(issued: &IssuedTokens) -> Value {
         "token_type": "Bearer",
         "scope": issued.scope,
         "created_at": issued.created_at,
-        "expires_in": issued.expires_in,
     });
+    if let Some(expires_in) = issued.expires_in {
+        entity["expires_in"] = json!(expires_in);
+    }
     if let Some(refresh) = &issued.refresh_token {
         entity["refresh_token"] = json!(refresh);
     }
     entity
+}
+
+/// `auth.access_token_expiry_minutes` as a `(bind, entity)` pair. `0`
+/// means the token never expires: the bind is NULL so `expires_at`
+/// stays NULL (`now() + NULL` yields NULL) and the entity omits
+/// `expires_in`.
+fn access_token_expiry(minutes: u64) -> (Option<i64>, Option<u64>) {
+    if minutes == 0 {
+        (None, None)
+    } else {
+        (Some(minutes as i64), Some(minutes * 60))
+    }
 }
 
 /// Issue an access token (+ refresh token for user tokens) and persist
@@ -102,7 +118,7 @@ pub async fn issue_token_pair_conn(
     let refresh_token = random_secret();
     let access_hash = crate::http::middleware::auth::token_hash(&access_token);
     let refresh_hash = crate::http::middleware::auth::token_hash(&refresh_token);
-    let expires_in = config.auth.access_token_expiry_minutes * 60;
+    let (expiry_minutes, expires_in) = access_token_expiry(config.auth.access_token_expiry_minutes);
 
     let access_token_id: i64 = sqlx::query_scalar(
         "INSERT INTO oauth_access_tokens \
@@ -115,7 +131,7 @@ pub async fn issue_token_pair_conn(
     .bind(&access_hash)
     .bind(scopes)
     .bind(name)
-    .bind(config.auth.access_token_expiry_minutes as i64)
+    .bind(expiry_minutes)
     .fetch_one(&mut **tx)
     .await?;
 
@@ -162,7 +178,8 @@ pub async fn issue_app_token(
 ) -> Result<IssuedTokens> {
     let access_token = random_secret();
     let access_hash = crate::http::middleware::auth::token_hash(&access_token);
-    let expires_in = state.config().auth.access_token_expiry_minutes * 60;
+    let (expiry_minutes, expires_in) =
+        access_token_expiry(state.config().auth.access_token_expiry_minutes);
     let access_token_id: i64 = sqlx::query_scalar(
         "INSERT INTO oauth_access_tokens \
          (application_id, user_id, token_hash, scopes, expires_at) \
@@ -172,7 +189,7 @@ pub async fn issue_app_token(
     .bind(application_id)
     .bind(&access_hash)
     .bind(scopes)
-    .bind(state.config().auth.access_token_expiry_minutes as i64)
+    .bind(expiry_minutes)
     .fetch_one(&state.db)
     .await?;
     Ok(IssuedTokens {
@@ -333,7 +350,8 @@ pub async fn rotate_refresh_token(
     let refresh_token = random_secret();
     let access_hash = crate::http::middleware::auth::token_hash(&access_token);
     let refresh_hash = crate::http::middleware::auth::token_hash(&refresh_token);
-    let expires_in = state.config().auth.access_token_expiry_minutes * 60;
+    let (expiry_minutes, expires_in) =
+        access_token_expiry(state.config().auth.access_token_expiry_minutes);
 
     let new_access_id: i64 = sqlx::query_scalar(
         "INSERT INTO oauth_access_tokens \
@@ -344,7 +362,7 @@ pub async fn rotate_refresh_token(
     .bind(user_id)
     .bind(&access_hash)
     .bind(&scopes)
-    .bind(state.config().auth.access_token_expiry_minutes as i64)
+    .bind(expiry_minutes)
     .fetch_one(&mut *tx)
     .await
     .map_err(|e| GrantError::server(&e.to_string()))?;

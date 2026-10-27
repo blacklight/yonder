@@ -230,6 +230,59 @@ async fn register_login_verify_credentials_flow() {
 }
 
 #[tokio::test]
+async fn access_tokens_do_not_expire_by_default() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let (status, body) = register_user(&env.app, "alice", "alice@example.com").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Mastodon behaviour: `access_token_expiry_minutes = 0` means the
+    // token never expires — `expires_in` is omitted and `expires_at`
+    // stays NULL.
+    let (status, body) = password_login(&env.app, "alice@example.com", "hunter2password").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("expires_in").is_none(), "{body}");
+    let token = body["access_token"].as_str().unwrap().to_string();
+    let immortal: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM oauth_access_tokens \
+         WHERE token_hash = $1 AND expires_at IS NULL",
+    )
+    .bind(yonder::http::middleware::auth::token_hash(&token))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(immortal, 1);
+}
+
+#[tokio::test]
+async fn access_token_expiry_config_emits_expires_in() {
+    let _permit = harness::acquire().await;
+    let mut config = base_config();
+    config.auth.access_token_expiry_minutes = 60;
+    let Some(env) = test_app(config).await else {
+        return;
+    };
+    let (status, body) = register_user(&env.app, "alice", "alice@example.com").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, body) = password_login(&env.app, "alice@example.com", "hunter2password").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["expires_in"], 3600, "{body}");
+    let token = body["access_token"].as_str().unwrap().to_string();
+    let expiring: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM oauth_access_tokens \
+         WHERE token_hash = $1 AND expires_at IS NOT NULL",
+    )
+    .bind(yonder::http::middleware::auth::token_hash(&token))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(expiring, 1);
+}
+
+#[tokio::test]
 async fn registration_validation_and_modes() {
     let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {

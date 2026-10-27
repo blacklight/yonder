@@ -391,7 +391,15 @@ pub struct AuthConfig {
     /// Signing secret for session/token material. Prefer
     /// `YONDER_AUTH__SECRET_KEY` over the TOML file.
     pub secret_key: Option<String>,
+    /// Lifetime of OAuth access tokens in minutes. `0` means tokens
+    /// never expire — the Mastodon behaviour (doorkeeper
+    /// `access_token_expires_in nil`): web and mobile sessions stay
+    /// valid until explicitly revoked, and `expires_in` is omitted
+    /// from `/oauth/token` responses. Set a positive value to force
+    /// hard expiry (clients then need the refresh-token grant).
     pub access_token_expiry_minutes: u64,
+    /// Lifetime of refresh tokens in days; only relevant while
+    /// `access_token_expiry_minutes` is non-zero.
     pub refresh_token_expiry_days: u64,
 }
 
@@ -412,7 +420,7 @@ impl Default for AuthConfig {
             registration_message: None,
             require_email_verification: true,
             secret_key: None,
-            access_token_expiry_minutes: 120,
+            access_token_expiry_minutes: 0,
             refresh_token_expiry_days: 30,
         }
     }

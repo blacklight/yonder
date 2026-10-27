@@ -11,10 +11,15 @@
 //! stored for the target `statuses.uri`. Bare-URI Deletes resolve
 //! ownership from the existing row. Mismatches are logged and skipped.
 
-use serde_json::Value;
+use std::time::Duration;
+
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use crate::activitypub::ApCore;
+use crate::activitypub::{lookup, moderation, ApContext, ApCore};
+use crate::cache::RedisCache;
+use crate::jobs::{JobContext, JobHandler, JobKind};
 use crate::Result;
 
 /// The object types we materialize — Notes, Questions and the
@@ -565,6 +570,30 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // Late-arriving quoted posts back-fill pending quotes — the
     // counter bump applies to *this* status only (it is the quoted
     // target); the pending quoters point at it via quote_uri.
+    backfill_pending_quotes(&core.db, status_id, &object_id).await?;
+
+    // A still-pending quote target gets an active fetch — passive
+    // backfill alone never resolves quotes whose target's server
+    // doesn't federate with us. Fresh rows and accepted Updates only:
+    // a redelivered Create changed nothing.
+    if is_new || activity.activity_type == "Update" {
+        if let Some(uri) = &quote_uri_col {
+            if let Err(e) = enqueue_quote_resolve(core, uri).await {
+                tracing::warn!(status_id, uri, error = %e, "quote resolve enqueue failed");
+            }
+        }
+    }
+    Ok(is_new)
+}
+
+/// Link every pending quoter (`quote_uri` = `uri`, `quote_of_id`
+/// NULL) to the now-materialized `target_id`, bumping the target's
+/// `quotes_count` by the number linked.
+pub(crate) async fn backfill_pending_quotes(
+    db: &sqlx::PgPool,
+    target_id: i64,
+    uri: &str,
+) -> Result<()> {
     sqlx::query(
         "WITH upd AS ( \
              UPDATE statuses SET quote_of_id = $1, quote_uri = NULL \
@@ -574,11 +603,11 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
          UPDATE statuses SET quotes_count = quotes_count + (SELECT count(*) FROM upd) \
          WHERE id = $1",
     )
-    .bind(status_id)
-    .bind(&object_id)
-    .execute(&core.db)
+    .bind(target_id)
+    .bind(uri)
+    .execute(db)
     .await?;
-    Ok(is_new)
+    Ok(())
 }
 
 /// Epic 18: remote-media caching. With `media.fetch_remote_media`
@@ -774,4 +803,148 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .await;
     crate::timelines::stream::publish_delete(&core.db, &core.bus, &existing).await;
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// Pending-quote resolution (epic 13 follow-up)
+// ---------------------------------------------------------------------------
+
+/// How long a "queued" marker suppresses repeat enqueues — covers job
+/// latency plus the retry window; after expiry a fresh ingest or read
+/// may enqueue again.
+const QUEUE_MARKER_TTL: Duration = Duration::from_secs(10 * 60);
+/// A resolved (or already-cached) target suppresses refetches for a
+/// day — the `load_by_uri` hit makes it belt-and-braces anyway.
+const OK_MARKER_TTL: Duration = Duration::from_secs(24 * 3600);
+/// A definitively-unfetchable target (Gone, untrusted, suspended)
+/// backs off for an hour before another ingest/read may retry.
+const FAIL_MARKER_TTL: Duration = Duration::from_secs(3600);
+
+/// Redis marker key deduping fetches per quote-target URI.
+fn fetch_marker_key(uri: &str) -> String {
+    format!(
+        "statusfetch:{}",
+        &hex::encode(Sha256::digest(uri.as_bytes()))[..32]
+    )
+}
+
+/// Enqueue a `RemoteStatusFetch` for a pending quote target — deduped
+/// by the marker, so repeat ingests of quoters (and status reads of
+/// rows left pending before the job existed) don't pile up jobs.
+/// When the target is already materialized — lost the ingest race or
+/// arrived since — quoters are linked inline instead.
+pub async fn enqueue_quote_resolve(core: &ApCore, uri: &str) -> Result<()> {
+    if let Some(target) = super::load_by_uri(&core.db, uri).await? {
+        backfill_pending_quotes(&core.db, target.id, uri).await?;
+        return Ok(());
+    }
+    let cache = RedisCache::new(core.redis.clone());
+    let key = fetch_marker_key(uri);
+    if cache.get(&key).await.ok().flatten().is_some() {
+        return Ok(());
+    }
+    core.dispatcher
+        .enqueue(JobKind::RemoteStatusFetch, json!({"uri": uri}))
+        .await?;
+    let _ = cache
+        .set(&key, &json!({"s": "queued"}), QUEUE_MARKER_TTL)
+        .await;
+    Ok(())
+}
+
+/// `JobKind::RemoteStatusFetch` — `{uri}`: signed-fetch a remote
+/// status object, materialize it through the same path as an inbound
+/// `Create`, and link every quoter that was parked on `quote_uri`.
+///
+/// Definitive misses (Gone, untrusted doc, suspended domain,
+/// non-status object) ack and set a `fail` marker — never a retry
+/// storm. Transient fetch failures return `Err` so the queue's
+/// backoff applies.
+pub struct RemoteStatusFetchJob {
+    ap: Option<ApContext>,
+}
+
+impl RemoteStatusFetchJob {
+    /// Create the handler; `ap` is `Some` when federation is enabled
+    /// (remote ingest implies it, but a `None` handler acks cleanly).
+    pub fn new(ap: Option<ApContext>) -> Self {
+        RemoteStatusFetchJob { ap }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RemoteStatusFetchJob {
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let Some(uri) = payload.get("uri").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let Some(ap) = &self.ap else {
+            return Ok(());
+        };
+        let cache = RedisCache::new(ctx.redis.clone());
+        let key = fetch_marker_key(uri);
+        // Already materialized — link pending quoters without a fetch
+        // (covers the ingest-race and a sibling job that got here
+        // first).
+        if let Some(target) = super::load_by_uri(&ctx.db, uri).await? {
+            backfill_pending_quotes(&ctx.db, target.id, uri).await?;
+            let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
+            return Ok(());
+        }
+        if let Some(marker) = cache.get(&key).await.ok().flatten() {
+            // A previous run already settled this URI.
+            if let Some("ok" | "fail") = marker.get("s").and_then(Value::as_str) {
+                return Ok(());
+            }
+        }
+        let domain = moderation::actor_domain(uri).unwrap_or_default();
+        if crate::search::resolve::domain_suspended(&ctx.db, &domain).await? {
+            let _ = cache
+                .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
+                .await;
+            return Ok(());
+        }
+        match lookup::fetch_remote_object_detailed(ap, uri).await? {
+            lookup::RemoteFetch::Gone => {
+                let _ = cache
+                    .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
+                    .await;
+                Ok(())
+            }
+            // Transport-level failure — retry through the queue's
+            // backoff budget.
+            lookup::RemoteFetch::Failed => Err(crate::Error::Internal(format!(
+                "remote status fetch failed: {uri}"
+            ))),
+            lookup::RemoteFetch::Doc(doc) => {
+                match crate::search::resolve::materialize_remote(&ctx.db, ap, uri, &doc).await? {
+                    // The fetched doc's `id` can differ from the URI
+                    // the quoter stored (e.g. `quoteUrl` vs `id`), so
+                    // back-fill by the requested URI explicitly — the
+                    // ingest-side CTE only matches `object_id`.
+                    Some(crate::search::resolve::ResolvedHit::Status(id)) => {
+                        backfill_pending_quotes(&ctx.db, id, uri).await?;
+                        let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
+                        Ok(())
+                    }
+                    // Settled but never a status — an actor document,
+                    // an untrusted or rejected Note.
+                    _ => {
+                        let _ = cache
+                            .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
+                            .await;
+                        Ok(())
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Register this module's job handler.
+pub(crate) fn register(registry: &mut crate::jobs::Registry, ap: Option<&ApContext>) {
+    registry.register(
+        JobKind::RemoteStatusFetch,
+        RemoteStatusFetchJob::new(ap.cloned()),
+    );
 }

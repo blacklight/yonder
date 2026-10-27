@@ -38,8 +38,9 @@ pub enum ResolvedHit {
 
 /// Whether `domain` is instance-suspended (`domain_blocks`,
 /// `action='suspend'` — checked live, not from the `ApCore`
-/// snapshot).
-async fn domain_suspended(db: &PgPool, domain: &str) -> Result<bool> {
+/// snapshot). `pub(crate)` — the `RemoteStatusFetch` job applies the
+/// same gate before fetching a quote target.
+pub(crate) async fn domain_suspended(db: &PgPool, domain: &str) -> Result<bool> {
     sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM domain_blocks \
          WHERE domain = $1 AND severity = 'suspend')",
@@ -155,7 +156,7 @@ pub(crate) async fn lookup_url(
     }
 
     let hit = match lookup::fetch_remote_object(ap, url).await? {
-        Some(doc) => materialize_remote(state, url, &doc).await?,
+        Some(doc) => materialize_remote(&state.db, ap, url, &doc).await?,
         None => None,
     };
     // Fetch failures and fetched-but-unusable documents are both
@@ -168,18 +169,21 @@ pub(crate) async fn lookup_url(
 
 /// Materialize a document fetched from `url`, but only when it is
 /// trustworthy for that URL (see [`trusted_note`]).
-async fn materialize_remote(
-    state: &AppState,
+/// `pub(crate)` — the `RemoteStatusFetch` job (pending quote targets)
+/// materializes through the same path.
+pub(crate) async fn materialize_remote(
+    db: &PgPool,
+    ap: &crate::activitypub::ApContext,
     url: &str,
     doc: &Value,
 ) -> Result<Option<ResolvedHit>> {
     let doc_type = doc.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if ACTOR_TYPES.contains(&doc_type) && doc.get("id").and_then(|v| v.as_str()) == Some(url) {
-        let id = crate::activitypub::storage::upsert_remote_actor_row(&state.db, url, doc).await?;
+        let id = crate::activitypub::storage::upsert_remote_actor_row(db, url, doc).await?;
         return Ok(id.map(ResolvedHit::Account));
     }
     if NOTE_TYPES.contains(&doc_type) && trusted_note(doc, url) {
-        return materialize_status(state, doc).await;
+        return materialize_status(db, ap, doc).await;
     }
     Ok(None)
 }
@@ -188,7 +192,7 @@ async fn materialize_remote(
 /// was requested from and its author lives on that same origin.
 /// Without this, a remote host could claim another server's `id` and
 /// overwrite that status through the `uri` upsert.
-fn trusted_note(doc: &Value, url: &str) -> bool {
+pub(crate) fn trusted_note(doc: &Value, url: &str) -> bool {
     let Some(id) = doc.get("id").and_then(|v| v.as_str()) else {
         return false;
     };
@@ -212,10 +216,11 @@ fn same_origin(a: &str, b: &str) -> bool {
 /// Wrap a fetched Note in a synthetic `Create` and run it through the
 /// inbound materialization path — the instance "learning" a post this
 /// way behaves exactly like receiving the Create in the inbox.
-async fn materialize_status(state: &AppState, doc: &Value) -> Result<Option<ResolvedHit>> {
-    let Some(ap) = &state.ap else {
-        return Ok(None);
-    };
+async fn materialize_status(
+    db: &PgPool,
+    ap: &crate::activitypub::ApContext,
+    doc: &Value,
+) -> Result<Option<ResolvedHit>> {
     let Some(author) = attributed_to(doc) else {
         return Ok(None);
     };
@@ -230,7 +235,7 @@ async fn materialize_status(state: &AppState, doc: &Value) -> Result<Option<Reso
     });
     let activity = pubby_sdk::Activity::from_json(&raw);
     posts::remote::handle(&ap.core, &activity, &raw).await;
-    let Some(row) = posts::load_by_uri(&state.db, object_id).await? else {
+    let Some(row) = posts::load_by_uri(db, object_id).await? else {
         return Ok(None);
     };
     Ok(Some(ResolvedHit::Status(row.id)))

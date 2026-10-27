@@ -86,6 +86,13 @@ pub async fn show(
     if !posts::can_see(&ctx.db, &status, viewer).await? {
         return Err(Error::NotFound("status".into()));
     }
+    // A still-pending remote quote self-heals on read — rows ingested
+    // before `RemoteStatusFetch` existed get their resolve job here.
+    if let (Some(ap), Some(uri)) = (&ctx.ap, &status.quote_uri) {
+        if let Err(e) = posts::remote::enqueue_quote_resolve(&ap.core, uri).await {
+            tracing::warn!(status_id = status.id, error = %e, "quote resolve enqueue failed");
+        }
+    }
     Ok(Json(entity::status_entity(&ctx, &status, viewer).await?))
 }
 

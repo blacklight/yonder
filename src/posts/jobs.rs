@@ -117,4 +117,5 @@ pub(crate) fn register(registry: &mut crate::jobs::Registry, ap: Option<&ApConte
     registry.register(JobKind::CleanupOrphanMedia, CleanupOrphanMediaJob);
     super::scheduled::register(registry, ap);
     super::preview::register(registry, ap);
+    super::remote::register(registry, ap);
 }

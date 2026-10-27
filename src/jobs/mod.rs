@@ -91,6 +91,10 @@ pub enum JobKind {
     /// or sweep stale remote actors (`{}` — the
     /// `remote_actor_refresh_schedule` fan-out).
     RemoteActorFetch,
+    /// Fetch and materialize a remote status object (`{"uri": …}`) —
+    /// resolves pending quote targets whose servers never federate
+    /// with us.
+    RemoteStatusFetch,
     /// Fan a notification out to its recipients.
     NotificationFanout,
     /// Send an email.
@@ -146,6 +150,7 @@ impl JobKind {
         JobKind::FederationDeliverySweep,
         JobKind::RemoteMediaFetch,
         JobKind::RemoteActorFetch,
+        JobKind::RemoteStatusFetch,
         JobKind::NotificationFanout,
         JobKind::EmailSend,
         JobKind::Import,
@@ -174,6 +179,7 @@ impl JobKind {
             JobKind::FederationDeliverySweep => "federation_delivery_sweep",
             JobKind::RemoteMediaFetch => "remote_media_fetch",
             JobKind::RemoteActorFetch => "remote_actor_fetch",
+            JobKind::RemoteStatusFetch => "remote_status_fetch",
             JobKind::NotificationFanout => "notification_fanout",
             JobKind::EmailSend => "email_send",
             JobKind::Import => "import",

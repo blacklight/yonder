@@ -9,8 +9,15 @@ ActivityPub activities.
 Boosts are `statuses` rows with `reblog_of_id` set (Mastodon
 semantics); the boost row's `uri` *is* the Announce activity id.
 Quotes use `quote_of_id` (+ `quotes_count`) with a `quote_uri`
-fallback for remote targets not materialized yet — back-filled when
-the quoted Create arrives. `favourites.activity_uri` and
+fallback for remote targets not materialized yet. Pending targets
+are resolved *actively*: ingest (and reads of a still-pending status)
+enqueue a `RemoteStatusFetch` job that signed-GETs the URI and
+materializes the object through the same pipeline as an inbound
+`Create`, honoring `domain_blocks` and the search resolver's
+same-origin trust rule; the stored `quote_uri` is then back-filled to
+`quote_of_id` and `quotes_count` bumps. The job is deduped per URI by
+a Redis marker — repeat ingests and re-reads don't pile up fetches.
+`favourites.activity_uri` and
 `emoji_reactions.activity_uri` record the sent activity id so
 `Undo(*)` rebuilds the inner activity from the `activities` ledger
 (with a deterministic rebuild fallback).

@@ -14,6 +14,7 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
+use redis::AsyncCommands;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use yonder::{
@@ -21,7 +22,8 @@ use yonder::{
     config::{Config, RateLimit},
     http::{build_router, AppState},
     interactions,
-    jobs::{JobContext, JobHandler},
+    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
+    posts::remote,
 };
 
 use crate::harness;
@@ -1230,4 +1232,270 @@ async fn favourites_list_pagination() {
     )
     .unwrap();
     assert_eq!(body.as_array().unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Pending-quote resolution — RemoteStatusFetch
+// ---------------------------------------------------------------------------
+
+fn job_ctx(state: &AppState) -> JobContext {
+    JobContext {
+        db: state.db.clone(),
+        redis: state.redis.clone(),
+        config: state.config().clone(),
+        media: state.media.clone(),
+    }
+}
+
+/// Every pending envelope on the `default` queue (non-draining).
+async fn queued_jobs(env: &Env) -> Vec<JobEnvelope> {
+    let key = env.state.redis.key("queue:default");
+    let mut conn = env.state.redis.conn().await.unwrap();
+    let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
+    reply
+        .ids
+        .iter()
+        .filter_map(|e| e.map.get("job"))
+        .filter_map(|v| {
+            let body: String = redis::from_redis_value(v).unwrap();
+            queue::decode(&body).ok()
+        })
+        .collect()
+}
+
+/// A loopback AP origin serving one Note at `/objects/n1` — `id` and
+/// `attributedTo` are same-origin so the doc passes the resolver's
+/// trust rule. Returns the object URI and a hit counter.
+async fn note_origin(content: &str) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let object_uri = format!("http://{addr}/objects/n1");
+    let doc = json!({
+        "id": object_uri,
+        "type": "Note",
+        "attributedTo": format!("http://{addr}/users/eve"),
+        "content": format!("<p>{content}</p>"),
+        "to": [PUBLIC],
+        "published": "2025-01-01T00:00:00Z",
+    });
+    let counted = hits.clone();
+    let app = Router::new().route(
+        "/objects/n1",
+        axum::routing::get(move || {
+            let counted = counted.clone();
+            let doc = doc.clone();
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                axum::Json(doc)
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (object_uri, hits)
+}
+
+/// A quote whose target we don't know stays pending at ingest, but a
+/// `RemoteStatusFetch` job is enqueued — running it fetches the doc,
+/// materializes it and back-fills the quoter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_quote_pending_target_fetches_and_links() {
+    use std::sync::atomic::Ordering;
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let remote_actor = "https://remote.test/users/eve";
+    let (quoted_uri, hits) = note_origin("the quoted post").await;
+
+    // Ingest: unknown quoteUri → pending quote_uri + resolve job.
+    let (act, raw) = activity(
+        "Create",
+        remote_actor,
+        json!({
+            "id": "https://remote.test/objects/quoter",
+            "type": "Note",
+            "attributedTo": remote_actor,
+            "content": "<p>quoting</p>",
+            "quoteUri": quoted_uri,
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    let (qid, quri): (Option<i64>, Option<String>) = sqlx::query_as(
+        "SELECT quote_of_id, quote_uri FROM statuses \
+         WHERE uri = 'https://remote.test/objects/quoter'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(qid, None);
+    assert_eq!(quri.as_deref(), Some(quoted_uri.as_str()));
+    let fetches: Vec<JobEnvelope> = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .collect();
+    assert_eq!(fetches.len(), 1, "one resolve job, got {fetches:?}");
+    assert_eq!(fetches[0].payload["uri"], json!(quoted_uri));
+
+    // Run the job — the loopback doc materializes through the same
+    // path as an inbound Create and the quoter links.
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(&job_ctx(&env.state), &json!({"uri": quoted_uri}))
+        .await
+        .unwrap();
+    let qid: Option<i64> = sqlx::query_scalar(
+        "SELECT quote_of_id FROM statuses \
+         WHERE uri = 'https://remote.test/objects/quoter'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let qid = qid.expect("quote resolved");
+    let (count, uri_match): (i32, bool) =
+        sqlx::query_as("SELECT quotes_count, uri = $2 FROM statuses WHERE id = $1")
+            .bind(qid)
+            .bind(&quoted_uri)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    assert!(uri_match);
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // Settled markers dedupe: a re-run sees the materialized target
+    // and a re-enqueue is suppressed — no second fetch, no new job.
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(&job_ctx(&env.state), &json!({"uri": quoted_uri}))
+        .await
+        .unwrap();
+    remote::enqueue_quote_resolve(&core, &quoted_uri)
+        .await
+        .unwrap();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let fetches = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .count();
+    assert_eq!(fetches, 1);
+}
+
+/// The self-heal and failure paths: reading a still-pending status
+/// re-enqueues the resolve (rows ingested before the job existed);
+/// `Gone`/suspended targets set a `fail` marker instead of refetching,
+/// and a transport error propagates so the queue retries it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pending_quote_self_heal_and_failure_markers() {
+    use std::sync::atomic::Ordering;
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let remote_actor = "https://remote.test/users/eve";
+
+    // ── Gone: a 404 origin settles with a fail marker, no refetch ──
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = hits.clone();
+    let gone_app = Router::new().route(
+        "/objects/gone",
+        axum::routing::get(move || {
+            let counted = counted.clone();
+            async move {
+                counted.fetch_add(1, Ordering::SeqCst);
+                StatusCode::NOT_FOUND
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let gone_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, gone_app).await.unwrap() });
+    let gone_uri = format!("http://{gone_addr}/objects/gone");
+
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(&job_ctx(&env.state), &json!({"uri": gone_uri}))
+        .await
+        .unwrap();
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(&job_ctx(&env.state), &json!({"uri": gone_uri}))
+        .await
+        .unwrap();
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "fail marker suppresses refetch"
+    );
+
+    // ── Suspended domain: no fetch attempted at all ──
+    sqlx::query("INSERT INTO domain_blocks (domain, severity) VALUES ('gone.example', 'suspend')")
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(
+            &job_ctx(&env.state),
+            &json!({"uri": "https://gone.example/objects/x"}),
+        )
+        .await
+        .unwrap();
+
+    // ── Transport failure propagates for the queue's backoff ──
+    let refused = remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(
+            &job_ctx(&env.state),
+            &json!({"uri": "http://127.0.0.1:9/objects/x"}),
+        )
+        .await;
+    assert!(refused.is_err(), "closed port must surface for retry");
+
+    // ── Self-heal: GET of a still-pending quoter re-enqueues ──
+    let (act, raw) = activity(
+        "Create",
+        remote_actor,
+        json!({
+            "id": "https://remote.test/objects/heal-me",
+            "type": "Note",
+            "attributedTo": remote_actor,
+            "content": "<p>heal me</p>",
+            "quoteUri": "https://gone.example/objects/y",
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/heal-me'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    // Simulate the pre-job row: drop the ingest-time enqueue and its
+    // marker.
+    let key = env.state.redis.key("queue:default");
+    let mut conn = env.state.redis.conn().await.unwrap();
+    let _: i64 = conn.del(&key).await.unwrap();
+    let cache = yonder::cache::RedisCache::new(env.state.redis.clone());
+    let _ = cache.delete_pattern("statusfetch:*").await;
+
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let enqueued = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .count();
+    assert_eq!(enqueued, 1, "the read self-heals the pending quote");
 }

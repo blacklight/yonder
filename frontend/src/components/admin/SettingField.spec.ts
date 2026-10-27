@@ -91,6 +91,36 @@ describe("SettingField", () => {
     expect(init.method).toBe("DELETE");
   });
 
+  it("renders enum-valued keys as a select and saves the choice", async () => {
+    const updated = entry({
+      toml_path: "email.smtp_tls",
+      source: "overlay",
+      value: "implicit",
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => json(updated));
+    const { wrapper } = mountWith(SettingField, {
+      props: {
+        entry: entry({ toml_path: "email.smtp_tls", value: "starttls" }),
+      },
+    });
+
+    const select = wrapper.get("select.setting__input");
+    expect(select.findAll("option").map((o) => o.attributes("value"))).toEqual([
+      "off",
+      "starttls",
+      "implicit",
+    ]);
+    expect((select.element as HTMLSelectElement).value).toBe("starttls");
+    await select.setValue("implicit");
+    await wrapper.get("button.btn").trigger("click");
+    await flushPromises();
+
+    const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ value: "implicit" });
+  });
+
   it("hides Reset when the value is not an overlay", () => {
     const { wrapper } = mountWith(SettingField, {
       props: { entry: entry() },

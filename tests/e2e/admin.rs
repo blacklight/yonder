@@ -382,6 +382,28 @@ async fn settings_describe_set_reset() {
             .unwrap();
     assert_eq!(overlay_audits, 3, "set + reset + reset again");
 
+    // `email.smtp_tls` is a string enum — overlays select the mode and
+    // unknown modes are rejected.
+    let (status, _, body) = request(
+        &env.app,
+        "PUT",
+        "/api/v1/yonder/admin/settings/email.smtp_tls",
+        Some(&admin),
+        Some(json!({"value": "implicit"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["value"], "implicit");
+    let (status, _, body) = request(
+        &env.app,
+        "PUT",
+        "/api/v1/yonder/admin/settings/email.smtp_tls",
+        Some(&admin),
+        Some(json!({"value": "bogus"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
     // Moderators can't touch the settings surface.
     let (status, _, _) = request(
         &env.app,
@@ -967,12 +989,19 @@ async fn email_templates_and_send() {
         "/api/v1/yonder/admin/email_templates/welcome",
         Some(&admin),
         Some(json!({
-            "subject": "Hi {{user_handle}} at {{instance_name}}",
-            "text_body": "Welcome aboard, {{user_handle}}!",
+            "subject": "Hi {{user_display_name}} at {{instance_name}}",
+            "text_body": "Welcome aboard, {{user_display_name}} ({{user_handle}})!",
         })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
+
+    // `user_display_name` resolves to the display name when set…
+    sqlx::query("UPDATE accounts SET display_name = 'Regular User' WHERE id = $1")
+        .bind(user_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
 
     // Template-shaped payload renders + sends through the transport.
     let ctx = job_ctx(&env);
@@ -983,8 +1012,8 @@ async fn email_templates_and_send() {
     let sent = transport.sent().await;
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0].1, "user@x.test");
-    assert_eq!(sent[0].2, "Hi user at Yonder");
-    assert_eq!(sent[0].3, "Welcome aboard, user!");
+    assert_eq!(sent[0].2, "Hi Regular User at Yonder");
+    assert_eq!(sent[0].3, "Welcome aboard, Regular User (user)!");
 
     // Pre-rendered payloads go through as-is (never templated).
     EmailSendJob
@@ -1052,7 +1081,7 @@ async fn email_templates_and_send() {
         Some(&admin),
         Some(json!({
             "subject": "Hi {{user_handle}}",
-            "text_body": "Welcome, {{user_handle}}!",
+            "text_body": "Welcome, {{user_display_name}}!",
             "html_body": "<p>{{note}}</p>",
         })),
     )
@@ -1076,7 +1105,9 @@ async fn email_templates_and_send() {
         Some("<p>&lt;i&gt;&amp;&quot;x&quot;&lt;/i&gt;</p>")
     );
 
-    // Test-send endpoint hits the same transport.
+    // Test-send endpoint hits the same transport and addresses the
+    // caller by their real account name (username fallback — the admin
+    // has no display name).
     let (status, _, body) = request(
         &env.app,
         "POST",
@@ -1087,7 +1118,10 @@ async fn email_templates_and_send() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["sent"], true);
-    assert_eq!(transport.sent().await.len(), 5);
+    let sent = transport.sent().await;
+    assert_eq!(sent.len(), 5);
+    assert_eq!(sent[4].2, "Hi admin");
+    assert_eq!(sent[4].3, "Welcome, admin!");
 }
 
 // ---------------------------------------------------------------------------

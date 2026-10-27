@@ -213,9 +213,16 @@ smtp_port = 587
 # smtp_username = "yonder@example.com"
 # Prefer YONDER_EMAIL__SMTP_PASSWORD.
 # smtp_password = ""
-# With smtp_tls = false, smtp credentials are sent unencrypted; a
-# warning is logged when the transport is built.
-smtp_tls = true
+# SMTP transport security:
+#   "starttls" — plaintext connect upgraded via STARTTLS (submission,
+#                port 587); the default.
+#   "implicit" — TLS from the first byte (SMTPS, port 465).
+#   "off"      — unencrypted; credentials cross the wire in cleartext
+#                and a warning is logged when the transport is built.
+# Booleans are accepted for compatibility: true = "starttls",
+# false = "off". Match the mode to the port — a STARTTLS client on an
+# implicit-TLS port deadlocks during connect.
+smtp_tls = "starttls"
 from_address = "yonder@example.com"
 # Per-class send toggles — welcome on signup, address verification,
 # password reset, and moderation account-status notices.

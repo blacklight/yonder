@@ -90,15 +90,20 @@ handler now (lettre + SMTP), honouring `send_welcome`,
 `send_verification`, `send_password_reset`, `send_account_status`.
 
 Template vars: a template-shaped payload's non-envelope fields are
-flattened into vars, plus `instance_name` and `user_handle`. Subject
+flattened into vars, plus `instance_name`, `user_handle` (the bare
+username) and `user_display_name` (the display name, falling back to
+the username — greetings should use it). Subject
 and text render raw; `html_body` renders with entity-escaped values
 (the template itself is trusted). Mail with an `html_body` goes out as
 `multipart/alternative` carrying both the text and HTML parts. The
 SMTP transport is cached per config — callers that pass a changed
 `email.*` config get a fresh transport — and a warning is logged when
-credentials would be sent with `smtp_tls` off. A failed
-`account_status` enqueue after a moderation action is logged but not
-retried.
+credentials would be sent with `smtp_tls` off. `smtp_tls` is
+`"off"`/`"starttls"`/`"implicit"` (booleans map to off/starttls for
+compatibility); `"implicit"` is TLS-on-connect for SMTPS servers on
+port 465, `"starttls"` is the plaintext-upgrade mode for port 587. A
+failed `account_status` enqueue after a moderation action is logged
+but not retried.
 
 ## WebPush keys
 

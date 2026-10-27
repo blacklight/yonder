@@ -28,7 +28,7 @@ use serde_json::{Map, Value};
 use sqlx::PgPool;
 
 use crate::{
-    config::EmailConfig,
+    config::{EmailConfig, SmtpTls},
     jobs::{JobContext, JobHandler, Registry},
     Error, Result,
 };
@@ -88,15 +88,19 @@ fn build_client(config: &EmailConfig) -> Result<AsyncSmtpTransport<Tokio1Executo
         .smtp_host
         .as_deref()
         .ok_or_else(|| Error::Validation("mail server is not configured".into()))?;
-    let mut builder = if config.smtp_tls {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
-            .map_err(|e| Error::Internal(format!("smtp transport config: {e}")))?
-    } else {
-        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host)
+    let mut builder = match config.smtp_tls {
+        // Implicit TLS (SMTPS, conventional port 465): the handshake
+        // starts on connect — a STARTTLS client pointed at it deadlocks
+        // waiting for a banner the server never sends.
+        SmtpTls::Implicit => AsyncSmtpTransport::<Tokio1Executor>::relay(host)
+            .map_err(|e| Error::Internal(format!("smtp transport config: {e}")))?,
+        SmtpTls::StartTls => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
+            .map_err(|e| Error::Internal(format!("smtp transport config: {e}")))?,
+        SmtpTls::Off => AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host),
     }
     .port(config.smtp_port);
     if let Some(user) = &config.smtp_username {
-        if !config.smtp_tls {
+        if config.smtp_tls == SmtpTls::Off {
             tracing::warn!("smtp_tls is off — SMTP credentials will cross the wire unencrypted");
         }
         let pass = config.smtp_password.clone().unwrap_or_default();
@@ -282,9 +286,16 @@ pub async fn template(
 }
 
 /// Template vars for a template-shaped payload: every payload field
-/// except the envelope keys becomes a var, plus `instance_name` and
-/// `user_handle`.
-fn vars_for(payload: &Value, instance_name: &str, user_handle: &str) -> Map<String, Value> {
+/// except the envelope keys becomes a var, plus `instance_name`,
+/// `user_handle` (the bare username) and `user_display_name` (the
+/// display name, falling back to the username — what greetings should
+/// use).
+fn vars_for(
+    payload: &Value,
+    instance_name: &str,
+    user_handle: &str,
+    user_display_name: Option<&str>,
+) -> Map<String, Value> {
     const ENVELOPE: &[&str] = &[
         "kind",
         "account_id",
@@ -307,7 +318,19 @@ fn vars_for(payload: &Value, instance_name: &str, user_handle: &str) -> Map<Stri
         Value::String(instance_name.to_string()),
     );
     vars.insert("user_handle".into(), Value::String(user_handle.to_string()));
+    vars.insert(
+        "user_display_name".into(),
+        Value::String(display_name_or(user_display_name, user_handle).to_string()),
+    );
     vars
+}
+
+/// `display_name` when set and non-blank, else the username — the same
+/// fallback the account entity uses.
+pub fn display_name_or<'a>(display_name: Option<&'a str>, username: &'a str) -> &'a str {
+    display_name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or(username)
 }
 
 /// `JobKind::EmailSend` — real SMTP sending.
@@ -357,14 +380,14 @@ impl JobHandler for EmailSendJob {
             tracing::warn!(kind, "email job with no recipient — skipping");
             return Ok(());
         };
-        let recipient: Option<(Option<String>, String)> = sqlx::query_as(
-            "SELECT u.email, a.username FROM users u \
+        let recipient: Option<(Option<String>, String, Option<String>)> = sqlx::query_as(
+            "SELECT u.email, a.username, a.display_name FROM users u \
              JOIN accounts a ON a.id = u.account_id WHERE u.account_id = $1",
         )
         .bind(account_id)
         .fetch_optional(&ctx.db)
         .await?;
-        let Some((Some(to), user_handle)) = recipient else {
+        let Some((Some(to), user_handle, user_display_name)) = recipient else {
             tracing::warn!(kind, account_id, "email job: no local recipient — skipping");
             return Ok(());
         };
@@ -372,7 +395,12 @@ impl JobHandler for EmailSendJob {
             tracing::warn!(kind, "email job: no template for kind — skipping");
             return Ok(());
         };
-        let vars = vars_for(payload, &ctx.config.instance.name, &user_handle);
+        let vars = vars_for(
+            payload,
+            &ctx.config.instance.name,
+            &user_handle,
+            user_display_name.as_deref(),
+        );
         let html_rendered = html.as_deref().map(|h| render_html(h, &vars));
         send_now(
             email,

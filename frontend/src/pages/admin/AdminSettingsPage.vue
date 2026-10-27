@@ -79,3 +79,13 @@ onMounted(async () => {
   color: var(--danger);
 }
 </style>
+
+<style>
+.admin-settings select {
+  max-width: 16rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+</style>

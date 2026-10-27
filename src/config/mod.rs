@@ -602,6 +602,62 @@ impl Default for MediaConfig {
     }
 }
 
+/// `email.smtp_tls` values — how the SMTP connection is secured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmtpTls {
+    /// Cleartext SMTP — credentials cross the wire unencrypted.
+    Off,
+    /// Plaintext connect, upgrade with STARTTLS (submission, port 587).
+    #[default]
+    StartTls,
+    /// TLS from the first byte (SMTPS, port 465).
+    Implicit,
+}
+
+impl<'de> Deserialize<'de> for SmtpTls {
+    /// Accepts the string modes plus booleans for backwards
+    /// compatibility (`true` → `starttls`, `false` → `off`); env vars
+    /// always arrive as strings.
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+        impl serde::de::Visitor<'_> for Visitor {
+            type Value = SmtpTls;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str(r#""off", "starttls" or "implicit" (or a boolean)"#)
+            }
+
+            fn visit_bool<E>(self, value: bool) -> std::result::Result<SmtpTls, E> {
+                Ok(if value {
+                    SmtpTls::StartTls
+                } else {
+                    SmtpTls::Off
+                })
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<SmtpTls, E>
+            where
+                E: serde::de::Error,
+            {
+                match value.to_ascii_lowercase().as_str() {
+                    "off" | "none" | "false" => Ok(SmtpTls::Off),
+                    "starttls" | "start_tls" | "true" => Ok(SmtpTls::StartTls),
+                    "implicit" | "tls" | "smtps" | "ssl" => Ok(SmtpTls::Implicit),
+                    other => Err(E::custom(format!(
+                        "invalid smtp_tls mode {other:?} — expected \"off\", \
+                         \"starttls\" or \"implicit\""
+                    ))),
+                }
+            }
+        }
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmailConfig {
@@ -611,8 +667,11 @@ pub struct EmailConfig {
     pub smtp_username: Option<String>,
     /// Prefer `YONDER_EMAIL__SMTP_PASSWORD` over the TOML file.
     pub smtp_password: Option<String>,
-    /// Use STARTTLS/TLS for the SMTP connection.
-    pub smtp_tls: bool,
+    /// `off` | `starttls` (plaintext upgraded via STARTTLS, port 587) |
+    /// `implicit` (TLS from the first byte — SMTPS, port 465).
+    /// Booleans are accepted for compatibility: `true` = `starttls`,
+    /// `false` = `off`.
+    pub smtp_tls: SmtpTls,
     pub from_address: String,
     /// Send a welcome email to newly registered users.
     pub send_welcome: bool,
@@ -632,7 +691,7 @@ impl Default for EmailConfig {
             smtp_port: 587,
             smtp_username: None,
             smtp_password: None,
-            smtp_tls: true,
+            smtp_tls: SmtpTls::StartTls,
             from_address: "yonder@localhost".to_string(),
             send_welcome: true,
             send_verification: true,

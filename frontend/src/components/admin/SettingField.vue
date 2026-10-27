@@ -15,6 +15,12 @@ const store = useAdminSettingsStore();
 
 type Kind = "bool" | "number" | "text" | "json";
 
+// String-valued keys whose values come from a fixed set — rendered as
+// a dropdown instead of a free-text input.
+const ENUM_OPTIONS: Record<string, string[]> = {
+  "email.smtp_tls": ["off", "starttls", "implicit"],
+};
+
 function kindOf(value: unknown): Kind {
   if (typeof value === "boolean") return "bool";
   if (typeof value === "number") return "number";
@@ -34,6 +40,9 @@ function serialize(value: unknown): string {
 // effective value.
 const kind = computed<Kind>(() =>
   props.entry.sensitive ? "text" : kindOf(props.entry.value),
+);
+const selectOptions = computed(() =>
+  props.entry.sensitive ? undefined : ENUM_OPTIONS[props.entry.toml_path],
 );
 const draft = ref(props.entry.sensitive ? "" : serialize(props.entry.value));
 const checked = ref(props.entry.value === true);
@@ -140,7 +149,7 @@ function flashSaved() {
 
     <template v-else>
       <div class="setting__control">
-        <label v-if="kind === 'bool'" class="setting__check">
+        <label v-if="kind === 'bool'" class="setting__check" :class="{ checked }">
           <input
             v-model="checked"
             type="checkbox"
@@ -163,6 +172,17 @@ function flashSaved() {
             spellcheck="false"
           />
         </template>
+        <select
+          v-else-if="selectOptions"
+          v-model="draft"
+          class="setting__input"
+          :disabled="pending"
+          :aria-label="entry.toml_path"
+        >
+          <option v-for="opt in selectOptions" :key="opt" :value="opt">
+            {{ opt }}
+          </option>
+        </select>
         <input
           v-else
           v-model="draft"
@@ -277,6 +297,14 @@ function flashSaved() {
   opacity: 0;
   width: 1px;
   height: 1px;
+}
+.setting__check svg {
+  width: 1.75rem;
+  height: 1.75rem;
+  color: gray;
+}
+.setting__check.checked svg {
+  color: green;
 }
 .setting__value {
   margin: var(--space-1) 0 0;

@@ -186,6 +186,71 @@ fn registry_covers_every_leaf_and_all_sections() {
 }
 
 #[test]
+fn smtp_tls_accepts_modes_and_booleans() {
+    use yonder::config::SmtpTls;
+
+    // Default.
+    assert_eq!(Config::default().email.smtp_tls, SmtpTls::StartTls);
+
+    Jail::expect_with(|jail| {
+        // TOML strings select the mode.
+        for (toml, expected) in [
+            (r#"smtp_tls = "implicit""#, SmtpTls::Implicit),
+            (r#"smtp_tls = "off""#, SmtpTls::Off),
+            (r#"smtp_tls = "starttls""#, SmtpTls::StartTls),
+            // Legacy booleans keep working.
+            ("smtp_tls = true", SmtpTls::StartTls),
+            ("smtp_tls = false", SmtpTls::Off),
+        ] {
+            jail.create_file("config.toml", &format!("[email]\n{toml}"))?;
+            let config =
+                Config::load(Some(&jail.directory().join("config.toml"))).expect("load email");
+            assert_eq!(config.email.smtp_tls, expected, "{toml}");
+        }
+
+        // Unknown strings are rejected at parse time.
+        jail.create_file(
+            "config.toml",
+            r#"[email]
+smtp_tls = "bogus""#,
+        )?;
+        assert!(Config::load(Some(&jail.directory().join("config.toml"))).is_err());
+        Ok(())
+    });
+
+    // Env vars arrive as strings — both mode names and bool spellings.
+    Jail::expect_with(|jail| {
+        for (env, expected) in [
+            ("implicit", SmtpTls::Implicit),
+            ("STARTTLS", SmtpTls::StartTls),
+            ("true", SmtpTls::StartTls),
+            ("false", SmtpTls::Off),
+        ] {
+            jail.set_env("YONDER_EMAIL__SMTP_TLS", env);
+            let config = Config::load(Some(&jail.directory().join("nope.toml"))).expect("env load");
+            assert_eq!(config.email.smtp_tls, expected, "env={env}");
+        }
+        Ok(())
+    });
+
+    // DB overlays carry JSON — string and legacy bool values both work.
+    Jail::expect_with(|jail| {
+        for (value, expected) in [
+            (json!("implicit"), SmtpTls::Implicit),
+            (json!(true), SmtpTls::StartTls),
+            (json!(false), SmtpTls::Off),
+        ] {
+            let overlays = vec![("email.smtp_tls".to_string(), value.clone())];
+            let config =
+                Config::with_overlays(Some(&jail.directory().join("nope.toml")), &overlays)
+                    .expect("overlay");
+            assert_eq!(config.email.smtp_tls, expected, "{value}");
+        }
+        Ok(())
+    });
+}
+
+#[test]
 fn i18n_fallback_locale() {
     // Default is English.
     let config = Config::default();

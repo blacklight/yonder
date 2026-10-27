@@ -108,7 +108,7 @@ async function sendTest() {
 
 <template>
   <AdminSettingsPage title-key="admin.nav.email" :sections="['email']">
-    <section class="email-extra">
+    <section class="email-extra email-extra--templates">
       <h3 class="email-extra__title">{{ t("admin.email.templates") }}</h3>
       <label class="email-extra__row">
         <span>{{ t("admin.email.templateLabel") }}</span>
@@ -142,7 +142,7 @@ async function sendTest() {
       </p>
     </section>
 
-    <section class="email-extra">
+    <section class="email-extra email-extra--test">
       <h3 class="email-extra__title">{{ t("admin.email.test") }}</h3>
       <div class="email-extra__row">
         <Input
@@ -192,15 +192,38 @@ async function sendTest() {
 .email-extra__row--top {
   align-items: start;
 }
+.email-extra--test .email-extra__row {
+  align-items: end;
+}
+.email-extra--templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.email-extra--templates label span {
+  width: 10rem;
+}
 .email-extra__row textarea {
   flex: 1;
   max-width: 32rem;
   padding: var(--space-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg);
+  background: var(--bg-raised);
   color: var(--text);
   font: inherit;
+}
+@media (max-width: 768px) {
+  .email-extra--templates .email-extra__row {
+    display: flex;
+    flex-direction: column;
+    align-items: start;
+    gap: var(--space-2);
+  }
+
+  .email-extra--templates textarea {
+    width: 100%;
+  }
 }
 .email-extra__saved,
 .email-extra__hint {

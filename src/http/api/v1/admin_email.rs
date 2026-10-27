@@ -159,11 +159,17 @@ pub async fn send_test(
                 .ok_or_else(|| Error::Validation("no recipient email".into()))?
         }
     };
+    let (username, display_name): (String, Option<String>) =
+        sqlx::query_as("SELECT username, display_name FROM accounts WHERE id = $1")
+            .bind(auth.account_id)
+            .fetch_one(&state.db)
+            .await?;
     let mut vars = serde_json::Map::new();
     vars.insert("instance_name".into(), json!(state.config().instance.name));
+    vars.insert("user_handle".into(), json!(username));
     vars.insert(
-        "user_handle".into(),
-        json!(format!("user {}", auth.account_id)),
+        "user_display_name".into(),
+        json!(email::display_name_or(display_name.as_deref(), &username)),
     );
     let (subject, text, html) = email::template(&state.db, "welcome")
         .await?

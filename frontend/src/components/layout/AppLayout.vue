@@ -514,11 +514,12 @@ function search() {
 .layout__brand {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   font-weight: 700;
   color: var(--text);
   text-decoration: none;
-  font-size: 1.1rem;
+  font-size: 1.5rem;
 }
 .layout__logo {
   width: 28px;

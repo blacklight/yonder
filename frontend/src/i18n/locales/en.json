@@ -482,6 +482,7 @@
   },
   "admin": {
     "nav": {
+      "back": "Back",
       "general": "General",
       "instance": "Instance",
       "content": "Content",

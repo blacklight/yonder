@@ -89,6 +89,35 @@ describe("AppLayout", () => {
     expect(names).toContain("Moderation");
   });
 
+  it("admin section replaces the app menu with the panel menu", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.role = "admin";
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: stubRoutes,
+    });
+    await router.push("/admin");
+    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
+      Promise.resolve(new Response("{}", { status: 200 })),
+    );
+    const w = mount(AppLayout, {
+      global: { plugins: [i18n, router] },
+    });
+    const names = labels(w);
+    expect(names[0]).toBe("Back");
+    expect(names).toContain("General");
+    expect(names).toContain("Users");
+    expect(names).toContain("Audit log");
+    expect(names).not.toContain("Explore");
+    expect(names).not.toContain("Home");
+    expect(names).not.toContain("Administration");
+    expect(w.find(".layout__compose").exists()).toBe(false);
+    // The Back entry leads out of the panel to the main app.
+    const back = w.findAll(".layout__sidebar .navmenu__link")[0];
+    expect(back.attributes("href")).toBe("/");
+  });
+
   it("renders the unread badge on notifications", () => {
     const auth = useAuthStore();
     auth.setToken("t");

@@ -221,20 +221,133 @@ const menuItems = computed<NavItem[]>(() =>
     })),
 );
 
+// Inside /admin the app menu is replaced by the admin panel menu —
+// rendering both (sidebar + in-page nav) was too cluttered, and the
+// panel menu is what the admin actually needs while section-hopping.
+// The "back" entry returns to the main app.
+const inAdmin = computed(() => route.matched.some((r) => r.path === "/admin"));
+
+const adminItems = computed<NavItem[]>(() => [
+  { id: "back", label: t("admin.nav.back"), to: "/", icon: "arrow-left" },
+  {
+    id: "general",
+    label: t("admin.nav.general"),
+    to: "/admin/general",
+    icon: "gear",
+  },
+  {
+    id: "instance",
+    label: t("admin.nav.instance"),
+    to: "/admin/instance",
+    icon: "server",
+  },
+  {
+    id: "content",
+    label: t("admin.nav.content"),
+    to: "/admin/content",
+    icon: "note-sticky",
+  },
+  {
+    id: "federation",
+    label: t("admin.nav.federation"),
+    to: "/admin/federation",
+    icon: "share-nodes",
+  },
+  {
+    id: "media",
+    label: t("admin.nav.media"),
+    to: "/admin/media",
+    icon: "image",
+  },
+  {
+    id: "email",
+    label: t("admin.nav.email"),
+    to: "/admin/email",
+    icon: "envelope",
+  },
+  {
+    id: "polls",
+    label: t("admin.nav.polls"),
+    to: "/admin/polls",
+    icon: "square-poll-vertical",
+  },
+  { id: "http", label: t("admin.nav.http"), to: "/admin/http", icon: "globe" },
+  {
+    id: "rateLimits",
+    label: t("admin.nav.rateLimits"),
+    to: "/admin/rate-limits",
+    icon: "gauge-high",
+  },
+  {
+    id: "search",
+    label: t("admin.nav.search"),
+    to: "/admin/search",
+    icon: "magnifying-glass",
+  },
+  {
+    id: "server",
+    label: t("admin.nav.server"),
+    to: "/admin/server",
+    icon: "database",
+  },
+  {
+    id: "users",
+    label: t("admin.nav.users"),
+    to: "/admin/users",
+    icon: "users",
+  },
+  {
+    id: "relays",
+    label: t("admin.nav.relays"),
+    to: "/admin/relays",
+    icon: "satellite-dish",
+  },
+  {
+    id: "domainBlocks",
+    label: t("admin.nav.domainBlocks"),
+    to: "/admin/domain-blocks",
+    icon: "ban",
+  },
+  {
+    id: "emojis",
+    label: t("admin.nav.emojis"),
+    to: "/admin/emojis",
+    icon: "face-smile",
+  },
+  {
+    id: "frontends",
+    label: t("admin.nav.frontends"),
+    to: "/admin/frontends",
+    icon: "display",
+  },
+  {
+    id: "audit",
+    label: t("admin.nav.audit"),
+    to: "/admin/audit",
+    icon: "list-ul",
+  },
+]);
+
+const navItems = computed<NavItem[]>(() =>
+  inAdmin.value ? adminItems.value : menuItems.value,
+);
+
 // The mobile drawer gets a compose entry — the big sidebar button is
 // desktop-only, so without this there is no way to post on mobile.
 const mobileItems = computed<NavItem[]>(() =>
-  auth.isLoggedIn
-    ? [
-        {
-          id: "compose",
-          label: t("nav.compose"),
-          to: "/compose",
-          icon: "pen-to-square",
-        },
-        ...menuItems.value,
-      ]
-    : menuItems.value,
+  inAdmin.value
+    ? adminItems.value
+    : auth.isLoggedIn
+      ? [
+          {
+            id: "compose",
+            label: t("nav.compose"),
+            to: "/compose",
+            icon: "pen-to-square",
+          },
+          ...menuItems.value,
+        ]
+      : menuItems.value,
 );
 
 function onSelect(item: NavItem) {
@@ -277,7 +390,7 @@ function search() {
       </form>
 
       <Button
-        v-if="auth.isLoggedIn"
+        v-if="auth.isLoggedIn && !inAdmin"
         class="layout__compose"
         @click="router.push('/compose')"
       >
@@ -285,7 +398,7 @@ function search() {
         {{ t("nav.compose") }}</Button
       >
 
-      <NavMenu :items="menuItems" @select="onSelect" />
+      <NavMenu :items="navItems" @select="onSelect" />
 
       <div class="layout__sidebar-footer">
         <router-link v-if="auth.account" to="/profile" class="layout__user">

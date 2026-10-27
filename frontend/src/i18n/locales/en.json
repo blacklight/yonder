@@ -723,6 +723,7 @@
     "confirm": "Confirm",
     "save": "Save",
     "delete": "Delete",
+    "clear": "Clear",
     "error": "Something went wrong."
   },
   "search": {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import Avatar from "@/components/ui/Avatar.vue";
@@ -364,6 +364,14 @@ function search() {
   const q = searchQuery.value.trim();
   if (q) void router.push({ name: "search", query: { q } });
 }
+
+const sidebarSearch = useTemplateRef<HTMLInputElement>("sidebarSearch");
+const asideSearch = useTemplateRef<HTMLInputElement>("asideSearch");
+
+function clearSearch(which: "sidebar" | "aside") {
+  searchQuery.value = "";
+  (which === "sidebar" ? sidebarSearch : asideSearch).value?.focus();
+}
 </script>
 
 <template>
@@ -381,12 +389,23 @@ function search() {
       >
         <FontAwesomeIcon icon="magnifying-glass" class="layout__search-icon" />
         <input
+          ref="sidebarSearch"
           v-model="searchQuery"
           type="search"
           class="layout__search-input"
           :placeholder="t('nav.searchPlaceholder')"
           :aria-label="t('nav.search')"
         />
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="layout__search-clear"
+          :aria-label="t('common.clear')"
+          :title="t('common.clear')"
+          @click="clearSearch('sidebar')"
+        >
+          <FontAwesomeIcon icon="xmark" />
+        </button>
       </form>
 
       <Button
@@ -495,12 +514,23 @@ function search() {
       <form class="layout__search" role="search" @submit.prevent="search">
         <FontAwesomeIcon icon="magnifying-glass" class="layout__search-icon" />
         <input
+          ref="asideSearch"
           v-model="searchQuery"
           type="search"
           class="layout__search-input"
           :placeholder="t('nav.searchPlaceholder')"
           :aria-label="t('nav.search')"
         />
+        <button
+          v-if="searchQuery"
+          type="button"
+          class="layout__search-clear"
+          :aria-label="t('common.clear')"
+          :title="t('common.clear')"
+          @click="clearSearch('aside')"
+        >
+          <FontAwesomeIcon icon="xmark" />
+        </button>
       </form>
 
       <div class="layout__aside-footer">
@@ -653,11 +683,36 @@ function search() {
   width: 100%;
   padding: var(--space-2) var(--space-3);
   padding-left: calc(var(--space-3) + 1.5em);
+  padding-inline-end: 2rem;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
   font: inherit;
+}
+/* The clear button replaces the native WebKit search cancel. */
+.layout__search-input::-webkit-search-cancel-button {
+  appearance: none;
+}
+.layout__search-clear {
+  position: absolute;
+  inset-inline-end: var(--space-1);
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.layout__search-clear:hover {
+  background: var(--bg-sunken);
+  color: var(--text);
 }
 .layout__compose {
   width: 100%;

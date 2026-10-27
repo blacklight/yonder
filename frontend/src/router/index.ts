@@ -325,6 +325,14 @@ export const router = createRouter({
       meta: { dynamicTitle: true },
     },
     {
+      // `/@user/{id}` — the `statuses.url` web form; the id is
+      // authoritative, the acct decorative (Mastodon permalink shape).
+      path: "/@:acct/:id(\\d+)",
+      name: "status-acct",
+      component: () => import("@/pages/StatusPage.vue"),
+      props: true,
+    },
+    {
       // Numeric ids resolve on this alias only — `/@123` is a valid handle.
       path: "/accounts/:id",
       name: "profile-id",

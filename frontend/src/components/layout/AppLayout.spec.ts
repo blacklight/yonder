@@ -159,6 +159,22 @@ describe("AppLayout", () => {
     expect(links.map((a) => a.text())).toEqual(["About", "Source code"]);
   });
 
+  it("search inputs show an X that clears the query", async () => {
+    const w = layout();
+    const inputs = w.findAll(".layout__search-input");
+    expect(inputs.length).toBe(2);
+    expect(w.find(".layout__search-clear").exists()).toBe(false);
+    await inputs[0].setValue("cats");
+    const clears = w.findAll(".layout__search-clear");
+    // Both bars mirror the same query, so each shows its own X.
+    expect(clears.length).toBe(2);
+    await clears[1].trigger("click");
+    expect(w.find(".layout__search-clear").exists()).toBe(false);
+    expect(
+      (w.findAll(".layout__search-input")[0].element as HTMLInputElement).value,
+    ).toBe("");
+  });
+
   it("sidebar keeps a search fallback below the wide breakpoint", () => {
     const w = layout();
     expect(

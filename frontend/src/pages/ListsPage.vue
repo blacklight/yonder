@@ -131,7 +131,11 @@ onMounted(() => store.fetch());
           t("common.delete")
         }}</Button>
         <div v-if="open === l.id" class="members">
-          <Input v-model="memberQuery" :label="t('lists.addMember')" />
+          <Input
+            v-model="memberQuery"
+            :label="t('lists.addMember')"
+            clearable
+          />
           <ul v-if="memberHits.length">
             <li v-for="a in memberHits" :key="a.id">
               <Avatar :src="a.avatar" :name="a.acct" size="sm" /> @{{ a.acct }}

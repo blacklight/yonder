@@ -85,21 +85,25 @@ onMounted(() => load());
         v-model="filters.action"
         :label="t('admin.audit.filterAction')"
         placeholder="config."
+        clearable
       />
       <Input
         v-model="filters.actor_account_id"
         :label="t('admin.audit.filterActor')"
         inputmode="numeric"
+        clearable
       />
       <Input
         v-model="filters.target_type"
         :label="t('admin.audit.filterTargetType')"
         placeholder="config"
+        clearable
       />
       <Input
         v-model="filters.target_id"
         :label="t('admin.audit.filterTargetId')"
         inputmode="numeric"
+        clearable
       />
       <Button type="submit" variant="secondary" size="sm">
         {{ t("admin.audit.apply") }}

@@ -45,6 +45,7 @@ async function go() {
         :placeholder="t('admin.users.lookupHint')"
         :error="error || undefined"
         inputmode="search"
+        clearable
       />
       <Button type="submit" :loading="pending" :disabled="!acct.trim()">
         {{ t("admin.users.lookup") }}

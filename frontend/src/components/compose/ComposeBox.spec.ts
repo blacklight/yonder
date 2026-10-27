@@ -205,6 +205,22 @@ describe("ComposeBox", () => {
     expect(useComposeStore().draft.mediaIds).toContain("m1");
   });
 
+  it("schedule toggle reveals the picker and clears the time when toggled off", async () => {
+    mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    expect(wrapper.find(".compose__schedule").exists()).toBe(false);
+    await wrapper.get("[data-testid='schedule-toggle']").trigger("click");
+    expect(wrapper.find(".compose__schedule").exists()).toBe(true);
+    // A set time keeps the row visible even without the toggle open.
+    useComposeStore().update({ scheduledAt: "2030-01-01T00:00:00.000Z" });
+    await flushPromises();
+    await wrapper.get("[data-testid='schedule-toggle']").trigger("click");
+    await flushPromises();
+    expect(useComposeStore().draft.scheduledAt).toBeNull();
+    expect(wrapper.find(".compose__schedule").exists()).toBe(false);
+  });
+
   it("blocks posting a schedule time in the past", async () => {
     mockPost();
     const { wrapper } = mountWith(ComposeBox);

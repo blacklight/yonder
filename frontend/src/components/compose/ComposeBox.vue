@@ -40,6 +40,7 @@ const posting = ref(false);
 const error = ref("");
 const done = ref("");
 const emojiOpen = ref(false);
+const scheduleOpen = ref(false);
 const editId = ref<string | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
 
@@ -91,10 +92,56 @@ const banner = computed(() => {
 const LANGUAGES = [
   { code: "", label: "compose.detect" },
   { code: "en", label: "English" },
-  { code: "es", label: "Español" },
-  { code: "it", label: "Italiano" },
-  { code: "de", label: "Deutsch" },
   { code: "ar", label: "العربية" },
+  { code: "bg", label: "Български" },
+  { code: "ca", label: "Catalan" },
+  { code: "cn", label: "简体中文" },
+  { code: "cs", label: "Czech" },
+  { code: "da", label: "Dansk" },
+  { code: "de", label: "Deutsch" },
+  { code: "el", label: "Ελληνικα" },
+  { code: "es", label: "Español" },
+  { code: "fa", label: "فارسی" },
+  { code: "fi", label: "Suomi" },
+  { code: "fr", label: "Français" },
+  { code: "he", label: "עברית" },
+  { code: "hi", label: "हिन्दी" },
+  { code: "hr", label: "Hrvatski" },
+  { code: "hu", label: "Magyar" },
+  { code: "id", label: "Bahasa Indonesia" },
+  { code: "is", label: "Icelandic" },
+  { code: "it", label: "Italiano" },
+  { code: "ja", label: "日本語" },
+  { code: "jv", label: "Basa Jawa" },
+  { code: "ka", label: "ქართული" },
+  { code: "km", label: "ភាសាខ្មែរ" },
+  { code: "ko", label: "한국어" },
+  { code: "lt", label: "Lietuvių" },
+  { code: "lv", label: "Latviesu" },
+  { code: "ms", label: "Bahasa Melayu" },
+  { code: "nb", label: "Norsk" },
+  { code: "nl", label: "Nederlands" },
+  { code: "pl", label: "Polski" },
+  { code: "pt", label: "Português" },
+  { code: "ro", label: "Romenian" },
+  { code: "ru", label: "Русский" },
+  { code: "sr", label: "Srpski" },
+  { code: "sl", label: "Slovenški" },
+  { code: "sk", label: "Slovensky" },
+  { code: "sq", label: "Shqip" },
+  { code: "sv", label: "Svenska" },
+  { code: "sw", label: "Swahili" },
+  { code: "ta", label: "தமிழ்" },
+  { code: "te", label: "తెలుగు" },
+  { code: "th", label: "ไทย" },
+  { code: "tl", label: "Tagalog" },
+  { code: "tr", label: "Türkçe" },
+  { code: "tw", label: "中文(繁體)" },
+  { code: "uk", label: "Українська" },
+  { code: "ur", label: "اردو" },
+  { code: "uz", label: "O'zbekcha" },
+  { code: "vi", label: "Tiếng Việt" },
+  { code: "zh", label: "中文" },
 ];
 const VISIBILITIES: StatusVisibility[] = [
   "public",
@@ -178,6 +225,7 @@ watch(
   () => {
     media.value = [];
     editId.value = null;
+    scheduleOpen.value = false;
     idemKey.value = crypto.randomUUID();
     textarea.value?.focus();
   },
@@ -231,6 +279,20 @@ function minLocal() {
   return new Date(now.getTime() - now.getTimezoneOffset() * 60000)
     .toISOString()
     .slice(0, 16);
+}
+
+// The picker stays open while a time is set — hiding it would make a
+// pending schedule invisible. Toggling off clears the time instead.
+const scheduleVisible = computed(
+  () => scheduleOpen.value || d.value.scheduledAt !== null,
+);
+function toggleSchedule() {
+  if (scheduleVisible.value) {
+    scheduleOpen.value = false;
+    if (d.value.scheduledAt) compose.update({ scheduledAt: null });
+  } else {
+    scheduleOpen.value = true;
+  }
 }
 
 function togglePoll() {
@@ -339,6 +401,7 @@ async function submit() {
     compose.reset();
     media.value = [];
     editId.value = null;
+    scheduleOpen.value = false;
     idemBody = "";
     idemKey.value = crypto.randomUUID();
     // Editing parked the previous draft — hand it back.
@@ -353,234 +416,285 @@ async function submit() {
 
 <template>
   <div class="compose" data-testid="compose">
-    <div v-if="banner" class="compose__banner">
-      <span>{{ banner }}</span>
-      <button type="button" class="compose__banner-x" @click="compose.reset()">
-        {{ t("compose.cancelContext") }}
-      </button>
-    </div>
-
-    <div v-if="d.cwEnabled" class="compose__cw">
-      <input
-        :value="d.spoilerText"
-        class="compose__cw-input"
-        :placeholder="t('compose.cwPlaceholder')"
-        @input="
-          compose.update({
-            spoilerText: ($event.target as HTMLInputElement).value,
-          })
-        "
-      />
-    </div>
-
-    <textarea
-      ref="textarea"
-      :value="d.text"
-      class="compose__text"
-      :placeholder="t('compose.placeholder')"
-      rows="5"
-      data-testid="compose-text"
-      @input="
-        compose.update({ text: ($event.target as HTMLTextAreaElement).value })
-      "
-      @keydown.ctrl.enter.prevent="submit"
-      @keydown.meta.enter.prevent="submit"
-    />
-
-    <div v-if="media.length" class="compose__media">
-      <figure v-for="m in media" :key="m.id" class="compose__media-item">
-        <img :src="m.preview_url ?? m.url" :alt="m.description ?? ''" />
-        <input
-          class="compose__alt"
-          :value="m.description ?? ''"
-          :placeholder="t('compose.altPlaceholder')"
-          @change="setAlt(m, ($event.target as HTMLInputElement).value)"
-        />
+    <div class="compose__top">
+      <div v-if="banner" class="compose__banner">
+        <span>{{ banner }}</span>
         <button
           type="button"
-          class="compose__media-x"
-          :aria-label="t('compose.mediaRemove')"
-          @click="removeMedia(m)"
+          class="compose__banner-x"
+          @click="compose.reset()"
         >
-          <FontAwesomeIcon icon="xmark" />
+          {{ t("compose.cancelContext") }}
         </button>
-      </figure>
-    </div>
+      </div>
 
-    <PollBuilder
-      v-if="d.poll"
-      :poll="d.poll"
-      :max-options="limits.poll.maxOptions"
-      :max-characters-per-option="limits.poll.maxCharactersPerOption"
-      :min-expiration="limits.poll.minExpiration"
-      :max-expiration="limits.poll.maxExpiration"
-      @update="compose.update({ poll: $event })"
-      @remove="compose.update({ poll: null })"
-    />
-
-    <div class="compose__controls">
-      <select
-        :value="d.language ?? ''"
-        :aria-label="t('compose.language')"
-        @change="
-          compose.update({
-            language: ($event.target as HTMLSelectElement).value || null,
-          })
-        "
-      >
-        <option v-for="l in LANGUAGES" :key="l.code" :value="l.code">
-          {{ l.label.startsWith("compose.") ? t(l.label) : l.label }}
-        </option>
-      </select>
-      <select
-        :value="d.visibility"
-        :aria-label="t('compose.visibility')"
-        data-testid="visibility"
-        @change="
-          compose.update({
-            visibility: ($event.target as HTMLSelectElement)
-              .value as StatusVisibility,
-          })
-        "
-      >
-        <option v-for="v in VISIBILITIES" :key="v" :value="v">
-          {{ t(`compose.vis_${v}`) }}
-        </option>
-      </select>
-      <select
-        :value="d.contentType"
-        :aria-label="t('compose.contentType')"
-        @change="
-          compose.update({
-            contentType: ($event.target as HTMLSelectElement).value,
-          })
-        "
-      >
-        <option v-for="ct in CONTENT_TYPES" :key="ct" :value="ct">
-          {{ ct }}
-        </option>
-      </select>
-      <button
-        type="button"
-        class="compose__ctl"
-        :class="{ 'compose__ctl--on': d.cwEnabled }"
-        :aria-pressed="d.cwEnabled"
-        :aria-label="t('compose.cw')"
-        :title="t('compose.cw')"
-        @click="
-          compose.update({
-            cwEnabled: !d.cwEnabled,
-            spoilerText: d.spoilerText,
-          })
-        "
-      >
-        CW
-      </button>
-      <button
-        type="button"
-        class="compose__ctl"
-        :class="{ 'compose__ctl--on': d.sensitive }"
-        :aria-pressed="d.sensitive"
-        :aria-label="t('compose.sensitive')"
-        :title="t('compose.sensitive')"
-        @click="compose.update({ sensitive: !d.sensitive })"
-      >
-        <FontAwesomeIcon icon="triangle-exclamation" />
-      </button>
-      <label
-        class="compose__ctl compose__file"
-        :title="t('compose.addMedia')"
-        :aria-label="t('compose.addMedia')"
-      >
-        <FontAwesomeIcon icon="paperclip" />
+      <div v-if="d.cwEnabled" class="compose__cw">
         <input
-          type="file"
-          multiple
-          accept="image/*,video/*,audio/*"
-          class="compose__file-input"
-          data-testid="media-input"
-          @change="onFiles"
-        />
-      </label>
-      <button
-        type="button"
-        class="compose__ctl"
-        :title="t('compose.pollAdd')"
-        :aria-label="t('compose.pollAdd')"
-        :disabled="media.length > 0"
-        data-testid="poll-toggle"
-        @click="togglePoll"
-      >
-        <FontAwesomeIcon icon="square-poll-vertical" />
-      </button>
-      <span class="compose__emoji-wrap">
-        <button
-          type="button"
-          class="compose__ctl"
-          :title="t('compose.emoji')"
-          :aria-label="t('compose.emoji')"
-          @click="emojiOpen = !emojiOpen"
-        >
-          <FontAwesomeIcon :icon="['far', 'face-smile']" />
-        </button>
-        <EmojiPicker v-if="emojiOpen" @select="insertEmoji" />
-      </span>
-    </div>
-
-    <div class="compose__schedule">
-      <label>
-        {{ t("compose.scheduleAt") }}
-        <input
-          type="datetime-local"
-          :value="d.scheduledAt?.slice(0, 16) ?? ''"
-          :min="minLocal()"
-          @change="
+          :value="d.spoilerText"
+          class="compose__cw-input"
+          :placeholder="t('compose.cwPlaceholder')"
+          @input="
             compose.update({
-              scheduledAt: ($event.target as HTMLInputElement).value
-                ? new Date(
-                    ($event.target as HTMLInputElement).value,
-                  ).toISOString()
-                : null,
+              spoilerText: ($event.target as HTMLInputElement).value,
             })
           "
         />
-      </label>
-      <p v-if="schedulePast" class="compose__error">
-        {{ t("compose.schedulePast") }}
-      </p>
+      </div>
+
+      <textarea
+        ref="textarea"
+        :value="d.text"
+        class="compose__text"
+        :placeholder="t('compose.placeholder')"
+        rows="5"
+        data-testid="compose-text"
+        @input="
+          compose.update({ text: ($event.target as HTMLTextAreaElement).value })
+        "
+        @keydown.ctrl.enter.prevent="submit"
+        @keydown.meta.enter.prevent="submit"
+      />
+
+      <div v-if="media.length" class="compose__media">
+        <figure v-for="m in media" :key="m.id" class="compose__media-item">
+          <img :src="m.preview_url ?? m.url" :alt="m.description ?? ''" />
+          <input
+            class="compose__alt"
+            :value="m.description ?? ''"
+            :placeholder="t('compose.altPlaceholder')"
+            @change="setAlt(m, ($event.target as HTMLInputElement).value)"
+          />
+          <button
+            type="button"
+            class="compose__media-x"
+            :aria-label="t('compose.mediaRemove')"
+            @click="removeMedia(m)"
+          >
+            <FontAwesomeIcon icon="xmark" />
+          </button>
+        </figure>
+      </div>
+
+      <PollBuilder
+        v-if="d.poll"
+        :poll="d.poll"
+        :max-options="limits.poll.maxOptions"
+        :max-characters-per-option="limits.poll.maxCharactersPerOption"
+        :min-expiration="limits.poll.minExpiration"
+        :max-expiration="limits.poll.maxExpiration"
+        @update="compose.update({ poll: $event })"
+        @remove="compose.update({ poll: null })"
+      />
     </div>
 
-    <div class="compose__footer">
-      <span
-        class="compose__counter"
-        :class="{ 'compose__counter--over': overLimit }"
-        data-testid="counter"
-        >{{ charLen }} / {{ maxChars }}</span
-      >
-      <span v-if="overLimit" class="compose__over">{{
-        t("compose.overLimit")
-      }}</span>
+    <div class="compose__bottom">
+      <div class="compose__toolbar">
+        <label
+          class="compose__ctl"
+          :title="t('compose.addMedia')"
+          :aria-label="t('compose.addMedia')"
+        >
+          <FontAwesomeIcon icon="image" />
+          <input
+            type="file"
+            multiple
+            accept="image/*,video/*,audio/*"
+            class="compose__file-input"
+            data-testid="media-input"
+            @change="onFiles"
+          />
+        </label>
+        <button
+          type="button"
+          class="compose__ctl"
+          :class="{ 'compose__ctl--on': d.poll }"
+          :title="t('compose.pollAdd')"
+          :aria-label="t('compose.pollAdd')"
+          :disabled="media.length > 0"
+          data-testid="poll-toggle"
+          @click="togglePoll"
+        >
+          <FontAwesomeIcon icon="square-poll-vertical" />
+        </button>
+        <span class="compose__emoji-wrap">
+          <button
+            type="button"
+            class="compose__ctl"
+            :class="{ 'compose__ctl--on': emojiOpen }"
+            :title="t('compose.emoji')"
+            :aria-label="t('compose.emoji')"
+            @click="emojiOpen = !emojiOpen"
+          >
+            <FontAwesomeIcon :icon="['far', 'face-smile']" />
+          </button>
+          <EmojiPicker v-if="emojiOpen" @select="insertEmoji" />
+        </span>
+        <button
+          type="button"
+          class="compose__ctl compose__ctl--text"
+          :class="{ 'compose__ctl--on': d.cwEnabled }"
+          :aria-pressed="d.cwEnabled"
+          :aria-label="t('compose.cw')"
+          :title="t('compose.cw')"
+          @click="
+            compose.update({
+              cwEnabled: !d.cwEnabled,
+              spoilerText: d.spoilerText,
+            })
+          "
+        >
+          CW
+        </button>
+        <button
+          type="button"
+          class="compose__ctl"
+          :class="{ 'compose__ctl--on': d.sensitive }"
+          :aria-pressed="d.sensitive"
+          :aria-label="t('compose.sensitive')"
+          :title="t('compose.sensitive')"
+          @click="compose.update({ sensitive: !d.sensitive })"
+        >
+          <FontAwesomeIcon icon="triangle-exclamation" />
+        </button>
+        <button
+          type="button"
+          class="compose__ctl"
+          :class="{ 'compose__ctl--on': scheduleVisible }"
+          :aria-pressed="scheduleVisible"
+          :aria-label="t('compose.schedule')"
+          :title="t('compose.schedule')"
+          data-testid="schedule-toggle"
+          @click="toggleSchedule"
+        >
+          <FontAwesomeIcon icon="clock" />
+        </button>
+
+        <span
+          class="compose__counter"
+          :class="{ 'compose__counter--over': overLimit }"
+          data-testid="counter"
+          >{{ charLen }} / {{ maxChars }}</span
+        >
+        <span v-if="overLimit" class="compose__over">{{
+          t("compose.overLimit")
+        }}</span>
+        <Button
+          type="button"
+          :loading="posting"
+          :disabled="!canPost"
+          data-testid="post"
+          @click="submit"
+        >
+          <FontAwesomeIcon icon="paper-plane" />
+          {{ d.scheduledAt ? t("compose.schedule") : t("compose.post") }}
+        </Button>
+      </div>
+
+      <div class="compose__options">
+        <span class="compose__select">
+          <select
+            :value="d.visibility"
+            :aria-label="t('compose.visibility')"
+            :title="t('compose.visibility')"
+            data-testid="visibility"
+            @change="
+              compose.update({
+                visibility: ($event.target as HTMLSelectElement)
+                  .value as StatusVisibility,
+              })
+            "
+          >
+            <option v-for="v in VISIBILITIES" :key="v" :value="v">
+              {{ t(`compose.vis_${v}`) }}
+            </option>
+          </select>
+          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
+        </span>
+        <span class="compose__select">
+          <select
+            :value="d.language ?? ''"
+            :aria-label="t('compose.language')"
+            :title="t('compose.language')"
+            @change="
+              compose.update({
+                language: ($event.target as HTMLSelectElement).value || null,
+              })
+            "
+          >
+            <option v-for="l in LANGUAGES" :key="l.code" :value="l.code">
+              {{ l.label.startsWith("compose.") ? t(l.label) : l.label }}
+            </option>
+          </select>
+          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
+        </span>
+        <span class="compose__select">
+          <select
+            :value="d.contentType"
+            :aria-label="t('compose.contentType')"
+            :title="t('compose.contentType')"
+            @change="
+              compose.update({
+                contentType: ($event.target as HTMLSelectElement).value,
+              })
+            "
+          >
+            <option v-for="ct in CONTENT_TYPES" :key="ct" :value="ct">
+              {{ ct }}
+            </option>
+          </select>
+          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
+        </span>
+
+        <div v-if="scheduleVisible" class="compose__schedule">
+          <label>
+            {{ t("compose.scheduleAt") }}
+            <input
+              type="datetime-local"
+              :value="d.scheduledAt?.slice(0, 16) ?? ''"
+              :min="minLocal()"
+              @change="
+                compose.update({
+                  scheduledAt: ($event.target as HTMLInputElement).value
+                    ? new Date(
+                        ($event.target as HTMLInputElement).value,
+                      ).toISOString()
+                    : null,
+                })
+              "
+            />
+          </label>
+          <p v-if="schedulePast" class="compose__error">
+            {{ t("compose.schedulePast") }}
+          </p>
+        </div>
+      </div>
+
       <p v-if="done" class="compose__done">{{ done }}</p>
       <p v-if="error" class="compose__error">{{ error }}</p>
-      <Button
-        type="button"
-        :loading="posting"
-        :disabled="!canPost"
-        data-testid="post"
-        @click="submit"
-      >
-        <FontAwesomeIcon icon="paper-plane" />
-        {{ d.scheduledAt ? t("compose.schedule") : t("compose.post") }}
-      </Button>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* The box fills whatever height its host gives it — ComposePage
+   assigns a viewport fraction, embedded contexts (inline reply,
+   quote modal, thread) let it size to content. The top region takes
+   all free space and scrolls when it overflows, so the controls can
+   never be pushed or clipped out of view. */
 .compose {
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+.compose__top {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 .compose__banner {
   display: flex;
@@ -608,6 +722,10 @@ async function submit() {
   background: var(--bg);
   color: var(--text);
   resize: vertical;
+}
+.compose__text {
+  flex: 1 1 auto;
+  min-height: 4.5rem;
 }
 .compose__media {
   display: grid;
@@ -641,13 +759,108 @@ async function submit() {
   color: #fff;
   cursor: pointer;
 }
-.compose__controls {
+.compose__bottom {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.compose__toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+.compose__ctl {
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) ease,
+    color var(--duration-fast) ease;
+}
+.compose__ctl--text {
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+.compose__ctl:hover:not(:disabled) {
+  background: var(--bg-sunken);
+  color: var(--accent-link);
+}
+.compose__ctl--on {
+  background: var(--accent-soft);
+  color: var(--accent-link);
+}
+.compose__ctl:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.compose__file-input {
+  display: none;
+}
+.compose__emoji-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.compose__counter {
+  margin-inline-start: auto;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+.compose__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+.compose__select {
+  position: relative;
+  display: inline-flex;
   align-items: center;
 }
-.compose__controls select,
+.compose__select select {
+  appearance: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-muted);
+  padding: var(--space-1) var(--space-2);
+  padding-inline-end: 1.5rem;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  max-width: 10rem;
+}
+.compose__select select:hover {
+  background: var(--bg-sunken);
+}
+.compose__select-caret {
+  position: absolute;
+  inset-inline-end: var(--space-2);
+  pointer-events: none;
+  font-size: var(--text-xs);
+}
+.compose__schedule {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.compose__schedule label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
 .compose input[type="datetime-local"] {
   border: 1px solid var(--border);
   background: var(--bg);
@@ -655,39 +868,7 @@ async function submit() {
   border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   font: inherit;
-}
-.compose__ctl {
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
-  border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  color: var(--text);
-  font: inherit;
-}
-.compose__ctl--on {
-  border-color: var(--accent);
-  color: var(--accent-link);
-}
-.compose__file-input {
-  display: none;
-}
-.compose__emoji-wrap {
-  position: relative;
-}
-.compose__schedule {
   font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-.compose__footer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.compose__counter {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-  margin-left: auto;
 }
 .compose__counter--over,
 .compose__over,

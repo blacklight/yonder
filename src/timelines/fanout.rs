@@ -1,12 +1,18 @@
 //! The Redis home-feed index and its writers.
 //!
-//! Each home feed is a sorted set `{prefix}:timeline:home:{account_id}`
-//! whose members and scores are both status ids (scores double as the
-//! pagination cursor). Writers only ever `ZADD`/`ZREM` ids; every read
-//! re-validates through [`query`] + [`filter`], so the index can hold
-//! stale entries (unfollows, blocks, tombstones) without them leaking
-//! into a page — and a Redis outage degrades to plain SQL.
+//! Each home feed is a sorted set
+//! `{prefix}:timeline:home:v2:{account_id}` whose members are status
+//! ids and whose scores are `created_at` epoch microseconds — matching
+//! [`query`]'s `(created_at, id)` chronological order, so a remote
+//! status materialized long after its `published` time lands at its
+//! real position instead of atop the feed. (The `v2` key leaves
+//! id-scored `v1` indexes orphaned rather than mixing score domains.)
+//! Writers only ever `ZADD`/`ZREM` ids; every read re-validates
+//! through [`query`] + [`filter`], so the index can hold stale entries
+//! (unfollows, blocks, tombstones) without them leaking into a page —
+//! and a Redis outage degrades to plain SQL.
 
+use chrono::{DateTime, Utc};
 use redis::{pipe, AsyncCommands};
 use serde_json::json;
 use sqlx::PgPool;
@@ -22,9 +28,16 @@ use crate::{
 
 use super::{filter::Filters, query, scope::TimelineScope};
 
-/// `{prefix}:timeline:home:{account_id}`.
+/// `{prefix}:timeline:home:v2:{account_id}`.
 pub fn home_key(redis: &Redis, account_id: i64) -> String {
-    redis.key(&format!("timeline:home:{account_id}"))
+    redis.key(&format!("timeline:home:v2:{account_id}"))
+}
+
+/// The ZSET score for a status: `created_at` in epoch microseconds —
+/// exact in an `f64` until ~2255. Equal scores order by member, an
+/// approximation of the SQL `(created_at, id)` tiebreak.
+fn score(created_at: DateTime<Utc>) -> f64 {
+    created_at.timestamp_micros() as f64
 }
 
 /// Enqueue a `TimelineFanOut` for one status — best-effort by
@@ -135,13 +148,22 @@ pub async fn add(
     .fetch_all(db)
     .await?;
     followers.extend(tag_followers);
+    let Some(created_at) =
+        sqlx::query_scalar::<_, DateTime<Utc>>("SELECT created_at FROM statuses WHERE id = $1")
+            .bind(status_id)
+            .fetch_optional(db)
+            .await?
+    else {
+        return Ok(());
+    };
+    let score = score(created_at);
     let mut conn = redis.conn().await?;
     let trim_stop = -(config.home_max_entries.max(1) as isize) - 1;
     for chunk in followers.chunks(config.fanout_batch_size.max(1) as usize) {
         let mut pipe = pipe();
         for follower in chunk {
             let key = home_key(redis, *follower);
-            pipe.zadd(key.clone(), status_id, status_id)
+            pipe.zadd(key.clone(), status_id, score)
                 .zremrangebyrank(key, 0, trim_stop)
                 .ignore();
         }
@@ -204,11 +226,11 @@ pub async fn backfill(
     .bind(followee_id)
     .fetch_one(db)
     .await?;
-    let ids: Vec<i64> = sqlx::query_scalar(&format!(
-        "SELECT s.id FROM statuses s \
+    let rows: Vec<(i64, DateTime<Utc>)> = sqlx::query_as(&format!(
+        "SELECT s.id, s.created_at FROM statuses s \
          WHERE s.account_id = $1 AND NOT s.tombstone \
            AND s.visibility <> 'direct' {} \
-         ORDER BY s.id DESC LIMIT $2",
+         ORDER BY s.created_at DESC, s.id DESC LIMIT $2",
         if show_reblogs {
             ""
         } else {
@@ -219,14 +241,14 @@ pub async fn backfill(
     .bind(config.home_max_entries as i64)
     .fetch_all(db)
     .await?;
-    if ids.is_empty() {
+    if rows.is_empty() {
         return Ok(());
     }
     let key = home_key(redis, follower_id);
     let mut conn = redis.conn().await?;
     let mut pipe = pipe();
-    for id in &ids {
-        pipe.zadd(key.clone(), *id, *id).ignore();
+    for (id, created_at) in &rows {
+        pipe.zadd(key.clone(), *id, score(*created_at)).ignore();
     }
     pipe.zremrangebyrank(key, 0, -(config.home_max_entries.max(1) as isize) - 1)
         .ignore();
@@ -235,17 +257,33 @@ pub async fn backfill(
 }
 
 /// The `(max, min)` score bounds for `ZREVRANGEBYSCORE` /
-/// `ZRANGEBYSCORE` — `(` makes the cursor exclusive.
-fn score_window(page: &Page) -> (String, String) {
-    let max = page
-        .max_id
-        .map(|id| format!("({id}"))
-        .unwrap_or_else(|| "+inf".to_string());
-    let min = page
-        .since_id
-        .map(|id| format!("({id}"))
-        .unwrap_or_else(|| "-inf".to_string());
-    (max, min)
+/// `ZRANGEBYSCORE` — `(` makes the cursor exclusive. Cursor ids map to
+/// their `created_at` score; a vanished cursor row produces an empty
+/// window — the same end-of-pages answer [`query::fetch`] gives.
+async fn score_window(db: &PgPool, page: &Page) -> Result<(String, String)> {
+    async fn cursor_score(db: &PgPool, id: i64) -> Result<Option<f64>> {
+        let created_at =
+            sqlx::query_scalar::<_, DateTime<Utc>>("SELECT created_at FROM statuses WHERE id = $1")
+                .bind(id)
+                .fetch_optional(db)
+                .await?;
+        Ok(created_at.map(score))
+    }
+    let max = match page.max_id {
+        Some(id) => match cursor_score(db, id).await? {
+            Some(s) => format!("({s}"),
+            None => "-inf".to_string(),
+        },
+        None => "+inf".to_string(),
+    };
+    let min = match page.since_id {
+        Some(id) => match cursor_score(db, id).await? {
+            Some(s) => format!("({s}"),
+            None => "+inf".to_string(),
+        },
+        None => "-inf".to_string(),
+    };
+    Ok((max, min))
 }
 
 /// Read a home page: ZSET window → SQL re-validation → SQL top-up.
@@ -273,8 +311,8 @@ pub async fn read_home(
 
     let (ids, key_exists): (Vec<i64>, bool) = {
         let windowed = async {
+            let (max, min) = score_window(db, page).await?;
             let mut conn = redis.conn().await?;
-            let (max, min) = score_window(page);
             let key = home_key(redis, viewer);
             let ids: Vec<i64> = if page.since_id.is_some() {
                 // Newest-N-above-cursor, like the SQL ASC path.
@@ -336,15 +374,21 @@ async fn repopulate(
         viewer: Some(viewer),
         ..Default::default()
     };
-    let ids = query::home_feed_ids(db, &filters, config.rebuild_page_size as i64).await?;
-    if ids.is_empty() {
+    let page = Page {
+        max_id: None,
+        since_id: None,
+        limit: config.rebuild_page_size as i64,
+    };
+    let rows = query::fetch(db, &TimelineScope::Home, &filters, &page).await?;
+    if rows.is_empty() {
         return Ok(());
     }
     let key = home_key(redis, viewer);
     let mut conn = redis.conn().await?;
     let mut pipe = pipe();
-    for id in &ids {
-        pipe.zadd(key.clone(), *id, *id).ignore();
+    for row in &rows {
+        pipe.zadd(key.clone(), row.id, score(row.created_at))
+            .ignore();
     }
     pipe.zremrangebyrank(key, 0, -(config.home_max_entries.max(1) as isize) - 1)
         .ignore();

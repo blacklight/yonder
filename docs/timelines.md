@@ -69,11 +69,22 @@ fragments already use.
 Everything above is evaluated at read time — mutes, hides and settings
 changes take effect immediately, with no re-fan-out.
 
+## Ordering
+
+Every timeline scope orders by `(created_at, id)` — `created_at` keeps
+the remote `published` time on federated statuses (clamped to
+`now()`), so an object fetched long after publication sorts by its
+real date rather than surfacing on top because it was ingested last.
+`max_id`/`since_id` stay status ids on the wire; reads translate them
+to the cursor row's `(created_at, id)` position.
+
 ## Home fan-out
 
 Each home feed is a Redis sorted set
-`{prefix}:timeline:home:{account_id}` (member = score = `statuses.id`),
-maintained by `TimelineFanOut` jobs:
+`{prefix}:timeline:home:v2:{account_id}` (member = `statuses.id`,
+score = `created_at` epoch microseconds — the `v2` key replaced
+id-scored indexes so score domains never mix), maintained by
+`TimelineFanOut` jobs:
 
 - `{ "status_id": N }` — `ZADD` into every local follower's index
   (author included), then `ZREMRANGEBYRANK` trims to

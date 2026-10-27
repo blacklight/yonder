@@ -108,8 +108,9 @@ pub async fn ancestors(db: &PgPool, status_id: i64, viewer: Option<i64>) -> Resu
 }
 
 /// The visible replies in `status_id`'s subtree, flat and
-/// chronological (`id ASC`). Replies under invisible parents are
-/// pruned with them.
+/// chronological (`created_at` then `id` — remote replies keep their
+/// `published` time, not ingestion order). Replies under invisible
+/// parents are pruned with them.
 pub async fn descendants(
     db: &PgPool,
     status_id: i64,
@@ -128,7 +129,7 @@ pub async fn descendants(
          ) \
          SELECT {cols} FROM down \
          JOIN statuses s ON s.id = down.id \
-         ORDER BY s.id LIMIT $4",
+         ORDER BY s.created_at, s.id LIMIT $4",
         pred = visible_sql(viewer),
         cols = s_cols(),
     );

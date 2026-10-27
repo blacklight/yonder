@@ -35,26 +35,31 @@ async fn test_state(tweak: impl FnOnce(&mut Config)) -> Option<Arc<AppState>> {
 }
 
 /// Insert account + user + a valid access token; returns the bearer
-/// token. `token_hash` is `hex(sha256(token))` — the epic 07 format.
-async fn seed_token(state: &AppState) -> String {
-    sqlx::query(
+/// token and the seeded `users.id`. `token_hash` is
+/// `hex(sha256(token))` — the epic 07 format.
+async fn seed_token(state: &AppState) -> (String, i64) {
+    let account_id: i64 = sqlx::query_scalar(
         "INSERT INTO accounts (username, actor_id)
-         VALUES ('alice', 'https://yonder.test/ap/actor/alice')",
+         VALUES ('alice', 'https://yonder.test/ap/actor/alice')
+         RETURNING id",
     )
-    .execute(&state.db)
+    .fetch_one(&state.db)
     .await
     .expect("insert account");
-    sqlx::query("INSERT INTO users (account_id) VALUES (1)")
-        .execute(&state.db)
-        .await
-        .expect("insert user");
+    let user_id: i64 =
+        sqlx::query_scalar("INSERT INTO users (account_id) VALUES ($1) RETURNING id")
+            .bind(account_id)
+            .fetch_one(&state.db)
+            .await
+            .expect("insert user");
     let token = "test-access-token";
-    sqlx::query("INSERT INTO oauth_access_tokens (user_id, token_hash) VALUES (1, $1)")
+    sqlx::query("INSERT INTO oauth_access_tokens (user_id, token_hash) VALUES ($1, $2)")
+        .bind(user_id)
         .bind(token_hash(token))
         .execute(&state.db)
         .await
         .expect("insert token");
-    token.to_string()
+    (token.to_string(), user_id)
 }
 
 async fn get(app: &axum::Router, uri: &str) -> axum::response::Response {
@@ -137,7 +142,7 @@ async fn invalid_bearer_rejected_with_mastodon_shape() {
     assert_eq!(body_json(resp).await, json!({"error": "unauthorized"}));
 
     // Valid token → 200, AuthContext resolved to the seeded user.
-    let token = seed_token(&state).await;
+    let (token, _user_id) = seed_token(&state).await;
     let resp = app
         .clone()
         .oneshot(
@@ -278,7 +283,7 @@ async fn rate_limit_authenticated_override() {
     else {
         return;
     };
-    let token = seed_token(&state).await;
+    let (token, _user_id) = seed_token(&state).await;
 
     let app = axum::Router::new()
         .route("/probe", axum::routing::get(|| async { "ok" }))
@@ -442,7 +447,7 @@ async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
     let Some(state) = test_state(|_| {}).await else {
         return;
     };
-    let token = seed_token(&state).await;
+    let (token, user_id) = seed_token(&state).await;
     let addr = serve_ephemeral(state.clone()).await;
 
     // Invalid token → HTTP 401, no upgrade.
@@ -466,9 +471,11 @@ async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(250)).await;
-    // user_id = 1 (first seeded user); another user's events don't match.
+    // Another user's events don't match the `user:{uid}` channel.
     state.bus.publish("user:9", "notification", json!({"x": 1}));
-    state.bus.publish("user:1", "notification", json!({"x": 2}));
+    state
+        .bus
+        .publish(format!("user:{user_id}"), "notification", json!({"x": 2}));
     let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
         .expect("user event timeout")
@@ -489,7 +496,7 @@ async fn websocket_pre_subscribes_via_query_and_folds_params() {
     let Some(state) = test_state(|_| {}).await else {
         return;
     };
-    let token = seed_token(&state).await;
+    let (token, user_id) = seed_token(&state).await;
     let addr = serve_ephemeral(state.clone()).await;
 
     // `?stream=` requires auth for private streams even on the
@@ -506,7 +513,9 @@ async fn websocket_pre_subscribes_via_query_and_folds_params() {
     .await
     .expect("websocket connect with ?stream=user");
     tokio::time::sleep(Duration::from_millis(250)).await;
-    state.bus.publish("user:1", "update", json!({"x": 1}));
+    state
+        .bus
+        .publish(format!("user:{user_id}"), "update", json!({"x": 1}));
     let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
         .await
         .expect("user event timeout")
@@ -552,7 +561,7 @@ async fn database_outage_is_500_not_401() {
     let Some(state) = test_state(|_| {}).await else {
         return;
     };
-    let token = seed_token(&state).await;
+    let (token, _user_id) = seed_token(&state).await;
 
     async fn protected(auth: http::middleware::auth::AuthContext) -> String {
         format!("user {}", auth.user_id)
@@ -602,7 +611,7 @@ async fn forbidden_names_the_gate() {
         return;
     };
     let app = http::build_router(state.clone());
-    let token = seed_token(&state).await;
+    let (token, _user_id) = seed_token(&state).await;
 
     let post_status = |token: &str| {
         let app = app.clone();
@@ -685,7 +694,7 @@ async fn authentication_bucket_scoped_to_auth_endpoints() {
     // A signed-in client gets `authenticated_limit` (3) instead —
     // verify_credentials on every app boot no longer trips the
     // anti-brute-force ceiling.
-    let token = seed_token(&state).await;
+    let (token, _user_id) = seed_token(&state).await;
     for i in 0..3 {
         let resp = app
             .clone()

@@ -153,9 +153,11 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
     }
     let mut tx = core.db.begin().await?;
     let boost_id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO statuses (account_id, content, content_html, content_type, visibility, \
-             local, reblog_of_id, uri, url) \
-         VALUES ($1,'','','text/plain','public',false,$2,$3,$4) \
+        "INSERT INTO statuses (id, account_id, content, content_html, content_type, visibility, \
+             local, reblog_of_id, uri, url, created_at) \
+         VALUES (timestamp_id('statuses', LEAST(COALESCE($5, now()), now())), \
+                 $1,'','','text/plain','public',false,$2,$3,$4, \
+                 LEAST(COALESCE($5, now()), now())) \
          ON CONFLICT (account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL \
          DO NOTHING RETURNING id",
     )
@@ -167,6 +169,7 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
         Some(activity.id.clone())
     })
     .bind(&uri)
+    .bind(activity.published)
     .fetch_optional(&mut *tx)
     .await?;
     if boost_id.is_some() {

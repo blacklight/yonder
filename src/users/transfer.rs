@@ -472,7 +472,7 @@ async fn build_archive(
     let statuses = sqlx::query(
         "SELECT id, uri, content, spoiler_text, sensitive, language, visibility, \
                 created_at, original_created_at FROM statuses \
-         WHERE account_id = $1 AND NOT tombstone ORDER BY id",
+         WHERE account_id = $1 AND NOT tombstone ORDER BY created_at, id",
     )
     .bind(account_id)
     .fetch_all(db)
@@ -1681,9 +1681,10 @@ async fn import_post(ctx: &JobContext, rel: Ctx<'_>, account_id: i64, item: &Val
 
     // Dedupe — one imported copy per source object.
     let status_id: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO statuses (account_id, content, spoiler_text, sensitive, language, \
+        "INSERT INTO statuses (id, account_id, content, spoiler_text, sensitive, language, \
                                visibility, local, original_id, original_created_at, created_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8, $8) \
+         VALUES (timestamp_id('statuses', COALESCE($8, now())), \
+                 $1, $2, $3, $4, $5, $6, true, $7, $8, $8) \
          ON CONFLICT (account_id, original_id) WHERE original_id IS NOT NULL DO NOTHING \
          RETURNING id",
     )

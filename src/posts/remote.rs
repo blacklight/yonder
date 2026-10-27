@@ -296,11 +296,12 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // Upsert the statuses row (ON CONFLICT uri → update). `edited_at`
     // keeps its stored value when the Update carries no `updated`.
     let status_id: i64 = sqlx::query_scalar(
-        "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
+        "INSERT INTO statuses (id, account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
              in_reply_to_account_id, quote_of_id, quote_uri, created_at, edited_at) \
-         VALUES ($1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15, \
-                 COALESCE($12, now()), $13) \
+         VALUES (timestamp_id('statuses', LEAST(COALESCE($12, now()), now())), \
+                 $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15, \
+                 LEAST(COALESCE($12, now()), now()), $13) \
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
              language = EXCLUDED.language, visibility = EXCLUDED.visibility, \

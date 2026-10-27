@@ -223,9 +223,22 @@ async fn insert_remote_status(
     content: &str,
     visibility: &str,
 ) -> i64 {
+    insert_remote_status_at(db, account_id, content, visibility, chrono::Utc::now()).await
+}
+
+/// A remote status with an explicit `created_at` — the shape a
+/// late-fetched object materializes with (`published`, not ingest
+/// time, in the column timelines order by).
+async fn insert_remote_status_at(
+    db: &PgPool,
+    account_id: i64,
+    content: &str,
+    visibility: &str,
+    created_at: chrono::DateTime<chrono::Utc>,
+) -> i64 {
     sqlx::query_scalar(
-        "INSERT INTO statuses (account_id, content, visibility, local, uri) \
-         VALUES ($1, $2, $3, false, $4) RETURNING id",
+        "INSERT INTO statuses (account_id, content, visibility, local, uri, created_at) \
+         VALUES ($1, $2, $3, false, $4, $5) RETURNING id",
     )
     .bind(account_id)
     .bind(content)
@@ -234,6 +247,7 @@ async fn insert_remote_status(
         "https://remote.example/statuses/{}",
         uuid::Uuid::new_v4()
     ))
+    .bind(created_at)
     .fetch_one(db)
     .await
     .unwrap()
@@ -1259,4 +1273,89 @@ async fn cold_index_repopulates_and_trims() {
     let index = fanout::index_ids(&env.state.redis, bob_id).await.unwrap();
     assert_eq!(index.len(), 5, "rebuild must trim to home_max_entries");
     assert_eq!(index[0], *posted.last().unwrap(), "newest first");
+}
+
+// ---------------------------------------------------------------------------
+// Chronological ordering — remote objects sort by `published`
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn late_fetched_remote_sorts_by_published_not_ingestion() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let alice_id = account_id(&env.state.db, "alice").await;
+    // Two fresh local posts — newer than the remote status by
+    // `published`, older than it by insertion id.
+    let fresh1 = post(&env.app, &alice, json!({"status": "fresh one"}))
+        .await
+        .parse::<i64>()
+        .unwrap();
+    let fresh2 = post(&env.app, &alice, json!({"status": "fresh two"}))
+        .await
+        .parse::<i64>()
+        .unwrap();
+    // A remote status published days ago but materialized just now —
+    // like one fetched through a URL search; it gets the *largest* id,
+    // which used to put it on top of every timeline.
+    let remote = insert_remote_account(&env.state.db, "old", "remote.example").await;
+    let stale = insert_remote_status_at(
+        &env.state.db,
+        remote,
+        "days-old remote",
+        "public",
+        chrono::Utc::now() - chrono::Duration::days(3),
+    )
+    .await;
+    assert!(stale > fresh2, "the late insert must hold the biggest id");
+
+    // Federated: `stale` sorts at its real (published) position — below
+    // the fresh posts, not on top.
+    let (_, _, ids) = timeline_ids(&env.app, "/api/v1/timelines/public", None).await;
+    let pos = |ids: &[i64], id| ids.iter().position(|x| *x == id).unwrap_or(usize::MAX);
+    assert!(ids.contains(&stale) && ids.contains(&fresh2), "{ids:?}");
+    assert!(pos(&ids, stale) > pos(&ids, fresh2), "{ids:?}");
+
+    // `max_id` on the newest local post still reaches `stale` even
+    // though stale.id > max_id — the cursor translates to the
+    // `(created_at, id)` position, not raw id order.
+    let (_, _, ids) = timeline_ids(
+        &env.app,
+        &format!("/api/v1/timelines/public?max_id={fresh2}"),
+        None,
+    )
+    .await;
+    assert!(
+        ids.contains(&stale),
+        "older page must include the backdated status: {ids:?}"
+    );
+    assert!(!ids.contains(&fresh2));
+
+    // `since_id` on `stale` returns everything published after it.
+    let (_, _, ids) = timeline_ids(
+        &env.app,
+        &format!("/api/v1/timelines/public?since_id={stale}"),
+        None,
+    )
+    .await;
+    assert!(ids.contains(&fresh1) && ids.contains(&fresh2), "{ids:?}");
+    assert!(!ids.contains(&stale));
+
+    // Home: alice follows the remote author and the stale post fans
+    // out — its `created_at` score lands it below the fresh posts in
+    // the Redis index too.
+    sqlx::query("INSERT INTO follows (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(alice_id)
+        .bind(remote)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    run_fanout(&env.state, fresh1).await;
+    run_fanout(&env.state, fresh2).await;
+    run_fanout(&env.state, stale).await;
+    let (_, _, ids) = timeline_ids(&env.app, "/api/v1/timelines/home", Some(&alice)).await;
+    assert!(ids.contains(&stale) && ids.contains(&fresh2), "{ids:?}");
+    assert!(pos(&ids, stale) > pos(&ids, fresh2), "{ids:?}");
 }

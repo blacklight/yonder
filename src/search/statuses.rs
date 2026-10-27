@@ -128,7 +128,7 @@ pub async fn search(
         "SELECT {} FROM statuses s \
          JOIN accounts a ON a.id = s.account_id \
          LEFT JOIN users u ON u.account_id = a.id \
-         WHERE {} ORDER BY s.id DESC LIMIT {limit} OFFSET {offset}",
+         WHERE {} ORDER BY s.created_at DESC, s.id DESC LIMIT {limit} OFFSET {offset}",
         select_cols(),
         clauses.join(" AND ")
     );

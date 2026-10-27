@@ -1,9 +1,14 @@
 //! Paginated timeline reads — the SQL half of every scope.
 //!
-//! Cursor semantics follow [`crate::http::paginate`]: `max_id` pages
-//! older (`s.id < max`), `min_id`/`since_id` pages newer (`s.id >
-//! since`). A `since_id` page runs `ASC` then reverses so the wire
-//! order is always newest-first, matching Mastodon.
+//! Chronological order is `(created_at, id)`: `created_at` carries the
+//! remote `published` time on federated statuses, so a late-fetched
+//! object sorts by its real date rather than jumping to the top just
+//! because it was ingested last. Cursor semantics follow
+//! [`crate::http::paginate`]: `max_id`/`since_id` stay status ids on
+//! the wire and are translated to the cursor row's `(created_at, id)`
+//! by a scalar subquery (`max_id` pages older, `since_id` newer). A
+//! `since_id` page runs `ASC` then reverses so the wire order is
+//! always newest-first, matching Mastodon.
 
 use sqlx::{postgres::PgArguments, query::Query, PgPool};
 
@@ -59,22 +64,31 @@ pub async fn fetch(
         extra.push(bind);
         format!("${}", wh.binds.len() + extra.len())
     };
+    // Cursor rows translate an id back to its `(created_at, id)`
+    // position; a vanished cursor row (hard-deleted status) yields an
+    // empty page — the safe end of either pagination direction.
     if let Some(max_id) = page.max_id {
         let p = alloc(Bind::I64(max_id));
-        suffix.push_str(&format!(" AND s.id < {p}"));
+        suffix.push_str(&format!(
+            " AND (s.created_at, s.id) < \
+             (SELECT c.created_at, c.id FROM statuses c WHERE c.id = {p})"
+        ));
     }
     let asc = page.since_id.is_some();
     if let Some(since_id) = page.since_id {
         let p = alloc(Bind::I64(since_id));
-        suffix.push_str(&format!(" AND s.id > {p}"));
+        suffix.push_str(&format!(
+            " AND (s.created_at, s.id) > \
+             (SELECT c.created_at, c.id FROM statuses c WHERE c.id = {p})"
+        ));
     }
+    let dir = if asc { "ASC" } else { "DESC" };
     let limit = alloc(Bind::I64(page.limit));
     let sql = format!(
         "SELECT {} FROM statuses s JOIN accounts a ON a.id = s.account_id \
-         WHERE {}{suffix} ORDER BY s.id {} LIMIT {limit}",
+         WHERE {}{suffix} ORDER BY s.created_at {dir}, s.id {dir} LIMIT {limit}",
         select_cols(),
         wh.sql,
-        if asc { "ASC" } else { "DESC" },
     );
     let rows = bind_all(sqlx::query(&sql), wh.binds.iter().chain(extra.iter()))
         .fetch_all(db)
@@ -118,21 +132,6 @@ pub async fn fetch_by_ids(
     // (ids arrive newest-first by construction).
     statuses.sort_by_key(|s| ids.iter().position(|id| *id == s.id).unwrap_or(usize::MAX));
     Ok(statuses)
-}
-
-/// The newest `limit` home-feed ids for `filters.viewer` — the SQL
-/// source `fanout::repopulate` rebuilds a cold index from.
-pub async fn home_feed_ids(db: &PgPool, filters: &Filters, limit: i64) -> Result<Vec<i64>> {
-    let page = Page {
-        max_id: None,
-        since_id: None,
-        limit,
-    };
-    Ok(fetch(db, &TimelineScope::Home, filters, &page)
-        .await?
-        .into_iter()
-        .map(|s| s.id)
-        .collect())
 }
 
 /// The status ids of a page, fed to `paginate::headers` as cursors.

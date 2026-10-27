@@ -261,26 +261,24 @@ pub async fn consume_pending_login(
 }
 
 /// Count a failed second-factor attempt against the pending login in a
-/// single Lua round-trip — the counter increment, budget check and
-/// TTL-preserving rewrite are atomic, so concurrent failures can't
-/// undercount. The entry's original TTL is kept (a failure budget must
-/// not extend the login's lifetime). At [`PENDING_LOGIN_MAX_ATTEMPTS`]
-/// the entry is dropped; the client must re-authenticate the password.
+/// single Lua round-trip — the increment, budget check and TTL-sync
+/// are atomic, so concurrent failures can't undercount. The counter
+/// lives in a sibling `{key}:attempts` key rather than inside the
+/// payload: the payload's 64-bit snowflake ids would lose precision
+/// through cjson's double round-trip. At [`PENDING_LOGIN_MAX_ATTEMPTS`]
+/// both keys drop; the client must re-authenticate the password.
 /// Returns `true` when the pending login is dead (or never existed).
 pub async fn fail_pending_login(state: &AppState, mfa_token: &str) -> Result<bool> {
     static SCRIPT: std::sync::LazyLock<redis::Script> = std::sync::LazyLock::new(|| {
         redis::Script::new(
-            "local v = redis.call('GET', KEYS[1])\n\
-             if not v then return 1 end\n\
-             local p = cjson.decode(v)\n\
-             p.attempts = p.attempts + 1\n\
-             if p.attempts >= tonumber(ARGV[1]) then\n\
-             \tredis.call('DEL', KEYS[1])\n\
+            "local ttl = redis.call('PTTL', KEYS[1])\n\
+             if ttl < 0 then return 1 end\n\
+             local n = redis.call('INCR', KEYS[2])\n\
+             if n >= tonumber(ARGV[1]) then\n\
+             \tredis.call('DEL', KEYS[1], KEYS[2])\n\
              \treturn 1\n\
              end\n\
-             local ttl = redis.call('PTTL', KEYS[1])\n\
-             if ttl < 0 then ttl = 1 end\n\
-             redis.call('SET', KEYS[1], cjson.encode(p), 'PX', ttl)\n\
+             redis.call('PEXPIRE', KEYS[2], ttl)\n\
              return 0",
         )
     });
@@ -291,7 +289,8 @@ pub async fn fail_pending_login(state: &AppState, mfa_token: &str) -> Result<boo
     ));
     let dead: bool = SCRIPT
         .clone()
-        .key(key)
+        .key(&key)
+        .key(format!("{key}:attempts"))
         .arg(PENDING_LOGIN_MAX_ATTEMPTS)
         .invoke_async(&mut *conn)
         .await?;

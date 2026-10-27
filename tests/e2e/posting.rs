@@ -14,14 +14,15 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
+use redis::AsyncCommands;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 use yonder::{
     activitypub,
     config::{Config, RateLimit},
     http::{build_router, AppState},
-    jobs::{JobContext, JobHandler},
-    posts::{self, jobs::StatusDeletionJob, remote, PostContext},
+    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
+    posts::{self, jobs::StatusDeletionJob, preview::FetchLinkPreviewJob, remote, PostContext},
 };
 
 use crate::harness;
@@ -620,6 +621,255 @@ async fn remote_note_materializes() {
     .await
     .unwrap();
     assert!(!html.contains("hacked"), "spoofed update must be dropped");
+}
+
+/// Drain every pending entry from the `default` job stream and return
+/// the decoded envelopes — the test stands in for the worker.
+async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
+    let key = env.state.redis.key("queue:default");
+    let mut conn = env.state.redis.conn().await.unwrap();
+    let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
+    let mut out = Vec::new();
+    for entry in reply.ids {
+        if let Some(v) = entry.map.get("job") {
+            let body: String = redis::from_redis_value(v).unwrap();
+            out.push(queue::decode(&body).unwrap());
+        }
+        let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
+    }
+    out
+}
+
+/// A remote `Create` for a Note — `object_extra` merges content,
+/// attachments and the like into the baseline object.
+fn preview_create(n: i64, object_extra: Value) -> pubby_sdk::Activity {
+    let mut object = json!({
+        "id": format!("https://remote.test/objects/prev-{n}"),
+        "type": "Note",
+        "attributedTo": "https://remote.test/users/eve",
+        "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        "published": "2025-01-01T00:00:00Z",
+    });
+    object
+        .as_object_mut()
+        .unwrap()
+        .extend(object_extra.as_object().unwrap().clone());
+    pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/prev-{n}"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object,
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    }
+}
+
+/// Remote materialization is the remote equivalent of local
+/// create/edit — a link-carrying Note must enqueue `FetchLinkPreview`
+/// or its `card` never reaches the timeline.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_note_link_preview_enqueue() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    // A remote Note carrying an external URL enqueues the preview job.
+    let create = preview_create(
+        1,
+        json!({"content": "<p>see https://example.com/article for details</p>"}),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let jobs = drain_default_queue(&env).await;
+    let previews: Vec<&JobEnvelope> = jobs
+        .iter()
+        .filter(|j| j.kind == JobKind::FetchLinkPreview)
+        .collect();
+    assert_eq!(previews.len(), 1, "{jobs:?}");
+    assert_eq!(
+        previews[0].payload["status_id"].as_i64().unwrap(),
+        status_id
+    );
+
+    // A redelivered Create changed nothing — no second enqueue.
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert!(
+        !jobs.iter().any(|j| j.kind == JobKind::FetchLinkPreview),
+        "{jobs:?}"
+    );
+
+    // An accepted Update re-runs the fetch (content may carry a new
+    // URL) — `updated` must postdate the stored row's timestamp.
+    let update = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/prev-1u"),
+        activity_type: "Update".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!({
+            "id": "https://remote.test/objects/prev-1",
+            "type": "Note",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": "<p>see https://example.com/article now</p>",
+            "updated": "2100-01-01T00:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(remote::handle(&core, &update, &update.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::FetchLinkPreview)
+            .count(),
+        1,
+        "{jobs:?}"
+    );
+
+    // Media-attached remote statuses never enqueue (card suppressed).
+    let create = preview_create(
+        2,
+        json!({
+            "content": "<p>see https://example.com/pic</p>",
+            "attachment": [{
+                "type": "Document",
+                "url": "https://remote.test/media/1.png",
+                "mediaType": "image/png",
+            }],
+        }),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert!(
+        !jobs.iter().any(|j| j.kind == JobKind::FetchLinkPreview),
+        "{jobs:?}"
+    );
+
+    // URL-free remote statuses enqueue nothing either.
+    let create = preview_create(3, json!({"content": "<p>no links here</p>"}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert!(
+        !jobs.iter().any(|j| j.kind == JobKind::FetchLinkPreview),
+        "{jobs:?}"
+    );
+}
+
+/// A stale `preview_cards` row for the status — what a re-run must
+/// reconcile away.
+async fn seed_card(db: &sqlx::PgPool, status_id: i64) {
+    sqlx::query(
+        "INSERT INTO preview_cards (status_id, url, title) \
+         VALUES ($1, 'https://example.com/old', 'Old')",
+    )
+    .bind(status_id)
+    .execute(db)
+    .await
+    .unwrap();
+}
+
+async fn card_count(db: &sqlx::PgPool, status_id: i64) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT count(*) FROM preview_cards WHERE status_id = $1")
+        .bind(status_id)
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
+/// Job re-runs converge `preview_cards` to the status' current
+/// eligibility: media or a dropped URL clears the card, a superseded
+/// first-URL is replaced — never left stale.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link_preview_job_converges_cards() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let job = FetchLinkPreviewJob::new(env.state.ap.clone());
+    let jctx = JobContext {
+        db: env.state.db.clone(),
+        redis: env.state.redis.clone(),
+        config: env.state.config().clone(),
+        media: env.state.media.clone(),
+    };
+
+    // A media-attached status that somehow holds a card loses it.
+    let create = preview_create(
+        4,
+        json!({
+            "content": "<p>see https://example.com/pic</p>",
+            "attachment": [{
+                "type": "Document",
+                "url": "https://remote.test/media/2.png",
+                "mediaType": "image/png",
+            }],
+        }),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let media_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-4'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    seed_card(&env.state.db, media_id).await;
+    job.run(&jctx, &json!({"status_id": media_id}))
+        .await
+        .unwrap();
+    assert_eq!(card_count(&env.state.db, media_id).await, 0);
+
+    // A URL-less status likewise.
+    let create = preview_create(5, json!({"content": "<p>no links here</p>"}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let bare_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-5'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    seed_card(&env.state.db, bare_id).await;
+    job.run(&jctx, &json!({"status_id": bare_id}))
+        .await
+        .unwrap();
+    assert_eq!(card_count(&env.state.db, bare_id).await, 0);
+
+    // A card for a superseded first-URL is dropped. The fetch target
+    // (127.0.0.1:9, discard port) refuses instantly — the reconcile
+    // already ran before the fetch fails.
+    let create = preview_create(6, json!({"content": "<p>see http://127.0.0.1:9/x</p>"}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let link_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-6'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    seed_card(&env.state.db, link_id).await;
+    job.run(&jctx, &json!({"status_id": link_id}))
+        .await
+        .unwrap();
+    let urls: Vec<String> =
+        sqlx::query_scalar("SELECT url FROM preview_cards WHERE status_id = $1")
+            .bind(link_id)
+            .fetch_all(&env.state.db)
+            .await
+            .unwrap();
+    assert!(
+        !urls.iter().any(|u| u == "https://example.com/old"),
+        "stale card must be reconciled: {urls:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

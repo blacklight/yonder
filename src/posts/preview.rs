@@ -9,6 +9,12 @@
 //! in Redis for `content.link_preview_cache_hours`. Every failure
 //! acks (`Ok(())`) — a failed preview leaves no card and never
 //! retry-storms.
+//!
+//! The enqueue happens everywhere a status is written: local create
+//! and edit ([`super::create`]), scheduled publish
+//! ([`super::scheduled`]) and remote materialization
+//! ([`super::remote`]). Re-runs converge `preview_cards` to the
+//! status' current eligibility — a stale card is worse than none.
 
 use std::collections::HashMap;
 
@@ -143,19 +149,27 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
     let Some(status) = super::load(&ctx.db, status_id).await? else {
         return Ok(());
     };
-    // Media-attached statuses never get a card; a card already present
-    // (edit re-run) short-circuits.
+    // Media-attached statuses never get a card. Re-runs (edits, remote
+    // Updates) converge the stored card to the status' current
+    // eligibility — disqualifying states delete rather than linger.
     let has_media: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM media_attachments WHERE status_id = $1)")
             .bind(status_id)
             .fetch_one(&ctx.db)
             .await?;
     if has_media {
+        // Media disqualifies the card — a re-run after an edit added
+        // attachments clears whatever a previous run stored.
+        clear_cards(&ctx.db, status_id, None).await?;
         return Ok(());
     }
     let Some(url) = extract_first_url(ctx, &status.content) else {
+        clear_cards(&ctx.db, status_id, None).await?;
         return Ok(());
     };
+    // A re-run after an edit/remote Update may have superseded the
+    // first-URL — cards keyed to a different URL are stale.
+    clear_cards(&ctx.db, status_id, Some(&url)).await?;
 
     let cache = crate::cache::RedisCache::new(ctx.redis.clone());
     let ttl =
@@ -293,6 +307,23 @@ async fn fetch_image(
     let ct = crate::media::images::content_type_for_key(&key).unwrap_or("application/octet-stream");
     ctx.media.put(&key, &response.body, ct).await.ok()?;
     Some(key)
+}
+
+/// Converge `preview_cards` to the current run's verdict: `None`
+/// clears every card for the status (media attached / no eligible
+/// URL), `Some(url)` keeps only the row for the URL this run
+/// extracted. Only the disqualifying paths call this — fetch
+/// failures keep the previous card.
+async fn clear_cards(db: &sqlx::PgPool, status_id: i64, keep_url: Option<&str>) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM preview_cards \
+         WHERE status_id = $1 AND ($2::text IS NULL OR url <> $2)",
+    )
+    .bind(status_id)
+    .bind(keep_url)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Upsert the `preview_cards` row (`UNIQUE (status_id, url)`).

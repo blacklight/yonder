@@ -94,7 +94,11 @@ pubby's SSRF-guarded client, parses Open Graph (with `twitter:` /
 `<title>` fallbacks), stores a `previews/` card image, and upserts
 `preview_cards`. Metadata caches in Redis for
 `content.link_preview_cache_hours`. Fetch failures ack — never a
-retry storm.
+retry storm. The job is enqueued wherever a status is written: local
+create/edit, scheduled publish, and remote materialization — a
+fresh `Create` or an accepted `Update` re-runs it, and re-runs
+converge `preview_cards` to the status' current eligibility (media
+added or URL removed clears the card, a changed URL replaces it).
 
 ## ActivityPub
 

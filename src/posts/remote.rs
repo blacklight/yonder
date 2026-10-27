@@ -545,6 +545,23 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         tracing::warn!(status_id, error = %e, "remote media fetch enqueue failed");
     }
 
+    // Link previews get the same `FetchLinkPreview` enqueue locals get
+    // on create/edit — materialization is the remote equivalent. Only
+    // fresh rows and accepted Updates enqueue: a redelivered Create
+    // changed nothing (a stale Update returned before this point).
+    if is_new || activity.activity_type == "Update" {
+        if let Ok(Some(status)) = super::load(&core.db, status_id).await {
+            let media_ids: Vec<i64> =
+                sqlx::query_scalar("SELECT id FROM media_attachments WHERE status_id = $1")
+                    .bind(status_id)
+                    .fetch_all(&core.db)
+                    .await
+                    .unwrap_or_default();
+            let ctx = crate::timelines::stream::post_ctx_for_core(core);
+            super::preview::enqueue(&ctx, &status, &media_ids).await;
+        }
+    }
+
     // Late-arriving quoted posts back-fill pending quotes — the
     // counter bump applies to *this* status only (it is the quoted
     // target); the pending quoters point at it via quote_uri.

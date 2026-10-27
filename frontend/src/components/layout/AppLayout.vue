@@ -823,3 +823,13 @@ function clearSearch(which: "sidebar" | "aside") {
   }
 }
 </style>
+
+<style>
+/* Always counter-compensate horizontal padding for timelines on mobile
+   (app-like experience) */
+@media (max-width: 767px) {
+  .timeline {
+    margin: 0 calc(var(--space-4) * -1);
+  }
+}
+</style>

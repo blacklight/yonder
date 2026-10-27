@@ -10,6 +10,7 @@
   --text-muted: #1e2c27;
   --text-faint: #5c6a66;
   --border: #d8dfdc;
+  --border-dim: #e6e6e6;
   /* Accent trio + --accent-link, the accent nudged to >=4.5:1
      against --bg for links and accent-colored text. Defaults come
      from the logo palette (teal-500/-400 between #0d9488 and
@@ -66,6 +67,7 @@
   --text-muted: #e0ece8;
   --text-faint: #b8bfbc;
   --border: #3c4a46;
+  --border-dim: #2e3e3b;
   --accent: #2dd4bf;
   --accent-fg: #1a1a1a;
   --accent-soft: #2dd4bf22;

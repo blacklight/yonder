@@ -498,7 +498,7 @@ async function onReact(emoji: string) {
 .status-card {
   background: var(--bg-raised);
   padding: var(--space-4);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-dim);
   cursor: pointer;
 }
 .status-card a,

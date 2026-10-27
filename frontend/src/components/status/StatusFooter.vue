@@ -142,7 +142,6 @@ async function toggle(
   gap: var(--space-5);
   padding-top: var(--space-2);
   margin-top: var(--space-2);
-  border-top: 1px solid var(--border);
 }
 .status-footer__btn {
   display: inline-flex;

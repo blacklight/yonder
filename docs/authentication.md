@@ -36,6 +36,28 @@ Interactive grants create a `sessions` row wrapping the access token;
 `GET /api/v1/sessions` lists them and `DELETE /api/v1/sessions/{id}`
 revokes a login (killing its token).
 
+## User-managed API tokens
+
+`/api/v1/tokens` is a Yonder extension for personal access tokens —
+long-lived bearer secrets issued without an OAuth dance, for scripts
+and third-party clients. The **Settings → API tokens** page
+(`/settings/tokens`) is the UI over the same endpoints.
+
+- `POST /api/v1/tokens` `{name, scopes, expires_in?}` — the requested
+  scopes must be a subset of the caller token's scopes (a token can
+  never widen its own grant); the plaintext is returned once and only
+  the sha256 hash is stored. Names are unique per user among active
+  tokens (409 on conflict). `expires_in` is seconds; omit it for a
+  non-expiring token.
+- `GET /api/v1/tokens` — active named tokens (`id`, `name`, `scopes`
+  array, `created_at`, `expires_at`); hashes never leave the DB.
+- `DELETE /api/v1/tokens/{id}` — revokes the token plus any refresh
+  tokens chained to it.
+
+These tokens carry `name` but no `application_id`, so they don't
+appear in the authorized-applications list; expiry is enforced at
+resolve time but expired rows stay listed until revoked.
+
 ## Two-factor authentication
 
 Three second factors: **TOTP** (authenticator apps; SHA1/6-digit/30s,

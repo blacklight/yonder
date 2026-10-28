@@ -28,7 +28,8 @@
     "label": "أقسام الإعدادات",
     "preferences": "التفضيلات",
     "profile": "الملف الشخصي",
-    "security": "الحساب والأمان"
+    "security": "الحساب والأمان",
+    "tokens": "رموز API"
   },
   "settings": {
     "title": "الإعدادات",
@@ -162,6 +163,45 @@
     "deleteAcknowledge": "أدرك أن هذا يعطّل حسابي ويحذفه نهائيًا.",
     "deleteAccount": "حذف حسابي"
   },
+  "settingsTokens": {
+    "title": "رموز API",
+    "intro": "تتيح رموز الوصول الشخصية للسكربتات وعملاء الطرف الثالث التصرف نيابةً عنك عبر واجهة البرمجة. عاملها ككلمات مرور.",
+    "groupCreate": "إنشاء رمز",
+    "nameLabel": "اسم الرمز",
+    "namePlaceholder": "مثال: سكربت النسخ الاحتياطي",
+    "nameRequired": "امنح الرمز اسمًا.",
+    "scopesLabel": "الأذونات",
+    "scopesHint": "لا يمكن للرمز فعل إلا ما تسمح به الأذونات المحددة — امنح الحد الأدنى اللازم.",
+    "scopeRequired": "حدّد إذنًا واحدًا على الأقل.",
+    "scope": {
+      "read": "read — عرض بياناتك",
+      "write": "write — النشر وتعديل البيانات",
+      "follow": "follow — إدارة المتابعات",
+      "push": "push — إدارة اشتراكات الدفع",
+      "admin": "admin — وصول إداري"
+    },
+    "expiryLabel": "ينتهي بعد",
+    "expiryNever": "أبدًا",
+    "expiryDay": "يوم واحد",
+    "expiryWeek": "7 أيام",
+    "expiryMonth": "30 يومًا",
+    "expiryQuarter": "90 يومًا",
+    "expiryYear": "سنة واحدة",
+    "create": "إنشاء الرمز",
+    "revealHint": "انسخ هذا الرمز الآن — لن يُعرض مرة أخرى.",
+    "copy": "نسخ الرمز",
+    "copied": "تم النسخ",
+    "saved": "حفظتُ هذا الرمز",
+    "groupList": "الرموز النشطة",
+    "empty": "لا توجد رموز API.",
+    "created": "أُنشئ {when}",
+    "expires": "ينتهي {when}",
+    "neverExpires": "لا ينتهي أبدًا",
+    "expired": "منتهي",
+    "revoke": "إبطال",
+    "revokeConfirm": "إبطال؟",
+    "cancel": "إلغاء"
+  },
   "route": {
     "moderation-report": {
       "title": "بلاغ"
@@ -231,6 +271,9 @@
     },
     "settings-security": {
       "title": "الحساب والأمان"
+    },
+    "settings-tokens": {
+      "title": "رموز API"
     },
     "not-found": {
       "title": "غير موجود"
@@ -689,12 +732,6 @@
         "apply": "تطبيق"
       },
       "empty": "لا توجد حسابات مطابقة.",
-      "cols": {
-        "account": "الحساب",
-        "email": "البريد الإلكتروني",
-        "state": "الحالة",
-        "created": "تاريخ الانضمام"
-      },
       "manage": "إدارة",
       "viewProfile": "عرض الملف العام",
       "remote": "بعيد",
@@ -746,7 +783,8 @@
         "skipVerification": "تخطي تأكيد البريد",
         "submit": "إنشاء مستخدم",
         "created": "تم إنشاء ‎{'@'}{acct}."
-      }
+      },
+      "joined": "تاريخ الانضمام"
     },
     "settings": {
       "helpLabel": "تفاصيل الإعداد",

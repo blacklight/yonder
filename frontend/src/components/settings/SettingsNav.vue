@@ -13,6 +13,7 @@ const items = computed(() => [
   { key: "settings", label: t("settingsNav.preferences") },
   { key: "settings-profile", label: t("settingsNav.profile") },
   { key: "settings-security", label: t("settingsNav.security") },
+  { key: "settings-tokens", label: t("settingsNav.tokens") },
 ]);
 
 const active = computed(() =>

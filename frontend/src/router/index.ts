@@ -371,6 +371,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: "/settings/tokens",
+      name: "settings-tokens",
+      component: () => import("@/pages/settings/TokensSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Invite links land on registration with the code prefilled —
       // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",

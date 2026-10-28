@@ -28,7 +28,8 @@
     "label": "Settings sections",
     "preferences": "Preferences",
     "profile": "Profile",
-    "security": "Account & security"
+    "security": "Account & security",
+    "tokens": "API tokens"
   },
   "settings": {
     "title": "Settings",
@@ -162,6 +163,45 @@
     "deleteAcknowledge": "I understand this deactivates and permanently deletes my account.",
     "deleteAccount": "Delete my account"
   },
+  "settingsTokens": {
+    "title": "API tokens",
+    "intro": "Personal access tokens let scripts and third-party clients act as you over the API. Treat them like passwords.",
+    "groupCreate": "Create a token",
+    "nameLabel": "Token name",
+    "namePlaceholder": "e.g. backup script",
+    "nameRequired": "Give the token a name.",
+    "scopesLabel": "Scopes",
+    "scopesHint": "The token can only do what the selected scopes allow — grant the minimum needed.",
+    "scopeRequired": "Select at least one scope.",
+    "scope": {
+      "read": "read — view your data",
+      "write": "write — post and modify data",
+      "follow": "follow — manage follows",
+      "push": "push — manage push subscriptions",
+      "admin": "admin — administrative access"
+    },
+    "expiryLabel": "Expires after",
+    "expiryNever": "Never",
+    "expiryDay": "1 day",
+    "expiryWeek": "7 days",
+    "expiryMonth": "30 days",
+    "expiryQuarter": "90 days",
+    "expiryYear": "1 year",
+    "create": "Create token",
+    "revealHint": "Copy this token now — it won't be shown again.",
+    "copy": "Copy token",
+    "copied": "Copied",
+    "saved": "I've saved this token",
+    "groupList": "Active tokens",
+    "empty": "No API tokens.",
+    "created": "created {when}",
+    "expires": "expires {when}",
+    "neverExpires": "never expires",
+    "expired": "Expired",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke?",
+    "cancel": "Cancel"
+  },
   "route": {
     "moderation-report": {
       "title": "Report"
@@ -231,6 +271,9 @@
     },
     "settings-security": {
       "title": "Account & security"
+    },
+    "settings-tokens": {
+      "title": "API tokens"
     },
     "not-found": {
       "title": "Not found"
@@ -676,12 +719,6 @@
         "apply": "Apply"
       },
       "empty": "No accounts match.",
-      "cols": {
-        "account": "Account",
-        "email": "Email",
-        "state": "State",
-        "created": "Joined"
-      },
       "manage": "Manage",
       "viewProfile": "View public profile",
       "remote": "Remote",

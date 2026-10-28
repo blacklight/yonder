@@ -28,7 +28,8 @@
     "label": "Einstellungsbereiche",
     "preferences": "Einstellungen",
     "profile": "Profil",
-    "security": "Konto & Sicherheit"
+    "security": "Konto & Sicherheit",
+    "tokens": "API-Tokens"
   },
   "settings": {
     "title": "Einstellungen",
@@ -162,6 +163,45 @@
     "deleteAcknowledge": "Ich verstehe, dass dadurch mein Konto deaktiviert und dauerhaft gelöscht wird.",
     "deleteAccount": "Mein Konto löschen"
   },
+  "settingsTokens": {
+    "title": "API-Tokens",
+    "intro": "Persönliche Zugangstokens erlauben Skripten und Drittanbieter-Clients, über die API in deinem Namen zu handeln. Behandle sie wie Passwörter.",
+    "groupCreate": "Token erstellen",
+    "nameLabel": "Token-Name",
+    "namePlaceholder": "z. B. Backup-Skript",
+    "nameRequired": "Gib dem Token einen Namen.",
+    "scopesLabel": "Berechtigungen",
+    "scopesHint": "Das Token kann nur das tun, was die gewählten Berechtigungen erlauben — vergib das nötige Minimum.",
+    "scopeRequired": "Wähle mindestens eine Berechtigung.",
+    "scope": {
+      "read": "read — Daten lesen",
+      "write": "write — Beiträge schreiben und Daten ändern",
+      "follow": "follow — Folgen verwalten",
+      "push": "push — Push-Abonnements verwalten",
+      "admin": "admin — administrativer Zugriff"
+    },
+    "expiryLabel": "Läuft ab nach",
+    "expiryNever": "Nie",
+    "expiryDay": "1 Tag",
+    "expiryWeek": "7 Tagen",
+    "expiryMonth": "30 Tagen",
+    "expiryQuarter": "90 Tagen",
+    "expiryYear": "1 Jahr",
+    "create": "Token erstellen",
+    "revealHint": "Kopiere dieses Token jetzt — es wird nicht wieder angezeigt.",
+    "copy": "Token kopieren",
+    "copied": "Kopiert",
+    "saved": "Ich habe das Token gespeichert",
+    "groupList": "Aktive Tokens",
+    "empty": "Keine API-Tokens.",
+    "created": "erstellt {when}",
+    "expires": "läuft ab {when}",
+    "neverExpires": "läuft nie ab",
+    "expired": "Abgelaufen",
+    "revoke": "Widerrufen",
+    "revokeConfirm": "Widerrufen?",
+    "cancel": "Abbrechen"
+  },
   "route": {
     "moderation-report": {
       "title": "Meldung"
@@ -231,6 +271,9 @@
     },
     "settings-security": {
       "title": "Konto & Sicherheit"
+    },
+    "settings-tokens": {
+      "title": "API-Tokens"
     },
     "not-found": {
       "title": "Nicht gefunden"
@@ -689,12 +732,6 @@
         "apply": "Anwenden"
       },
       "empty": "Keine Konten gefunden.",
-      "cols": {
-        "account": "Konto",
-        "email": "E-Mail",
-        "state": "Status",
-        "created": "Beigetreten"
-      },
       "manage": "Verwalten",
       "viewProfile": "Öffentliches Profil ansehen",
       "remote": "Entfernt",
@@ -746,7 +783,8 @@
         "skipVerification": "E-Mail-Verifizierung überspringen",
         "submit": "Benutzer erstellen",
         "created": "{'@'}{acct} erstellt."
-      }
+      },
+      "joined": "Beigetreten"
     },
     "settings": {
       "helpLabel": "Einstellungsdetails",

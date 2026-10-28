@@ -28,7 +28,8 @@
     "label": "Secciones de ajustes",
     "preferences": "Preferencias",
     "profile": "Perfil",
-    "security": "Cuenta y seguridad"
+    "security": "Cuenta y seguridad",
+    "tokens": "Tokens de API"
   },
   "settings": {
     "title": "Ajustes",
@@ -162,6 +163,45 @@
     "deleteAcknowledge": "Entiendo que esto desactiva y elimina permanentemente mi cuenta.",
     "deleteAccount": "Eliminar mi cuenta"
   },
+  "settingsTokens": {
+    "title": "Tokens de API",
+    "intro": "Los tokens de acceso personal permiten que scripts y clientes de terceros actúen en tu nombre a través de la API. Trátalos como contraseñas.",
+    "groupCreate": "Crear un token",
+    "nameLabel": "Nombre del token",
+    "namePlaceholder": "p. ej. script de respaldo",
+    "nameRequired": "Asigna un nombre al token.",
+    "scopesLabel": "Ámbitos",
+    "scopesHint": "El token solo puede hacer lo que permiten los ámbitos seleccionados: concede el mínimo necesario.",
+    "scopeRequired": "Selecciona al menos un ámbito.",
+    "scope": {
+      "read": "read — ver tus datos",
+      "write": "write — publicar y modificar datos",
+      "follow": "follow — gestionar seguimientos",
+      "push": "push — gestionar suscripciones push",
+      "admin": "admin — acceso administrativo"
+    },
+    "expiryLabel": "Caduca tras",
+    "expiryNever": "Nunca",
+    "expiryDay": "1 día",
+    "expiryWeek": "7 días",
+    "expiryMonth": "30 días",
+    "expiryQuarter": "90 días",
+    "expiryYear": "1 año",
+    "create": "Crear token",
+    "revealHint": "Copia este token ahora — no se volverá a mostrar.",
+    "copy": "Copiar token",
+    "copied": "Copiado",
+    "saved": "Ya guardé este token",
+    "groupList": "Tokens activos",
+    "empty": "No hay tokens de API.",
+    "created": "creado {when}",
+    "expires": "caduca {when}",
+    "neverExpires": "nunca caduca",
+    "expired": "Caducado",
+    "revoke": "Revocar",
+    "revokeConfirm": "¿Revocar?",
+    "cancel": "Cancelar"
+  },
   "route": {
     "moderation-report": {
       "title": "Informe"
@@ -231,6 +271,9 @@
     },
     "settings-security": {
       "title": "Cuenta y seguridad"
+    },
+    "settings-tokens": {
+      "title": "Tokens de API"
     },
     "not-found": {
       "title": "No encontrado"
@@ -689,12 +732,6 @@
         "apply": "Aplicar"
       },
       "empty": "Ninguna cuenta coincide.",
-      "cols": {
-        "account": "Cuenta",
-        "email": "Correo",
-        "state": "Estado",
-        "created": "Registro"
-      },
       "manage": "Gestionar",
       "viewProfile": "Ver perfil público",
       "remote": "Remoto",
@@ -746,7 +783,8 @@
         "skipVerification": "Omitir verificación de correo",
         "submit": "Crear usuario",
         "created": "{'@'}{acct} creado."
-      }
+      },
+      "joined": "Se unió"
     },
     "settings": {
       "helpLabel": "Detalles del ajuste",

@@ -24,6 +24,11 @@ export const stubRoutes: RouteRecordRaw[] = [
     name: "settings-security",
     component: stub,
   },
+  {
+    path: "/settings/tokens",
+    name: "settings-tokens",
+    component: stub,
+  },
   { path: "/compose", name: "compose", component: stub },
   { path: "/local", name: "local", component: stub },
   { path: "/explore", name: "explore", component: stub },

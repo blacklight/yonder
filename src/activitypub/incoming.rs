@@ -507,7 +507,8 @@ impl JobHandler for RemoteActorFetchJob {
             return self.sweep(ctx).await;
         };
         match super::lookup::fetch_remote_object_detailed(&self.ctx, &actor_url).await? {
-            super::lookup::RemoteFetch::Doc(doc) => {
+            super::lookup::RemoteFetch::Doc(fetched) => {
+                let doc = fetched.doc;
                 // Resolve a `movedTo` target we don't know yet before
                 // the upsert — its move sync needs the target row (and
                 // the fresh `alsoKnownAs`) to mark the move.
@@ -636,7 +637,10 @@ async fn refresh_remote_counters(ctx: &ApContext, actor_id: &str, doc: &Value) {
         let Some(uri) = super::lookup::actor_collection_uri(doc, key) else {
             continue;
         };
-        let Ok(Some(coll)) = super::lookup::fetch_remote_object(ctx, &uri).await else {
+        let Ok(Some(coll)) = super::lookup::fetch_remote_object(ctx, &uri)
+            .await
+            .map(|o| o.map(|f| f.doc))
+        else {
             continue;
         };
         let Some(total) = super::lookup::total_items(&coll) else {

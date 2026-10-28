@@ -334,7 +334,10 @@ async fn sync_remote_network(
     // keeps what landed; a document with no readable items at all
     // (count-only, or the first fetch failed) leaves the previous
     // edges alone and reports failure for a sooner retry.
-    let Some(doc) = lookup::fetch_remote_object(ap, &collection).await? else {
+    let Some(doc) = lookup::fetch_remote_object(ap, &collection)
+        .await?
+        .map(|f| f.doc)
+    else {
         return Ok(false);
     };
     // The collection's `totalItems` is the counter's source of truth —
@@ -355,9 +358,9 @@ async fn sync_remote_network(
         Some(Value::String(u)) => {
             // The make-or-break fetch of the list — one retry for a
             // transient failure before giving up on the sync.
-            let mut p = lookup::fetch_remote_object(ap, u).await?;
+            let mut p = lookup::fetch_remote_object(ap, u).await?.map(|f| f.doc);
             if p.is_none() {
-                p = lookup::fetch_remote_object(ap, u).await?;
+                p = lookup::fetch_remote_object(ap, u).await?.map(|f| f.doc);
             }
             p
         }
@@ -377,7 +380,7 @@ async fn sync_remote_network(
         page = match p.get("next").and_then(|v| v.as_str()) {
             Some(u) => {
                 hops += 1;
-                lookup::fetch_remote_object(ap, u).await?
+                lookup::fetch_remote_object(ap, u).await?.map(|f| f.doc)
             }
             None => None,
         };

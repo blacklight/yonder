@@ -153,7 +153,23 @@ pub(crate) async fn lookup_url(
     }
 
     let hit = match lookup::fetch_remote_object(ap, url).await? {
-        Some(doc) => materialize_remote(&state.db, ap, url, &doc).await?,
+        // Trust the URL the document was *served from* — domain-split
+        // servers redirect web permalinks to their AP domain, and the
+        // object's `id` matches the post-redirect origin.
+        Some(fetched) => {
+            // A redirect back to this instance resolves locally — a
+            // remote URL must never materialize our own objects as
+            // "remote" rows.
+            if let Ok(final_url) = url::Url::parse(&fetched.url) {
+                if is_local_host(state, &final_url) {
+                    lookup_local(state, &final_url).await?
+                } else {
+                    materialize_remote(&state.db, ap, &fetched.url, &fetched.doc).await?
+                }
+            } else {
+                None
+            }
+        }
         None => None,
     };
     // Fetch failures and fetched-but-unusable documents are both
@@ -165,7 +181,10 @@ pub(crate) async fn lookup_url(
 }
 
 /// Materialize a document fetched from `url`, but only when it is
-/// trustworthy for that URL (see [`trusted_note`]).
+/// trustworthy for that URL (see [`trusted_note`]). `url` is the URL
+/// the document was *served from* — the fetch's last redirect hop —
+/// so a web-domain permalink redirected to its canonical AP domain
+/// still matches the object's `id` origin.
 /// `pub(crate)` — the `RemoteStatusFetch` job (pending quote targets)
 /// materializes through the same path.
 pub(crate) async fn materialize_remote(

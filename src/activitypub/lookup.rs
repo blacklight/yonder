@@ -116,12 +116,23 @@ pub(crate) fn total_items(doc: &Value) -> Option<i64> {
         .map(|n| n.clamp(0, i32::MAX as i64))
 }
 
+/// A fetched remote document plus the URL that actually served it —
+/// the last redirect hop (pubby's `HttpResponse::final_url`). Origin
+/// trust checks must compare the document's `id` against `url`, not
+/// the requested URL: domain-split servers legitimately redirect web
+/// permalinks to their canonical ActivityPub domain.
+#[derive(Debug)]
+pub(crate) struct FetchedDoc {
+    pub doc: Value,
+    pub url: String,
+}
+
 /// Outcome of a signed remote-document GET — split so callers can tell
 /// a *permanently* unfetchable object (deleted actor, dead instance
 /// route, SSRF-refused URL) from a transient failure worth retrying.
 pub(crate) enum RemoteFetch {
     /// 2xx with a parseable JSON body.
-    Doc(Value),
+    Doc(FetchedDoc),
     /// 404/410, or the URL can never be fetched (SSRF guard) —
     /// retrying won't help.
     Gone,
@@ -132,7 +143,7 @@ pub(crate) enum RemoteFetch {
 
 /// [`fetch_remote_object_detailed`] collapsed to `Option`: `Some` only
 /// on `RemoteFetch::Doc` — for callers that treat every failure alike.
-pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Option<Value>> {
+pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Option<FetchedDoc>> {
     Ok(match fetch_remote_object_detailed(ap, url).await? {
         RemoteFetch::Doc(doc) => Some(doc),
         _ => None,
@@ -190,7 +201,10 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
         };
         match http.get(&url, &headers) {
             Ok(resp) if resp.is_success() => match resp.json() {
-                Ok(doc) => RemoteFetch::Doc(doc),
+                Ok(doc) => RemoteFetch::Doc(FetchedDoc {
+                    doc,
+                    url: resp.final_url,
+                }),
                 Err(e) => {
                     tracing::warn!(error = %e, url = %url, "remote object fetch returned non-JSON");
                     RemoteFetch::Failed

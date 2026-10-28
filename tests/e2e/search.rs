@@ -1268,3 +1268,113 @@ async fn remote_fetch_materializes_audio_objects() {
         "{body}"
     );
 }
+
+/// Domain-split servers (a web domain redirecting to the canonical
+/// ActivityPub domain, e.g. blog.fabiomanganiello.com → manganiello.blog)
+/// serve the object from the *redirected* origin — the trust check must
+/// compare the object's `id` against the post-redirect URL, and the web
+/// permalink then resolves through `statuses.url`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_fetch_follows_redirect_to_ap_domain() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice").await;
+
+    // Two loopback origins — the port makes them distinct origins for
+    // the same-origin trust check.
+    let ap_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let web_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let ap_base = format!(
+        "http://localhost:{}",
+        ap_listener.local_addr().unwrap().port()
+    );
+    let web_base = format!(
+        "http://localhost:{}",
+        web_listener.local_addr().unwrap().port()
+    );
+
+    let note_base = ap_base.clone();
+    let note_web = web_base.clone();
+    let actor_base = ap_base.clone();
+    let ap_app = axum::Router::new()
+        .route(
+            "/article/kite",
+            axum::routing::get(move || {
+                let b = note_base.clone();
+                let w = note_web.clone();
+                async move {
+                    axum::Json(json!({
+                        "@context": PUBLIC,
+                        "id": format!("{b}/article/kite"),
+                        "type": "Note",
+                        "attributedTo": format!("{b}/users/eve"),
+                        "name": "Split domain post",
+                        "content": "<p>splitdomain fetch marker</p>",
+                        "url": format!("{w}/article/kite"),
+                        "to": [PUBLIC],
+                        "published": "2025-01-01T00:00:00Z",
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/users/eve",
+            axum::routing::get(move || {
+                let b = actor_base.clone();
+                async move {
+                    axum::Json(json!({
+                        "@context": PUBLIC,
+                        "id": format!("{b}/users/eve"),
+                        "type": "Person",
+                        "preferredUsername": "eve",
+                        "inbox": format!("{b}/users/eve/inbox"),
+                    }))
+                }
+            }),
+        );
+
+    // The "web domain" answers every fetch with a 302 to the AP origin.
+    let redirect_base = ap_base.clone();
+    let web_app = axum::Router::new().route(
+        "/article/kite",
+        axum::routing::get(move || {
+            let b = redirect_base.clone();
+            async move { axum::response::Redirect::temporary(&format!("{b}/article/kite")) }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(ap_listener, ap_app).await.unwrap() });
+    tokio::spawn(async move { axum::serve(web_listener, web_app).await.unwrap() });
+
+    // Searching the *web* permalink fetches through the redirect and
+    // materializes the AP-domain object.
+    let url = format!("{web_base}/article/kite");
+    let encoded = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}&resolve=true"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    let statuses = body["statuses"].as_array().unwrap();
+    assert_eq!(statuses.len(), 1, "{body}");
+    assert_eq!(statuses[0]["uri"], format!("{ap_base}/article/kite"));
+    assert_eq!(statuses[0]["url"], url);
+
+    // Both spellings now resolve through the cached row.
+    for u in [&url, &format!("{ap_base}/article/kite")] {
+        let encoded = url::form_urlencoded::byte_serialize(u.as_bytes()).collect::<String>();
+        let (_, body) = request(
+            &env.app,
+            "GET",
+            &format!("/api/v2/search?q={encoded}"),
+            Some(&alice),
+            None,
+        )
+        .await;
+        assert_eq!(body["statuses"].as_array().unwrap().len(), 1, "{u}: {body}");
+    }
+}

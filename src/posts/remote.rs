@@ -1254,8 +1254,15 @@ impl JobHandler for RemoteStatusFetchJob {
             lookup::RemoteFetch::Failed => Err(crate::Error::Internal(format!(
                 "remote status fetch failed: {uri}"
             ))),
-            lookup::RemoteFetch::Doc(doc) => {
-                match crate::search::resolve::materialize_remote(&ctx.db, ap, uri, &doc).await? {
+            lookup::RemoteFetch::Doc(fetched) => {
+                match crate::search::resolve::materialize_remote(
+                    &ctx.db,
+                    ap,
+                    &fetched.url,
+                    &fetched.doc,
+                )
+                .await?
+                {
                     // The fetched doc's `id` can differ from the URI
                     // the quoter stored (e.g. `quoteUrl` vs `id`), so
                     // back-fill by the requested URI explicitly — the

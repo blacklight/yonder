@@ -1,7 +1,9 @@
 //! `/api/v2/instance` — instance metadata in the Mastodon API v2
 //! shape: `domain` instead of `uri`, `configuration.urls` for
 //! streaming, and `registrations` as an object (`enabled`,
-//! `approval_required`, `message`, `url`).
+//! `approval_required`, `message`, `url`). Yonder adds
+//! `registrations.invites_enabled` — whether non-staff users may
+//! create invite links (the v1 entity's scalar `invites_enabled`).
 
 use std::sync::Arc;
 
@@ -32,6 +34,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
             "approval_required": matches!(mode, RegistrationMode::ApprovalRequired),
             "message": config.auth.registration_message,
             "url": Value::Null,
+            "invites_enabled": config.auth.invite_links_enabled(),
         },
         "configuration": {
             "urls": {

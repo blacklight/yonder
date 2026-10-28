@@ -896,10 +896,12 @@ async fn email_verification_flow() {
     let text_body = job["payload"]["text_body"]
         .as_str()
         .expect("email text_body");
+    // The body carries a `/verify-email/{token}` link — the token is
+    // the last URL segment.
     let token = text_body
         .split_whitespace()
-        .rev()
-        .find(|w| w.len() == 64 && w.chars().all(|c| c.is_ascii_hexdigit()))
+        .find_map(|w| w.split_once("/verify-email/").map(|(_, t)| t))
+        .filter(|w| w.len() == 64 && w.chars().all(|c| c.is_ascii_hexdigit()))
         .expect("verification token in payload")
         .to_string();
 
@@ -1043,6 +1045,7 @@ async fn instance_endpoint() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["registrations"]["enabled"], true);
     assert_eq!(body["registrations"]["approval_required"], false);
+    assert_eq!(body["registrations"]["invites_enabled"], true);
     assert_eq!(body["domain"], env.state.config().instance.domain);
     assert_eq!(
         body["configuration"]["media_attachments"]["image_size_limit"],

@@ -29,7 +29,8 @@
     "preferences": "Preferences",
     "profile": "Profile",
     "security": "Account & security",
-    "tokens": "API tokens"
+    "tokens": "API tokens",
+    "invites": "Invite links"
   },
   "settings": {
     "title": "Settings",
@@ -202,6 +203,36 @@
     "revokeConfirm": "Revoke?",
     "cancel": "Cancel"
   },
+  "settingsInvites": {
+    "title": "Invite links",
+    "intro": "Invite links let others sign up — even when registration is closed. Share the link, not the code.",
+    "groupCreate": "Create an invite link",
+    "disabled": "Invite links are disabled on this server.",
+    "maxUsesLabel": "Maximum uses",
+    "maxUsesUnlimited": "Unlimited",
+    "expiryLabel": "Expires after",
+    "expiryNever": "Never",
+    "expiryDay": "1 day",
+    "expiryWeek": "7 days",
+    "expiryMonth": "30 days",
+    "expiryQuarter": "90 days",
+    "expiryYear": "1 year",
+    "create": "Create invite",
+    "groupList": "Invite links",
+    "empty": "No invite links.",
+    "uses": "uses: {used} / {max}",
+    "usesUnlimited": "uses: {used}",
+    "created": "created {when}",
+    "expires": "expires {when}",
+    "neverExpires": "never expires",
+    "expired": "Expired",
+    "exhausted": "Exhausted",
+    "copy": "Copy link",
+    "copied": "Copied",
+    "revoke": "Revoke",
+    "revokeConfirm": "Revoke?",
+    "cancel": "Cancel"
+  },
   "route": {
     "moderation-report": {
       "title": "Report"
@@ -340,6 +371,12 @@
     },
     "oauth-authorize": {
       "title": "Authorize app"
+    },
+    "settings-invites": {
+      "title": "Invite links"
+    },
+    "verify-email": {
+      "title": "Email verification"
     }
   },
   "not_found": {
@@ -941,6 +978,14 @@
     "verifyEmail": "Check your inbox — confirm your email address to unlock posting.",
     "continue": "Continue",
     "registered": "Account created!"
+  },
+  "verifyEmail": {
+    "title": "Email verification",
+    "verifying": "Verifying your email address…",
+    "verified": "Your email address is verified — you're all set.",
+    "signIn": "Sign in",
+    "failed": "This verification link is invalid or has expired.",
+    "failedHint": "If the link has expired, ask an instance admin to verify your address, or sign up again."
   },
   "footer": {
     "links": "Links",

@@ -29,7 +29,8 @@
     "preferences": "Preferencias",
     "profile": "Perfil",
     "security": "Cuenta y seguridad",
-    "tokens": "Tokens de API"
+    "tokens": "Tokens de API",
+    "invites": "Enlaces de invitación"
   },
   "settings": {
     "title": "Ajustes",
@@ -202,6 +203,36 @@
     "revokeConfirm": "¿Revocar?",
     "cancel": "Cancelar"
   },
+  "settingsInvites": {
+    "title": "Enlaces de invitación",
+    "intro": "Los enlaces de invitación permiten que otras personas se registren, incluso cuando el registro está cerrado. Comparte el enlace.",
+    "groupCreate": "Crear un enlace de invitación",
+    "disabled": "Los enlaces de invitación están desactivados en este servidor.",
+    "maxUsesLabel": "Usos máximos",
+    "maxUsesUnlimited": "Ilimitados",
+    "expiryLabel": "Caduca tras",
+    "expiryNever": "Nunca",
+    "expiryDay": "1 día",
+    "expiryWeek": "7 días",
+    "expiryMonth": "30 días",
+    "expiryQuarter": "90 días",
+    "expiryYear": "1 año",
+    "create": "Crear invitación",
+    "groupList": "Enlaces de invitación",
+    "empty": "No hay enlaces de invitación.",
+    "uses": "usos: {used} / {max}",
+    "usesUnlimited": "usos: {used}",
+    "created": "creado {when}",
+    "expires": "caduca {when}",
+    "neverExpires": "nunca caduca",
+    "expired": "Caducado",
+    "exhausted": "Agotado",
+    "copy": "Copiar enlace",
+    "copied": "Copiado",
+    "revoke": "Revocar",
+    "revokeConfirm": "¿Revocar?",
+    "cancel": "Cancelar"
+  },
   "route": {
     "moderation-report": {
       "title": "Informe"
@@ -340,6 +371,12 @@
     },
     "oauth-authorize": {
       "title": "Autorizar aplicación"
+    },
+    "settings-invites": {
+      "title": "Enlaces de invitación"
+    },
+    "verify-email": {
+      "title": "Verificación de correo"
     }
   },
   "not_found": {
@@ -954,6 +991,14 @@
     "verifyEmail": "Revisa tu bandeja de entrada: confirma tu dirección de correo para desbloquear la publicación.",
     "continue": "Continuar",
     "registered": "¡Cuenta creada!"
+  },
+  "verifyEmail": {
+    "title": "Verificación de correo",
+    "verifying": "Verificando tu dirección de correo…",
+    "verified": "Tu dirección de correo está verificada — ya puedes empezar.",
+    "signIn": "Iniciar sesión",
+    "failed": "Este enlace de verificación no es válido o ha caducado.",
+    "failedHint": "Si el enlace ha caducado, pide a un administrador de la instancia que verifique tu dirección, o regístrate de nuevo."
   },
   "footer": {
     "links": "Enlaces",

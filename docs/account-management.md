@@ -98,7 +98,11 @@ source id lands in `statuses.original_id` (deduped by
 - `POST /api/v1/yonder/invites` `{max_uses?, expires_at?|expires_in?}`
   — create a link (shareable as `{base}/invite/{code}`). Staff always
   may; regular users when `auth.invite_links_enabled` is effective —
-  unset means "on only while registration is open".
+  unset means "on only while registration is open". The web UI
+  exposes create/list/revoke under **Settings → Invite links**
+  (`/settings/invites`); the create form hides for non-staff users
+  when invite links are disabled (`registrations.invites_enabled`
+  on `/api/v2/instance`).
 - `GET /api/v1/yonder/invites`, `DELETE …/{id}` (owner or staff),
   `GET /api/v1/yonder/invites/check/{code}` (public validity check).
 
@@ -107,6 +111,12 @@ bypasses `closed` registration and auto-approves under
 `approval-required`; use is consumed atomically inside the
 registration transaction so `max_uses` can't be exceeded
 (`users.invite_id` records which invite signed a user up).
+
+When email verification is required, the confirmation mail carries a
+`{base}/verify-email/{token}` link: the SPA route POSTs the token to
+`POST /api/v1/accounts/verify_email`, keeping the side effect on POST
+so mail scanners prefetching the link can't burn the single-use
+token (7-day TTL, Redis-stored).
 
 ## Auto-follow
 

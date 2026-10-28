@@ -475,6 +475,11 @@ async fn enqueue_verification_email(state: &AppState, user_id: i64, email: &str)
     )
     .await?;
     let base = activitypub::federation_base_url(&state.config());
+    // The SPA route POSTs the token to `/api/v1/accounts/verify_email` —
+    // keeping the side effect on POST means mail scanners that prefetch
+    // links can't burn the single-use token.
+    let url = format!("{base}/verify-email/{token}");
+    let days = EMAIL_VERIFY_TTL_SECONDS / (24 * 60 * 60);
     state
         .dispatcher
         .enqueue(
@@ -484,7 +489,10 @@ async fn enqueue_verification_email(state: &AppState, user_id: i64, email: &str)
                 "to": email,
                 "subject": "Verify your Yonder account",
                 "text_body": format!(
-                    "Verify your email address by POSTing this token to {base}/api/v1/accounts/verify_email:\n\n{token}"
+                    "Verify your email address by opening this link:\n\n{url}\n\nThe link expires in {days} days and can be used once."
+                ),
+                "html_body": format!(
+                    "<p>Verify your email address:</p>\n<p><a href=\"{url}\">{url}</a></p>\n<p>The link expires in {days} days and can be used once.</p>"
                 ),
             }),
         )

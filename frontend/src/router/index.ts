@@ -377,6 +377,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: "/settings/invites",
+      name: "settings-invites",
+      component: () => import("@/pages/settings/InvitesSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Invite links land on registration with the code prefilled —
       // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",
@@ -385,6 +391,13 @@ export const router = createRouter({
         name: "register",
         query: { invite: to.params.code },
       }),
+    },
+    {
+      // The emailed verification link lands here; the page POSTs the
+      // token so a mail-scanner prefetch can't burn it.
+      path: "/verify-email/:token",
+      name: "verify-email",
+      component: () => import("@/pages/VerifyEmailPage.vue"),
     },
     {
       path: "/:pathMatch(.*)*",

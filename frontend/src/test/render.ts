@@ -13,6 +13,7 @@ export const stubRoutes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: stub },
   { path: "/login", name: "sign-in", component: stub },
   { path: "/register", name: "register", component: stub },
+  { path: "/verify-email/:token", name: "verify-email", component: stub },
   { path: "/settings", name: "settings", component: stub },
   {
     path: "/settings/profile",
@@ -27,6 +28,11 @@ export const stubRoutes: RouteRecordRaw[] = [
   {
     path: "/settings/tokens",
     name: "settings-tokens",
+    component: stub,
+  },
+  {
+    path: "/settings/invites",
+    name: "settings-invites",
     component: stub,
   },
   { path: "/compose", name: "compose", component: stub },

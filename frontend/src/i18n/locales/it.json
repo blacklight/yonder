@@ -29,7 +29,8 @@
     "preferences": "Preferenze",
     "profile": "Profilo",
     "security": "Account e sicurezza",
-    "tokens": "Token API"
+    "tokens": "Token API",
+    "invites": "Link d'invito"
   },
   "settings": {
     "title": "Impostazioni",
@@ -202,6 +203,36 @@
     "revokeConfirm": "Revocare?",
     "cancel": "Annulla"
   },
+  "settingsInvites": {
+    "title": "Link d'invito",
+    "intro": "I link d'invito permettono ad altre persone di registrarsi, anche quando le registrazioni sono chiuse. Condividi il link.",
+    "groupCreate": "Crea un link d'invito",
+    "disabled": "I link d'invito sono disattivati su questo server.",
+    "maxUsesLabel": "Utilizzi massimi",
+    "maxUsesUnlimited": "Illimitati",
+    "expiryLabel": "Scade dopo",
+    "expiryNever": "Mai",
+    "expiryDay": "1 giorno",
+    "expiryWeek": "7 giorni",
+    "expiryMonth": "30 giorni",
+    "expiryQuarter": "90 giorni",
+    "expiryYear": "1 anno",
+    "create": "Crea invito",
+    "groupList": "Link d'invito",
+    "empty": "Nessun link d'invito.",
+    "uses": "utilizzi: {used} / {max}",
+    "usesUnlimited": "utilizzi: {used}",
+    "created": "creato {when}",
+    "expires": "scade {when}",
+    "neverExpires": "non scade mai",
+    "expired": "Scaduto",
+    "exhausted": "Esaurito",
+    "copy": "Copia link",
+    "copied": "Copiato",
+    "revoke": "Revoca",
+    "revokeConfirm": "Revocare?",
+    "cancel": "Annulla"
+  },
   "route": {
     "moderation-report": {
       "title": "Segnalazione"
@@ -340,6 +371,12 @@
     },
     "oauth-authorize": {
       "title": "Autorizza app"
+    },
+    "settings-invites": {
+      "title": "Link d'invito"
+    },
+    "verify-email": {
+      "title": "Verifica dell'email"
     }
   },
   "not_found": {
@@ -954,6 +991,14 @@
     "verifyEmail": "Controlla la posta in arrivo: conferma il tuo indirizzo email per sbloccare la pubblicazione.",
     "continue": "Continua",
     "registered": "Account creato!"
+  },
+  "verifyEmail": {
+    "title": "Verifica dell'email",
+    "verifying": "Verifica del tuo indirizzo email…",
+    "verified": "Il tuo indirizzo email è verificato — è tutto pronto.",
+    "signIn": "Accedi",
+    "failed": "Questo link di verifica non è valido o è scaduto.",
+    "failedHint": "Se il link è scaduto, chiedi a un amministratore dell'istanza di verificare il tuo indirizzo, o registrati di nuovo."
   },
   "footer": {
     "links": "Collegamenti",

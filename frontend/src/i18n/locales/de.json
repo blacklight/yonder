@@ -29,7 +29,8 @@
     "preferences": "Einstellungen",
     "profile": "Profil",
     "security": "Konto & Sicherheit",
-    "tokens": "API-Tokens"
+    "tokens": "API-Tokens",
+    "invites": "Einladungslinks"
   },
   "settings": {
     "title": "Einstellungen",
@@ -202,6 +203,36 @@
     "revokeConfirm": "Widerrufen?",
     "cancel": "Abbrechen"
   },
+  "settingsInvites": {
+    "title": "Einladungslinks",
+    "intro": "Mit Einladungslinks können sich andere registrieren – auch bei geschlossener Registrierung. Teile den Link.",
+    "groupCreate": "Einladungslink erstellen",
+    "disabled": "Einladungslinks sind auf diesem Server deaktiviert.",
+    "maxUsesLabel": "Maximale Nutzungen",
+    "maxUsesUnlimited": "Unbegrenzt",
+    "expiryLabel": "Läuft ab nach",
+    "expiryNever": "Nie",
+    "expiryDay": "1 Tag",
+    "expiryWeek": "7 Tage",
+    "expiryMonth": "30 Tage",
+    "expiryQuarter": "90 Tage",
+    "expiryYear": "1 Jahr",
+    "create": "Einladung erstellen",
+    "groupList": "Einladungslinks",
+    "empty": "Keine Einladungslinks.",
+    "uses": "Nutzungen: {used} / {max}",
+    "usesUnlimited": "Nutzungen: {used}",
+    "created": "erstellt {when}",
+    "expires": "läuft ab {when}",
+    "neverExpires": "läuft nie ab",
+    "expired": "Abgelaufen",
+    "exhausted": "Aufgebraucht",
+    "copy": "Link kopieren",
+    "copied": "Kopiert",
+    "revoke": "Widerrufen",
+    "revokeConfirm": "Widerrufen?",
+    "cancel": "Abbrechen"
+  },
   "route": {
     "moderation-report": {
       "title": "Meldung"
@@ -340,6 +371,12 @@
     },
     "oauth-authorize": {
       "title": "App autorisieren"
+    },
+    "settings-invites": {
+      "title": "Einladungslinks"
+    },
+    "verify-email": {
+      "title": "E-Mail-Bestätigung"
     }
   },
   "not_found": {
@@ -954,6 +991,14 @@
     "verifyEmail": "Prüfe dein Postfach — bestätige deine E-Mail-Adresse, um Posten freizuschalten.",
     "continue": "Weiter",
     "registered": "Konto erstellt!"
+  },
+  "verifyEmail": {
+    "title": "E-Mail-Bestätigung",
+    "verifying": "Deine E-Mail-Adresse wird bestätigt…",
+    "verified": "Deine E-Mail-Adresse ist bestätigt — fertig.",
+    "signIn": "Anmelden",
+    "failed": "Dieser Bestätigungslink ist ungültig oder abgelaufen.",
+    "failedHint": "Wenn der Link abgelaufen ist, bitte einen Instanz-Administrator, deine Adresse zu bestätigen, oder registriere dich erneut."
   },
   "footer": {
     "links": "Links",

@@ -29,7 +29,8 @@
     "preferences": "التفضيلات",
     "profile": "الملف الشخصي",
     "security": "الحساب والأمان",
-    "tokens": "رموز API"
+    "tokens": "رموز API",
+    "invites": "روابط الدعوة"
   },
   "settings": {
     "title": "الإعدادات",
@@ -202,6 +203,36 @@
     "revokeConfirm": "إبطال؟",
     "cancel": "إلغاء"
   },
+  "settingsInvites": {
+    "title": "روابط الدعوة",
+    "intro": "تتيح روابط الدعوة للآخرين التسجيل، حتى عندما يكون التسجيل مغلقًا. شارك الرابط.",
+    "groupCreate": "إنشاء رابط دعوة",
+    "disabled": "روابط الدعوة معطلة على هذا الخادم.",
+    "maxUsesLabel": "الحد الأقصى للاستخدامات",
+    "maxUsesUnlimited": "غير محدود",
+    "expiryLabel": "تنتهي الصلاحية بعد",
+    "expiryNever": "أبدًا",
+    "expiryDay": "يوم واحد",
+    "expiryWeek": "7 أيام",
+    "expiryMonth": "30 يومًا",
+    "expiryQuarter": "90 يومًا",
+    "expiryYear": "سنة واحدة",
+    "create": "إنشاء دعوة",
+    "groupList": "روابط الدعوة",
+    "empty": "لا توجد روابط دعوة.",
+    "uses": "الاستخدامات: {used} / {max}",
+    "usesUnlimited": "الاستخدامات: {used}",
+    "created": "أُنشئ {when}",
+    "expires": "تنتهي {when}",
+    "neverExpires": "لا تنتهي أبدًا",
+    "expired": "منتهٍ",
+    "exhausted": "مستنفد",
+    "copy": "نسخ الرابط",
+    "copied": "تم النسخ",
+    "revoke": "إبطال",
+    "revokeConfirm": "إبطال؟",
+    "cancel": "إلغاء"
+  },
   "route": {
     "moderation-report": {
       "title": "بلاغ"
@@ -340,6 +371,12 @@
     },
     "oauth-authorize": {
       "title": "تفويض التطبيق"
+    },
+    "settings-invites": {
+      "title": "روابط الدعوة"
+    },
+    "verify-email": {
+      "title": "تأكيد البريد الإلكتروني"
     }
   },
   "not_found": {
@@ -954,6 +991,14 @@
     "verifyEmail": "تحقق من بريدك الوارد — أكّد عنوان بريدك لفتح النشر.",
     "continue": "متابعة",
     "registered": "تم إنشاء الحساب!"
+  },
+  "verifyEmail": {
+    "title": "تأكيد البريد الإلكتروني",
+    "verifying": "جارٍ تأكيد عنوان بريدك الإلكتروني…",
+    "verified": "تم تأكيد عنوان بريدك الإلكتروني — كل شيء جاهز.",
+    "signIn": "تسجيل الدخول",
+    "failed": "رابط التأكيد هذا غير صالح أو منتهي الصلاحية.",
+    "failedHint": "إذا انتهت صلاحية الرابط، اطلب من مدير الخادم تأكيد عنوانك أو سجّل مجددًا."
   },
   "footer": {
     "links": "روابط",

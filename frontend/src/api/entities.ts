@@ -396,6 +396,7 @@ export interface InstanceEntity {
     enabled?: boolean;
     approval_required?: boolean;
     message?: string | null;
+    invites_enabled?: boolean;
   };
   [key: string]: unknown;
 }

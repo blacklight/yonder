@@ -41,6 +41,20 @@ export function register(
   });
 }
 
+/**
+ * `POST /api/v1/accounts/verify_email` — consume the emailed token.
+ * Anonymous (`skipAuth`): the `/verify-email/:token` link is opened
+ * before the user has signed in.
+ */
+export function verifyEmail(token: string): Promise<{ verified: boolean }> {
+  return request<{ verified: boolean }>({
+    path: "/accounts/verify_email",
+    method: "POST",
+    body: { token },
+    skipAuth: true,
+  });
+}
+
 /** `GET /api/v1/accounts/verify_credentials` — the caller's account. */
 export function verifyCredentials(): Promise<CredentialAccount> {
   return request<CredentialAccount>({

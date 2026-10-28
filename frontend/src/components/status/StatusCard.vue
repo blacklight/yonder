@@ -7,6 +7,7 @@ import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
 import CwBlock from "./CwBlock.vue";
+import ShowMore from "./ShowMore.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusQuote from "./StatusQuote.vue";
 import StatusPoll from "./StatusPoll.vue";
@@ -31,6 +32,9 @@ const props = defineProps<{
   /** DM threads reply through the page's own composer as a direct
    * message — no inline form and never a public reply to a DM. */
   directReply?: boolean;
+  /** Render the body in full — the focal status on its permalink page
+   * opts out of the long-post clamp. */
+  expanded?: boolean;
 }>();
 const emit = defineEmits<{ removed: [id: string] }>();
 const { t } = useI18n();
@@ -51,6 +55,7 @@ const shownContent = computed(() =>
       )
     : shown.value.content,
 );
+const safeContent = computed(() => sanitizeHtml(shownContent.value));
 
 // The whole card is the permalink's click target, Mastodon-style —
 // except interactive elements (links, buttons, the composer) and an
@@ -70,6 +75,9 @@ function onCardClick(event: MouseEvent) {
 const booster = computed(() =>
   props.status.reblog ? props.status.account : null,
 );
+// Long bodies clamp behind a "Show more" fade — except CW'd posts
+// (already gated by CwBlock) and the expanded focal status.
+const clampBody = computed(() => !props.expanded && !shown.value.spoiler_text);
 
 const account = computed(() => shown.value.account);
 const remoteDomain = computed(() => {
@@ -359,8 +367,12 @@ async function onReact(emoji: string) {
     <p v-if="actionError" class="status-card__error">{{ actionError }}</p>
 
     <CwBlock :spoiler-text="shown.spoiler_text">
-      <!-- eslint-disable-next-line vue/no-v-html -->
-      <div class="status-card__content" v-html="sanitizeHtml(shownContent)" />
+      <!-- Only the text clamps — media, quotes and polls always
+           render whole, never sliced by the fade. -->
+      <ShowMore :disabled="!clampBody">
+        <!-- eslint-disable-next-line vue/no-v-html -->
+        <div class="status-card__content" v-html="safeContent" />
+      </ShowMore>
 
       <StatusMedia
         :media="shown.media_attachments"

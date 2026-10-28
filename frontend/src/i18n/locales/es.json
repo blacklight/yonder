@@ -350,7 +350,9 @@
     "close": "Cerrar",
     "loading": "Cargando…",
     "confirm": "Confirmar",
-    "cancel": "Cancelar"
+    "cancel": "Cancelar",
+    "showMore": "Mostrar más",
+    "showLess": "Mostrar menos"
   },
   "auth": {
     "signInTitle": "Iniciar sesión",

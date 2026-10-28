@@ -159,6 +159,7 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
              nothing left to show. -->
         <StatusCard
           :status="status"
+          expanded
           @removed="() => router.push({ name: 'home' })"
         />
         <div v-for="(thread, i) in threads" :key="i" class="thread">

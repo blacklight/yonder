@@ -350,7 +350,9 @@
     "close": "Close",
     "loading": "Loading…",
     "confirm": "Confirm",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "showMore": "Show more",
+    "showLess": "Show less"
   },
   "auth": {
     "signInTitle": "Sign in",

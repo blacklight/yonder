@@ -69,8 +69,26 @@ function mockApi(status = 200, body: unknown = {}) {
     );
 }
 
+// jsdom reports every scrollHeight as 0 — ShowMore reads it to decide
+// whether a body needs the clamp, so tests drive it per case.
+let scrollHeight = 0;
+
 describe("StatusCard", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    scrollHeight = 0;
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(
+      () => scrollHeight,
+    );
+  });
 
   it("renders header, content and footer", () => {
     const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
@@ -109,6 +127,48 @@ describe("StatusCard", () => {
     expect(wrapper.find(".cw__body").attributes("style") ?? "").not.toContain(
       "display: none",
     );
+  });
+
+  it("clamps tall bodies behind Show more — skipped for CW + expanded", async () => {
+    scrollHeight = 1000;
+    const media = {
+      id: "m1",
+      type: "image",
+      url: "https://x.test/m.png",
+      preview_url: null,
+      remote_url: null,
+      description: null,
+      blurhash: null,
+    } as Status["media_attachments"][number];
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: status({ media_attachments: [media] }) },
+    });
+    await flushPromises(); // the onMounted measure lands on next flush
+    const toggle = wrapper.get(".show-more__toggle");
+    expect(toggle.text()).toBe("Show more");
+    await toggle.trigger("click");
+    await flushPromises();
+    expect(wrapper.get(".show-more__toggle").text()).toBe("Show less");
+
+    // Media renders whole, outside the clamped text — never sliced
+    // by the fade.
+    const clamp = wrapper.get(".show-more");
+    expect(clamp.find(".status-media").exists()).toBe(false);
+    expect(wrapper.find(".status-media").exists()).toBe(true);
+
+    // CW'd bodies are already gated by CwBlock — no second clamp.
+    const { wrapper: cw } = mountWith(StatusCard, {
+      props: { status: status({ spoiler_text: "nsfw" }) },
+    });
+    await flushPromises();
+    expect(cw.find(".show-more__toggle").exists()).toBe(false);
+
+    // The focal permalink status renders in full.
+    const { wrapper: detail } = mountWith(StatusCard, {
+      props: { status: status(), expanded: true },
+    });
+    await flushPromises();
+    expect(detail.find(".show-more__toggle").exists()).toBe(false);
   });
 
   it("renders preview cards only for http(s) URLs", () => {

@@ -669,8 +669,33 @@
     },
     "users": {
       "lookupLabel": "Buscar una cuenta",
-      "lookupHint": "usuario@dominio o nombre local",
+      "lookupHint": "usuario{'@'}dominio o nombre local",
       "lookup": "Buscar",
+      "filters": {
+        "search": "Buscar",
+        "searchHint": "Usuario, nombre o correo",
+        "origin": "Origen",
+        "status": "Estado",
+        "all": "Todos",
+        "local": "Local",
+        "remote": "Remoto",
+        "statuses": {
+          "active": "Activo",
+          "pending": "Pendiente de aprobación",
+          "disabled": "Desactivado",
+          "silenced": "Limitado",
+          "suspended": "Suspendido"
+        },
+        "apply": "Aplicar"
+      },
+      "empty": "Ninguna cuenta coincide.",
+      "cols": {
+        "account": "Cuenta",
+        "email": "Correo",
+        "state": "Estado",
+        "created": "Registro"
+      },
+      "manage": "Gestionar",
       "viewProfile": "Ver perfil público",
       "remote": "Remoto",
       "roles": {
@@ -682,7 +707,9 @@
         "suspended": "Suspendido",
         "limited": "Limitado",
         "disabled": "Desactivado",
-        "sensitive": "Sensible forzado"
+        "sensitive": "Sensible forzado",
+        "pending": "Pendiente de aprobación",
+        "unverified": "Correo sin verificar"
       },
       "actions": {
         "limit": "Limitar cuenta",
@@ -709,6 +736,16 @@
         "suspend": "¿Suspender a {acct}? La cuenta queda desactivada y oculta.",
         "disable": "¿Desactivar el acceso de {acct}?",
         "delete": "¿Eliminar a {acct} de la instancia? Es irreversible."
+      },
+      "create": {
+        "title": "Crear usuario",
+        "username": "Usuario",
+        "email": "Correo electrónico",
+        "password": "Contraseña",
+        "role": "Rol",
+        "skipVerification": "Omitir verificación de correo",
+        "submit": "Crear usuario",
+        "created": "{'@'}{acct} creado."
       }
     },
     "settings": {

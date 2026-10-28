@@ -8,23 +8,227 @@
 //! [`crate::moderation::actions`] — handlers only validate, authorize
 //! and audit.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::{HeaderMap, Uri},
     Json,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{
-    auth::scopes::{require_moderator_scope, require_scope},
-    http::{middleware::auth::AuthContext, AppState},
+    auth::{
+        password::{hash_password, MIN_PASSWORD_LENGTH},
+        registration,
+        scopes::{require_moderator_scope, require_scope},
+    },
+    http::{middleware::auth::AuthContext, paginate, AppState},
     interactions::boost,
     moderation::{actions, audit},
     posts::{self, PostContext},
     Error, Result,
 };
+
+/// `GET /api/v1/admin/accounts` — Mastodon's admin account index:
+/// `origin` (`local`|`remote`), `status` (`active`|`pending`|
+/// `disabled`|`silenced`|`suspended`) and the individual flags
+/// (`local`, `remote`, `staff`, `suspended`, `disabled`, `silenced`,
+/// `pending`, `active`) combine conjunctively; `username`,
+/// `display_name`, `email` are substring matches, `by_domain` exact,
+/// `role` (Yonder extension) exact. `max_id`/`min_id`/`limit`
+/// keyset-paginate; `Link` headers carry cursors. Moderator+.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/accounts",
+    tag = "admin",
+    params(
+        ("origin" = Option<String>, Query, description = "`local` or `remote`"),
+        ("status" = Option<String>, Query, description = "`active|pending|disabled|silenced|suspended`"),
+        ("username" = Option<String>, Query, description = "Substring match"),
+        ("display_name" = Option<String>, Query, description = "Substring match"),
+        ("email" = Option<String>, Query, description = "Substring match"),
+        ("by_domain" = Option<String>, Query, description = "Exact remote domain"),
+        ("role" = Option<String>, Query, description = "`user|moderator|admin`"),
+        ("limit" = Option<i64>, Query, description = "Page size (1-40, default 20)"),
+    ),
+    responses(
+        (status = 200, description = "Array of Admin::Account, newest first"),
+        (status = 403, description = "Moderator role required", body = crate::error::ErrorBody),
+        (status = 422, description = "Invalid filter value", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn list(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    uri: Uri,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<(HeaderMap, Json<Value>)> {
+    require_moderator_scope(&state.config(), &auth, "admin:read")?;
+    let page = paginate::parse(&params);
+    let filters = parse_filters(&params)?;
+    let rows = actions::list(&state.db, &filters, &page).await?;
+    let cursors: Vec<i64> = rows
+        .iter()
+        .filter_map(|row| row["id"].as_str().and_then(|s| s.parse().ok()))
+        .collect();
+    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    Ok((headers, Json(json!(rows))))
+}
+
+/// Query-string → [`actions::AccountFilters`]. Unknown `origin`,
+/// `status` or `role` values are 422s — silently dropping a filter
+/// would widen the result set.
+fn parse_filters(params: &HashMap<String, String>) -> Result<actions::AccountFilters> {
+    let truthy = |k: &str| {
+        params
+            .get(k)
+            .is_some_and(|v| matches!(v.as_str(), "true" | "1"))
+    };
+    let text = |k: &str| {
+        params
+            .get(k)
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .map(String::from)
+    };
+    let mut f = actions::AccountFilters {
+        local: truthy("local"),
+        remote: truthy("remote"),
+        staff: truthy("staff"),
+        suspended: truthy("suspended"),
+        disabled: truthy("disabled"),
+        silenced: truthy("silenced") || truthy("limited"),
+        pending: truthy("pending"),
+        active: truthy("active"),
+        role: text("role"),
+        username: text("username"),
+        display_name: text("display_name"),
+        email: text("email"),
+        by_domain: text("by_domain"),
+        search: text("search"),
+    };
+    match params.get("origin").map(|v| v.trim()) {
+        Some("local") => f.local = true,
+        Some("remote") => f.remote = true,
+        Some(other) => {
+            return Err(Error::Validation(format!("invalid origin {other:?}")));
+        }
+        None => {}
+    }
+    match params.get("status").map(|v| v.trim()) {
+        Some("suspended") => f.suspended = true,
+        Some("disabled") => f.disabled = true,
+        Some("silenced" | "limited") => f.silenced = true,
+        Some("pending") => f.pending = true,
+        Some("active") => f.active = true,
+        Some(other) => {
+            return Err(Error::Validation(format!("invalid status {other:?}")));
+        }
+        None => {}
+    }
+    if let Some(role) = &f.role {
+        if !matches!(role.as_str(), "user" | "moderator" | "admin") {
+            return Err(Error::Validation(format!("invalid role {role:?}")));
+        }
+    }
+    Ok(f)
+}
+
+#[derive(Deserialize, utoipa::ToSchema)]
+pub struct CreateAccountBody {
+    pub username: String,
+    pub email: String,
+    pub password: String,
+    /// `user|moderator|admin` (default `user`).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Create the account already verified (implied for staff roles).
+    #[serde(default)]
+    pub skip_verification: bool,
+    #[serde(default)]
+    pub locale: Option<String>,
+}
+
+/// `POST /api/v1/admin/accounts` — Yonder extension (Mastodon has no
+/// admin create; Pleroma's `/pleroma/admin/users` is the analog):
+/// create a local account bypassing the registration mode. Shares
+/// [`registration::create_admin_account`] with `yonder user create`
+/// — approved, role set, verification email when required and not
+/// skipped. Admin-only; the caller is the audit actor.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/accounts",
+    tag = "admin",
+    request_body(content_type = "application/json"),
+    responses(
+        (status = 200, description = "The new Admin::Account"),
+        (status = 403, description = "Admin role required", body = crate::error::ErrorBody),
+        (status = 422, description = "Validation failed", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn create(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Json(body): Json<CreateAccountBody>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "admin")?;
+    if body.password.chars().count() < MIN_PASSWORD_LENGTH {
+        return Err(Error::Validation(format!(
+            "password must be at least {MIN_PASSWORD_LENGTH} characters"
+        )));
+    }
+    let password_hash = hash_password(&body.password)?;
+    let registered = registration::create_admin_account(
+        &state,
+        &registration::AdminCreateParams {
+            username: &body.username,
+            email: &body.email,
+            password_hash: &password_hash,
+            role: body.role.as_deref().unwrap_or("user"),
+            skip_verification: body.skip_verification,
+            locale: body.locale.as_deref(),
+            actor_id: Some(auth.account_id),
+        },
+    )
+    .await?;
+    Ok(Json(
+        actions::admin_account_entity(&state.db, registered.account_id).await?,
+    ))
+}
+
+/// `DELETE /api/v1/admin/accounts/{id}` — REST alias for
+/// `POST …/action` with `type: "delete"`: same admin-only guard,
+/// same last-active-admin protection, same audit row, same
+/// immediate-purge pipeline. Remote accounts are permitted (their
+/// local mirror is removed; Mastodon admins purge remote accounts the
+/// same way).
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/accounts/{id}",
+    tag = "admin",
+    params(("id" = i64, Path)),
+    responses(
+        (status = 200, description = "Deletion scheduled"),
+        (status = 403, description = "Admin role required", body = crate::error::ErrorBody),
+        (status = 404, description = "No such account", body = crate::error::ErrorBody),
+        (status = 409, description = "Last active admin", body = crate::error::ErrorBody),
+        (status = 422, description = "Self-target", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn remove(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "admin")?;
+    if id == auth.account_id {
+        return Err(Error::Validation("cannot delete your own account".into()));
+    }
+    actions::apply(&state, auth.account_id, &auth.role, id, "delete", "", None).await?;
+    Ok(Json(json!({ "id": id.to_string(), "deleted": true })))
+}
 
 /// `POST /api/v1/admin/accounts/{id}/action` — Mastodon form:
 /// `type` (required; `none|sensitive|disable|silence|suspend` plus

@@ -669,8 +669,33 @@
     },
     "users": {
       "lookupLabel": "Konto suchen",
-      "lookupHint": "nutzer@domain oder lokaler Name",
+      "lookupHint": "nutzer{'@'}domain oder lokaler Name",
       "lookup": "Suchen",
+      "filters": {
+        "search": "Suchen",
+        "searchHint": "Benutzername, Anzeigename oder E-Mail",
+        "origin": "Herkunft",
+        "status": "Status",
+        "all": "Alle",
+        "local": "Lokal",
+        "remote": "Entfernt",
+        "statuses": {
+          "active": "Aktiv",
+          "pending": "Ausstehende Freigabe",
+          "disabled": "Deaktiviert",
+          "silenced": "Eingeschränkt",
+          "suspended": "Gesperrt"
+        },
+        "apply": "Anwenden"
+      },
+      "empty": "Keine Konten gefunden.",
+      "cols": {
+        "account": "Konto",
+        "email": "E-Mail",
+        "state": "Status",
+        "created": "Beigetreten"
+      },
+      "manage": "Verwalten",
       "viewProfile": "Öffentliches Profil ansehen",
       "remote": "Entfernt",
       "roles": {
@@ -682,7 +707,9 @@
         "suspended": "Gesperrt",
         "limited": "Eingeschränkt",
         "disabled": "Deaktiviert",
-        "sensitive": "Sensibel erzwungen"
+        "sensitive": "Sensibel erzwungen",
+        "pending": "Ausstehende Freigabe",
+        "unverified": "E-Mail nicht bestätigt"
       },
       "actions": {
         "limit": "Konto einschränken",
@@ -709,6 +736,16 @@
         "suspend": "{acct} sperren? Das Konto wird deaktiviert und ausgeblendet.",
         "disable": "Login für {acct} deaktivieren?",
         "delete": "{acct} von der Instanz löschen? Das ist unwiderruflich."
+      },
+      "create": {
+        "title": "Benutzer erstellen",
+        "username": "Benutzername",
+        "email": "E-Mail",
+        "password": "Passwort",
+        "role": "Rolle",
+        "skipVerification": "E-Mail-Verifizierung überspringen",
+        "submit": "Benutzer erstellen",
+        "created": "{'@'}{acct} erstellt."
       }
     },
     "settings": {

@@ -57,6 +57,32 @@ handshake). Rows carry `id`, `inbox_url`, `state`, `created_at` and
 `updated_at`. Only `accepted` relays receive public-post fan-out
 (`federation.allow_relays` gates globally).
 
+## Account index and provisioning
+
+`GET /api/v1/admin/accounts` (moderator+) is Mastodon's admin account
+index: `origin` (`local`|`remote`), `status` (`active`|`pending`|
+`disabled`|`silenced`|`suspended`) and the individual flags
+(`local`, `remote`, `staff`, `suspended`, `disabled`, `silenced`,
+`pending`, `active`) AND together; `username`, `display_name`,
+`email` are escaped case-insensitive substring matches (`%`/`_`
+match literally), `by_domain` is exact, `role` (Yonder extension) is
+exact, and `search` (Yonder extension) ORs one term across username,
+display name and email. Unknown `origin`/`status`/`role` values are
+422s — a dropped filter would widen the result set. Rows are
+`Admin::Account` entities newest-first; `max_id`/`min_id`/`limit`
+keyset-paginate and `Link` headers carry cursors (filters included).
+
+`POST /api/v1/admin/accounts` (admin-only) creates a local account —
+the API twin of `yonder user create`. Body: `username`, `email`,
+`password`, optional `role` (`user` default), `skip_verification`
+(implied for staff roles), `locale`. Registration mode does not
+apply; the response is the new `Admin::Account`.
+
+`DELETE /api/v1/admin/accounts/{id}` (admin-only) is the REST alias
+for `action` with `type: "delete"` — same last-active-admin guard,
+same audit row, same immediate-purge pipeline. Self-targets are
+rejected (422).
+
 ## User actions
 
 `POST /api/v1/admin/accounts/{id}/action` now also accepts

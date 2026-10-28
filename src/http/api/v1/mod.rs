@@ -191,7 +191,16 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/admin/accounts/{id}/email_reset",
             post(admin_actions::email_reset),
         )
-        .route("/api/v1/admin/accounts/{id}", get(admin_actions::show))
+        // Account index + admin-side provisioning (epic 25's panel):
+        // Mastodon's filtered list, Yonder's create/REST-delete.
+        .route(
+            "/api/v1/admin/accounts",
+            get(admin_actions::list).post(admin_actions::create),
+        )
+        .route(
+            "/api/v1/admin/accounts/{id}",
+            get(admin_actions::show).delete(admin_actions::remove),
+        )
         // Epic 22 — audit log reader.
         .route("/api/v1/admin/audit_log", get(admin_audit::list))
         // Epic 22 — relays (manual accept, no Follow handshake).
@@ -830,6 +839,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     reports::admin_reopen,
     reports::admin_assign_self,
     reports::admin_unassign,
+    admin_actions::list,
+    admin_actions::create,
+    admin_actions::remove,
     admin_actions::action,
     admin_actions::reverse,
     admin_actions::set_role,

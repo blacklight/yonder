@@ -70,11 +70,23 @@ function onUpdated(a: AdminAccount) {
         >
           {{ t("admin.users.state.disabled") }}
         </span>
+        <span
+          v-if="account.approved === false"
+          class="admin-user__badge admin-user__badge--warn"
+        >
+          {{ t("admin.users.state.pending") }}
+        </span>
+        <span v-if="account.email_verified === false" class="admin-user__badge">
+          {{ t("admin.users.state.unverified") }}
+        </span>
         <span v-if="account.force_sensitive" class="admin-user__badge">
           {{ t("admin.users.state.sensitive") }}
         </span>
       </div>
       <p class="admin-user__meta">
+        <span v-if="account.email" class="admin-user__email">{{
+          account.email
+        }}</span>
         <router-link :to="`/@${acct}`">{{
           t("admin.users.viewProfile")
         }}</router-link>
@@ -107,7 +119,13 @@ function onUpdated(a: AdminAccount) {
   color: var(--accent-fg, #fff);
 }
 .admin-user__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
   font-size: var(--text-xs);
+}
+.admin-user__email {
+  color: var(--text-muted);
 }
 .admin-user__status {
   color: var(--text-muted);

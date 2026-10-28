@@ -936,6 +936,367 @@ async fn reset_links_respect_staff_guard() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_accounts_index_filters_and_paginates() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let admin = register(&env.app, "admin", "admin@x.test").await;
+    make_role(&env, "admin", "admin").await;
+    let _mod = register(&env.app, "mod", "mod@x.test").await;
+    make_role(&env, "mod", "moderator").await;
+    let plain = register(&env.app, "alice", "alice@x.test").await;
+    let _ = register(&env.app, "bob", "bob@x.test").await;
+    let alice_id = account_id(&env, "alice").await;
+
+    // The index returns local users, newest first, with the
+    // users-joined fields populated.
+    let (status, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?origin=local",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 4, "{body}");
+    let usernames: Vec<&str> = rows
+        .iter()
+        .map(|r| r["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(usernames, ["bob", "alice", "mod", "admin"], "{usernames:?}");
+    let alice = &rows[1];
+    assert_eq!(alice["email"], "alice@x.test");
+    assert_eq!(alice["role"], "user");
+    assert_eq!(alice["email_verified"], true);
+    assert_eq!(alice["approved"], true);
+    assert_eq!(alice["suspended"], false);
+
+    // Substring filters: `search` ORs username/display_name/email;
+    // `username` matches only the handle.
+    for q in ["search=lice@x", "username=alic", "email=lice@x"] {
+        let (_, _, body) = request(
+            &env.app,
+            "GET",
+            &format!("/api/v1/admin/accounts?{q}"),
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(body.as_array().unwrap().len(), 1, "{q}: {body}");
+        assert_eq!(body[0]["username"], "alice");
+    }
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?email=bob@x",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 1, "{body}");
+
+    // `staff` / `role` filters.
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?staff=true",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let staff: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["username"].as_str().unwrap())
+        .collect();
+    assert_eq!(staff, ["mod", "admin"], "{staff:?}");
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?role=admin",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body[0]["username"], "admin");
+
+    // The instance actor is a local account without a `users` row —
+    // it's excluded from the index and rejected as a target.
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id) \
+         VALUES (NULL, 'yonder.instance', 'http://127.0.0.1:4000/ap/users/yonder.instance')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?origin=local",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 4, "{body}");
+    let (status, _, body) = request(
+        &env.app,
+        "DELETE",
+        &format!(
+            "/api/v1/admin/accounts/{}",
+            account_id(&env, "yonder.instance").await
+        ),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Plain users can't read the index. (Done before the suspend
+    // below — suspension revokes alice's tokens.)
+    let (status, _, _) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts",
+        Some(&plain),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // `status=suspended` surfaces only suspended accounts.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/admin/accounts/{alice_id}/action"),
+        Some(&admin),
+        Some(json!({"type": "suspend"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?status=suspended",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(body[0]["username"], "alice");
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?status=active",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 3, "{body}");
+
+    // LIKE metacharacters match literally — `_` is not a wildcard.
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?username=_",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 0, "{body}");
+
+    // Keyset pagination carries the filters in `Link`.
+    let (_, headers, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/accounts?origin=local&limit=2",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(body.as_array().unwrap().len(), 2);
+    let link = headers["link"].to_str().unwrap();
+    assert!(link.contains("rel=\"next\""), "{link}");
+    assert!(link.contains("origin=local"), "{link}");
+    let max_id = body[1]["id"].as_str().unwrap();
+    let (_, _, page2) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/admin/accounts?origin=local&limit=2&max_id={max_id}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(page2.as_array().unwrap().len(), 2, "{page2}");
+    assert_ne!(page2[0]["id"], body[0]["id"]);
+
+    // Unknown filter values are 422, not silently dropped.
+    for q in ["origin=elsewhere", "status=weird", "role=owner"] {
+        let (status, _, body) = request(
+            &env.app,
+            "GET",
+            &format!("/api/v1/admin/accounts?{q}"),
+            Some(&admin),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{q}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_accounts_create_and_delete() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let admin = register(&env.app, "admin", "admin@x.test").await;
+    make_role(&env, "admin", "admin").await;
+    let mod_ = register(&env.app, "mod", "mod@x.test").await;
+    make_role(&env, "mod", "moderator").await;
+    let admin_id = account_id(&env, "admin").await;
+
+    // Create a regular user — approved, verified (the test env does
+    // not require email verification), no OAuth tokens.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/accounts",
+        Some(&admin),
+        Some(json!({
+            "username": "newbie",
+            "email": "newbie@x.test",
+            "password": "hunter2-password",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["username"], "newbie");
+    assert_eq!(body["role"], "user");
+    assert_eq!(body["email"], "newbie@x.test");
+    assert_eq!(body["email_verified"], true);
+    assert_eq!(body["approved"], true);
+    let newbie_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+    // The account can authenticate.
+    let password_ok: bool =
+        sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM users WHERE account_id = $1")
+            .bind(newbie_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert!(password_ok);
+
+    // Create with a role + explicit skip flag.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/accounts",
+        Some(&admin),
+        Some(json!({
+            "username": "helper",
+            "email": "helper@x.test",
+            "password": "hunter2-password",
+            "role": "moderator",
+            "skip_verification": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["role"], "moderator");
+
+    // Validation: duplicate username, bad email, short password,
+    // unknown role — all 422.
+    for body in [
+        json!({"username": "newbie", "email": "other@x.test", "password": "hunter2-password"}),
+        json!({"username": "ok1", "email": "not-an-email", "password": "hunter2-password"}),
+        json!({"username": "ok2", "email": "ok2@x.test", "password": "short"}),
+        json!({"username": "ok3", "email": "ok3@x.test", "password": "hunter2-password", "role": "owner"}),
+    ] {
+        let (status, _, resp) = request(
+            &env.app,
+            "POST",
+            "/api/v1/admin/accounts",
+            Some(&admin),
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}: {resp}");
+    }
+
+    // Moderators can't create or delete accounts.
+    for (method, path) in [
+        ("POST", "/api/v1/admin/accounts".to_string()),
+        ("DELETE", format!("/api/v1/admin/accounts/{newbie_id}")),
+    ] {
+        let (status, _, body) = request(
+            &env.app,
+            method,
+            &path,
+            Some(&mod_),
+            Some(json!({"username": "x", "email": "x@x.test", "password": "hunter2-password"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}: {body}");
+    }
+
+    // Self-delete rejected.
+    let (status, _, _) = request(
+        &env.app,
+        "DELETE",
+        &format!("/api/v1/admin/accounts/{admin_id}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // DELETE suspends + schedules the purge, and audits it.
+    let (status, _, body) = request(
+        &env.app,
+        "DELETE",
+        &format!("/api/v1/admin/accounts/{newbie_id}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["deleted"], true);
+    let (suspended, scheduled): (bool, bool) = sqlx::query_as(
+        "SELECT a.suspended_at IS NOT NULL, \
+                EXISTS(SELECT 1 FROM account_deletions WHERE account_id = $1) \
+         FROM accounts a WHERE a.id = $1",
+    )
+    .bind(newbie_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(suspended);
+    assert!(scheduled);
+    let audited: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM audit_log WHERE action = 'account.delete' AND target_id = $1",
+    )
+    .bind(newbie_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(audited, 1);
+
+    // Nonexistent id → 404.
+    let (status, _, _) = request(
+        &env.app,
+        "DELETE",
+        "/api/v1/admin/accounts/99999999",
+        Some(&admin),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 // ---------------------------------------------------------------------------
 // Email templates + transport
 // ---------------------------------------------------------------------------

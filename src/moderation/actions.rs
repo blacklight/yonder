@@ -98,7 +98,7 @@ pub async fn apply(
     let mut tx = state.db.begin().await?;
     admin_set_lock(&mut tx).await?;
     let target = sqlx::query(
-        "SELECT role, suspended_at, domain FROM accounts WHERE id = $1 AND deleted_at IS NULL",
+        "SELECT username, role, suspended_at, domain FROM accounts WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(target_id)
     .fetch_optional(&mut *tx)
@@ -109,6 +109,19 @@ pub async fn apply(
         .get::<Option<DateTime<Utc>>, _>("suspended_at")
         .is_some();
     let target_local = target.get::<Option<String>, _>("domain").is_none();
+
+    // The instance actor is infrastructure: it signs outbound
+    // activities and can't be suspended, deleted or re-roled without
+    // breaking federation for the whole instance.
+    if target_local
+        && target
+            .get::<String, _>("username")
+            .eq_ignore_ascii_case(crate::activitypub::actors::INSTANCE_USERNAME)
+    {
+        return Err(Error::Validation(
+            "the instance actor cannot be modified".into(),
+        ));
+    }
 
     // Moderators can't act on staff — suspension-class powers over
     // admins and fellow moderators belong to admins alone.
@@ -340,7 +353,7 @@ pub async fn set_role(state: &AppState, actor_id: i64, target_id: i64, role: &st
     // last-admin check.
     admin_set_lock(&mut tx).await?;
     let target = sqlx::query(
-        "SELECT role, suspended_at FROM accounts \
+        "SELECT username, role, suspended_at FROM accounts \
          WHERE id = $1 AND domain IS NULL AND deleted_at IS NULL FOR UPDATE",
     )
     .bind(target_id)
@@ -349,6 +362,14 @@ pub async fn set_role(state: &AppState, actor_id: i64, target_id: i64, role: &st
     let Some(target) = target else {
         return Err(Error::NotFound("account".into()));
     };
+    if target
+        .get::<String, _>("username")
+        .eq_ignore_ascii_case(crate::activitypub::actors::INSTANCE_USERNAME)
+    {
+        return Err(Error::Validation(
+            "the instance actor cannot be modified".into(),
+        ));
+    }
     let current: String = target.get("role");
     let suspended = target
         .get::<Option<DateTime<Utc>>, _>("suspended_at")
@@ -478,27 +499,178 @@ pub async fn reset_link(
     Ok(url)
 }
 
-/// Mastodon `Admin::Account` entity, minimal: identity + moderation
-/// state flags for the panel.
-pub async fn admin_account_entity(db: &PgPool, account_id: i64) -> Result<Value> {
-    let row = sqlx::query(
-        "SELECT id, username, domain, role, suspended_at, limited_at, disabled_at, \
-                force_sensitive, created_at \
-         FROM accounts WHERE id = $1",
-    )
-    .bind(account_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| Error::NotFound("account".into()))?;
-    Ok(json!({
+/// The `accounts`↔`users` projection [`admin_account_entity`] and
+/// [`list`] share: identity + moderation flags from `accounts`, the
+/// local-user fields from `users` (NULL for remote rows, which carry
+/// no `users` entry).
+const ADMIN_ACCOUNT_COLS: &str =
+    "a.id, a.username, a.domain, a.role, a.suspended_at, a.limited_at, \
+     a.disabled_at, a.force_sensitive, a.created_at, \
+     u.id AS user_id, u.email, u.email_verified_at, u.approved_at";
+
+/// Mastodon `Admin::Account` entity from one joined row.
+fn admin_entity(row: &sqlx::postgres::PgRow) -> Value {
+    // The `users`-derived fields are null — not false — when there
+    // is no `users` row (remote accounts, the instance actor).
+    let has_user = row.get::<Option<i64>, _>("user_id").is_some();
+    let user_ts = |col: &str| -> Value {
+        match has_user {
+            true => json!(row.get::<Option<DateTime<Utc>>, _>(col).is_some()),
+            false => Value::Null,
+        }
+    };
+    json!({
         "id": row.get::<i64, _>("id").to_string(),
         "username": row.get::<String, _>("username"),
         "domain": row.get::<Option<String>, _>("domain"),
         "role": row.get::<String, _>("role"),
-        "suspended": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("suspended_at").is_some(),
-        "limited": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("limited_at").is_some(),
-        "disabled": row.get::<Option<chrono::DateTime<chrono::Utc>>, _>("disabled_at").is_some(),
+        "email": row.get::<Option<String>, _>("email"),
+        "email_verified": user_ts("email_verified_at"),
+        "approved": user_ts("approved_at"),
+        "suspended": row.get::<Option<DateTime<Utc>>, _>("suspended_at").is_some(),
+        "limited": row.get::<Option<DateTime<Utc>>, _>("limited_at").is_some(),
+        "disabled": row.get::<Option<DateTime<Utc>>, _>("disabled_at").is_some(),
         "force_sensitive": row.get::<bool, _>("force_sensitive"),
-        "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at").to_rfc3339(),
-    }))
+        "created_at": row.get::<DateTime<Utc>, _>("created_at").to_rfc3339(),
+    })
+}
+
+/// Mastodon `Admin::Account` entity, minimal: identity + moderation
+/// state flags for the panel.
+pub async fn admin_account_entity(db: &PgPool, account_id: i64) -> Result<Value> {
+    let row = sqlx::query(&format!(
+        "SELECT {ADMIN_ACCOUNT_COLS} FROM accounts a \
+         LEFT JOIN users u ON u.account_id = a.id WHERE a.id = $1"
+    ))
+    .bind(account_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| Error::NotFound("account".into()))?;
+    Ok(admin_entity(&row))
+}
+
+/// `GET /api/v1/admin/accounts` filters — Mastodon's query
+/// vocabulary, resolved by the handler: `origin`/`status` umbrella
+/// params land here as the individual flags, which AND together.
+/// Text filters are case-insensitive substrings, `by_domain` exact.
+#[derive(Debug, Default)]
+pub struct AccountFilters {
+    pub local: bool,
+    pub remote: bool,
+    /// `role IN ('admin','moderator')`.
+    pub staff: bool,
+    /// Exact role (`user|moderator|admin`) — Yonder extension.
+    pub role: Option<String>,
+    // State flags — each `true` adds its conjunct.
+    pub suspended: bool,
+    pub disabled: bool,
+    /// Mastodon's `silenced`, Yonder's `limited_at`.
+    pub silenced: bool,
+    /// Unapproved local users.
+    pub pending: bool,
+    /// No flags set (and approved, for locals).
+    pub active: bool,
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub by_domain: Option<String>,
+    /// Yonder convenience — one term OR'd across username, display
+    /// name and email (the panel's single search box).
+    pub search: Option<String>,
+}
+
+/// Newest-first page of `Admin::Account` entities matching `filters`
+/// and `page`'s keyset cursors.
+pub async fn list(
+    db: &PgPool,
+    f: &AccountFilters,
+    page: &crate::http::paginate::Page,
+) -> Result<Vec<Value>> {
+    let mut qb = sqlx::QueryBuilder::<sqlx::Postgres>::new(format!(
+        "SELECT {ADMIN_ACCOUNT_COLS} FROM accounts a \
+         LEFT JOIN users u ON u.account_id = a.id \
+         WHERE a.deleted_at IS NULL \
+           AND (a.domain IS NOT NULL OR u.id IS NOT NULL)"
+    ));
+    if f.local {
+        qb.push(" AND a.domain IS NULL");
+    }
+    if f.remote {
+        qb.push(" AND a.domain IS NOT NULL");
+    }
+    if f.staff {
+        qb.push(" AND a.role IN ('admin','moderator')");
+    }
+    if let Some(role) = &f.role {
+        qb.push(" AND a.role = ").push_bind(role);
+    }
+    if f.suspended {
+        qb.push(" AND a.suspended_at IS NOT NULL");
+    }
+    if f.disabled {
+        qb.push(" AND a.disabled_at IS NOT NULL");
+    }
+    if f.silenced {
+        qb.push(" AND a.limited_at IS NOT NULL");
+    }
+    if f.pending {
+        qb.push(" AND a.domain IS NULL AND u.approved_at IS NULL AND a.suspended_at IS NULL");
+    }
+    if f.active {
+        qb.push(
+            " AND a.suspended_at IS NULL AND a.disabled_at IS NULL \
+                 AND a.limited_at IS NULL \
+                 AND (a.domain IS NOT NULL OR u.approved_at IS NOT NULL)",
+        );
+    }
+    let substring = |v: &str| {
+        format!(
+            "%{}%",
+            escape_like(&v.chars().take(200).collect::<String>())
+        )
+    };
+    if let Some(v) = &f.username {
+        qb.push(" AND a.username ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\'");
+    }
+    if let Some(v) = &f.display_name {
+        qb.push(" AND a.display_name ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\'");
+    }
+    if let Some(v) = &f.email {
+        qb.push(" AND u.email ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\'");
+    }
+    if let Some(v) = &f.search {
+        qb.push(" AND (a.username ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\' OR a.display_name ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\' OR u.email ILIKE ")
+            .push_bind(substring(v))
+            .push(" ESCAPE '\\')");
+    }
+    if let Some(v) = &f.by_domain {
+        qb.push(" AND a.domain = ").push_bind(v);
+    }
+    if let Some(max_id) = page.max_id {
+        qb.push(" AND a.id < ").push_bind(max_id);
+    }
+    if let Some(since_id) = page.since_id {
+        qb.push(" AND a.id > ").push_bind(since_id);
+    }
+    qb.push(" ORDER BY a.id DESC LIMIT ").push_bind(page.limit);
+    let rows = qb.build().fetch_all(db).await?;
+    Ok(rows.iter().map(admin_entity).collect())
+}
+
+/// Escape `LIKE` metacharacters so a substring filter matches
+/// literally (`%` and `_` in the input are not wildcards).
+fn escape_like(v: &str) -> String {
+    v.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }

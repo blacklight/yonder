@@ -669,8 +669,33 @@
     },
     "users": {
       "lookupLabel": "ابحث عن حساب",
-      "lookupHint": "user@domain أو اسم محلي",
+      "lookupHint": "user{'@'}domain أو اسم محلي",
       "lookup": "بحث",
+      "filters": {
+        "search": "بحث",
+        "searchHint": "اسم المستخدم أو الاسم المعروض أو البريد",
+        "origin": "المصدر",
+        "status": "الحالة",
+        "all": "الكل",
+        "local": "محلي",
+        "remote": "بعيد",
+        "statuses": {
+          "active": "نشط",
+          "pending": "بانتظار الموافقة",
+          "disabled": "معطّل",
+          "silenced": "محدود",
+          "suspended": "موقوف"
+        },
+        "apply": "تطبيق"
+      },
+      "empty": "لا توجد حسابات مطابقة.",
+      "cols": {
+        "account": "الحساب",
+        "email": "البريد الإلكتروني",
+        "state": "الحالة",
+        "created": "تاريخ الانضمام"
+      },
+      "manage": "إدارة",
       "viewProfile": "عرض الملف العام",
       "remote": "بعيد",
       "roles": {
@@ -682,7 +707,9 @@
         "suspended": "موقوف",
         "limited": "محدود",
         "disabled": "معطّل",
-        "sensitive": "حسّاس إجباري"
+        "sensitive": "حسّاس إجباري",
+        "pending": "بانتظار الموافقة",
+        "unverified": "البريد غير مؤكد"
       },
       "actions": {
         "limit": "تقييد الحساب",
@@ -709,6 +736,16 @@
         "suspend": "إيقاف {acct}؟ سيُعطَّل الحساب ويُخفى.",
         "disable": "تعطيل دخول {acct}؟",
         "delete": "حذف {acct} من المثيل؟ هذا لا يمكن التراجع عنه."
+      },
+      "create": {
+        "title": "إنشاء مستخدم",
+        "username": "اسم المستخدم",
+        "email": "البريد الإلكتروني",
+        "password": "كلمة المرور",
+        "role": "الدور",
+        "skipVerification": "تخطي تأكيد البريد",
+        "submit": "إنشاء مستخدم",
+        "created": "تم إنشاء ‎{'@'}{acct}."
       }
     },
     "settings": {

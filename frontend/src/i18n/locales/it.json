@@ -669,8 +669,33 @@
     },
     "users": {
       "lookupLabel": "Trova un account",
-      "lookupHint": "utente@dominio o nome locale",
+      "lookupHint": "utente{'@'}domain o nome locale",
       "lookup": "Cerca",
+      "filters": {
+        "search": "Cerca",
+        "searchHint": "Utente, nome o email",
+        "origin": "Origine",
+        "status": "Stato",
+        "all": "Tutti",
+        "local": "Locale",
+        "remote": "Remoto",
+        "statuses": {
+          "active": "Attivo",
+          "pending": "In attesa di approvazione",
+          "disabled": "Disabilitato",
+          "silenced": "Limitato",
+          "suspended": "Sospeso"
+        },
+        "apply": "Applica"
+      },
+      "empty": "Nessun account corrisponde.",
+      "cols": {
+        "account": "Account",
+        "email": "Email",
+        "state": "Stato",
+        "created": "Iscrizione"
+      },
+      "manage": "Gestisci",
       "viewProfile": "Vedi profilo pubblico",
       "remote": "Remoto",
       "roles": {
@@ -682,7 +707,9 @@
         "suspended": "Sospeso",
         "limited": "Limitato",
         "disabled": "Disabilitato",
-        "sensitive": "Sensibile forzato"
+        "sensitive": "Sensibile forzato",
+        "pending": "In attesa di approvazione",
+        "unverified": "Email non verificata"
       },
       "actions": {
         "limit": "Limita account",
@@ -709,6 +736,16 @@
         "suspend": "Sospendere {acct}? L'account viene disabilitato e nascosto.",
         "disable": "Disabilitare l'accesso di {acct}?",
         "delete": "Eliminare {acct} dall'istanza? È irreversibile."
+      },
+      "create": {
+        "title": "Crea utente",
+        "username": "Nome utente",
+        "email": "Email",
+        "password": "Password",
+        "role": "Ruolo",
+        "skipVerification": "Salta verifica email",
+        "submit": "Crea utente",
+        "created": "{'@'}{acct} creato."
       }
     },
     "settings": {

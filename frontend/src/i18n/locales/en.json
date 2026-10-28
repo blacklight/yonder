@@ -656,8 +656,33 @@
     },
     "users": {
       "lookupLabel": "Find an account",
-      "lookupHint": "user@domain or local username",
+      "lookupHint": "user{'@'}domain or local username",
       "lookup": "Look up",
+      "filters": {
+        "search": "Search",
+        "searchHint": "Username, display name or email",
+        "origin": "Origin",
+        "status": "Status",
+        "all": "All",
+        "local": "Local",
+        "remote": "Remote",
+        "statuses": {
+          "active": "Active",
+          "pending": "Pending approval",
+          "disabled": "Disabled",
+          "silenced": "Limited",
+          "suspended": "Suspended"
+        },
+        "apply": "Apply"
+      },
+      "empty": "No accounts match.",
+      "cols": {
+        "account": "Account",
+        "email": "Email",
+        "state": "State",
+        "created": "Joined"
+      },
+      "manage": "Manage",
       "viewProfile": "View public profile",
       "remote": "Remote",
       "roles": {
@@ -669,7 +694,9 @@
         "suspended": "Suspended",
         "limited": "Limited",
         "disabled": "Disabled",
-        "sensitive": "Force-sensitive"
+        "sensitive": "Force-sensitive",
+        "pending": "Pending approval",
+        "unverified": "Email unverified"
       },
       "actions": {
         "limit": "Limit account",
@@ -696,7 +723,18 @@
         "suspend": "Suspend {acct}? The account is disabled and hidden.",
         "disable": "Disable login for {acct}?",
         "delete": "Delete {acct} from the instance? This is irreversible."
-      }
+      },
+      "create": {
+        "title": "Create user",
+        "username": "Username",
+        "email": "Email",
+        "password": "Password",
+        "role": "Role",
+        "skipVerification": "Skip email verification",
+        "submit": "Create user",
+        "created": "Created {'@'}{acct}."
+      },
+      "joined": "Joined"
     },
     "settings": {
       "helpLabel": "Setting details",

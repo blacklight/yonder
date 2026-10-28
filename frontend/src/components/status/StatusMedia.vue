@@ -98,9 +98,9 @@ function altPlacement(type: MediaAttachment["type"]): string {
 </template>
 
 <style scoped>
-.status-media {
-  max-height: 30rem;
-}
+/* `.status-media` carries no max-height — the box would stop growing
+   while the grid's extra rows kept painting, overflowing onto the
+   next status. Each attachment is capped on `.status-media__img`. */
 .status-media__cover {
   padding: var(--space-5);
   background: var(--bg-sunken);

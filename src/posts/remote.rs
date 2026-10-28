@@ -23,8 +23,13 @@ use crate::jobs::{JobContext, JobHandler, JobKind};
 use crate::Result;
 
 /// The object types we materialize — Notes, Questions and the
-/// Mastodon-compatible Article/Page shapes degrade to Notes.
-const NOTE_TYPES: &[&str] = &["Note", "Question", "Article", "Page"];
+/// Mastodon-compatible Article/Page plus media/event shapes (Audio,
+/// Video, Event — Songhive/Funkwhale tracks, PeerTube videos,
+/// Mobilizon events) all degrade to notes. `pub(crate)` —
+/// `search::resolve` accepts the same set for fetched documents.
+pub(crate) const NOTE_TYPES: &[&str] = &[
+    "Note", "Question", "Article", "Page", "Audio", "Video", "Event",
+];
 
 /// Entry point from `on_activity_fn`: decide whether `activity` is a
 /// status-bearing Create/Update/Delete and materialize it. Returns
@@ -103,6 +108,131 @@ fn attributed_to(object: &Value) -> Option<String> {
         }),
         _ => None,
     }
+}
+
+/// `object.url` → the web permalink. AP allows `url` as a string, a
+/// `Link`-shaped object, or an array of them (Songhive/Funkwhale
+/// `Audio` objects carry one Link per representation — the media file
+/// plus the `text/html` track page). Prefer the HTML link when
+/// several are present; fall back to the object `id`.
+fn object_url(object: &Value, object_id: &str) -> String {
+    fn href(v: &Value) -> Option<&str> {
+        match v {
+            Value::String(s) => Some(s.as_str()),
+            Value::Object(_) => v.get("href").and_then(|h| h.as_str()),
+            _ => None,
+        }
+    }
+    let picked = match object.get("url") {
+        Some(Value::Array(links)) => links
+            .iter()
+            .find(|l| l.get("mediaType").and_then(|m| m.as_str()) == Some("text/html"))
+            .and_then(href)
+            .or_else(|| links.iter().find_map(href)),
+        Some(v) => href(v),
+        None => None,
+    };
+    picked.unwrap_or(object_id).to_string()
+}
+
+/// The best playable `url` Link for a `Video`/`Audio` object with no
+/// `attachment` (PeerTube): `video/*` progressive first, then HLS
+/// (`application/x-mpegURL`), then `audio/*`. Tracker/`text/html`
+/// links are skipped.
+struct PlayableLink {
+    href: String,
+    media_type: String,
+    kind: &'static str,
+}
+
+fn playable_link(object: &Value) -> Option<PlayableLink> {
+    let links = object.get("url").and_then(|v| v.as_array())?;
+    let mut hls: Option<PlayableLink> = None;
+    let mut audio: Option<PlayableLink> = None;
+    for l in links {
+        let Some(href) = l.get("href").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let mt = l.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+        if mt.starts_with("video/") {
+            return Some(PlayableLink {
+                href: href.to_string(),
+                media_type: mt.to_string(),
+                kind: "video",
+            });
+        }
+        if matches!(
+            mt,
+            "application/x-mpegURL" | "application/vnd.apple.mpegurl"
+        ) && hls.is_none()
+        {
+            hls = Some(PlayableLink {
+                href: href.to_string(),
+                media_type: mt.to_string(),
+                kind: "video",
+            });
+        } else if mt.starts_with("audio/") && audio.is_none() {
+            audio = Some(PlayableLink {
+                href: href.to_string(),
+                media_type: mt.to_string(),
+                kind: "audio",
+            });
+        }
+    }
+    hls.or(audio)
+}
+
+/// Poster art for a remote attachment — surfaced as `preview_url`
+/// (Mastodon renders it as cover art in its audio player / as the
+/// `<video>` poster). Precedence: the attachment's own `preview`/
+/// `image`/`icon`, then the object's, then — for Songhive/Funkwhale
+/// `Audio` — the nested `track`/`track.album` documents. Each field
+/// may be a string, a `Link`/`Image` object (`url` or `href`), or an
+/// array of those (the largest rendition wins — PeerTube `icon`
+/// lists thumbnails small→large).
+fn preview_art_url(att: &Value, object: &Value) -> Option<String> {
+    fn pick(v: Option<&Value>) -> Option<String> {
+        match v {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            Some(Value::Object(_)) => v
+                .and_then(|o| o.get("url").or_else(|| o.get("href")))
+                .and_then(|u| pick(Some(u))),
+            Some(Value::Array(a)) => a.iter().find_map(|i| pick(Some(i))),
+            _ => None,
+        }
+    }
+    // For `Image`-object arrays (e.g. PeerTube `icon`) prefer the
+    // largest rendition by area; unscored items keep array order.
+    fn best(v: Option<&Value>) -> Option<String> {
+        match v {
+            Some(Value::Array(a)) if a.len() > 1 => {
+                let area = |i: &Value| {
+                    let w = i.get("width").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    let h = i.get("height").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                    (w * h) as i64
+                };
+                a.iter()
+                    .max_by_key(|i| area(i))
+                    .and_then(|i| pick(Some(i)))
+                    .or_else(|| a.iter().find_map(|i| pick(Some(i))))
+            }
+            other => pick(other),
+        }
+    }
+    fn art(doc: &Value) -> Option<String> {
+        ["preview", "image", "icon"]
+            .iter()
+            .find_map(|k| best(doc.get(*k)))
+    }
+    art(att)
+        .or_else(|| art(object))
+        .or_else(|| object.get("track").and_then(art))
+        .or_else(|| {
+            object
+                .get("track")
+                .and_then(|t| t.get("album"))
+                .and_then(art)
+        })
 }
 
 /// Bare `accounts` upsert for a remote actor + `RemoteActorFetch`
@@ -212,17 +342,95 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
 
     let account_id = ensure_account(core, &author).await?;
     let visibility = infer_visibility(activity, object, &author);
-    let content_html = object
+    let content_src = object
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or_default();
-    let content_html = super::render::sanitize_html(
-        content_html,
-        &crate::config::Config {
-            content: core.config.content.clone(),
-            ..Default::default()
-        },
+    // Most servers send `content` as HTML; PeerTube (and some others)
+    // declare `mediaType` and send Markdown or plain-text source —
+    // run those through the same render pipeline locals use so links,
+    // formatting and line breaks survive instead of rendering raw.
+    let media_type = object
+        .get("mediaType")
+        .and_then(|v| v.as_str())
+        .map(|m| {
+            m.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+    let render_type = match media_type.as_str() {
+        "text/markdown" | "text/x-markdown" => "text/markdown",
+        "text/plain" => "text/plain",
+        _ => "text/html",
+    };
+    let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    // Mastodon's "converted" types (long-form + media shapes): the
+    // `name` headline and `summary` teaser join the status *text*
+    // with the permalink — `summary` is never a CW there.
+    let converted = matches!(
+        object_type,
+        "Article" | "Page" | "Audio" | "Video" | "Event"
     );
+    // AS2 `summary` is HTML (WriteFreely sends
+    // `<p><img …> […]</p>`); `spoiler_text` and the converted teaser
+    // are plain text — strip it or the markup renders verbatim.
+    let summary_text = object
+        .get("summary")
+        .and_then(|v| v.as_str())
+        .map(|s| super::render::html_to_text(&super::render::sanitize_html(s, &core.config)))
+        .unwrap_or_default()
+        .chars()
+        .take(2000)
+        .collect::<String>();
+    let mut content_hashtags: Vec<String> = Vec::new();
+    let mut content_html = if render_type == "text/html" {
+        super::render::sanitize_html(
+            content_src,
+            &crate::config::Config {
+                content: core.config.content.clone(),
+                ..Default::default()
+            },
+        )
+    } else {
+        let rendered =
+            super::render::render(content_src, render_type, &[], &core.base_url, &core.config);
+        content_hashtags = rendered.hashtags;
+        rendered.html
+    };
+    let url = object_url(object, &object_id);
+    if converted {
+        // Mastodon converts these to headline + teaser + permalink;
+        // keep the rendered body too — headline, teaser, body, then
+        // the link footer (which the link-preview job turns into the
+        // status card, picking up the article's header image).
+        let mut wrapped = String::new();
+        if let Some(name) = object
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|n| !n.is_empty())
+        {
+            wrapped.push_str("<p><strong>");
+            wrapped.push_str(&pubby_sdk::content::html_escape(name));
+            wrapped.push_str("</strong></p>");
+        }
+        if !summary_text.is_empty() {
+            wrapped.push_str("<p>");
+            wrapped.push_str(&pubby_sdk::content::html_escape(&summary_text));
+            wrapped.push_str("</p>");
+        }
+        wrapped.push_str(&content_html);
+        wrapped.push_str("<p>");
+        wrapped.push_str(&pubby_sdk::render_link_anchor(
+            &url,
+            None,
+            Some(url.as_str()),
+        ));
+        wrapped.push_str("</p>");
+        content_html = wrapped;
+    }
     let source_text = object
         .get("source")
         .and_then(|s| s.get("content"))
@@ -238,11 +446,16 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     } else {
         source_text
     };
-    let spoiler = object
-        .get("summary")
-        .and_then(|v| v.as_str())
-        .map(|s| s.chars().take(2000).collect::<String>())
-        .filter(|s| !s.is_empty());
+    // A `source`-supplied text skips `html_to_text`, so the converted
+    // permalink footer never reached `content` — append it or the
+    // link-preview extractor (which reads `content`) finds no URL.
+    let content = if converted && !content.contains(&url) {
+        format!("{content} {url}")
+    } else {
+        content
+    };
+    // Converted objects put the teaser in the text — no CW.
+    let spoiler = (!converted && !summary_text.is_empty()).then_some(summary_text.clone());
     let sensitive = object
         .get("sensitive")
         .and_then(|v| v.as_bool())
@@ -283,11 +496,6 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     };
     let published = object.get("published").and_then(pubby_sdk::model::parse_dt);
     let updated = object.get("updated").and_then(pubby_sdk::model::parse_dt);
-    let url = object
-        .get("url")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| object_id.clone());
 
     // One transaction for the whole materialization — a mid-way
     // failure never leaves a half-written status.
@@ -298,9 +506,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (id, account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
-             in_reply_to_account_id, quote_of_id, quote_uri, created_at, edited_at) \
+             in_reply_to_account_id, quote_of_id, quote_uri, object_type, \
+             created_at, edited_at) \
          VALUES (timestamp_id('statuses', LEAST(COALESCE($12, now()), now())), \
-                 $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15, \
+                 $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15,$16, \
                  LEAST(COALESCE($12, now()), now()), $13) \
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
@@ -310,6 +519,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
              in_reply_to_account_id = EXCLUDED.in_reply_to_account_id, \
              quote_of_id = EXCLUDED.quote_of_id, \
              quote_uri = EXCLUDED.quote_uri, \
+             object_type = EXCLUDED.object_type, \
              edited_at = COALESCE(EXCLUDED.edited_at, statuses.edited_at), \
              updated_at = now() \
          RETURNING id",
@@ -329,6 +539,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .bind(updated)
     .bind(quote_of_id)
     .bind(&quote_uri_col)
+    .bind(object.get("type").and_then(|v| v.as_str()))
     .fetch_one(&mut *tx)
     .await?;
 
@@ -412,12 +623,39 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             }
         }
     }
+    // Hashtags the renderer found in markdown/plain `content` (e.g.
+    // PeerTube `text/markdown` descriptions carry literal `#tags` the
+    // `tag` array may not list).
+    for name in content_hashtags {
+        let tag_id: i64 = sqlx::query_scalar(
+            "INSERT INTO tags (name) VALUES ($1) ON CONFLICT (lower(name)) \
+             DO UPDATE SET name = EXCLUDED.name RETURNING id",
+        )
+        .bind(&name)
+        .fetch_one(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO status_tags (status_id, tag_id) VALUES ($1,$2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(status_id)
+        .bind(tag_id)
+        .execute(&mut *tx)
+        .await?;
+    }
     // Media attachments — remote_url rows only while
     // `media.fetch_remote_media` is off (the fetch runs after
     // `tx.commit()` when it is on). On
     // Update, rows the object no longer names are dropped so stale
     // attachments don't linger.
-    let mut remote_urls: Vec<String> = Vec::new();
+    struct RemoteAtt {
+        kind: &'static str,
+        url: String,
+        media_type: String,
+        description: Option<String>,
+        preview_art: Option<String>,
+    }
+    let mut atts: Vec<RemoteAtt> = Vec::new();
     for att in object
         .get("attachment")
         .and_then(|v| v.as_array())
@@ -436,26 +674,76 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         } else {
             continue;
         };
-        remote_urls.push(url.to_string());
         let description = att
             .get("name")
             .or_else(|| att.get("summary"))
             .and_then(|v| v.as_str())
             .map(|s| s.chars().take(5000).collect::<String>());
+        let preview_art = preview_art_url(att, object);
+        atts.push(RemoteAtt {
+            kind,
+            url: url.to_string(),
+            media_type: media_type.to_string(),
+            description,
+            preview_art,
+        });
+    }
+    // `Video`/`Audio` objects may carry no `attachment` at all —
+    // PeerTube puts the playable source in `url` Links (`video/*`,
+    // or HLS `application/x-mpegURL`) and the poster in `icon`.
+    // Synthesize one attachment from the best playable link so the
+    // status gets a real media element. A real `attachment` of the
+    // same A/V kind wins when present.
+    let is_av = matches!(
+        object.get("type").and_then(|v| v.as_str()),
+        Some("Video") | Some("Audio")
+    );
+    if is_av && !atts.iter().any(|a| a.kind != "image") {
+        if let Some(link) = playable_link(object) {
+            let description = object
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().take(5000).collect::<String>());
+            atts.push(RemoteAtt {
+                kind: link.kind,
+                url: link.href,
+                media_type: link.media_type,
+                description,
+                preview_art: preview_art_url(&Value::Null, object),
+            });
+        }
+    }
+    let mut remote_urls: Vec<String> = Vec::new();
+    for a in &atts {
+        remote_urls.push(a.url.clone());
         sqlx::query(
             "INSERT INTO media_attachments \
-                 (account_id, status_id, type, remote_url, content_type, description) \
-             SELECT $1,$2,$3,$4,$5,$6 WHERE NOT EXISTS ( \
+                 (account_id, status_id, type, remote_url, content_type, description, \
+                  preview_remote_url) \
+             SELECT $1,$2,$3,$4,$5,$6,$7 WHERE NOT EXISTS ( \
                  SELECT 1 FROM media_attachments \
                  WHERE status_id = $2 AND remote_url = $4 \
              )",
         )
         .bind(account_id)
         .bind(status_id)
-        .bind(kind)
-        .bind(url)
-        .bind(media_type)
-        .bind(&description)
+        .bind(a.kind)
+        .bind(&a.url)
+        .bind(&a.media_type)
+        .bind(&a.description)
+        .bind(&a.preview_art)
+        .execute(&mut *tx)
+        .await?;
+        // Re-ingested Updates keep the existing row (media must not be
+        // re-fetched) but the poster may have changed — converge it.
+        sqlx::query(
+            "UPDATE media_attachments SET preview_remote_url = $3 \
+             WHERE status_id = $1 AND remote_url = $2 \
+               AND preview_remote_url IS DISTINCT FROM $3",
+        )
+        .bind(status_id)
+        .bind(&a.url)
+        .bind(&a.preview_art)
         .execute(&mut *tx)
         .await?;
     }
@@ -829,6 +1117,45 @@ fn fetch_marker_key(uri: &str) -> String {
     )
 }
 
+/// Redis marker key for media self-heal refreshes — a separate
+/// namespace so a settled quote marker never blocks a media re-fetch
+/// (and vice versa).
+fn media_refresh_marker_key(uri: &str) -> String {
+    format!(
+        "statusfetch-media:{}",
+        &hex::encode(Sha256::digest(uri.as_bytes()))[..32]
+    )
+}
+
+/// A media-heal refresh backs off a week per row: a successful one
+/// lands the attachment (or the object type) and stops the gate, a
+/// failed one retries at most weekly per viewed status.
+const MEDIA_REFRESH_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+
+/// Enqueue a `RemoteStatusFetch` with `refresh` for a remote A/V row
+/// that materialized without media — rows ingested before `url`-Link
+/// synthesis existed (or a remote that only later added the source)
+/// get the playable attachment + poster on next read. Deduped by the
+/// media marker for [`MEDIA_REFRESH_TTL`], so repeat views don't
+/// pile up fetches.
+pub async fn enqueue_media_refresh(core: &ApCore, uri: &str) -> Result<()> {
+    let cache = RedisCache::new(core.redis.clone());
+    let key = media_refresh_marker_key(uri);
+    if cache.get(&key).await.ok().flatten().is_some() {
+        return Ok(());
+    }
+    core.dispatcher
+        .enqueue(
+            JobKind::RemoteStatusFetch,
+            json!({"uri": uri, "refresh": true}),
+        )
+        .await?;
+    let _ = cache
+        .set(&key, &json!({"s": "queued"}), MEDIA_REFRESH_TTL)
+        .await;
+    Ok(())
+}
+
 /// Enqueue a `RemoteStatusFetch` for a pending quote target — deduped
 /// by the marker, so repeat ingests of quoters (and status reads of
 /// rows left pending before the job existed) don't pile up jobs.
@@ -882,20 +1209,30 @@ impl JobHandler for RemoteStatusFetchJob {
         let Some(ap) = &self.ap else {
             return Ok(());
         };
+        // `refresh` jobs deliberately re-fetch a materialized row (the
+        // media self-heal) — skip the already-cached and
+        // settled-marker shortcuts; the enqueue-side media marker
+        // bounds them instead.
+        let refresh = payload
+            .get("refresh")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let cache = RedisCache::new(ctx.redis.clone());
         let key = fetch_marker_key(uri);
-        // Already materialized — link pending quoters without a fetch
-        // (covers the ingest-race and a sibling job that got here
-        // first).
-        if let Some(target) = super::load_by_uri(&ctx.db, uri).await? {
-            backfill_pending_quotes(&ctx.db, target.id, uri).await?;
-            let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
-            return Ok(());
-        }
-        if let Some(marker) = cache.get(&key).await.ok().flatten() {
-            // A previous run already settled this URI.
-            if let Some("ok" | "fail") = marker.get("s").and_then(Value::as_str) {
+        if !refresh {
+            // Already materialized — link pending quoters without a
+            // fetch (covers the ingest-race and a sibling job that got
+            // here first).
+            if let Some(target) = super::load_by_uri(&ctx.db, uri).await? {
+                backfill_pending_quotes(&ctx.db, target.id, uri).await?;
+                let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
                 return Ok(());
+            }
+            if let Some(marker) = cache.get(&key).await.ok().flatten() {
+                // A previous run already settled this URI.
+                if let Some("ok" | "fail") = marker.get("s").and_then(Value::as_str) {
+                    return Ok(());
+                }
             }
         }
         let domain = moderation::actor_domain(uri).unwrap_or_default();
@@ -925,6 +1262,23 @@ impl JobHandler for RemoteStatusFetchJob {
                     // ingest-side CTE only matches `object_id`.
                     Some(crate::search::resolve::ResolvedHit::Status(id)) => {
                         backfill_pending_quotes(&ctx.db, id, uri).await?;
+                        // Refresh re-materializes an existing row, so
+                        // the ingest-side `is_new`/Update gate skipped
+                        // the preview enqueue — run it here or
+                        // self-healed statuses never get their card.
+                        if refresh {
+                            if let Ok(Some(status)) = super::load(&ctx.db, id).await {
+                                let media_ids: Vec<i64> = sqlx::query_scalar(
+                                    "SELECT id FROM media_attachments WHERE status_id = $1",
+                                )
+                                .bind(id)
+                                .fetch_all(&ctx.db)
+                                .await
+                                .unwrap_or_default();
+                                let pctx = super::PostContext::from_job(ctx, self.ap.clone());
+                                super::preview::enqueue(&pctx, &status, &media_ids).await;
+                            }
+                        }
                         let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
                         Ok(())
                     }

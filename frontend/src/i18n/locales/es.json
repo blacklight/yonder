@@ -379,7 +379,14 @@
     "media": {
       "view": "Ver multimedia",
       "previous": "Adjunto anterior",
-      "next": "Adjunto siguiente"
+      "next": "Adjunto siguiente",
+      "play": "Reproducir",
+      "pause": "Pausar",
+      "seek": "Posición",
+      "volume": "Volumen",
+      "mute": "Silenciar",
+      "unmute": "Activar sonido",
+      "download": "Descargar"
     },
     "quoteUnavailable": "Post citado no disponible",
     "vote": "Votar",

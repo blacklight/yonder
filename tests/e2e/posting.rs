@@ -623,6 +623,331 @@ async fn remote_note_materializes() {
     assert!(!html.contains("hacked"), "spoofed update must be dropped");
 }
 
+/// WriteFreely `Article`s put the headline in `name`, an HTML teaser
+/// (header image + `[…]`) in `summary`, the body in `content` and the
+/// permalink in `url`. Mastodon converts this to title + teaser +
+/// permalink text with *no* CW — and so do we, keeping the body.
+/// `summary`'s markup must never reach `spoiler_text` verbatim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_article_converted_text() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/wf1"),
+        activity_type: "Create".into(),
+        actor: "https://blog.remote/users/eve".into(),
+        object: json!({
+            "id": "https://blog.remote/api/posts/kite1",
+            "type": "Article",
+            "attributedTo": "https://blog.remote/users/eve",
+            "name": "When a Child’s Kite Becomes a Military Threat",
+            "summary": "<p><img src=\"https://i.postimg.cc/x/IMG.jpg\"> […]</p>",
+            "url": "https://blog.remote/eve/when-a-childs-kite",
+            "content": "<p><img src=\"https://i.postimg.cc/x/IMG.jpg\"></p>\n\n<p>A child in Gaza flies a kite.</p>",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-08-24T09:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let handled = remote::handle(&core, &activity, &activity.to_json()).await;
+    assert!(handled);
+
+    let row: (Option<String>, String, String, String) = sqlx::query_as(
+        "SELECT spoiler_text, content_html, content, url \
+         FROM statuses WHERE uri = 'https://blog.remote/api/posts/kite1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (spoiler, html, text, url) = row;
+    // Converted objects carry no CW — the teaser lives in the text.
+    assert!(spoiler.is_none(), "article summary must not become a CW");
+    assert_eq!(url, "https://blog.remote/eve/when-a-childs-kite");
+    // Headline, stripped teaser, sanitized body, permalink footer.
+    assert!(html.contains("<strong>When a Child’s Kite"));
+    assert!(html.contains("<p>[…]</p>"), "teaser in text: {html}");
+    assert!(
+        !html.contains("<img"),
+        "remote img must be stripped: {html}"
+    );
+    assert!(html.contains("A child in Gaza flies a kite."));
+    assert!(
+        html.contains("href=\"https://blog.remote/eve/when-a-childs-kite\""),
+        "permalink footer: {html}"
+    );
+    // The permalink lands in searchable text — that's what lets the
+    // link-preview job pick it up for the article card.
+    assert!(text.contains("https://blog.remote/eve/when-a-childs-kite"));
+
+    // A Note's HTML summary still becomes a CW — stripped, never raw.
+    let note = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/wf2"),
+        activity_type: "Create".into(),
+        actor: "https://blog.remote/users/eve".into(),
+        object: json!({
+            "id": "https://blog.remote/objects/n1",
+            "type": "Note",
+            "attributedTo": "https://blog.remote/users/eve",
+            "summary": "<p><b>spoilers</b> ahead</p>",
+            "content": "<p>the twist</p>",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-08-24T10:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    remote::handle(&core, &note, &note.to_json()).await;
+    let cw: String = sqlx::query_scalar(
+        "SELECT spoiler_text FROM statuses WHERE uri = 'https://blog.remote/objects/n1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(cw, "spoilers ahead");
+}
+
+/// Songhive/Funkwhale tracks arrive as `Create{Audio}` — the object
+/// carries a `url` array (media + `text/html` track page) and an
+/// `audio/*` Document attachment. The materialized status keeps the
+/// HTML permalink as `url` and an `audio` media row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_audio_materializes() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/audio-1"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!({
+            "id": "https://remote.test/objects/track-1",
+            "type": "Audio",
+            "attributedTo": [
+                "https://remote.test/users/eve",
+                "https://remote.test/artists/eve",
+            ],
+            "name": "eve - track one",
+            "content": "<p>a song I composed</p>",
+            "url": [
+                {"type": "Link", "href": "https://remote.test/files/track-1.mp3",
+                 "mediaType": "audio/mp3"},
+                {"type": "Link", "href": "https://remote.test/tracks/track-1",
+                 "mediaType": "text/html"},
+            ],
+            "attachment": [{
+                "type": "Document",
+                "mediaType": "audio/mp3",
+                "url": "https://remote.test/files/track-1.mp3",
+                "name": "track one",
+            }],
+            "image": {
+                "type": "Image",
+                "url": "https://remote.test/art/track-1.png",
+            },
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let handled = remote::handle(&core, &activity, &activity.to_json()).await;
+    assert!(handled, "Create{{Audio}} must be handled");
+
+    let row: Option<(bool, String)> = sqlx::query_as(
+        "SELECT local, url FROM statuses WHERE uri = 'https://remote.test/objects/track-1'",
+    )
+    .fetch_optional(&env.state.db)
+    .await
+    .unwrap();
+    let (local, url) = row.expect("remote Audio materialized");
+    assert!(!local);
+    // The `text/html` Link wins — the media-file href is not a permalink.
+    assert_eq!(url, "https://remote.test/tracks/track-1");
+
+    let (kind, remote_url, content_type, preview): (String, String, String, String) =
+        sqlx::query_as(
+            "SELECT type, remote_url, content_type, preview_remote_url FROM media_attachments \
+             WHERE status_id = (SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/track-1')",
+        )
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(kind, "audio");
+    assert_eq!(remote_url, "https://remote.test/files/track-1.mp3");
+    assert_eq!(content_type, "audio/mp3");
+    // The object's `image` became the attachment's poster art.
+    assert_eq!(preview, "https://remote.test/art/track-1.png");
+
+    // …and the entity surfaces it as `preview_url` (cover art for
+    // players), not the mp3 itself.
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/track-1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let token = register(&env.app, "mia", "mia@example.com").await;
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&token),
+        None,
+        &[],
+    )
+    .await;
+    let att = &body["media_attachments"][0];
+    assert_eq!(att["type"], "audio", "{body}");
+    assert_eq!(att["preview_url"], "https://remote.test/art/track-1.png");
+}
+
+/// PeerTube `Video` objects carry no `attachment` — the playable
+/// source lives in `url` Links and the poster in `icon`. Ingest
+/// synthesizes a `video` media row from the best playable link
+/// (`video/*` first, then HLS) and picks the largest thumbnail as
+/// `preview_url` poster.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_video_synthesizes_attachment() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/video-1"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/accounts/lunatics".into(),
+        object: json!({
+            "id": "https://remote.test/videos/watch/0200ef42",
+            "type": "Video",
+            "name": "Textless episode titles",
+            "attributedTo": [
+                {"type": "Person", "id": "https://remote.test/accounts/lunatics"},
+                {"type": "Group", "id": "https://remote.test/video-channels/lunatics"},
+            ],
+            // PeerTube declares `mediaType: text/markdown` and sends
+            // raw Markdown source — rendered, not sanitized as HTML.
+            "mediaType": "text/markdown",
+            "content": "Textless episode titles / end credits\r\n\r\nMore on the [Lunatics Log](https://lunaticsproject.org) #film",
+            "url": [
+                {"type": "Link", "href": "https://remote.test/w/1fmju4eq",
+                 "mediaType": "text/html"},
+                {"type": "Link", "href": "https://remote.test/videos/watch/0200ef42",
+                 "mediaType": "text/html"},
+                {"type": "Link",
+                 "href": "https://remote.test/static/streaming-playlists/hls/0200ef42/master.m3u8",
+                 "mediaType": "application/x-mpegURL"},
+                {"type": "Link", "href": "https://remote.test/tracker/announce"},
+            ],
+            "icon": [
+                {"type": "Image", "mediaType": "image/jpeg",
+                 "url": "https://remote.test/thumb/small.jpg",
+                 "width": 280, "height": 157},
+                {"type": "Image", "mediaType": "image/jpeg",
+                 "url": "https://remote.test/thumb/large.jpg",
+                 "width": 1280, "height": 720},
+            ],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let handled = remote::handle(&core, &activity, &activity.to_json()).await;
+    assert!(handled, "Create{{Video}} must be handled");
+
+    // The Markdown `content` rendered to real HTML — link anchors,
+    // paragraph breaks — rather than staying literal markup.
+    let content_html: String = sqlx::query_scalar(
+        "SELECT content_html FROM statuses WHERE uri = 'https://remote.test/videos/watch/0200ef42'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(
+        content_html.contains(r#"<a href="https://lunaticsproject.org""#),
+        "markdown link not rendered: {content_html}"
+    );
+    assert!(!content_html.contains("[Lunatics Log]"), "{content_html}");
+    let tag_synced: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM status_tags st JOIN tags t ON t.id = st.tag_id \
+         WHERE st.status_id = (SELECT id FROM statuses WHERE uri = 'https://remote.test/videos/watch/0200ef42') \
+           AND t.name = 'film')",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(tag_synced, "content-discovered hashtag not synced");
+
+    let row: Option<(String, String, String, String, String)> = sqlx::query_as(
+        "SELECT m.type, m.remote_url, m.content_type, m.preview_remote_url, m.description \
+         FROM media_attachments m \
+         WHERE m.status_id = (SELECT id FROM statuses WHERE uri = 'https://remote.test/videos/watch/0200ef42')",
+    )
+    .fetch_optional(&env.state.db)
+    .await
+    .unwrap();
+    let (kind, remote_url, content_type, preview, description) =
+        row.expect("url-Link attachment synthesized");
+    assert_eq!(kind, "video");
+    assert_eq!(
+        remote_url,
+        "https://remote.test/static/streaming-playlists/hls/0200ef42/master.m3u8"
+    );
+    assert_eq!(content_type, "application/x-mpegURL");
+    // Largest `icon` rendition wins the poster slot.
+    assert_eq!(preview, "https://remote.test/thumb/large.jpg");
+    assert_eq!(description, "Textless episode titles");
+
+    // The status keeps the `text/html` watch page as its permalink…
+    let url: String = sqlx::query_scalar(
+        "SELECT url FROM statuses WHERE uri = 'https://remote.test/videos/watch/0200ef42'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(url, "https://remote.test/w/1fmju4eq");
+
+    // …and the entity emits the playable attachment with the poster.
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/videos/watch/0200ef42'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let token = register(&env.app, "ned", "ned@example.com").await;
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&token),
+        None,
+        &[],
+    )
+    .await;
+    let att = &body["media_attachments"][0];
+    assert_eq!(att["type"], "video", "{body}");
+    assert_eq!(att["preview_url"], "https://remote.test/thumb/large.jpg");
+    assert_eq!(
+        att["url"],
+        "https://remote.test/static/streaming-playlists/hls/0200ef42/master.m3u8"
+    );
+}
+
 /// Drain every pending entry from the `default` job stream and return
 /// the decoded envelopes — the test stands in for the worker.
 async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {

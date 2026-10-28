@@ -179,13 +179,19 @@ fn activity(ty: &str, actor: &str, object: Value) -> (pubby_sdk::Activity, Value
 /// signed-GET fetch path is exercised without external network.
 /// Returns the URL prefix (`http://localhost:{port}`) the search must
 /// fetch. Routes: `/objects/m1` (trusted Note), `/objects/spoof` (id
-/// on another origin), `/users/mallory` (actor doc), anything else 404.
+/// on another origin), `/users/mallory` (actor doc),
+/// `/activities/audio-1` (Audio doc served under its activity URL,
+/// like Songhive — the object `id` lives on a different path),
+/// `/activities/listen-1` (a `Listen` activity wrapping an inline
+/// Audio), anything else 404.
 async fn mock_remote() -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     let base = format!("http://localhost:{port}");
     let note_base = base.clone();
     let actor_base = base.clone();
+    let audio_base = base.clone();
+    let listen_base = base.clone();
     let app = axum::Router::new()
         .route(
             "/objects/m1",
@@ -228,6 +234,67 @@ async fn mock_remote() -> String {
                         "type": "Person",
                         "preferredUsername": "mallory",
                         "inbox": format!("{b}/users/mallory/inbox"),
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/activities/audio-1",
+            axum::routing::get(move || {
+                let b = audio_base.clone();
+                async move {
+                    axum::Json(json!({
+                        "@context": PUBLIC,
+                        "id": format!("{b}/objects/track-1"),
+                        "type": "Audio",
+                        "attributedTo": [
+                            format!("{b}/users/eve"),
+                            format!("{b}/artists/eve"),
+                        ],
+                        "name": "eve - aurora",
+                        "content": "<p>aurorafield fetch marker</p>",
+                        "url": [
+                            {"type": "Link", "href": format!("{b}/files/track-1.mp3"),
+                             "mediaType": "audio/mp3"},
+                            {"type": "Link", "href": format!("{b}/tracks/track-1"),
+                             "mediaType": "text/html"},
+                        ],
+                        "attachment": [{
+                            "type": "Document",
+                            "mediaType": "audio/mp3",
+                            "url": format!("{b}/files/track-1.mp3"),
+                            "name": "aurora",
+                        }],
+                        "image": {
+                            "type": "Image",
+                            "url": format!("{b}/art/track-1.png"),
+                        },
+                        "to": [PUBLIC],
+                        "published": "2025-01-01T00:00:00Z",
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/activities/listen-1",
+            axum::routing::get(move || {
+                let b = listen_base.clone();
+                async move {
+                    axum::Json(json!({
+                        "@context": PUBLIC,
+                        "id": format!("{b}/activities/listen-1"),
+                        "type": "Listen",
+                        "actor": format!("{b}/users/eve"),
+                        "object": {
+                            "id": format!("{b}/objects/track-2"),
+                            "type": "Audio",
+                            "attributedTo": format!("{b}/users/eve"),
+                            "name": "eve - tidepull",
+                            "content": "<p>tidepull fetch marker</p>",
+                            "to": [PUBLIC],
+                            "published": "2025-01-01T00:00:00Z",
+                        },
+                        "to": [PUBLIC],
                     }))
                 }
             }),
@@ -1128,4 +1195,76 @@ async fn remote_fetch_materializes_trusted_objects() {
         .await
         .unwrap();
     assert!(cached.is_some(), "spoofed fetch was not negatively cached");
+}
+
+/// Songhive/Funkwhale `/activities/…` URLs resolve: the doc can be a
+/// bare `Audio` object served at its activity URL, or an activity
+/// (`Listen`) wrapping one. Both materialize a status with an `audio`
+/// attachment and a `text/html` permalink as `url`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_fetch_materializes_audio_objects() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice").await;
+    let base = mock_remote().await;
+
+    // Bare `Audio` doc at its `/activities/` URL — the object `id`
+    // lives on a different path of the same origin (the Songhive
+    // shape). Same-origin trust holds, so it materializes.
+    let url = format!("{base}/activities/audio-1");
+    let encoded = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}&resolve=true"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    let statuses = body["statuses"].as_array().unwrap();
+    assert_eq!(statuses.len(), 1, "{body}");
+    assert_eq!(statuses[0]["media_attachments"][0]["type"], "audio");
+    // The object's `image` surfaces as the attachment `preview_url`
+    // (cover art), not the mp3.
+    assert_eq!(
+        statuses[0]["media_attachments"][0]["preview_url"],
+        format!("{base}/art/track-1.png"),
+        "{body}"
+    );
+    // The `text/html` Link becomes `statuses.url`, so the track's web
+    // permalink also resolves through the cached row.
+    let permalink = format!("{base}/tracks/track-1");
+    assert_eq!(statuses[0]["url"], permalink);
+    let encoded = url::form_urlencoded::byte_serialize(permalink.as_bytes()).collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["statuses"].as_array().unwrap().len(), 1, "{body}");
+
+    // An activity document (`Listen`) wraps the object — the resolver
+    // descends one level under the same trust rules.
+    let url = format!("{base}/activities/listen-1");
+    let encoded = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}&resolve=true"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    let statuses = body["statuses"].as_array().unwrap();
+    assert_eq!(statuses.len(), 1, "{body}");
+    assert_eq!(
+        statuses[0]["uri"],
+        format!("{base}/objects/track-2"),
+        "{body}"
+    );
 }

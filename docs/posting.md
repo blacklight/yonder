@@ -122,9 +122,23 @@ their resolver. The status acct segment is decorative (id is
 authoritative, like Mastodon); `/@{u}@{domain}` serves only when the
 domain names this instance.
 
-Inbound `Create`/`Update`/`Delete` for Note/Question materializes
-`statuses` rows (`local = false`): sanitized `content_html`, explicit
+Inbound `Create`/`Update`/`Delete` for `Note`, `Question`,
+`Article`/`Page` and the media/event shapes `Audio`, `Video`,
+`Event` (Songhive/Funkwhale tracks, PeerTube videos, Mobilizon
+events — all degrade to notes) materializes `statuses` rows
+(`local = false`): `content_html` rendered per the object's
+`mediaType` — `text/markdown`/`text/x-markdown` and `text/plain`
+(PeerTube descriptions) go through the same pipeline locals use,
+anything else is sanitized as claimed HTML — explicit
 visibility inference from combined activity+object addressing, and
-mention/tag/media/poll sync. The ownership gate requires
+mention/tag/media/poll sync. `summary` is HTML per AS2 — it is
+always stripped to plain text: for `Note`/`Question` it becomes the
+CW, while the converted types (`Article`/`Page`/`Audio`/`Video`/
+`Event`, Mastodon's converted set) get no CW and instead fold the
+`name` headline, the teaser and a permalink footer into
+`content_html` — WriteFreely articles render as title + `[…]` +
+link footer, and the permalink in the text is what the link-preview
+job turns into the article card (og:image header image). The
+ownership gate requires
 `activity.actor == attributedTo`, and Update/Delete must match the
 stored `account_id` — spoofed mutations are dropped.

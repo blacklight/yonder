@@ -20,6 +20,7 @@ pub struct MediaRow {
     pub kind: String,
     pub file_path: Option<String>,
     pub remote_url: Option<String>,
+    pub preview_remote_url: Option<String>,
     pub content_type: Option<String>,
     pub file_size: Option<i64>,
     pub description: Option<String>,
@@ -39,6 +40,7 @@ fn media_from_row(r: &sqlx::postgres::PgRow) -> MediaRow {
         kind: r.get("type"),
         file_path: r.get("file_path"),
         remote_url: r.get("remote_url"),
+        preview_remote_url: r.get("preview_remote_url"),
         content_type: r.get("content_type"),
         file_size: r.get("file_size"),
         description: r.get("description"),
@@ -51,7 +53,8 @@ fn media_from_row(r: &sqlx::postgres::PgRow) -> MediaRow {
     }
 }
 
-const MEDIA_COLS: &str = "id, account_id, status_id, type, file_path, remote_url, content_type, \
+const MEDIA_COLS: &str = "id, account_id, status_id, type, file_path, remote_url, \
+     preview_remote_url, content_type, \
      file_size, description, blurhash, width, height, focus_x, focus_y, processed";
 
 /// Load one media row by id.
@@ -122,11 +125,15 @@ pub fn media_entity(config: &crate::config::Config, base_url: &str, row: &MediaR
     if let (Some(x), Some(y)) = (row.focus_x, row.focus_y) {
         meta["focus"] = json!({ "x": x, "y": y });
     }
+    // Poster art (remote `image`/`icon`/`preview`) is the real
+    // `preview_url` when present — it's what powers cover art in
+    // audio/video players; otherwise the attachment URL itself stands
+    // in (images thumbnail themselves).
     json!({
         "id": row.id.to_string(),
         "type": row.kind,
         "url": url,
-        "preview_url": url,
+        "preview_url": row.preview_remote_url.clone().or(url),
         "remote_url": row.remote_url,
         "description": row.description,
         "blurhash": row.blurhash,

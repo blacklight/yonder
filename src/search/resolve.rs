@@ -16,6 +16,7 @@ use sqlx::PgPool;
 use crate::activitypub::{federation_base_url, lookup, moderation};
 use crate::http::AppState;
 use crate::posts;
+use crate::posts::remote::NOTE_TYPES;
 use crate::Result;
 
 /// Negative-lookup cache TTL (10 minutes).
@@ -24,10 +25,6 @@ const NEG_TTL: Duration = Duration::from_secs(600);
 /// AP actor types an object fetch can materialize.
 pub(crate) const ACTOR_TYPES: &[&str] =
     &["Person", "Service", "Application", "Group", "Organization"];
-
-/// AP object types the inbound pipeline materializes as statuses —
-/// mirrors `posts::remote::NOTE_TYPES`.
-const NOTE_TYPES: &[&str] = &["Note", "Question", "Article", "Page"];
 
 /// What a URL/FQN lookup resolved to.
 #[derive(Debug)]
@@ -182,14 +179,38 @@ pub(crate) async fn materialize_remote(
         let id = crate::activitypub::storage::upsert_remote_actor_row(db, url, doc).await?;
         return Ok(id.map(ResolvedHit::Account));
     }
+    if let Some(hit) = materialize_object(db, ap, url, doc).await? {
+        return Ok(Some(hit));
+    }
+    // Some servers serve an *activity* at its URL (a `Create`, or a
+    // Funkwhale `Listen`/`Upload` wrapping an `Audio`): descend one
+    // level into an inline `object` under the same trust rules —
+    // `trusted_note` still requires the inner `id` and author on the
+    // fetch origin.
+    if let Some(inner) = doc.get("object").filter(|o| o.is_object()) {
+        return materialize_object(db, ap, url, inner).await;
+    }
+    Ok(None)
+}
+
+/// Materialize a fetched *object* document as a status, but only when
+/// its type is supported and it is trustworthy for `url` (see
+/// [`trusted_note`]).
+async fn materialize_object(
+    db: &PgPool,
+    ap: &crate::activitypub::ApContext,
+    url: &str,
+    doc: &Value,
+) -> Result<Option<ResolvedHit>> {
+    let doc_type = doc.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if NOTE_TYPES.contains(&doc_type) && trusted_note(doc, url) {
         return materialize_status(db, ap, doc).await;
     }
     Ok(None)
 }
 
-/// A fetched Note is trusted only when it is served from the host it
-/// was requested from and its author lives on that same origin.
+/// A fetched object is trusted only when it is served from the host
+/// it was requested from and its author lives on that same origin.
 /// Without this, a remote host could claim another server's `id` and
 /// overwrite that status through the `uri` upsert.
 pub(crate) fn trusted_note(doc: &Value, url: &str) -> bool {

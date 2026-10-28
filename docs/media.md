@@ -49,6 +49,35 @@ dropped by construction — GIF comment/XMP extension blocks are a known gap.
 
 ## Remote media
 
+Poster art: ingest also extracts a preview image for the attachment —
+its own `preview`/`image`/`icon`, then the object's, then (for
+Songhive/Funkwhale `Audio`) the nested `track`/`track.album` — into
+`preview_remote_url`. Arrays of `Image` renditions pick the largest
+by area (PeerTube `icon` lists thumbnails small→large). The entity
+emits it as `preview_url` (cover art in audio players, `<video>`
+posters); it's always served remote, never downloaded by
+`RemoteMediaFetch`.
+
+PeerTube `Video` objects (and some `Audio` servers) carry **no
+`attachment`** — the playable source lives in `url` Links and the
+poster in `icon`. Ingest synthesizes one media row from the best
+playable link — `video/*` progressive first, then HLS
+(`application/x-mpegURL`/`application/vnd.apple.mpegurl`), then
+`audio/*` — but only when no real attachment already provides an A/V
+kind. The row keeps the Link's `mediaType` as `content_type` so
+clients can detect HLS (the frontend attaches `hls.js` outside
+Safari) and uses the object's `name` as `description`. HLS playlists
+are text — `RemoteMediaFetch`/`for_declared` never caches them.
+
+Rows materialized **before** synthesis existed self-heal on read:
+`GET /statuses/{id}` on a remote status with zero media enqueues a
+`RemoteStatusFetch{refresh}` job when `object_type` is `Video`/
+`Audio` — or NULL (legacy rows get a single refresh that backfills
+the type on re-ingest). The refresh re-fetches the object `uri` and
+re-runs the upsert, landing the attachment and poster. A Redis
+marker (`statusfetch-media:*`, 7d) bounds it to at most a weekly
+re-fetch per viewed status.
+
 `media.fetch_remote_media` (default `false`):
 
 - **off**: remote attachments keep only `remote_url`; entities serve the

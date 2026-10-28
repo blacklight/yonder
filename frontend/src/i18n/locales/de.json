@@ -379,7 +379,14 @@
     "media": {
       "view": "Medien ansehen",
       "previous": "Vorheriger Anhang",
-      "next": "Nächster Anhang"
+      "next": "Nächster Anhang",
+      "play": "Abspielen",
+      "pause": "Pause",
+      "seek": "Position",
+      "volume": "Lautstärke",
+      "mute": "Stummschalten",
+      "unmute": "Ton einschalten",
+      "download": "Herunterladen"
     },
     "quoteUnavailable": "Zitierter Beitrag nicht verfügbar",
     "vote": "Abstimmen",

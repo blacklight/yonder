@@ -562,6 +562,16 @@ async function onReact(emoji: string) {
 .status-card__content {
   overflow-wrap: break-word;
 }
+:deep(.status-card__content) pre,
+:deep(.status-card__content) code {
+  background: var(--bg);
+  border-radius: var(--radius-md);
+}
+:deep(.status-card__content) pre {
+  max-height: 30rem;
+  overflow: auto;
+  padding: var(--space-3);
+}
 .status-card__preview {
   display: flex;
   gap: var(--space-3);

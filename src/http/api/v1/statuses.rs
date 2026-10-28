@@ -93,6 +93,31 @@ pub async fn show(
             tracing::warn!(status_id = status.id, error = %e, "quote resolve enqueue failed");
         }
     }
+    // A remote A/V object with no media self-heals on read — rows
+    // ingested before `url`-Link synthesis existed (PeerTube `Video`s
+    // carry no `attachment`) get a refresh job that lands the playable
+    // attachment + poster. `object_type` NULL rows (pre-migration) get
+    // a single refresh — the re-ingest writes the type, so a legacy
+    // media-less `Note` only fetches once.
+    if let (Some(ap), Some(uri)) = (&ctx.ap, &status.uri) {
+        let maybe_av = matches!(
+            status.object_type.as_deref(),
+            None | Some("Video") | Some("Audio")
+        );
+        if !status.local && maybe_av {
+            let has_media: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM media_attachments WHERE status_id = $1)",
+            )
+            .bind(status.id)
+            .fetch_one(&ctx.db)
+            .await?;
+            if !has_media {
+                if let Err(e) = posts::remote::enqueue_media_refresh(&ap.core, uri).await {
+                    tracing::warn!(status_id = status.id, error = %e, "media refresh enqueue failed");
+                }
+            }
+        }
+    }
     Ok(Json(entity::status_entity(&ctx, &status, viewer).await?))
 }
 

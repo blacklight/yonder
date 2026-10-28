@@ -170,10 +170,7 @@ async function submit() {
             {{ t("auth.verify") }}
           </Button>
         </template>
-        <p
-          v-if="canVerifyCode && canUseKey"
-          class="signin__or"
-        >
+        <p v-if="canVerifyCode && canUseKey" class="signin__or">
           {{ t("auth.mfaOr") }}
         </p>
         <template v-if="canUseKey">

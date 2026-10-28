@@ -283,6 +283,7 @@ mod tests {
             reblog_of_id: None,
             quote_of_id: None,
             quote_uri: None,
+            object_type: None,
             poll_id: None,
             replies_count: 0,
             reblogs_count: 0,

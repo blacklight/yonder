@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
+import AudioPlayer from "@/components/status/AudioPlayer.vue";
+import VideoAttachment from "@/components/status/VideoAttachment.vue";
 import type { MediaAttachment } from "@/api/entities";
 
 const props = defineProps<{
@@ -119,17 +121,16 @@ onBeforeUnmount(() => {
             muted
             playsinline
           />
-          <video
+          <VideoAttachment
             v-else-if="current?.type === 'video'"
-            :src="current.url"
+            :media="current"
             class="media-modal__img"
-            controls
             autoplay
           />
-          <audio
+          <AudioPlayer
             v-else-if="current?.type === 'audio'"
-            :src="current.url"
-            controls
+            :media="current"
+            class="media-modal__audio"
           />
           <img
             v-else-if="current"
@@ -185,6 +186,9 @@ onBeforeUnmount(() => {
   max-width: 90vw;
   max-height: 85vh;
   object-fit: contain;
+}
+.media-modal__audio {
+  width: min(34rem, 90vw);
 }
 .media-modal__caption {
   color: #fff;

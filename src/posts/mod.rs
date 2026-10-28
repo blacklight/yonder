@@ -221,6 +221,11 @@ pub struct StatusRow {
     /// Remote quote target not (yet) materialized — `quote_of_id`
     /// back-fills when the quoted Create arrives (epic 13).
     pub quote_uri: Option<String>,
+    /// The AP object `type` for remote statuses (`Note`, `Video`,
+    /// `Audio`, …); NULL for local posts and rows ingested before the
+    /// column existed. The read-time media self-heal uses it to bound
+    /// re-fetches to A/V objects.
+    pub object_type: Option<String>,
     pub poll_id: Option<i64>,
     pub replies_count: i32,
     pub reblogs_count: i32,
@@ -235,7 +240,7 @@ pub struct StatusRow {
 pub(crate) const STATUS_COLS: &str =
     "id, account_id, content, content_html, content_type, language, \
      visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
-     in_reply_to_account_id, reblog_of_id, quote_of_id, quote_uri, poll_id, replies_count, \
+     in_reply_to_account_id, reblog_of_id, quote_of_id, quote_uri, object_type, poll_id, replies_count, \
      reblogs_count, favourites_count, quotes_count, edited_at, tombstone, \
      created_at, updated_at";
 
@@ -259,6 +264,7 @@ pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
         reblog_of_id: r.get("reblog_of_id"),
         quote_of_id: r.get("quote_of_id"),
         quote_uri: r.get("quote_uri"),
+        object_type: r.get("object_type"),
         poll_id: r.get("poll_id"),
         replies_count: r.get("replies_count"),
         reblogs_count: r.get("reblogs_count"),

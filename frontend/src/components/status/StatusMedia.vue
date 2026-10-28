@@ -3,6 +3,8 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import Modal from "@/components/ui/Modal.vue";
 import MediaModal from "@/components/status/MediaModal.vue";
+import AudioPlayer from "@/components/status/AudioPlayer.vue";
+import VideoAttachment from "@/components/status/VideoAttachment.vue";
 import type { MediaAttachment } from "@/api/entities";
 
 defineProps<{
@@ -59,13 +61,12 @@ function altPlacement(type: MediaAttachment["type"]): string {
             class="status-media__img"
           />
         </button>
-        <video
+        <VideoAttachment
           v-else-if="m.type === 'video'"
-          :src="m.url"
-          controls
+          :media="m"
           class="status-media__img"
         />
-        <audio v-else-if="m.type === 'audio'" :src="m.url" controls />
+        <AudioPlayer v-else-if="m.type === 'audio'" :media="m" />
         <a v-else :href="m.url" target="_blank" rel="noopener">{{
           m.description ?? m.url
         }}</a>

@@ -11,7 +11,9 @@ const items = [
 describe("Menu", () => {
   it("opens on trigger click and selects an item", async () => {
     const w = mount(Menu, {
-    global: { stubs: { teleport: true } }, props: { items, label: "menu" } });
+      global: { stubs: { teleport: true } },
+      props: { items, label: "menu" },
+    });
     await w.get(".menu__trigger").trigger("click");
     expect(w.find("[role='menu']").exists()).toBe(true);
     await w.findAll("[role='menuitem']")[1].trigger("click");
@@ -19,7 +21,9 @@ describe("Menu", () => {
   });
   it("navigates with arrows skipping disabled items", async () => {
     const w = mount(Menu, {
-    global: { stubs: { teleport: true } }, props: { items, label: "menu" } });
+      global: { stubs: { teleport: true } },
+      props: { items, label: "menu" },
+    });
     await w.get(".menu__trigger").trigger("click");
     await w.get("[role='menu']").trigger("keydown", { key: "ArrowDown" });
     await w.get("[role='menu']").trigger("keydown", { key: "ArrowDown" });
@@ -30,7 +34,7 @@ describe("Menu", () => {
   });
   it("opens on ArrowDown with focus moved into the list", async () => {
     const w = mount(Menu, {
-    global: { stubs: { teleport: true } },
+      global: { stubs: { teleport: true } },
       props: { items, label: "menu" },
       attachTo: document.body,
     });
@@ -55,7 +59,7 @@ describe("Menu", () => {
   });
   it("Escape closes and returns focus to the trigger", async () => {
     const w = mount(Menu, {
-    global: { stubs: { teleport: true } },
+      global: { stubs: { teleport: true } },
       props: { items, label: "menu" },
       attachTo: document.body,
     });
@@ -67,7 +71,7 @@ describe("Menu", () => {
   });
   it("closes on outside pointerdown", async () => {
     const w = mount(Menu, {
-    global: { stubs: { teleport: true } },
+      global: { stubs: { teleport: true } },
       props: { items, label: "menu" },
       attachTo: document.body,
     });

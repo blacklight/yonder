@@ -366,7 +366,14 @@
     "media": {
       "view": "View media",
       "previous": "Previous attachment",
-      "next": "Next attachment"
+      "next": "Next attachment",
+      "play": "Play",
+      "pause": "Pause",
+      "seek": "Seek",
+      "volume": "Volume",
+      "mute": "Mute",
+      "unmute": "Unmute",
+      "download": "Download"
     },
     "quoteUnavailable": "Quoted post unavailable",
     "vote": "Vote",

@@ -149,7 +149,11 @@ function flashSaved() {
 
     <template v-else>
       <div class="setting__control">
-        <label v-if="kind === 'bool'" class="setting__check" :class="{ checked }">
+        <label
+          v-if="kind === 'bool'"
+          class="setting__check"
+          :class="{ checked }"
+        >
           <input
             v-model="checked"
             type="checkbox"

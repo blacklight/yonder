@@ -57,11 +57,15 @@ does Yonder.
   belongs to the host it came from: actor documents must have `id ==
   <the fetched URL>`; notes must have `id` on the fetch origin and an
   `attributedTo` on that same origin. Trusted actors go through
-  `upsert_remote_actor_row`; trusted notes (`Note`/`Question`/
-  `Article`/`Page`) are wrapped in a synthetic `Create` and run
-  through the inbound `posts::remote` pipeline — the instance
-  "learning" a post behaves exactly like receiving the `Create` in the
-  inbox.
+  `upsert_remote_actor_row`; trusted objects (the same set the
+  inbound pipeline materializes: `Note`/`Question`/`Article`/`Page`
+  plus `Audio`/`Video`/`Event`) are wrapped in a synthetic `Create`
+  and run through the inbound `posts::remote` pipeline — the instance
+  "learning" a post behaves exactly like receiving the `Create` in
+  the inbox. When the fetched document is itself an *activity* (some
+  servers — Songhive/Funkwhale `/activities/…` URLs — serve a
+  `Create`/`Listen` rather than the bare object), an inline `object`
+  is descended one level under the same trust rules.
 - The signed fetch is triggered by an authenticated query, so the
   instance actor's signature is disclosed to any host a user names;
   targets are bounded by the federation client's SSRF guard

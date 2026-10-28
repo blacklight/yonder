@@ -590,7 +590,7 @@ onMounted(async () => {
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
-.settings__group-title svg{
+.settings__group-title svg {
   color: var(--text-faint);
   margin-right: var(--space-2);
 }

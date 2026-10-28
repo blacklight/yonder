@@ -1499,3 +1499,210 @@ async fn pending_quote_self_heal_and_failure_markers() {
         .count();
     assert_eq!(enqueued, 1, "the read self-heals the pending quote");
 }
+
+/// A loopback AP origin serving a PeerTube-shaped `Video` doc at
+/// `/videos/watch/v1`: the playable source lives in `url` Links (HLS,
+/// no `attachment`), the poster in `icon` renditions. Returns the
+/// object URI, the actor URL, and a hit counter.
+async fn video_origin() -> (
+    String,
+    String,
+    std::sync::Arc<std::sync::atomic::AtomicUsize>,
+) {
+    use std::sync::atomic::AtomicUsize;
+    let hits = std::sync::Arc::new(AtomicUsize::new(0));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let object_uri = format!("http://{addr}/videos/watch/v1");
+    let actor = format!("http://{addr}/users/eve");
+    let doc = json!({
+        "id": object_uri,
+        "type": "Video",
+        "name": "vid title",
+        "attributedTo": actor,
+        "content": "<p>a video</p>",
+        "url": [
+            {"type": "Link", "href": format!("http://{addr}/w/short"),
+             "mediaType": "text/html"},
+            {"type": "Link",
+             "href": format!("http://{addr}/hls/master.m3u8"),
+             "mediaType": "application/x-mpegURL"},
+        ],
+        "icon": [
+            {"type": "Image", "mediaType": "image/jpeg",
+             "url": format!("http://{addr}/thumb/s.jpg"),
+             "width": 280, "height": 157},
+            {"type": "Image", "mediaType": "image/jpeg",
+             "url": format!("http://{addr}/thumb/l.jpg"),
+             "width": 1280, "height": 720},
+        ],
+        "to": [PUBLIC],
+        "published": "2025-01-01T00:00:00Z",
+    });
+    let counted = hits.clone();
+    let app = Router::new().route(
+        "/videos/watch/v1",
+        axum::routing::get(move || {
+            let counted = counted.clone();
+            let doc = doc.clone();
+            async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::Json(doc)
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (object_uri, actor, hits)
+}
+
+/// A remote `Video` row materialized before `url`-Link synthesis
+/// (`object_type` NULL, zero media) self-heals on read: `GET`
+/// enqueues a `refresh` `RemoteStatusFetch`, the job re-fetches and
+/// lands the playable attachment + poster + `object_type`. A
+/// `Note`-typed remote row never triggers it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_video_media_self_heal() {
+    use std::sync::atomic::Ordering;
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let (video_uri, actor, hits) = video_origin().await;
+
+    // Ingest a Video whose doc carries no playable link — the
+    // pre-synthesis outcome: a row with zero media.
+    let (act, raw) = activity(
+        "Create",
+        &actor,
+        json!({
+            "id": video_uri,
+            "type": "Video",
+            "attributedTo": actor,
+            "name": "vid title",
+            "content": "<p>a video</p>",
+            "url": format!("http://{video_uri}/w/short"),
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    // Simulate the pre-migration row: `object_type` was unknown then.
+    sqlx::query("UPDATE statuses SET object_type = NULL WHERE uri = $1")
+        .bind(&video_uri)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let status_id: i64 = sqlx::query_scalar("SELECT id FROM statuses WHERE uri = $1")
+        .bind(&video_uri)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    let media: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM media_attachments WHERE status_id = $1")
+            .bind(status_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(media, 0);
+
+    // The read self-heals: one refresh job for the status URI.
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let fetches: Vec<JobEnvelope> = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .collect();
+    assert_eq!(fetches.len(), 1, "one refresh job, got {fetches:?}");
+    assert_eq!(fetches[0].payload["uri"], json!(video_uri));
+    assert_eq!(fetches[0].payload["refresh"], json!(true));
+
+    // The refresh re-fetches despite the row existing (the `refresh`
+    // flag skips the already-materialized shortcut) and lands media.
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(
+            &job_ctx(&env.state),
+            &json!({"uri": video_uri, "refresh": true}),
+        )
+        .await
+        .unwrap();
+    let (kind, remote_url, preview, object_type): (String, String, String, String) =
+        sqlx::query_as(
+            "SELECT m.type, m.remote_url, m.preview_remote_url, s.object_type \
+         FROM media_attachments m JOIN statuses s ON s.id = m.status_id \
+         WHERE m.status_id = $1",
+        )
+        .bind(status_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(kind, "video");
+    assert!(remote_url.ends_with("/hls/master.m3u8"));
+    assert!(preview.ends_with("/thumb/l.jpg"));
+    assert_eq!(object_type, "Video");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+    // The media marker suppresses repeat enqueues on re-read.
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let fetches = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .count();
+    assert_eq!(fetches, 1, "media marker dedupes repeat views");
+
+    // A remote `Note` with no media — `object_type` populated at
+    // ingest — never triggers the refresh gate.
+    let (act, raw) = activity(
+        "Create",
+        &actor,
+        json!({
+            "id": format!("{actor}/objects/note-no-media"),
+            "type": "Note",
+            "attributedTo": actor,
+            "content": "<p>just text</p>",
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    let note_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = format('%s/objects/note-no-media', $1)",
+    )
+    .bind(&actor)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{note_id}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let refreshes = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .filter(|j| j.payload["refresh"] == json!(true))
+        .count();
+    assert_eq!(refreshes, 1, "a media-less Note never self-heals");
+}

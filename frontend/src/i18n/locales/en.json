@@ -526,7 +526,8 @@
     "editing": "Editing post",
     "discardText": "Your current draft will be replaced.",
     "mediaLimit": "At most {n} attachments are allowed.",
-    "mediaRemove": "Remove media"
+    "mediaRemove": "Remove media",
+    "mentionSuggestions": "Mention suggestions"
   },
   "moderation": {
     "showResolved": "Show resolved",

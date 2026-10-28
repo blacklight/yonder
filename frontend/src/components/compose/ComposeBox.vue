@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
 import PollBuilder from "./PollBuilder.vue";
 import EmojiPicker from "./EmojiPicker.vue";
+import MentionAutocomplete from "./MentionAutocomplete.vue";
 import { FontAwesomeIcon } from "@/icons";
 import {
   createStatus,
@@ -17,10 +18,12 @@ import {
 import { ApiError } from "@/api/errors";
 import { composeLimits } from "@/api/instance";
 import { getInstance } from "@/api/instance";
+import { search } from "@/api/search";
 import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
 import type {
+  Account,
   MediaAttachment,
   ScheduledStatus,
   Status,
@@ -328,6 +331,104 @@ function insertEmoji(shortcode: string) {
   emojiOpen.value = false;
 }
 
+// --- @-mention autocomplete ----------------------------------------
+// A `@word` (optionally `@word@domain`) at the caret queries the
+// indexed accounts via the search endpoint's autocomplete mode
+// (`type` + small `limit` ⇒ prefix matching server-side).
+const MENTION_RE = /(?:^|[\s([{"'])@([A-Za-z0-9_.]+(?:@[A-Za-z0-9_.-]*)?)$/;
+const mentionToken = ref<{ start: number; token: string } | null>(null);
+const mentionResults = ref<Account[]>([]);
+const mentionActive = ref(0);
+// Escape suppresses the dropdown until the token changes — otherwise
+// the next caret-scan (any keyup) would reopen it.
+const mentionDismissed = ref("");
+let mentionSeq = 0;
+let mentionTimer: ReturnType<typeof setTimeout> | undefined;
+
+function closeMention() {
+  mentionToken.value = null;
+  mentionResults.value = [];
+  clearTimeout(mentionTimer);
+}
+
+/** Re-scan the text before the caret for an `@`-token; debounces the
+ * search request. Called on input, click and keyup so caret moves
+ * without edits still update or dismiss the list. */
+function updateMention() {
+  const el = textarea.value;
+  if (!el) return;
+  const caret = el.selectionStart ?? d.value.text.length;
+  const m = d.value.text.slice(0, caret).match(MENTION_RE);
+  if (!m || mentionDismissed.value === `${caret}:${m[1]}`) {
+    if (!m) closeMention();
+    return;
+  }
+  const token = m[1];
+  const start = caret - token.length - 1;
+  // An unchanged token (arrow keys, clicks inside it) keeps the
+  // current list and highlight — no refetch.
+  if (mentionToken.value?.start === start && mentionToken.value.token === token)
+    return;
+  mentionDismissed.value = "";
+  mentionToken.value = { start, token };
+  mentionActive.value = 0;
+  const seq = ++mentionSeq;
+  clearTimeout(mentionTimer);
+  mentionTimer = setTimeout(async () => {
+    try {
+      const res = await search({ q: token, type: "accounts", limit: 6 });
+      // A later keystroke made this response stale — drop it.
+      if (seq === mentionSeq) mentionResults.value = res.accounts;
+    } catch {
+      if (seq === mentionSeq) mentionResults.value = [];
+    }
+  }, 200);
+}
+
+function pickMention(a: Account) {
+  const tk = mentionToken.value;
+  if (!tk) return;
+  const insert = `@${a.acct} `;
+  const end = tk.start + tk.token.length + 1;
+  compose.update({
+    text: d.value.text.slice(0, tk.start) + insert + d.value.text.slice(end),
+  });
+  closeMention();
+  void nextTick(() => {
+    const pos = tk.start + insert.length;
+    textarea.value?.focus();
+    textarea.value?.setSelectionRange(pos, pos);
+  });
+}
+
+/** Textarea keydown: Ctrl/Cmd+Enter submits; while the mention list
+ * is open, arrows/Tab/Enter/Escape are consumed for navigation.
+ * Everything else (plain Enter → newline) passes through. */
+function onTextKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+    e.preventDefault();
+    void submit();
+    return;
+  }
+  if (!mentionResults.value.length) return;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const n = mentionResults.value.length;
+    mentionActive.value =
+      (mentionActive.value + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+  } else if ((e.key === "Tab" && !e.shiftKey) || e.key === "Enter") {
+    e.preventDefault();
+    const a = mentionResults.value[mentionActive.value];
+    if (a) pickMention(a);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    const tk = mentionToken.value;
+    if (tk)
+      mentionDismissed.value = `${tk.start + tk.token.length + 1}:${tk.token}`;
+    closeMention();
+  }
+}
+
 async function submit() {
   if (!canPost.value) return;
   // `schedulePast` computes over non-reactive `Date.now()` — the
@@ -441,19 +542,41 @@ async function submit() {
         />
       </div>
 
-      <textarea
-        ref="textarea"
-        :value="d.text"
-        class="compose__text"
-        :placeholder="t('compose.placeholder')"
-        rows="5"
-        data-testid="compose-text"
-        @input="
-          compose.update({ text: ($event.target as HTMLTextAreaElement).value })
-        "
-        @keydown.ctrl.enter.prevent="submit"
-        @keydown.meta.enter.prevent="submit"
-      />
+      <div class="compose__text-wrap">
+        <textarea
+          ref="textarea"
+          :value="d.text"
+          class="compose__text"
+          :placeholder="t('compose.placeholder')"
+          rows="5"
+          data-testid="compose-text"
+          role="combobox"
+          :aria-expanded="mentionResults.length > 0"
+          aria-controls="mention-ac"
+          :aria-activedescendant="
+            mentionResults.length
+              ? `mention-opt-${mentionResults[mentionActive]?.id}`
+              : undefined
+          "
+          @input="
+            compose.update({
+              text: ($event.target as HTMLTextAreaElement).value,
+            });
+            updateMention();
+          "
+          @keydown="onTextKeydown"
+          @keyup="updateMention"
+          @click="updateMention"
+          @blur="closeMention"
+        />
+        <MentionAutocomplete
+          v-if="mentionResults.length"
+          :accounts="mentionResults"
+          :active="mentionActive"
+          :textarea="textarea"
+          @select="pickMention"
+        />
+      </div>
 
       <div v-if="media.length" class="compose__media">
         <figure v-for="m in media" :key="m.id" class="compose__media-item">
@@ -722,6 +845,14 @@ async function submit() {
   background: var(--bg);
   color: var(--text);
   resize: vertical;
+}
+.compose__text-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 .compose__text {
   flex: 1 1 auto;

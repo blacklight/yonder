@@ -539,7 +539,8 @@
     "editing": "Beitrag bearbeiten",
     "discardText": "Dein aktueller Entwurf wird ersetzt.",
     "mediaLimit": "Maximal {n} Anhänge sind erlaubt.",
-    "mediaRemove": "Medien entfernen"
+    "mediaRemove": "Medien entfernen",
+    "mentionSuggestions": "Erwähnungsvorschläge"
   },
   "moderation": {
     "showResolved": "Erledigte anzeigen",

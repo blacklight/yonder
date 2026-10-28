@@ -539,7 +539,8 @@
     "editing": "Editando post",
     "discardText": "Tu borrador actual será reemplazado.",
     "mediaLimit": "Se permiten como máximo {n} archivos adjuntos.",
-    "mediaRemove": "Quitar media"
+    "mediaRemove": "Quitar media",
+    "mentionSuggestions": "Sugerencias de mención"
   },
   "moderation": {
     "showResolved": "Mostrar resueltos",

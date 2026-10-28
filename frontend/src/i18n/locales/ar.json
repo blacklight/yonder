@@ -539,7 +539,8 @@
     "editing": "تحرير المنشور",
     "discardText": "سيُستبدل مسودتك الحالية.",
     "mediaLimit": "يُسمح بـ {n} مرفقات كحد أقصى.",
-    "mediaRemove": "إزالة الوسائط"
+    "mediaRemove": "إزالة الوسائط",
+    "mentionSuggestions": "اقتراحات الإشارة"
   },
   "moderation": {
     "showResolved": "عرض المحلولة",

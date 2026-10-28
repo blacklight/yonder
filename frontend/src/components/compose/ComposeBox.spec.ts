@@ -35,6 +35,43 @@ function mockPost(body: unknown = { id: "1" }) {
     );
 }
 
+const ACCOUNTS = [
+  {
+    id: "a1",
+    username: "alice",
+    acct: "alice",
+    display_name: "Alice A",
+    avatar: "/a1.png",
+  },
+  {
+    id: "a2",
+    username: "alina",
+    acct: "alina@remote.example",
+    display_name: "",
+    avatar: "/a2.png",
+  },
+];
+
+/** fetch mock that answers the search endpoint and 404s the rest. */
+function mockSearch(accounts = ACCOUNTS) {
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const isSearch = String(input).includes("/api/v2/search");
+    return Promise.resolve(
+      new Response(
+        JSON.stringify(
+          isSearch
+            ? { accounts, statuses: [], hashtags: [] }
+            : { error: "not found" },
+        ),
+        { status: isSearch ? 200 : 404 },
+      ),
+    );
+  });
+}
+
+/** Debounce window in `updateMention` is 200 ms. */
+const waitSuggest = () => new Promise((r) => setTimeout(r, 300));
+
 describe("ComposeBox", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -258,6 +295,79 @@ describe("ComposeBox", () => {
     expect(called.some((u) => u.includes("/api/v2/media/gone"))).toBe(true);
     expect(wrapper.findAll(".compose__media-item")).toHaveLength(1);
     expect(useComposeStore().draft.mediaIds).toEqual(["m9"]);
+  });
+
+  it("@token shows matching accounts and a click inserts @acct", async () => {
+    const spy = mockSearch();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue("hi @ali");
+    await waitSuggest();
+    await flushPromises();
+    expect(String(spy.mock.calls.at(-1)![0])).toContain(
+      "/api/v2/search?q=ali&type=accounts",
+    );
+    const items = wrapper.findAll(".mention-ac__item");
+    expect(items).toHaveLength(2);
+    expect(items[0].text()).toContain("@alice");
+    await items[0].trigger("mousedown");
+    expect(useComposeStore().draft.text).toBe("hi @alice ");
+    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
+  });
+
+  it("arrow keys + Enter select a suggestion; plain Enter does not submit", async () => {
+    const spy = mockSearch();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("@al");
+    await waitSuggest();
+    await flushPromises();
+    await text.trigger("keydown", { key: "ArrowDown" });
+    await text.trigger("keydown", { key: "Enter" });
+    await flushPromises();
+    expect(useComposeStore().draft.text).toBe("@alina@remote.example ");
+    // The Enter above was consumed by the dropdown — no POST fired.
+    expect(spy.mock.calls.every(([u]) => String(u).includes("/search"))).toBe(
+      true,
+    );
+  });
+
+  it("Escape dismisses the list until the token changes", async () => {
+    mockSearch();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("@al");
+    await waitSuggest();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(true);
+    await text.trigger("keydown", { key: "Escape" });
+    await text.trigger("keyup", { key: "Escape" });
+    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
+    // Editing the token re-arms suggestions.
+    await text.setValue("@alin");
+    await waitSuggest();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(true);
+  });
+
+  it("no @-token means no suggestions", async () => {
+    const spy = mockSearch();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper
+      .get("[data-testid='compose-text']")
+      .setValue("mail alice@example.com and @ alone");
+    await waitSuggest();
+    await flushPromises();
+    // 'alice@example' mid-word is not a mention token (no boundary
+    // before the '@'), and '@ alone' has the '@' separated from the
+    // caret token by a space — nothing should fire a search.
+    expect(
+      spy.mock.calls.filter(([u]) => String(u).includes("/api/v2/search")),
+    ).toHaveLength(0);
+    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
   });
 
   it("keeps draft media ids when rehydration fails transiently", async () => {

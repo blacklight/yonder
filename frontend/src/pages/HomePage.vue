@@ -20,7 +20,14 @@ const auth = useAuthStore();
 
 <style scoped>
 .home__intro {
+  background: var(--bg-raised);
   color: var(--text-muted);
+  font-size: 0.8em;
+  text-align: center;
   margin: 0 0 var(--space-4);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  opacity: 0.75;
 }
 </style>

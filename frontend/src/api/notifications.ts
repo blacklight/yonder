@@ -45,8 +45,13 @@ export async function unreadCount(): Promise<number> {
   return body.count;
 }
 
-/** `POST /api/v1/notifications/read` — mark rendered rows read. */
-export function markNotificationsRead(ids: number[]): Promise<void> {
+/**
+ * `POST /api/v1/notifications/read` — mark rendered rows read.
+ * Ids stay strings end-to-end: snowflake values exceed
+ * `Number.MAX_SAFE_INTEGER`, so `Number()` would silently corrupt
+ * them before the request leaves the browser.
+ */
+export function markNotificationsRead(ids: string[]): Promise<void> {
   return request<void>({
     path: "/notifications/read",
     method: "POST",

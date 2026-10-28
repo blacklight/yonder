@@ -592,6 +592,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/admin/accounts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/admin/accounts` — Mastodon's admin account index:
+     *     `origin` (`local`|`remote`), `status` (`active`|`pending`|
+     *     `disabled`|`silenced`|`suspended`) and the individual flags
+     *     (`local`, `remote`, `staff`, `suspended`, `disabled`, `silenced`,
+     *     `pending`, `active`) combine conjunctively; `username`,
+     *     `display_name`, `email` are substring matches, `by_domain` exact,
+     *     `role` (Yonder extension) exact. `max_id`/`min_id`/`limit`
+     *     keyset-paginate; `Link` headers carry cursors. Moderator+.
+     */
+    get: operations["list"];
+    put?: never;
+    /**
+     * `POST /api/v1/admin/accounts` — Yonder extension (Mastodon has no
+     *     admin create; Pleroma's `/pleroma/admin/users` is the analog):
+     *     create a local account bypassing the registration mode. Shares
+     *     [`registration::create_admin_account`] with `yonder user create`
+     *     — approved, role set, verification email when required and not
+     *     skipped. Admin-only; the caller is the audit actor.
+     */
+    post: operations["create"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/admin/accounts/{id}": {
     parameters: {
       query?: never;
@@ -606,7 +640,15 @@ export interface paths {
     get: operations["show"];
     put?: never;
     post?: never;
-    delete?: never;
+    /**
+     * `DELETE /api/v1/admin/accounts/{id}` — REST alias for
+     *     `POST …/action` with `type: "delete"`: same admin-only guard,
+     *     same last-active-admin protection, same audit row, same
+     *     immediate-purge pipeline. Remote accounts are permitted (their
+     *     local mirror is removed; Mastodon admins purge remote accounts the
+     *     same way).
+     */
+    delete: operations["remove"];
     options?: never;
     head?: never;
     patch?: never;
@@ -735,7 +777,7 @@ export interface paths {
      *     `until` (RFC 3339); `max_id`/`min_id`/`limit` keyset-paginate and
      *     the `Link` header carries cursors.
      */
-    get: operations["list"];
+    get: operations["list_2"];
     put?: never;
     post?: never;
     delete?: never;
@@ -752,10 +794,10 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/admin/domain_blocks` — all blocks, newest first. */
-    get: operations["list_2"];
+    get: operations["list_3"];
     put?: never;
     /** `POST /api/v1/admin/domain_blocks` — create or update a block. */
-    post: operations["create"];
+    post: operations["create_2"];
     delete?: never;
     options?: never;
     head?: never;
@@ -831,13 +873,13 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/admin/emojis` — local rows, optionally pack-filtered. */
-    get: operations["list_3"];
+    get: operations["list_4"];
     put?: never;
     /**
      * `POST /api/v1/admin/emojis` — multipart `file` + `shortcode`
      *     (+optional `pack_id`, `category`).
      */
-    post: operations["create_2"];
+    post: operations["create_3"];
     delete?: never;
     options?: never;
     head?: never;
@@ -916,10 +958,10 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/admin/relays` — every relay with its state. */
-    get: operations["list_4"];
+    get: operations["list_5"];
     put?: never;
     /** `POST /api/v1/admin/relays` — add a relay; starts `pending`. */
-    post: operations["create_3"];
+    post: operations["create_4"];
     delete?: never;
     options?: never;
     head?: never;
@@ -937,7 +979,7 @@ export interface paths {
     put?: never;
     post?: never;
     /** `DELETE /api/v1/admin/relays/{id}` — remove a relay. */
-    delete: operations["remove"];
+    delete: operations["remove_2"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1264,7 +1306,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/custom_emojis` — enabled, picker-visible local emoji. */
-    get: operations["list_5"];
+    get: operations["list_6"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1320,7 +1362,7 @@ export interface paths {
      * `GET /api/v1/follow_requests` — accounts with a pending request on
      *     the caller, newest first.
      */
-    get: operations["list_6"];
+    get: operations["list_7"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1456,10 +1498,10 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/lists` — the caller's lists. */
-    get: operations["list_7"];
+    get: operations["list_8"];
     put?: never;
     /** `POST /api/v1/lists` — `{title, replies_policy?, exclusive?}`. */
-    post: operations["create_4"];
+    post: operations["create_5"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1574,7 +1616,7 @@ export interface paths {
      *     `exclude_types[]` filter by Mastodon type or Yonder alias
      *     (`all`, `likes`, `boosts`, `quotes`, `mentions`, `reports`).
      */
-    get: operations["list_8"];
+    get: operations["list_9"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1843,7 +1885,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/scheduled_statuses` — the caller's scheduled posts. */
-    get: operations["list_9"];
+    get: operations["list_10"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1950,7 +1992,7 @@ export interface paths {
      * `POST /api/v1/statuses` — create. `Idempotency-Key` replays the
      *     stored result. Returns the Status (or ScheduledStatus) entity.
      */
-    post: operations["create_5"];
+    post: operations["create_6"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2853,13 +2895,13 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v2/filters` — the caller's filters, newest-first. */
-    get: operations["list_10"];
+    get: operations["list_11"];
     put?: never;
     /**
      * `POST /api/v2/filters` — create a filter with optional nested
      *     `keywords_attributes`.
      */
-    post: operations["create_6"];
+    post: operations["create_7"];
     delete?: never;
     options?: never;
     head?: never;
@@ -3140,7 +3182,7 @@ export interface components {
     /** @description Body for `POST /notifications/read` — ids the client rendered. */
     MarkReadBody: {
       /** @description Notification ids to mark read (max [`MAX_MARK_READ_IDS`]). */
-      ids: number[];
+      ids: components["schemas"]["NotificationId"][];
     };
     /** @description OpenAPI shape of the media update body. */
     MediaUpdateSchema: {
@@ -3154,6 +3196,13 @@ export interface components {
       /** @description Current password (confirmation for the irreversible redirect). */
       password: string;
     };
+    /**
+     * @description A notification id in either wire form. Entities serialize ids as
+     *     strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
+     *     so round-tripping through a JS number silently corrupts them —
+     *     but bare JSON numbers are accepted for convenience.
+     */
+    NotificationId: string | number;
     PasswordParams: {
       /** @description Current password. */
       password: string;
@@ -4595,6 +4644,99 @@ export interface operations {
       };
     };
   };
+  list: {
+    parameters: {
+      query?: {
+        /** @description `local` or `remote` */
+        origin?: string;
+        /** @description `active|pending|disabled|silenced|suspended` */
+        status?: string;
+        /** @description Substring match */
+        username?: string;
+        /** @description Substring match */
+        display_name?: string;
+        /** @description Substring match */
+        email?: string;
+        /** @description Exact remote domain */
+        by_domain?: string;
+        /** @description `user|moderator|admin` */
+        role?: string;
+        /** @description Page size (1-40, default 20) */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Admin::Account, newest first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Moderator role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Invalid filter value */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": unknown;
+      };
+    };
+    responses: {
+      /** @description The new Admin::Account */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Admin role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Validation failed */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   show: {
     parameters: {
       query?: never;
@@ -4622,6 +4764,62 @@ export interface operations {
       };
       /** @description No such account */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deletion scheduled */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Admin role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description No such account */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Last active admin */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Self-target */
+      422: {
         headers: {
           [name: string]: unknown;
         };
@@ -4868,7 +5066,7 @@ export interface operations {
       };
     };
   };
-  list: {
+  list_2: {
     parameters: {
       query?: {
         /** @description Action prefix, e.g. `report.` */
@@ -4932,7 +5130,7 @@ export interface operations {
       };
     };
   };
-  list_2: {
+  list_3: {
     parameters: {
       query?: never;
       header?: never;
@@ -4959,7 +5157,7 @@ export interface operations {
       };
     };
   };
-  create: {
+  create_2: {
     parameters: {
       query?: never;
       header?: never;
@@ -5224,7 +5422,7 @@ export interface operations {
       };
     };
   };
-  list_3: {
+  list_4: {
     parameters: {
       query?: {
         /** @description Limit to one pack */
@@ -5247,7 +5445,7 @@ export interface operations {
       };
     };
   };
-  create_2: {
+  create_3: {
     parameters: {
       query?: never;
       header?: never;
@@ -5470,7 +5668,7 @@ export interface operations {
       };
     };
   };
-  list_4: {
+  list_5: {
     parameters: {
       query?: never;
       header?: never;
@@ -5497,7 +5695,7 @@ export interface operations {
       };
     };
   };
-  create_3: {
+  create_4: {
     parameters: {
       query?: never;
       header?: never;
@@ -5546,7 +5744,7 @@ export interface operations {
       };
     };
   };
-  remove: {
+  remove_2: {
     parameters: {
       query?: never;
       header?: never;
@@ -6244,7 +6442,7 @@ export interface operations {
       };
     };
   };
-  list_5: {
+  list_6: {
     parameters: {
       query?: never;
       header?: never;
@@ -6388,7 +6586,7 @@ export interface operations {
       };
     };
   };
-  list_6: {
+  list_7: {
     parameters: {
       query?: never;
       header?: never;
@@ -6606,7 +6804,7 @@ export interface operations {
       };
     };
   };
-  list_7: {
+  list_8: {
     parameters: {
       query?: never;
       header?: never;
@@ -6633,7 +6831,7 @@ export interface operations {
       };
     };
   };
-  create_4: {
+  create_5: {
     parameters: {
       query?: never;
       header?: never;
@@ -7049,7 +7247,7 @@ export interface operations {
       };
     };
   };
-  list_8: {
+  list_9: {
     parameters: {
       query?: {
         /** @description Repeatable type/alias filter */
@@ -7642,7 +7840,7 @@ export interface operations {
       };
     };
   };
-  list_9: {
+  list_10: {
     parameters: {
       query?: never;
       header?: never;
@@ -7898,7 +8096,7 @@ export interface operations {
       };
     };
   };
-  create_5: {
+  create_6: {
     parameters: {
       query?: never;
       header?: never;
@@ -10253,7 +10451,7 @@ export interface operations {
       };
     };
   };
-  list_10: {
+  list_11: {
     parameters: {
       query?: never;
       header?: never;
@@ -10280,7 +10478,7 @@ export interface operations {
       };
     };
   };
-  create_6: {
+  create_7: {
     parameters: {
       query?: never;
       header?: never;

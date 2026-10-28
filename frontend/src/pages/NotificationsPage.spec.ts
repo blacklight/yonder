@@ -109,7 +109,8 @@ describe("NotificationsPage", () => {
       .mocked(globalThis.fetch)
       .mock.calls.find((c) => String(c[0]).includes("/notifications/read"));
     expect(post).toBeTruthy();
-    expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: [1] });
+    // String ids — snowflake values corrupt as JS numbers.
+    expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: ["1"] });
   });
 
   it("live events prepend a row while the page is open", async () => {

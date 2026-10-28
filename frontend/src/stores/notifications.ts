@@ -139,7 +139,9 @@ function browserNotify(n: Notification) {
  * subscribes to the `user:notification` stream: `notification` events
  * show a toast and live-insert the row when it passes the active
  * filter, `notifications_count` events carry the authoritative badge
- * value. There is no mark-read endpoint — `clear` deletes.
+ * value. Viewed rows are marked read via `POST /notifications/read`
+ * (string ids — snowflakes exceed JS's safe-integer range); `clear`
+ * deletes.
  */
 export const useNotificationsStore = defineStore("notifications", () => {
   const unread = ref(0);
@@ -276,15 +278,13 @@ export const useNotificationsStore = defineStore("notifications", () => {
     // A missing `read` field (older server) counts as unread.
     const fresh = ids.filter((id) => byId.has(id) && !byId.get(id)?.read);
     if (!fresh.length) return;
-    const numeric = fresh.map(Number).filter((v) => Number.isFinite(v));
     for (const id of fresh) {
       const n = byId.get(id);
       if (n) n.read = true;
     }
     unread.value = Math.max(0, unread.value - fresh.length);
-    if (!numeric.length) return;
     try {
-      await markNotificationsRead(numeric);
+      await markNotificationsRead(fresh);
     } catch {
       // Read state is cosmetic — a dropped call self-heals on the
       // next count push or page reload.

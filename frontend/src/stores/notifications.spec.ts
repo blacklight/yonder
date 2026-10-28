@@ -265,7 +265,8 @@ describe("notifications store", () => {
       .mocked(globalThis.fetch)
       .mock.calls.find((c) => String(c[0]).includes("/notifications/read"));
     expect(post).toBeTruthy();
-    expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: [8] });
+    // String ids verbatim — snowflake ids lose precision as JS numbers.
+    expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: ["8"] });
     // A second pass is a no-op — no extra request.
     const calls = vi.mocked(globalThis.fetch).mock.calls.length;
     await store.markRead(["8"]);

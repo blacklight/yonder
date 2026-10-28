@@ -1079,12 +1079,14 @@ async fn mark_read_updates_unread_count_but_keeps_rows() {
     .await;
     assert_eq!(body["count"], 1);
 
+    // The entity's wire form is a string — snowflake ids exceed JS's
+    // safe-integer range, so the SPA posts them verbatim as strings.
     let (status, _, _) = request(
         &env.app,
         "POST",
         "/api/v1/notifications/read",
         Some(&alice),
-        Some(json!({ "ids": [nid.parse::<i64>().unwrap()] })),
+        Some(json!({ "ids": [nid] })),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1102,6 +1104,50 @@ async fn mark_read_updates_unread_count_but_keeps_rows() {
     let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
     assert_eq!(body.as_array().unwrap().len(), 1);
     assert_eq!(body[0]["read"], true);
+
+    // Bare JSON numbers are accepted too — a second notification
+    // marked by its numeric form flips as well.
+    let id = post(&env.app, &alice, json!({"status": "y"})).await;
+    request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{id}/favourite"),
+        Some(&bob),
+        Some(json!({})),
+    )
+    .await;
+    run_pending_fanouts(&env).await;
+    let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
+    let nid2 = body[0]["id"].as_str().unwrap().parse::<i64>().unwrap();
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/notifications/read",
+        Some(&alice),
+        Some(json!({ "ids": [nid2] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 0);
+
+    // Malformed ids are a validation error, not a silent miss.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/notifications/read",
+        Some(&alice),
+        Some(json!({ "ids": ["not-a-number"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 // ---------------------------------------------------------------------------

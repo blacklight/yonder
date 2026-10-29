@@ -70,10 +70,14 @@ Mastodon's `value_for_verification` does — the raw value when it is
 itself a URL, otherwise the first `<a>` href inside the rendered
 `value` — fetches each unique URL with pubby's SSRF-guarded
 `HttpClient` (≤4 in flight per run), parses for
-`a[rel~=me], link[rel~=me]` (scraper), and stamps `verified_at` when a
-link resolves to the actor id (`{base}/ap/users/{username}`) **or** the
-profile URL (`{base}/@{username}`). A definitive non-match or non-2xx
-clears the stamp; a transient failure keeps it. Writes go through
+`a[rel~=me], link[rel~=me]` (scraper — `<noscript>` wrappers are
+stripped first, because html5ever's scripting-enabled parse hides
+their contents while Mastodon's gumbo parser sees SPA fallback links
+inside `<noscript>`), and stamps `verified_at` when a link resolves to
+the actor id (`{base}/ap/users/{username}`) **or** the profile URL
+(`{base}/@{username}`). A 2xx page with no matching backlink clears
+the stamp; non-2xx responses and fetch errors keep it, so transient
+outages never wipe verification. Writes go through
 `SELECT … FOR UPDATE` and only touch entries still carrying the fetched
 `(name, value_raw)` pair. The same job sweeps every local account on
 `federation.profile_link_verification_schedule` (default `0 4 * * *`,

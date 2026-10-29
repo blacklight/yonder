@@ -54,6 +54,7 @@ pubby-sdk = { version = "0.6.5", features = ["axum", "redis", "async"] }
 redis = "0.27"
 rsa = "0.9"
 scraper = { version = "0.27", features = ["atomic"] }
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.11.1"

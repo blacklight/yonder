@@ -646,7 +646,7 @@ async fn remote_article_converted_text() {
             "name": "When a Child’s Kite Becomes a Military Threat",
             "summary": "<p><img src=\"https://i.postimg.cc/x/IMG.jpg\"> […]</p>",
             "url": "https://blog.remote/eve/when-a-childs-kite",
-            "content": "<p><img src=\"https://i.postimg.cc/x/IMG.jpg\"></p>\n\n<p>A child in Gaza flies a kite.</p>",
+            "content": "<p><img src=\"https://i.postimg.cc/x/IMG.jpg\"></p>\n\n<p>A child flies a kite.</p>",
             "to": ["https://www.w3.org/ns/activitystreams#Public"],
             "published": "2025-08-24T09:00:00Z",
         }),
@@ -676,7 +676,7 @@ async fn remote_article_converted_text() {
         !html.contains("<img"),
         "remote img must be stripped: {html}"
     );
-    assert!(html.contains("A child in Gaza flies a kite."));
+    assert!(html.contains("A child flies a kite."));
     assert!(
         html.contains("href=\"https://blog.remote/eve/when-a-childs-kite\""),
         "permalink footer: {html}"

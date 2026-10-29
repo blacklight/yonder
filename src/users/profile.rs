@@ -1013,8 +1013,10 @@ pub(crate) async fn enqueue_verification(
 enum Verdict {
     /// Page links back with `rel="me"` → stamp `verified_at`.
     Verified,
-    /// Definitive answer the link is absent (2xx without a match, or a
-    /// non-2xx response) → clear `verified_at`.
+    /// Definitive answer the link is absent (2xx without a match) →
+    /// clear `verified_at`. Non-2xx responses stay `Keep`: a transient
+    /// outage must not wipe a previously verified field (Mastodon
+    /// likewise only clears verification on a definitive miss).
     NotVerified,
     /// Transient failure — fetch error/timeout: keep the prior stamp.
     Keep,
@@ -1028,6 +1030,18 @@ fn url_eq(candidate: &str, target: &str) -> bool {
     }
 }
 
+/// `<noscript>` wrappers, case-insensitive. html5ever parses with
+/// scripting enabled, so noscript contents come out as raw text and
+/// `rel="me"` links inside SPA fallback pages are invisible to the
+/// selector. Mastodon's gumbo parser has no scripting mode — those
+/// links count there, so they must count here: strip the wrapper
+/// tags and let the inner markup parse as real elements.
+fn noscript_tag_re() -> &'static regex::Regex {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)</?noscript\b[^>]*>").unwrap());
+    &RE
+}
+
 /// Whether the fetched page body links back to either target (actor id
 /// or profile URL) with `rel="me"` — Mastodon's two-target rule.
 fn body_links_back(body: &str, page_url: &str, targets: &[String]) -> bool {
@@ -1037,7 +1051,8 @@ fn body_links_back(body: &str, page_url: &str, targets: &[String]) -> bool {
     let Ok(base) = url::Url::parse(page_url) else {
         return false;
     };
-    let document = scraper::Html::parse_document(body);
+    let body = noscript_tag_re().replace_all(body, "");
+    let document = scraper::Html::parse_document(&body);
     for element in document.select(&selector) {
         let Some(href) = element.value().attr("href") else {
             continue;
@@ -1067,8 +1082,7 @@ fn fetch_verdict(client: &HttpClient, page_url: &str, targets: &[String]) -> Ver
                 Verdict::NotVerified
             }
         }
-        Ok(_) => Verdict::NotVerified,
-        Err(_) => Verdict::Keep,
+        Ok(_) | Err(_) => Verdict::Keep,
     }
 }
 
@@ -1280,4 +1294,22 @@ async fn verify_account(
 /// gate (the sweep only needs DB + config).
 pub fn register_jobs(registry: &mut crate::jobs::Registry) {
     registry.register(JobKind::VerifyProfileLinks, VerifyProfileLinksJob);
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    /// `rel="me"` links inside `<noscript>` still count — SPA fallback
+    /// pages serve them only to no-JS clients, and Mastodon's gumbo
+    /// parser (unlike html5ever's scripting-enabled default) sees them.
+    #[test]
+    fn noscript_wrapped_rel_me_links_back() {
+        let targets = vec!["https://a.example/@u".to_string()];
+        assert!(body_links_back(
+            "<html><body><noscript><a rel=\"me\" href=\"https://a.example/@u\">u</a></noscript></body></html>",
+            "https://p.example/",
+            &targets
+        ));
+    }
 }

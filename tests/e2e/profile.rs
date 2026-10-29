@@ -913,8 +913,10 @@ async fn rel_me_verification_marks_remote_fields() {
         "<html><body><a rel=\"me\" href=\"{base}/@zed\">me</a></body></html>"
     ))
     .await;
+    // Page B wraps the link in <noscript> — SPA fallback pages do
+    // this; Mastodon's gumbo parser still sees the anchors.
     let page_b = serve_once(&format!(
-        "<html><body><a rel=\"me\" href=\"{base}/users/zed\">me</a></body></html>"
+        "<html><body><noscript><a rel=\"me\" href=\"{base}/users/zed\">me</a></noscript></body></html>"
     ))
     .await;
     let actor_url = format!("{base}/users/zed");

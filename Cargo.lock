@@ -6202,6 +6202,7 @@ dependencies = [
  "pulldown-cmark",
  "quick-xml",
  "redis",
+ "regex",
  "rsa",
  "scraper",
  "serde",

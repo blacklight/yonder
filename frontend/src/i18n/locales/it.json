@@ -376,6 +376,15 @@
     },
     "verify-email": {
       "title": "Verifica dell'email"
+    },
+    "status-boosts": {
+      "title": "Boost"
+    },
+    "status-quotes": {
+      "title": "Citazioni"
+    },
+    "status-favourites": {
+      "title": "Mi piace"
     }
   },
   "not_found": {
@@ -492,7 +501,16 @@
       "adminLimit": "Limitare {user}? I suoi post saranno nascosti dalle timeline pubbliche."
     },
     "notFound": "Questo post non è disponibile.",
-    "loadError": "Impossibile caricare il post."
+    "loadError": "Impossibile caricare il post.",
+    "boostsCount": "{count} boost | {count} boost",
+    "quotesCount": "{count} citazione | {count} citazioni",
+    "likesCount": "{count} mi piace | {count} mi piace",
+    "interactionsTabs": "Interazioni del post",
+    "tabs": {
+      "boosts": "Boost",
+      "quotes": "Citazioni",
+      "likes": "Mi piace"
+    }
   },
   "timeline": {
     "empty": "Ancora niente qui.",

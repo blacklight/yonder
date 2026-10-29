@@ -91,6 +91,41 @@ pub async fn send_quote_request(
     Ok(())
 }
 
+/// The statuses quoting `target`, newest first (cursor = the quote
+/// row id), filtered to what the viewer can see. Returns the visible
+/// rows plus the raw page cursors — visibility pruning may shorten a
+/// page, so the `next` link must move past pruned rows, not the last
+/// visible one.
+pub async fn quoted_by(
+    ctx: &PostContext,
+    target: &StatusRow,
+    page: &crate::http::paginate::Page,
+    viewer: Option<i64>,
+) -> Result<(Vec<StatusRow>, Vec<i64>)> {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM statuses \
+         WHERE quote_of_id = $1 AND NOT tombstone \
+           AND ($2::bigint IS NULL OR id < $2) \
+           AND ($3::bigint IS NULL OR id > $3) \
+         ORDER BY id DESC LIMIT $4",
+    )
+    .bind(target.id)
+    .bind(page.max_id)
+    .bind(page.since_id)
+    .bind(page.limit)
+    .fetch_all(&ctx.db)
+    .await?;
+    let mut rows = Vec::with_capacity(ids.len());
+    for id in &ids {
+        if let Some(s) = posts::load(&ctx.db, *id).await? {
+            rows.push(s);
+        }
+    }
+    let visible = posts::visible_ids(&ctx.db, &rows, viewer).await?;
+    rows.retain(|s| visible.contains(&s.id));
+    Ok((rows, ids))
+}
+
 /// Bump `quotes_count` on the quoted target (negative `delta`
 /// decrements). Works on a pool or an open transaction.
 pub async fn bump_quote_counter<'e, E>(db: E, status_id: i64, delta: i64) -> Result<()>

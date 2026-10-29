@@ -1,6 +1,7 @@
 import { request, requestWithResponse, type RequestOptions } from "./client";
 import { paginated, type Page } from "./pagination";
 import type {
+  Account,
   EmojiReaction,
   MediaAttachment,
   Poll,
@@ -75,6 +76,47 @@ export function getStatusContext(id: string): Promise<StatusContext> {
   return request<StatusContext>({
     path: `/statuses/${encodeURIComponent(id)}/context`,
   });
+}
+
+async function pageOfAccounts(
+  path: string,
+  query?: RequestOptions["query"],
+): Promise<Page<Account>> {
+  const { data, response } = await requestWithResponse<Account[]>({
+    path,
+    query,
+  });
+  return paginated(response, data);
+}
+
+/** `GET /api/v1/statuses/{id}/favourited_by` — who liked it. */
+export function favouritedBy(
+  id: string,
+  query?: TimelineQuery,
+): Promise<Page<Account>> {
+  return pageOfAccounts(
+    `/statuses/${encodeURIComponent(id)}/favourited_by`,
+    query,
+  );
+}
+
+/** `GET /api/v1/statuses/{id}/reblogged_by` — who boosted it. */
+export function rebloggedBy(
+  id: string,
+  query?: TimelineQuery,
+): Promise<Page<Account>> {
+  return pageOfAccounts(
+    `/statuses/${encodeURIComponent(id)}/reblogged_by`,
+    query,
+  );
+}
+
+/** `GET /api/v1/statuses/{id}/quotes` — posts quoting it. */
+export function statusQuotes(
+  id: string,
+  query?: TimelineQuery,
+): Promise<Page<Status>> {
+  return pageOfStatuses(`/statuses/${encodeURIComponent(id)}/quotes`, query);
 }
 
 /** `POST /api/v1/statuses/{id}/translate` — translate into `lang`

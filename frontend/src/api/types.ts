@@ -2117,6 +2117,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/statuses/{id}/quotes": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v1/statuses/{id}/quotes` — the posts quoting this one. */
+    get: operations["quotes"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/statuses/{id}/reblog": {
     parameters: {
       query?: never;
@@ -2149,6 +2166,30 @@ export interface paths {
     get: operations["reblogged_by"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/statuses/{id}/translate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/statuses/{id}/translate` — the Mastodon-compatible
+     *     Translation entity. `can_see` is the only audience gate: the admin
+     *     chose the backend (which may be a self-hosted LibreTranslate), so
+     *     gated content is sent to it just like Mastodon sends public posts.
+     *     The target language is `lang` (query or body) → the viewer's
+     *     interface locale → `i18n.fallback_locale`.
+     */
+    post: operations["translate"];
     delete?: never;
     options?: never;
     head?: never;
@@ -3319,6 +3360,11 @@ export interface components {
     TotpConfirmParams: {
       /** @description The 6-digit code from the authenticator app. */
       code: string;
+    };
+    /** @description OpenAPI shape of the translate body. */
+    TranslateSchema: {
+      /** @description BCP-47 target language. */
+      lang?: string | null;
     };
     /**
      * @description OpenAPI shape of the JSON form of `update_credentials` (files are
@@ -8470,6 +8516,45 @@ export interface operations {
       };
     };
   };
+  quotes: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Statuses quoting the status */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   reblog: {
     parameters: {
       query?: never;
@@ -8548,6 +8633,67 @@ export interface operations {
       };
       /** @description Not found or not visible */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  translate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["TranslateSchema"];
+      };
+    };
+    responses: {
+      /** @description The translation */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Scope gate */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not configured or bad lang */
+      422: {
         headers: {
           [name: string]: unknown;
         };

@@ -32,6 +32,9 @@ a Redis marker — repeat ingests and re-reads don't pile up fetches.
   accepted in the body or query string).
 - `POST /api/v1/statuses/{id}/bookmark|unbookmark`,
   `GET /api/v1/bookmarks` — silent: no AP, no notification.
+- `GET /api/v1/statuses/{id}/quotes` — posts quoting the target,
+  newest first; each row is filtered through `can_see` for the
+  viewer (anonymous viewers see the public subset).
 - `POST /api/v1/statuses` with `quote_id` — appends the Pleroma `RE:`
   link to the rendered HTML, stamps all FEP-0449 quote fields on the
   object and sends a FEP-044f `QuoteRequest` to remote quoted authors

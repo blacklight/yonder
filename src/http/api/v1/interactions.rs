@@ -19,7 +19,7 @@ use crate::{
         middleware::auth::{AuthContext, MaybeAuth},
         paginate, AppState,
     },
-    interactions::{bookmark, boost, favourite, pins, reactions},
+    interactions::{bookmark, boost, favourite, pins, quote, reactions},
     posts::{entity, PostContext},
     users::account as account_mapper,
     Error, Result,
@@ -276,6 +276,38 @@ pub async fn reblogged_by(
     let accounts = account_entities(&ctx, &ids).await?;
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
+}
+
+/// `GET /api/v1/statuses/{id}/quotes` — the posts quoting this one.
+#[utoipa::path(
+    get,
+    path = "/api/v1/statuses/{id}/quotes",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "Statuses quoting the status"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn quotes(
+    State(state): State<Arc<AppState>>,
+    auth: MaybeAuth,
+    Path(id): Path<i64>,
+    Query(params): Query<HashMap<String, String>>,
+    uri: axum::http::Uri,
+) -> Result<(HeaderMap, Json<Value>)> {
+    if let Some(a) = &auth.0 {
+        require_scope(&state.config(), a, "read:statuses")?;
+    }
+    let ctx = PostContext::new(&state);
+    let viewer = auth.0.as_ref().map(|a| a.account_id);
+    let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
+    let page = paginate::parse(&params);
+    let (statuses, cursors) = quote::quoted_by(&ctx, &status, &page, viewer).await?;
+    let items = entity::status_entities(&ctx, &statuses, viewer).await?;
+    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    Ok((headers, Json(json!(items))))
 }
 
 // ---------------------------------------------------------------------------

@@ -530,4 +530,32 @@ describe("StatusCard", () => {
     expect(del).toBeTruthy();
     expect(String(del![0])).toContain("/reactions/");
   });
+
+  it("expanded card links non-zero stats to the interaction lists", async () => {
+    const s = status({
+      reblogs_count: 3,
+      quotes_count: 2,
+      favourites_count: 0,
+    });
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: s, expanded: true },
+    });
+    await flushPromises();
+    const stats = wrapper.get(".status-card__stats");
+    const links = stats.findAll("a.status-card__stat");
+    expect(links.map((l) => l.attributes("href"))).toEqual([
+      "/statuses/1/boosts",
+      "/statuses/1/quotes",
+    ]);
+    // A zero counter renders as text, not a link.
+    expect(stats.text()).toContain("0 likes");
+    expect(stats.text()).toContain("3 boosts");
+  });
+
+  it("stats strip stays off timeline cards", () => {
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: status({ reblogs_count: 3 }) },
+    });
+    expect(wrapper.find(".status-card__stats").exists()).toBe(false);
+  });
 });

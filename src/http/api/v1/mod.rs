@@ -387,6 +387,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/statuses/{id}/reblogged_by",
             get(interactions::reblogged_by),
         )
+        .route("/api/v1/statuses/{id}/quotes", get(interactions::quotes))
         .route(
             "/api/v1/statuses/{id}/bookmark",
             axum::routing::post(interactions::bookmark)
@@ -759,6 +760,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     interactions::reblog,
     interactions::unreblog,
     interactions::reblogged_by,
+    interactions::quotes,
     interactions::bookmark,
     interactions::unbookmark,
     interactions::bookmarks_list,

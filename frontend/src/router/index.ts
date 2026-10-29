@@ -115,6 +115,24 @@ export const router = createRouter({
       props: true,
     },
     {
+      path: "/statuses/:id/boosts",
+      name: "status-boosts",
+      component: () => import("@/pages/StatusInteractionsPage.vue"),
+      props: (route) => ({ id: route.params.id, kind: "boosts" }),
+    },
+    {
+      path: "/statuses/:id/quotes",
+      name: "status-quotes",
+      component: () => import("@/pages/StatusInteractionsPage.vue"),
+      props: (route) => ({ id: route.params.id, kind: "quotes" }),
+    },
+    {
+      path: "/statuses/:id/favourites",
+      name: "status-favourites",
+      component: () => import("@/pages/StatusInteractionsPage.vue"),
+      props: (route) => ({ id: route.params.id, kind: "likes" }),
+    },
+    {
       path: "/notifications",
       name: "notifications",
       component: () => import("@/pages/NotificationsPage.vue"),

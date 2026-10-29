@@ -376,6 +376,15 @@
     },
     "verify-email": {
       "title": "E-Mail-Bestätigung"
+    },
+    "status-boosts": {
+      "title": "Boosts"
+    },
+    "status-quotes": {
+      "title": "Zitate"
+    },
+    "status-favourites": {
+      "title": "Gefällt mir"
     }
   },
   "not_found": {
@@ -492,7 +501,16 @@
       "adminLimit": "{user} limitieren? Beiträge werden aus öffentlichen Timelines ausgeblendet."
     },
     "notFound": "Dieser Beitrag ist nicht verfügbar.",
-    "loadError": "Beitrag konnte nicht geladen werden."
+    "loadError": "Beitrag konnte nicht geladen werden.",
+    "boostsCount": "{count} Boost | {count} Boosts",
+    "quotesCount": "{count} Zitat | {count} Zitate",
+    "likesCount": "{count} „Gefällt mir“ | {count} „Gefällt mir“",
+    "interactionsTabs": "Interaktionen mit dem Beitrag",
+    "tabs": {
+      "boosts": "Boosts",
+      "quotes": "Zitate",
+      "likes": "Gefällt mir"
+    }
   },
   "timeline": {
     "empty": "Hier ist noch nichts.",

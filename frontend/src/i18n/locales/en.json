@@ -376,6 +376,15 @@
     },
     "verify-email": {
       "title": "Email verification"
+    },
+    "status-boosts": {
+      "title": "Boosts"
+    },
+    "status-quotes": {
+      "title": "Quotes"
+    },
+    "status-favourites": {
+      "title": "Likes"
     }
   },
   "not_found": {
@@ -479,7 +488,16 @@
       "adminLimit": "Limit {user}? Their posts will be hidden from public timelines."
     },
     "notFound": "This status is not available.",
-    "loadError": "Could not load the status."
+    "loadError": "Could not load the status.",
+    "boostsCount": "{count} boost | {count} boosts",
+    "quotesCount": "{count} quote | {count} quotes",
+    "likesCount": "{count} like | {count} likes",
+    "interactionsTabs": "Post interactions",
+    "tabs": {
+      "boosts": "Boosts",
+      "quotes": "Quotes",
+      "likes": "Likes"
+    }
   },
   "timeline": {
     "empty": "Nothing here yet.",

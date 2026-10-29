@@ -1760,3 +1760,95 @@ async fn remote_video_media_self_heal() {
         .count();
     assert_eq!(refreshes, 1, "a media-less Note never self-heals");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quotes_list_filters_by_viewer() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    let carol = register(&env.app, "carol", "c@x.com").await;
+    let (id, _) = post(&env.app, &alice, "quote target", "public").await;
+    let path = format!("/api/v1/statuses/{id}/quotes");
+
+    // A public quote — visible to everyone, anonymous included.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&bob),
+        Some(json!({"status": "public quote", "quote_id": id})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let public_quote = body["id"].as_str().unwrap().to_string();
+
+    // A followers-only quote — only bob's followers see it, even on a
+    // public target.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&bob),
+        Some(json!({"status": "private quote", "quote_id": id, "visibility": "private"})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let private_quote = body["id"].as_str().unwrap().to_string();
+
+    // carol follows bob — she sees both quotes, newest first.
+    let bob_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'bob' AND domain IS NULL")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{bob_id}/follow"),
+        Some(&carol),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+
+    let listed = |body: &Value| -> Vec<String> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // Anonymous: the public quote only.
+    let (code, body) = request(&env.app, "GET", &path, None, None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(listed(&body), [public_quote.as_str()]);
+
+    // The target's author doesn't follow bob — same view as anonymous.
+    let (code, body) = request(&env.app, "GET", &path, Some(&alice), None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(listed(&body), [public_quote.as_str()]);
+
+    // The follower sees both, newest first.
+    let (code, body) = request(&env.app, "GET", &path, Some(&carol), None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(
+        listed(&body),
+        [private_quote.as_str(), public_quote.as_str()]
+    );
+
+    // Quotes of a target the viewer can't see are 404, not an empty list.
+    let (hidden, _) = post(&env.app, &alice, "secret", "private").await;
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{hidden}/quotes"),
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}

@@ -376,6 +376,15 @@
     },
     "verify-email": {
       "title": "Verificación de correo"
+    },
+    "status-boosts": {
+      "title": "Impulsos"
+    },
+    "status-quotes": {
+      "title": "Citas"
+    },
+    "status-favourites": {
+      "title": "Me gusta"
     }
   },
   "not_found": {
@@ -492,7 +501,16 @@
       "adminLimit": "¿Limitar a {user}? Sus publicaciones se ocultarán de las líneas de tiempo públicas."
     },
     "notFound": "Esta publicación no está disponible.",
-    "loadError": "No se pudo cargar la publicación."
+    "loadError": "No se pudo cargar la publicación.",
+    "boostsCount": "{count} impulso | {count} impulsos",
+    "quotesCount": "{count} cita | {count} citas",
+    "likesCount": "{count} me gusta | {count} me gusta",
+    "interactionsTabs": "Interacciones de la publicación",
+    "tabs": {
+      "boosts": "Impulsos",
+      "quotes": "Citas",
+      "likes": "Me gusta"
+    }
   },
   "timeline": {
     "empty": "Nada por aquí todavía.",

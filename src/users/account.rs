@@ -311,7 +311,9 @@ fn sole_anchor_raw(html: &str) -> Option<String> {
     if frag.select(&elements).count() != 1 {
         return None;
     }
-    let a = frag.select(&scraper::Selector::parse("a[href]").ok()?).next()?;
+    let a = frag
+        .select(&scraper::Selector::parse("a[href]").ok()?)
+        .next()?;
     let href = a.value().attr("href")?.to_string();
     let text: String = a.text().collect();
     let rel_me = a

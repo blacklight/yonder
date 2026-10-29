@@ -186,6 +186,27 @@ const displayedStatus = computed(() => {
   }
   return out;
 });
+// Expanded (permalink) cards get a stats strip — "N boosts · N
+// quotes · N likes" — that links to the per-interaction lists.
+// Zero counters render as plain text: nothing to list.
+const stats = computed(() => [
+  {
+    path: "boosts",
+    key: "status.boostsCount",
+    count: shown.value.reblogs_count,
+  },
+  {
+    path: "quotes",
+    key: "status.quotesCount",
+    count: shown.value.quotes_count,
+  },
+  {
+    path: "favourites",
+    key: "status.likesCount",
+    count: shown.value.favourites_count,
+  },
+]);
+
 const remoteDomain = computed(() => {
   const acct = account.value.acct;
   return acct.includes("@") ? acct.split("@").slice(1).join("@") : null;
@@ -592,6 +613,21 @@ async function onReact(emoji: string) {
       </button>
     </div>
 
+    <div v-if="expanded" class="status-card__stats">
+      <template v-for="(stat, i) in stats" :key="stat.path">
+        <span v-if="i > 0" class="status-card__stat-sep">·</span>
+        <router-link
+          v-if="stat.count > 0"
+          :to="`/statuses/${shown.id}/${stat.path}`"
+          class="status-card__stat"
+          >{{ t(stat.key, { count: stat.count }) }}</router-link
+        >
+        <span v-else class="status-card__stat">{{
+          t(stat.key, { count: stat.count })
+        }}</span>
+      </template>
+    </div>
+
     <div class="status-card__footer-wrap">
       <StatusFooter
         :status="shown"
@@ -827,6 +863,29 @@ async function onReact(emoji: string) {
 .status-card__reaction-img {
   width: 1rem;
   height: 1rem;
+}
+.status-card__stats {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+}
+.status-card__stat {
+  color: var(--text-muted);
+}
+a.status-card__stat {
+  text-decoration: none;
+  cursor: pointer;
+}
+a.status-card__stat:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.status-card__stat-sep {
+  color: var(--text-faint);
 }
 .status-card__footer-wrap {
   position: relative;

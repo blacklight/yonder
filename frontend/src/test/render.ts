@@ -67,6 +67,22 @@ export const stubRoutes: RouteRecordRaw[] = [
     component: stub,
   },
   { path: "/accounts/:id", name: "profile-id", component: stub },
+  { path: "/statuses/:id", name: "status", component: stub },
+  {
+    path: "/statuses/:id/boosts",
+    name: "status-boosts",
+    component: stub,
+  },
+  {
+    path: "/statuses/:id/quotes",
+    name: "status-quotes",
+    component: stub,
+  },
+  {
+    path: "/statuses/:id/favourites",
+    name: "status-favourites",
+    component: stub,
+  },
   { path: "/search", name: "search", component: stub },
   { path: "/about", name: "about", component: stub },
   { path: "/tags/:name", name: "tag", component: stub },

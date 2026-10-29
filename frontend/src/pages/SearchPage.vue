@@ -10,6 +10,8 @@ import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import { useStatusEvents } from "@/composables/useStatusEvents";
+import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
 const { t } = useI18n();
 const store = useSearchStore();
@@ -79,6 +81,18 @@ function goTag(name: string) {
 function goStatus(id: string) {
   router.push(`/statuses/${id}`);
 }
+
+// Status results stay live: edits replace the row, deletes drop it.
+useStatusEvents({
+  onStatus: (s) => {
+    const r = store.results;
+    if (r) r.statuses = patchStatusList(r.statuses, s);
+  },
+  onDelete: (id) => {
+    const r = store.results;
+    if (r) r.statuses = dropFromStatusList(r.statuses, id);
+  },
+});
 
 onMounted(() => {
   if (q.value.trim()) void submit();

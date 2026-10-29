@@ -18,7 +18,7 @@ import { useAuthStore } from "./auth";
 export interface StreamEvent {
   /** Folded subscription name (`public`, `hashtag:rust`, `list:7`). */
   stream: string;
-  /** `update` | `delete` | `notification` | `notifications_count`. */
+  /** `update` | `status.update` | `delete` | `notification` | `notifications_count`. */
   event: string;
   /** The twice-parsed payload (entity, or id string for `delete`). */
   payload: unknown;

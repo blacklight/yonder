@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import type { Status } from "@/api/entities";
 import {
+  dropFromStatusList,
+  patchStatusList,
+  statusMatchesId,
+} from "@/utils/statusStream";
+import {
   homeTimeline,
   listTimeline,
   publicTimeline,
@@ -130,20 +135,19 @@ export const useTimelineStore = defineStore("timeline", {
     },
 
     /**
-     * Buffer a live event; the visible list is untouched. A repeat
-     * event for an already-visible or already-buffered status is an
-     * edit — replace it in place rather than dropping it.
+     * Buffer a live event; the visible list is untouched. An event
+     * for an already-visible or already-buffered status — including
+     * the original inside a displayed boost wrapper — is an edit:
+     * replace it in place rather than dropping it.
      */
     buffer(key: TimelineKey, status: Status) {
       const tl = this.ensure(key);
-      const i = tl.items.findIndex((s) => s.id === status.id);
-      if (i !== -1) {
-        tl.items[i] = status;
+      if (tl.items.some((s) => statusMatchesId(s, status.id))) {
+        tl.items = patchStatusList(tl.items, status);
         return;
       }
-      const p = tl.pending.findIndex((s) => s.id === status.id);
-      if (p !== -1) {
-        tl.pending[p] = status;
+      if (tl.pending.some((s) => statusMatchesId(s, status.id))) {
+        tl.pending = patchStatusList(tl.pending, status);
         return;
       }
       tl.pending.push(status);
@@ -157,24 +161,30 @@ export const useTimelineStore = defineStore("timeline", {
       tl.pending = [];
     },
 
-    remove(key: TimelineKey, id: string) {
-      const tl = this.ensure(key);
-      tl.items = tl.items.filter((s) => s.id !== id);
-      tl.pending = tl.pending.filter((s) => s.id !== id);
+    /**
+     * Drop a status everywhere it is displayed — the row itself and
+     * every boost wrapper pointing at it (the wrapper's `reblog`
+     * renders null once the original is gone).
+     */
+    remove(id: string) {
+      for (const tl of Object.values(this.timelines)) {
+        tl.items = dropFromStatusList(tl.items, id);
+        tl.pending = dropFromStatusList(tl.pending, id);
+      }
     },
 
     /**
      * Replace a status everywhere it is displayed — after an own edit
      * the returned entity lands in every timeline that carries it
      * (home, public, hashtag, list), not just the one it was edited
-     * from. Live `update` events reach the same slots via `buffer`.
+     * from. Live `update`/`status.update` events reach the same
+     * slots; a match inside a boost wrapper refreshes the wrapper's
+     * `reblog` in place.
      */
     replace(status: Status) {
       for (const tl of Object.values(this.timelines)) {
-        const i = tl.items.findIndex((s) => s.id === status.id);
-        if (i !== -1) tl.items[i] = status;
-        const p = tl.pending.findIndex((s) => s.id === status.id);
-        if (p !== -1) tl.pending[p] = status;
+        tl.items = patchStatusList(tl.items, status);
+        tl.pending = patchStatusList(tl.pending, status);
       }
     },
   },

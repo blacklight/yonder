@@ -35,8 +35,10 @@ function streamKey(): string {
 function onStreamEvent(ev: { event: string; payload: unknown }) {
   if (ev.event === "update")
     timelines.buffer(props.timeline, ev.payload as Status);
-  else if (ev.event === "delete")
-    timelines.remove(props.timeline, String(ev.payload));
+  else if (ev.event === "status.update")
+    // An edit only ever replaces — never lands as a "new" pending item.
+    timelines.replace(ev.payload as Status);
+  else if (ev.event === "delete") timelines.remove(String(ev.payload));
 }
 
 onMounted(() => {
@@ -100,7 +102,7 @@ onBeforeUnmount(() => {
       v-for="s in tl.items"
       :key="s.id"
       :status="s"
-      @removed="(id) => timelines.remove(timeline, id)"
+      @removed="(id) => timelines.remove(id)"
     />
 
     <div ref="sentinel" class="timeline__sentinel" aria-hidden="true" />

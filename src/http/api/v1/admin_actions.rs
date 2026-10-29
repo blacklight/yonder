@@ -381,7 +381,7 @@ pub async fn status_action(
             .await?;
             tx.commit().await?;
             let ctx = PostContext::new(&state);
-            crate::timelines::stream::publish_update(&ctx, &status).await;
+            crate::timelines::stream::publish_status_update(&ctx, &status).await;
             if let Some(ap) = &ctx.ap {
                 if status.local {
                     if let Err(e) =

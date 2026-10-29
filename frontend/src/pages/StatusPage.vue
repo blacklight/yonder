@@ -9,6 +9,11 @@ import StatusCard from "@/components/status/StatusCard.vue";
 import { ApiError } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import { useStreamingStore } from "@/stores/streaming";
+import {
+  dropFromStatusList,
+  patchStatus,
+  statusMatchesId,
+} from "@/utils/statusStream";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
@@ -18,10 +23,15 @@ const ancestors = ref<Status[]>([]);
 const descendants = ref<Status[]>([]);
 const error = ref<number | null>(null);
 
-// A delete from a thread card drops it from the rendered lists.
+// A delete from a thread card — or over the stream — drops it from
+// the rendered lists; deleting the opened status leaves the page.
 function dropRemoved(id: string) {
-  ancestors.value = ancestors.value.filter((s) => s.id !== id);
-  descendants.value = descendants.value.filter((s) => s.id !== id);
+  if (status.value && statusMatchesId(status.value, id)) {
+    void router.push({ name: "home" });
+    return;
+  }
+  ancestors.value = dropFromStatusList(ancestors.value, id);
+  descendants.value = dropFromStatusList(descendants.value, id);
 }
 
 // Mastodon/Songhive-style single threading: every descendant unfolds
@@ -80,18 +90,6 @@ async function load() {
   }
 }
 
-// Stream payloads render unpersonalized — keep the viewer's own
-// interaction flags when an `update` replaces a displayed row.
-function mergeViewerFlags(next: Status, prev: Status): Status {
-  return {
-    ...next,
-    favourited: prev.favourited,
-    reblogged: prev.reblogged,
-    bookmarked: prev.bookmarked,
-    pinned: prev.pinned,
-  };
-}
-
 const auth = useAuthStore();
 const streaming = useStreamingStore();
 let unsub: (() => void)[] = [];
@@ -101,19 +99,23 @@ function onStreamEvent(ev: { event: string; payload: unknown }) {
     dropRemoved(String(ev.payload));
     return;
   }
-  if (ev.event !== "update") return;
+  // `update` is a fresh post (append replies); `status.update` is an
+  // edit — it only ever replaces a row already on screen.
+  const isEdit = ev.event === "status.update";
+  if (ev.event !== "update" && !isEdit) return;
   const s = ev.payload as Status;
-  if (status.value?.id === s.id) {
-    status.value = mergeViewerFlags(s, status.value);
+  if (status.value && statusMatchesId(status.value, s.id)) {
+    status.value = patchStatus(status.value, s);
     return;
   }
   for (const list of [ancestors.value, descendants.value]) {
-    const i = list.findIndex((x) => x.id === s.id);
+    const i = list.findIndex((x) => statusMatchesId(x, s.id));
     if (i !== -1) {
-      list[i] = mergeViewerFlags(s, list[i]);
+      list[i] = patchStatus(list[i], s);
       return;
     }
   }
+  if (isEdit) return;
   // A reply landing anywhere inside the visible thread appends in
   // chronological order — covers own replies, remote replies and
   // remote edits pushed over the stream without a refresh.

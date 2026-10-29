@@ -18,6 +18,13 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import { useStatusEvents } from "@/composables/useStatusEvents";
+import {
+  dropFromStatusList,
+  patchStatus,
+  patchStatusList,
+  statusMatchesId,
+} from "@/utils/statusStream";
 
 type Kind = "boosts" | "quotes" | "likes";
 const props = defineProps<{ id: string; kind: Kind }>();
@@ -92,8 +99,22 @@ async function load() {
 }
 
 function removed(id: string) {
-  quotes.value = quotes.value.filter((s) => s.id !== id);
+  quotes.value = dropFromStatusList(quotes.value, id);
 }
+
+useStatusEvents({
+  onStatus: (s) => {
+    if (status.value && statusMatchesId(status.value, s.id))
+      status.value = patchStatus(status.value, s);
+    quotes.value = patchStatusList(quotes.value, s);
+  },
+  onDelete: (id) => {
+    // The interacted-with status itself is gone — same as the 404.
+    if (status.value && statusMatchesId(status.value, id))
+      state.value = "not-found";
+    removed(id);
+  },
+});
 
 watch(() => [props.id, props.kind], load, { immediate: true });
 </script>

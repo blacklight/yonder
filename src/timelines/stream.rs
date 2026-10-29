@@ -122,6 +122,19 @@ async fn streams_for(db: &PgPool, status: &StatusRow) -> Vec<String> {
 /// see. Scoped subscribers render the same payload; Mastodon does the
 /// same.
 pub async fn publish_update(ctx: &PostContext, status: &StatusRow) {
+    publish_entity(ctx, status, "update").await;
+}
+
+/// `status.update` event — Mastodon's name for an *edit* of an
+/// existing status. Clients replace the row in place only where it is
+/// already displayed; unlike `update` it must never surface as a new
+/// pending item.
+pub async fn publish_status_update(ctx: &PostContext, status: &StatusRow) {
+    publish_entity(ctx, status, "status.update").await;
+}
+
+/// Shared render+publish for the entity-carrying events.
+async fn publish_entity(ctx: &PostContext, status: &StatusRow, event: &str) {
     if status.tombstone {
         return;
     }
@@ -133,7 +146,7 @@ pub async fn publish_update(ctx: &PostContext, status: &StatusRow) {
         }
     };
     for stream in streams_for(&ctx.db, status).await {
-        ctx.bus.publish(stream, "update", payload.clone());
+        ctx.bus.publish(stream, event, payload.clone());
     }
 }
 
@@ -142,5 +155,19 @@ pub async fn publish_delete(db: &PgPool, bus: &EventBus, status: &StatusRow) {
     let payload = serde_json::json!(status.id.to_string());
     for stream in streams_for(db, status).await {
         bus.publish(stream, "delete", payload.clone());
+    }
+}
+
+/// `delete` events for a batch of statuses over the Redis relay —
+/// bulk removals (account purge) where the caller holds no bus. Rows
+/// must be the *live* shape: callers publish before the mass delete
+/// because stream membership reads the row's visibility, tags and
+/// follow graph.
+pub async fn publish_delete_many(db: &PgPool, redis: &crate::cache::Redis, statuses: &[StatusRow]) {
+    for status in statuses {
+        let payload = serde_json::json!(status.id.to_string());
+        for stream in streams_for(db, status).await {
+            crate::notifications::publish_live(redis, &stream, "delete", &payload).await;
+        }
     }
 }

@@ -929,9 +929,10 @@ pub async fn edit_status(
         }
         crate::activitypub::posts::invalidate_object(ap, status_id);
     }
-    // Stream the `update` event — subscribed timelines replace the row
-    // in place, so an edit reflects without a reload.
-    crate::timelines::stream::publish_update(ctx, &status).await;
+    // Stream the `status.update` event — subscribed timelines replace
+    // the row in place, so an edit reflects without a reload (and an
+    // edit of an unseen row never lands as a pending "new" item).
+    crate::timelines::stream::publish_status_update(ctx, &status).await;
     // When the edit kept the attachments (`media_ids` omitted), read
     // them back so the preview check still sees the effective set.
     let effective_media: Vec<i64> = match &validated.media_ids {

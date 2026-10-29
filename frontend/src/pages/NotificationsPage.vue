@@ -23,11 +23,29 @@ import StatusCard from "@/components/status/StatusCard.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
+import { useStatusEvents } from "@/composables/useStatusEvents";
+import { patchStatus, statusMatchesId } from "@/utils/statusStream";
 
 const { t } = useI18n();
 const store = useNotificationsStore();
 const auth = useAuthStore();
 const confirming = ref(false);
+
+// Statuses embedded in notifications stay live: an edit refreshes
+// the row; a delete drops the notification that referenced it
+// (there is nothing left to act on).
+useStatusEvents({
+  onStatus: (s) => {
+    store.items = store.items.map((n) =>
+      n.status ? { ...n, status: patchStatus(n.status, s) } : n,
+    );
+  },
+  onDelete: (id) => {
+    store.items = store.items.filter(
+      (n) => !n.status || !statusMatchesId(n.status, id),
+    );
+  },
+});
 
 // Computed, not constant — `auth.isStaff` can arrive after mount via
 // `auth.restore()`, and the reports tab must appear when it does.

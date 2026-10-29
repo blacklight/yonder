@@ -33,6 +33,8 @@ import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import { useStatusEvents } from "@/composables/useStatusEvents";
+import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -480,6 +482,13 @@ watch([account, state], () => {
   } else if (state.value !== "loading") {
     document.title = `${t("route.profile.title")} — ${app}`;
   }
+});
+
+// Live edits/deletes land on the displayed statuses — the profile
+// timeline is not store-backed, so it patches its own list.
+useStatusEvents({
+  onStatus: (s) => (statuses.value = patchStatusList(statuses.value, s)),
+  onDelete: (id) => (statuses.value = dropFromStatusList(statuses.value, id)),
 });
 
 watch(

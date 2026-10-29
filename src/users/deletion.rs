@@ -461,6 +461,22 @@ pub async fn purge_account(
         .execute(&ctx.db)
         .await?;
 
+    // Live timelines must drop the posts as they vanish: publish a
+    // `delete` event per status over the Redis relay *before* the
+    // mass delete — stream membership reads the follow graph, tags
+    // and list rows the statements below are about to remove.
+    let purged: Vec<crate::posts::StatusRow> = sqlx::query(&format!(
+        "SELECT {} FROM statuses WHERE account_id = $1",
+        crate::posts::STATUS_COLS
+    ))
+    .bind(account_id)
+    .fetch_all(&ctx.db)
+    .await?
+    .iter()
+    .map(crate::posts::row_to_status)
+    .collect();
+    crate::timelines::stream::publish_delete_many(&ctx.db, &ctx.redis, &purged).await;
+
     // Content and relationships — every DELETE is idempotent.
     let statements = [
         "DELETE FROM statuses WHERE account_id = $1",

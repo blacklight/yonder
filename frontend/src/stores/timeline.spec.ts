@@ -130,8 +130,8 @@ describe("timeline store", () => {
     const tl = useTimelineStore();
     await tl.load("public");
     tl.buffer("public", status("3"));
-    tl.remove("public", "2");
-    tl.remove("public", "3");
+    tl.remove("2");
+    tl.remove("3");
     expect(tl.get("public").items.map((s) => s.id)).toEqual(["1"]);
     expect(tl.pendingCount("public")).toBe(0);
   });
@@ -143,5 +143,75 @@ describe("timeline store", () => {
     tl.prepend("public", status("0"));
     tl.prepend("public", status("0"));
     expect(tl.get("public").items.map((s) => s.id)).toEqual(["0", "1"]);
+  });
+});
+
+describe("timeline live patches", () => {
+  function boost(id: string, original: Status): Status {
+    return { id, reblog: original } as Status;
+  }
+
+  it("remove drops the status and its boost wrappers everywhere", async () => {
+    home.mockResolvedValue(page([status("1"), boost("9", status("2"))]));
+    pub.mockResolvedValue(page([status("2"), status("3")]));
+    const tl = useTimelineStore();
+    await tl.load("home");
+    await tl.load("public");
+
+    tl.remove("2");
+    expect(tl.get("home").items.map((s) => s.id)).toEqual(["1"]);
+    expect(tl.get("public").items.map((s) => s.id)).toEqual(["3"]);
+  });
+
+  it("replace patches the original inside a boost wrapper, keeping flags", async () => {
+    const wrapped = {
+      ...status("9"),
+      reblog: { ...status("2"), favourited: true },
+    } as Status;
+    home.mockResolvedValue(page([wrapped]));
+    const tl = useTimelineStore();
+    await tl.load("home");
+
+    tl.replace({ ...status("2"), content: "edited" } as Status);
+    const item = tl.get("home").items[0];
+    expect(item.id).toBe("9");
+    expect(item.reblog?.content).toBe("edited");
+    // Stream entities are unpersonalized — the viewer flag survives.
+    expect(item.reblog?.favourited).toBe(true);
+  });
+
+  it("replace touches every loaded timeline, pending included", async () => {
+    home.mockResolvedValue(page([status("1")]));
+    pub.mockResolvedValue(page([status("1")]));
+    const tl = useTimelineStore();
+    await tl.load("home");
+    await tl.load("public");
+    tl.buffer("home", status("4"));
+    tl.buffer("home", status("1"));
+
+    tl.replace({ ...status("1"), content: "v2" } as Status);
+    expect(tl.get("home").items[0].content).toBe("v2");
+    expect(tl.get("public").items[0].content).toBe("v2");
+    expect(tl.get("home").pending.map((s) => s.id)).toEqual(["4"]);
+  });
+
+  it("buffer patches a displayed wrapper's reblog instead of pending", async () => {
+    const wrapped = boost("9", status("2"));
+    home.mockResolvedValue(page([wrapped]));
+    const tl = useTimelineStore();
+    await tl.load("home");
+
+    tl.buffer("home", { ...status("2"), content: "edited" } as Status);
+    expect(tl.get("home").pending).toHaveLength(0);
+    expect(tl.get("home").items[0].reblog?.content).toBe("edited");
+  });
+
+  it("buffer keeps unseen updates pending", async () => {
+    home.mockResolvedValue(page([status("1")]));
+    const tl = useTimelineStore();
+    await tl.load("home");
+    tl.buffer("home", status("5"));
+    expect(tl.get("home").pending.map((s) => s.id)).toEqual(["5"]);
+    expect(tl.get("home").items.map((s) => s.id)).toEqual(["1"]);
   });
 });

@@ -135,8 +135,11 @@ export const useConversationsStore = defineStore("conversations", () => {
     const direct =
       ev.event === "update" &&
       (ev.payload as { visibility?: string })?.visibility === "direct";
+    const knownEdit =
+      ev.event === "status.update" &&
+      knownStatusId((ev.payload as { id?: unknown })?.id);
     const knownDelete = ev.event === "delete" && knownStatusId(ev.payload);
-    if (!direct && !knownDelete) return;
+    if (!direct && !knownEdit && !knownDelete) return;
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(() => {
       debounce = null;

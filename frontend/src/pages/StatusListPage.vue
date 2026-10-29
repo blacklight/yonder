@@ -7,6 +7,8 @@ import { paginated } from "@/api/pagination";
 import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
 import Button from "@/components/ui/Button.vue";
+import { useStatusEvents } from "@/composables/useStatusEvents";
+import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
 const props = defineProps<{ feed: "favourites" | "bookmarks" }>();
 const { t } = useI18n();
@@ -39,8 +41,15 @@ async function load(more = false) {
 }
 
 function removed(id: string) {
-  items.value = items.value.filter((s) => s.id !== id);
+  items.value = dropFromStatusList(items.value, id);
 }
+
+// Edits and deletes pushed live — an un-liked/un-bookmarked row also
+// disappears, but that flows through the card's own `removed` emit.
+useStatusEvents({
+  onStatus: (s) => (items.value = patchStatusList(items.value, s)),
+  onDelete: removed,
+});
 
 onMounted(() => load());
 // Both routes reuse this component — reload when the feed prop flips.

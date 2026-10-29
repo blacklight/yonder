@@ -1359,3 +1359,117 @@ async fn late_fetched_remote_sorts_by_published_not_ingestion() {
     assert!(ids.contains(&stale) && ids.contains(&fresh2), "{ids:?}");
     assert!(pos(&ids, stale) > pos(&ids, fresh2), "{ids:?}");
 }
+
+/// A local edit streams `status.update` — Mastodon's edit event —
+/// never `update` (which would surface as a new pending post).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_edit_streams_status_update() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let mut rx = env.state.bus.subscribe();
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let id = post(&env.app, &alice, json!({"status": "before edit"})).await;
+    while rx.try_recv().is_ok() {}
+
+    let (code, _, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{id}"),
+        Some(&alice),
+        Some(json!({"status": "after edit"})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+
+    let mut edits = Vec::new();
+    let mut news = 0;
+    while let Ok(ev) = rx.try_recv() {
+        match ev.event.as_str() {
+            "status.update" => edits.push(ev),
+            "update" => news += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(news, 0, "an edit must not stream as a new post");
+    assert!(
+        edits
+            .iter()
+            .any(|e| e.stream == "public" && e.payload["id"].as_str() == Some(id.as_str())),
+        "expected status.update on public for {id}: {edits:?}"
+    );
+}
+
+/// An accepted remote `Update` streams `status.update` on the
+/// streams the status occupies — remote edits reach live timelines
+/// like Mastodon's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_update_streams_status_update() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let mut rx = env.state.bus.subscribe();
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    let activity = |ty: &str, content: &str, updated: Option<&str>| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/upd{}", ty),
+        activity_type: ty.into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!({
+            "id": "https://remote.test/objects/upd1",
+            "type": "Note",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": content,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+            "updated": updated,
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let create = activity("Create", "<p>original</p>", None);
+    assert!(yonder::posts::remote::handle(&core, &create, &create.to_json()).await);
+    while rx.try_recv().is_ok() {}
+
+    let update = activity(
+        "Update",
+        "<p>edited remote</p>",
+        Some("2100-01-01T00:00:00Z"),
+    );
+    assert!(yonder::posts::remote::handle(&core, &update, &update.to_json()).await);
+
+    let mut edits = Vec::new();
+    let mut news = 0;
+    while let Ok(ev) = rx.try_recv() {
+        match ev.event.as_str() {
+            "status.update" => edits.push(ev),
+            "update" => news += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(news, 0, "a remote edit must not stream as a new post");
+    assert!(
+        edits.iter().any(|e| {
+            e.stream == "public"
+                && e.payload["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("edited remote"))
+        }),
+        "expected status.update on public carrying the edit: {edits:?}"
+    );
+
+    // A stale Update (older `updated`) produces no event at all.
+    let stale = activity("Update", "<p>stale</p>", Some("2025-06-01T00:00:00Z"));
+    assert!(yonder::posts::remote::handle(&core, &stale, &stale.to_json()).await);
+    let mut any = false;
+    while let Ok(ev) = rx.try_recv() {
+        if ev.event == "update" || ev.event == "status.update" {
+            any = true;
+        }
+    }
+    assert!(!any, "a stale Update must not stream");
+}

@@ -1487,3 +1487,73 @@ async fn change_password_rotates_and_revokes_other_sessions() {
     let (status, body) = password_login(&env.app, "changer@example.com", "fresh-secret").await;
     assert_eq!(status, StatusCode::OK, "{body}");
 }
+
+/// A purged account's statuses must vanish from live timelines too:
+/// the purge publishes a `delete` event per status over the Redis
+/// stream channel (the relay forwards it to every serving bus).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn account_purge_streams_status_deletes() {
+    use futures_util::StreamExt;
+
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    register(&env, "leaver", None).await;
+    let leaver = account_id(&env.state, "leaver").await;
+    let status_id: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (account_id, content, uri, visibility, local) \
+         VALUES ($1, 'bye', $2, 'public', true) RETURNING id",
+    )
+    .bind(leaver)
+    .bind(format!("{BASE}/ap/users/leaver/statuses/purge-1"))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    // Subscribe before the purge — pub/sub drops messages published
+    // before the subscription lands.
+    let mut pubsub = env.state.redis.pubsub().await.unwrap();
+    pubsub
+        .subscribe(env.state.redis.key("stream"))
+        .await
+        .unwrap();
+
+    deletion::schedule_account_deletion(
+        &env.state,
+        leaver,
+        None,
+        std::time::Duration::from_secs(86_400),
+    )
+    .await
+    .unwrap();
+    // `scheduled_at <= now()` is the claim gate — run the clock down.
+    sqlx::query("UPDATE account_deletions SET scheduled_at = now() WHERE account_id = $1")
+        .bind(leaver)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let ctx = job_ctx(&env.state);
+    deletion::AccountDeletionJob::new(env.state.ap.clone())
+        .run(&ctx, &json!({ "account_id": leaver }))
+        .await
+        .unwrap();
+
+    let mut messages = pubsub.on_message();
+    let stream = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while let Some(msg) = messages.next().await {
+            let payload: String = msg.get_payload().unwrap_or_default();
+            let Ok(ev) = serde_json::from_str::<yonder::http::ws::StreamEvent>(&payload) else {
+                continue;
+            };
+            let want = status_id.to_string();
+            if ev.event == "delete" && ev.payload.as_str() == Some(want.as_str()) {
+                return ev.stream;
+            }
+        }
+        String::new()
+    })
+    .await
+    .expect("purge never published the status delete to the stream channel");
+    assert_eq!(stream, "public");
+}

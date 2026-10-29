@@ -127,11 +127,22 @@ Deletions (`tombstone`, remote `Delete`, `unreblog`, `Undo(Announce)`)
 - `direct` → `user:{uid}` for the author and mentioned local users
   only; never public, hashtag or list streams.
 
+**Edits** publish `status.update` (Mastodon's event name) on the same
+stream set — local `PUT /statuses/{id}`, accepted remote `Update`s and
+the admin `sensitive` flag all stream it. Clients replace the entity
+only where it is already displayed; unlike `update` it never lands as
+a pending "new post". **Deletes** stream `delete` with the bare id on
+the same set — local `DELETE`, remote `Delete`, admin `delete`,
+un-boost and account purges (the purge publishes per status over the
+Redis relay before the rows are removed). Boost wrappers pointing at a
+deleted original are dropped client-side by matching `reblog.id`.
+
 Fan-out and `update` events fire only when an object is *new* — a
 redelivered remote `Create` re-runs the idempotent upsert but does not
-re-notify. Remote materialization publishes through `ApCore::bus`,
-which is the real bus in the HTTP process and a detached no-op
-elsewhere — cross-process fan-out is a later concern.
+re-notify, and a stale remote `Update` produces no event at all.
+Remote materialization publishes through `ApCore::bus`, which is the
+real bus in the HTTP process and a detached no-op elsewhere —
+cross-process fan-out is a later concern.
 
 ## Config (`[timelines]`)
 
@@ -143,7 +154,6 @@ elsewhere — cross-process fan-out is a later concern.
 
 ## Known gaps
 
-- Status **edits** don't publish `status.update` stream events.
 - Archive imports don't fan out (their bulk inserts would flood the
   index).
 - A **standalone worker** process carries a detached `EventBus`, so

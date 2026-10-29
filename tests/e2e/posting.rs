@@ -2296,3 +2296,237 @@ async fn mentioned_nonfollower_can_reply_to_followers_only() {
     .await;
     assert_eq!(status, StatusCode::OK, "{reply}");
 }
+
+/// `POST /statuses/{id}/translate` — LibreTranslate backend against a
+/// loopback fake; the wire is the Mastodon Translation entity and the
+/// second call lands on the Redis cache (the fake counts hits).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn translate_status_via_libretranslate() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let _permit = harness::acquire().await;
+
+    // Fake LibreTranslate: echoes `[target] q` plus a detected
+    // language, counting calls so the cache assertion is real.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let fake = {
+        let hits = hits.clone();
+        Router::new().route(
+            "/translate",
+            axum::routing::post(move |body: axum::Json<Value>| {
+                let hits = hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    axum::Json(json!({
+                        "translatedText": format!(
+                            "[{}] {}",
+                            body["target"].as_str().unwrap_or_default(),
+                            body["q"].as_str().unwrap_or_default(),
+                        ),
+                        "detectedLanguage": {"language": "de", "confidence": 99},
+                    }))
+                }
+            }),
+        )
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+
+    let mut config = Config::default();
+    config.content.translation_backend = yonder::config::TranslationBackend::LibreTranslate;
+    config.content.libretranslate_url = Some(format!("http://127.0.0.1:{port}"));
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "alice@x.com").await;
+    let bob = register(&env.app, "bob", "bob@x.com").await;
+    let carol = register(&env.app, "carol", "carol@x.com").await;
+
+    // The instance entities advertise the feature once configured.
+    let (status, inst) = request(&env.app, "GET", "/api/v1/instance", None, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(inst["configuration"]["translation"]["enabled"], true);
+    let (status, inst2) = request(&env.app, "GET", "/api/v2/instance", None, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(inst2["configuration"]["translation"]["enabled"], true);
+
+    let (status, post) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "hallo welt", "language": "de"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{post}");
+    let id = post["id"].as_str().unwrap();
+    let url = format!("/api/v1/statuses/{id}/translate");
+
+    // Anonymous → 401.
+    let (status, _) = request(&env.app, "POST", &url, None, None, &[]).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, tr) = request(
+        &env.app,
+        "POST",
+        &url,
+        Some(&alice),
+        Some(json!({"lang": "es"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tr}");
+    assert_eq!(tr["provider"], "LibreTranslate");
+    assert_eq!(tr["detected_source_language"], "de");
+    let content = tr["content"].as_str().unwrap();
+    assert!(content.starts_with("[es] "), "{content}");
+    assert!(content.contains("hallo welt"), "{content}");
+    assert_eq!(tr["media_attachments"], json!([]));
+    assert_eq!(tr["poll"], Value::Null);
+    assert_eq!(tr["spoiler_text"], "");
+
+    // Second identical call — the Redis cache serves it, the fake
+    // stays at one hit.
+    let (status, _) = request(
+        &env.app,
+        "POST",
+        &url,
+        Some(&alice),
+        Some(json!({"lang": "es"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "cached translation must not re-hit the backend"
+    );
+
+    // `lang` as a query param works too (Mastodon clients differ).
+    let (status, tr) = request(
+        &env.app,
+        "POST",
+        &format!("{url}?lang=fr"),
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{tr}");
+    assert!(tr["content"].as_str().unwrap().starts_with("[fr]"));
+
+    // Omitted lang falls back to the viewer's locale ("en" here).
+    let (status, tr) = request(&env.app, "POST", &url, Some(&alice), None, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{tr}");
+    assert!(tr["content"].as_str().unwrap().starts_with("[en]"), "{tr}");
+
+    // A malformed lang is a client bug — 422.
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        &url,
+        Some(&alice),
+        Some(json!({"lang": "../../etc"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Gated content stays behind `can_see`, but a viewer with audience
+    // can translate it: bob sees the followers-only mention and the
+    // DM, so both go through the admin-configured backend.
+    for (label, vis) in [("followers-only", "private"), ("direct", "direct")] {
+        let (status, gated) = request(
+            &env.app,
+            "POST",
+            "/api/v1/statuses",
+            Some(&alice),
+            Some(json!({"status": format!("@bob {label}"), "visibility": vis})),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{gated}");
+        let gid = gated["id"].as_str().unwrap();
+        let (status, tr) = request(
+            &env.app,
+            "POST",
+            &format!("/api/v1/statuses/{gid}/translate"),
+            Some(&bob),
+            Some(json!({"lang": "en"})),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{label}: {tr}");
+        assert_eq!(tr["provider"], "LibreTranslate", "{label}: {tr}");
+    }
+
+    // …and a viewer who can't see the post at all gets a bare 404.
+    let (status, gated) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "followers only", "visibility": "private"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{gated}");
+    let gid = gated["id"].as_str().unwrap();
+    let (status, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{gid}/translate"),
+        Some(&carol),
+        Some(json!({"lang": "en"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// Without a usable backend (`libretranslate` set but no URL) the
+/// instance reports `translation.enabled = false` and the endpoint
+/// rejects with 422 — the button hides, stray clients get a clean error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn translate_reports_disabled_without_backend() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.content.translation_backend = yonder::config::TranslationBackend::LibreTranslate;
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "alice@x.com").await;
+
+    let (status, inst) = request(&env.app, "GET", "/api/v2/instance", None, None, &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(inst["configuration"]["translation"]["enabled"], false);
+
+    let (status, post) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "hallo"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{post}");
+    let id = post["id"].as_str().unwrap();
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{id}/translate"),
+        Some(&alice),
+        Some(json!({"lang": "en"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("not configured"),
+        "{body}"
+    );
+}

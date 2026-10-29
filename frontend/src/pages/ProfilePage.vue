@@ -66,6 +66,72 @@ const MAX_HOPS = 5;
 
 const bio = computed(() => sanitizeHtml(account.value?.note ?? ""));
 const headerUrl = computed(() => safeHttpUrl(account.value?.header));
+
+const FIELD_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const FIELD_HANDLE_RE = /^@([\w.]+)@((?:[\w-]+\.)+[\w-]+)$/;
+
+/** Scheme-less display text for a URL (`https://x.example/` → `x.example`). */
+function displayUrl(url: string): string {
+  const s = url.replace(/^https?:\/\//i, "");
+  return s.endsWith("/") && s.indexOf("/") === s.length - 1
+    ? s.slice(0, -1)
+    : s;
+}
+
+interface FieldLink {
+  href: string;
+  text: string;
+  external: boolean;
+}
+
+/**
+ * The single link a field value boils down to — a bare URL, a sole
+ * `<a>` anchor (remote fields arrive pre-rendered), or an email
+ * address. Anything more complex renders as sanitized HTML.
+ */
+function fieldLink(value: string): FieldLink | null {
+  const trimmed = value.trim();
+  const url = safeHttpUrl(trimmed);
+  if (url) return { href: url, text: displayUrl(url), external: true };
+  if (FIELD_EMAIL_RE.test(trimmed)) {
+    return { href: `mailto:${trimmed}`, text: trimmed, external: false };
+  }
+  const handle = FIELD_HANDLE_RE.exec(trimmed);
+  if (handle) {
+    return {
+      href: `https://${handle[2]}/@${handle[1]}`,
+      text: trimmed,
+      external: true,
+    };
+  }
+  if (trimmed.startsWith("<")) {
+    const doc = new DOMParser().parseFromString(trimmed, "text/html");
+    const nodes = [...doc.body.childNodes].filter(
+      (n) => !(n.nodeType === Node.TEXT_NODE && !n.textContent?.trim()),
+    );
+    const sole = nodes.length === 1 ? nodes[0] : null;
+    if (sole instanceof HTMLAnchorElement) {
+      const href = safeHttpUrl(sole.getAttribute("href"));
+      if (href) {
+        const text = sole.textContent?.trim() || href;
+        return {
+          href,
+          text: safeHttpUrl(text) ? displayUrl(text) : text,
+          external: true,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+const fieldsView = computed(() =>
+  (account.value?.fields ?? []).map((f) => ({
+    ...f,
+    link: fieldLink(f.value),
+  })),
+);
+
 const avatarUrl = computed(
   () => safeHttpUrl(account.value?.avatar) ?? undefined,
 );
@@ -509,26 +575,24 @@ watch([tab, showReplies, showBoosts], () => {
         </p>
         <div v-if="bio" class="profile__bio" v-html="bio" />
         <dl v-if="account.fields.length" class="profile__fields">
-          <template v-for="f in account.fields" :key="f.name">
-            <dt>
-              {{ f.name }}
+          <template v-for="f in fieldsView" :key="f.name">
+            <dt>{{ f.name }}</dt>
+            <dd :class="{ 'profile__field--verified': f.verified_at }">
+              <a
+                v-if="f.link"
+                :href="f.link.href"
+                :target="f.link.external ? '_blank' : undefined"
+                rel="nofollow noopener noreferrer"
+                >{{ f.link.text }}</a
+              >
               <FontAwesomeIcon
                 v-if="f.verified_at"
                 icon="circle-check"
                 class="verified"
                 :title="t('profile.verified')"
               />
-            </dt>
-            <dd v-if="safeHttpUrl(f.value)">
-              <a
-                :href="safeHttpUrl(f.value)!"
-                target="_blank"
-                rel="nofollow noopener noreferrer"
-              >
-                {{ f.value }}
-              </a>
+              <span v-else-if="!f.link" v-html="sanitizeHtml(f.value)" />
             </dd>
-            <dd v-else v-html="sanitizeHtml(f.value)" />
           </template>
         </dl>
       </header>
@@ -717,6 +781,16 @@ watch([tab, showReplies, showBoosts], () => {
   text-align: center;
 }
 .verified {
-  color: var(--accent-link);
+  color: var(--success);
+}
+.profile__fields a {
+  text-decoration: none;
+}
+.profile__fields a:hover {
+  text-decoration: underline;
+}
+.profile__field--verified a {
+  font-weight: 600;
+  margin-right: var(--space-2);
 }
 </style>

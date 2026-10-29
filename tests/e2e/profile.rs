@@ -238,7 +238,12 @@ async fn update_credentials_json_persists_and_returns_account() {
     let fields = body["fields"].as_array().unwrap();
     assert_eq!(fields.len(), 2);
     assert_eq!(fields[0]["name"], "site");
-    assert!(fields[0]["value"].as_str().unwrap().contains("rel=\"me\""));
+    // `<a href>` whose text is the full URL — the single-anchor,
+    // `href == text` shape Mastodon's remote-field verifier requires.
+    assert_eq!(
+        fields[0]["value"],
+        "<a href=\"https://alice.example\" rel=\"me\">https://alice.example</a>"
+    );
     assert!(fields[0].get("value_raw").is_none());
     assert!(fields[0]["verified_at"].is_null());
     assert_eq!(
@@ -630,7 +635,8 @@ async fn avatar_replace_and_clear_delete_stale_object() {
 }
 
 /// Serve `body` on `127.0.0.1:0` — the rel="me" fixture page.
-async fn serve_once(body: &'static str) -> String {
+async fn serve_once(body: impl Into<String>) -> String {
+    let body = body.into();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -855,6 +861,298 @@ async fn rel_me_private_target_not_fetched() {
         .await
         .unwrap();
     assert!(fields[0]["verified_at"].is_null(), "{fields}");
+}
+
+/// Serve a mutable actor document at `/users/zed` on loopback — the
+/// `RemoteActorFetch` target. Returns the actor's base URL and a
+/// handle the test swaps to simulate an actor `Update` refetch.
+async fn serve_actor_doc() -> (String, Arc<std::sync::Mutex<String>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://127.0.0.1:{port}");
+    let doc = Arc::new(std::sync::Mutex::new(String::new()));
+    let handler_doc = doc.clone();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route(
+                "/users/zed",
+                axum::routing::get(move || {
+                    let doc = handler_doc.clone();
+                    async move {
+                        (
+                            [("content-type", "application/activity+json")],
+                            doc.lock().unwrap().clone(),
+                        )
+                    }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    (base, doc)
+}
+
+/// Remote accounts verify too: `attachment`-sourced fields whose
+/// rendered `value` carries an anchor get fetched, and a `rel="me"`
+/// backlink to either the actor's `url` or its AP `id` stamps
+/// `verified_at`. A re-fetch of the unchanged doc carries the stamp
+/// over — a periodic refetch must not flap verified → unverified; a
+/// changed field resets it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rel_me_verification_marks_remote_fields() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let (base, doc) = serve_actor_doc().await;
+    // Page A links back to the actor `url`, page B to the AP `id` —
+    // both targets count (Mastodon's uri/url rule).
+    let page_a = serve_once(&format!(
+        "<html><body><a rel=\"me\" href=\"{base}/@zed\">me</a></body></html>"
+    ))
+    .await;
+    let page_b = serve_once(&format!(
+        "<html><body><a rel=\"me\" href=\"{base}/users/zed\">me</a></body></html>"
+    ))
+    .await;
+    let actor_url = format!("{base}/users/zed");
+    let doc_for = |attachment: Value| {
+        json!({
+            "id": actor_url,
+            "type": "Person",
+            "preferredUsername": "zed",
+            "url": format!("{base}/@zed"),
+            "inbox": format!("{base}/inbox"),
+            "attachment": attachment,
+        })
+        .to_string()
+    };
+    *doc.lock().unwrap() = doc_for(json!([
+        {"type": "PropertyValue", "name": "Site",
+         "value": format!("<a href=\"{page_a}\" rel=\"me\">site</a>")},
+        {"type": "PropertyValue", "name": "Blog",
+         "value": format!("<a href=\"{page_b}\">blog</a>")},
+        {"type": "PropertyValue", "name": "Pronouns", "value": "he/him"},
+    ]));
+
+    // The fetch upserts the account and enqueues verification itself.
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
+        .bind(&actor_url)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    run_verify_job(&env, account_id).await;
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert!(fields[0]["verified_at"].is_string(), "{fields}");
+    assert!(fields[1]["verified_at"].is_string(), "{fields}");
+    assert!(fields[2]["verified_at"].is_null(), "{fields}");
+    let stamp = fields[0]["verified_at"].clone();
+
+    // A refresh carrying the unchanged doc keeps the stamps.
+    job.run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(fields[0]["verified_at"], stamp, "{fields}");
+    assert!(fields[1]["verified_at"].is_string(), "{fields}");
+
+    // A changed field value resets the stamp; the next verification
+    // pass leaves it null when the new page doesn't link back.
+    let bad = serve_once("<html><body>nope</body></html>").await;
+    *doc.lock().unwrap() = doc_for(json!([
+        {"type": "PropertyValue", "name": "Site",
+         "value": format!("<a href=\"{bad}\">site</a>")},
+    ]));
+    job.run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(fields.as_array().unwrap().len(), 1, "{fields}");
+    assert!(fields[0]["verified_at"].is_null(), "{fields}");
+    run_verify_job(&env, account_id).await;
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert!(fields[0]["verified_at"].is_null(), "{fields}");
+}
+
+/// Reading a remote profile with an unverified link field enqueues a
+/// `verify_profile_links` job — remote rows ingested before the job
+/// existed (or via `attachment`-less partial docs) get their check on
+/// first view.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_profile_read_enqueues_field_verification() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let actor_id = "https://remote.example/users/vera";
+    let account_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox, profile_fields) \
+         VALUES ('remote.example', 'vera', $1, $2, '', $3::jsonb) RETURNING id",
+    )
+    .bind(actor_id)
+    .bind("https://remote.example/@vera")
+    .bind(json!([{
+        "name": "Site",
+        "value": "<a href=\"https://vera.example\">vera.example</a>",
+        "verified_at": Value::Null,
+    }]))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (status, body) = request(
+        &env.app,
+        Request::builder()
+            .uri(format!("/api/v1/accounts/{account_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let key = env.state.redis.key("queue:bulk");
+    let mut conn = env
+        .state
+        .redis
+        .client()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
+        .arg(&key)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let enqueued = raw.iter().any(|(_, fields)| {
+        fields.iter().any(|f| {
+            f.contains("\"verify_profile_links\"")
+                && f.contains(&format!("\"account_id\":{account_id}"))
+        })
+    });
+    assert!(enqueued, "no verify_profile_links job queued: {raw:?}");
+}
+
+/// A field value submitted as an `<a>` anchor is kept as an anchor
+/// (Mastodon accepts anchor markup in field values) and is
+/// verifiable; a `javascript:` href degrades to its text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn anchor_valued_field_renders_and_verifies() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let token = token_for(&env.app, "kate").await;
+    let page = serve_once(
+        "<html><body><a rel=\"me\" href=\"http://127.0.0.1:4000/@kate\">me</a></body></html>",
+    )
+    .await;
+    let anchor = format!("<a href=\"{page}\">my site</a>");
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "PATCH",
+                PATCH,
+                json!({ "fields_attributes": [{"name": "site", "value": anchor}] }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let fields = body["fields"].as_array().unwrap();
+    assert_eq!(fields[0]["value"], anchor, "{body}");
+
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'kate'")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    run_verify_job(&env, account_id).await;
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert!(fields[0]["verified_at"].is_string(), "{fields}");
+
+    // `javascript:` and markup around the anchor degrade safely.
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "PATCH",
+                PATCH,
+                json!({ "fields_attributes": [{"name": "site",
+                    "value": "<a href=\"javascript:alert(1)\">x</a><script>alert(2)</script>"}] }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let fields = body["fields"].as_array().unwrap();
+    let value = fields[0]["value"].as_str().unwrap();
+    assert!(!value.contains("<a"), "{value}");
+    assert!(!value.contains("<script"), "{value}");
+    assert!(value.contains('x'), "{value}");
+    assert!(value.contains("alert(2)"), "{value}");
+}
+
+/// A bare `@user@domain` field value renders as a link to
+/// `https://{domain}/@{user}` — Mastodon's mention-field shape.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_valued_field_renders_as_profile_link() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let token = token_for(&env.app, "mia").await;
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "PATCH",
+                PATCH,
+                json!({ "fields_attributes": [{"name": "main",
+                    "value": "@mia@mastodon.example"},
+                    {"name": "mail", "value": "mia@mastodon.example"}] }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let fields = body["fields"].as_array().unwrap();
+    assert_eq!(
+        fields[0]["value"], "<a href=\"https://mastodon.example/@mia\">@mia@mastodon.example</a>",
+        "{body}"
+    );
+    // Without the leading `@` the value stays an email-shaped text, not
+    // a handle link.
+    assert_eq!(fields[1]["value"], "mia@mastodon.example", "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

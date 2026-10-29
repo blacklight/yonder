@@ -45,16 +45,30 @@ grace window).
 `{name, value, value_raw, verified_at}`:
 
 - `name`/`value_raw` — as entered; `source.fields` exposes them.
-- `value` — pre-rendered HTML: `render_verified_link` (`<a rel="me">`)
-  for URLs whose scheme is in `content.valid_url_schemes`, otherwise
-  `render_bio_html`. This is already the AP `PropertyValue` wire shape.
+- `value` — pre-rendered HTML: `render_verified_link` for URLs whose
+  scheme is in `content.valid_url_schemes`, emitting
+  `<a href="URL" rel="me">URL</a>` — the full URL as link text, which
+  is exactly the shape Mastodon's remote-field verifier accepts
+  (`extract_url_from_html` requires a sole `<a>` with `href` equal to
+  its text; a scheme-less label is never fetched). The frontend strips
+  the scheme for display. A bare `@user@domain` value renders as
+  `<a href="https://{domain}/@{user}">` (Mastodon's mention-field
+  shape; the leading `@` keeps it distinct from email values). Submitted
+  markup is re-rendered by `sanitize_field_html` (anchors kept as
+  safe links — Mastodon accepts `<a>` values — other tags stripped
+  with their text kept, `javascript:` hrefs degrade to text);
+  otherwise `render_bio_html`. This is already the AP `PropertyValue`
+  wire shape.
 - `verified_at` — RFC-3339 or null; `null` when the value changes,
   preserved while `name`+`value_raw` are unchanged.
 
-PATCH performs **no network I/O**. When URL-valued fields are present
+PATCH performs **no network I/O**. When link-valued fields are present
 it clears the stamp on changed entries and enqueues
 `JobKind::VerifyProfileLinks` (Bulk queue, deduplicated per account for
-60 s). The job fetches each unique URL with pubby's SSRF-guarded
+60 s). The job resolves each entry's verification URL the way
+Mastodon's `value_for_verification` does — the raw value when it is
+itself a URL, otherwise the first `<a>` href inside the rendered
+`value` — fetches each unique URL with pubby's SSRF-guarded
 `HttpClient` (≤4 in flight per run), parses for
 `a[rel~=me], link[rel~=me]` (scraper), and stamps `verified_at` when a
 link resolves to the actor id (`{base}/ap/users/{username}`) **or** the
@@ -70,13 +84,22 @@ For **remote** accounts the same column is populated at ingest: the
 actor document's `attachment[]` `PropertyValue` entries (any spelling —
 plain, `schema:`-prefixed, or the schema.org IRI; a missing `type` also
 counts) map to `{name, value, verified_at}` — `value` is the remote's
-pre-rendered HTML and `verified_at` stays null, a remote-claimed
-verification is not trusted. A document with no `attachment` key leaves
-stored fields alone (partial docs must not clobber); a present-but-empty
-array clears them. The extraction is bounded to 32 entries with
-255/4096-char name/value caps. An inbound `Update{Person}` refreshes the
-row in place — the activity carries the full actor document and only
-applies when `object.id` equals the signer.
+pre-rendered HTML. `verified_at` is *verified locally* like Mastodon
+does: `RemoteActorFetch` and inbound `Update{Person}` upserts enqueue
+`VerifyProfileLinks` for accounts whose doc carries attachments, and
+the job checks the field link against the remote actor's own identity
+pair — `accounts.actor_id` (e.g. `https://instance/users/name`) **or**
+`accounts.url` (e.g. `https://instance/@name`). Refreshes that leave a
+(name, value) pair unchanged carry its stamp over; rows that predate
+verification (or never went through a fetch — the 0028 backfill,
+partial docs) get a read-triggered enqueue on the profile endpoint,
+throttled to one attempt per account per hour via a Redis flag. A
+document with no `attachment` key leaves stored fields alone (partial
+docs must not clobber); a present-but-empty array clears them. The
+extraction is bounded to 32 entries with 255/4096-char name/value caps.
+An inbound `Update{Person}` refreshes the row in place — the activity
+carries the full actor document and only applies when `object.id`
+equals the signer.
 
 ## ActivityPub propagation
 

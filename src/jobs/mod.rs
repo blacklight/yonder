@@ -107,8 +107,9 @@ pub enum JobKind {
     CleanupRemoteActivities,
     /// Evict stale cached remote media.
     CleanupRemoteMedia,
-    /// Re-verify a local account's URL-valued profile fields
-    /// (`rel="me"`), or sweep all of them (epic 09).
+    /// Re-verify one account's link-valued profile fields
+    /// (`rel="me"` — `{"account_id": …}`, local or remote), or sweep
+    /// every local account's (epic 09).
     VerifyProfileLinks,
     /// Purge one deleted account, or sweep due `account_deletions`.
     AccountDeletion,

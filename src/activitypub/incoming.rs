@@ -273,7 +273,26 @@ async fn handle_actor_update(core: &Arc<ApCore>, activity: &Activity, raw: &Valu
         tracing::warn!(actor = %activity.actor, "spoofed actor Update dropped");
         return Ok(());
     }
-    super::storage::upsert_remote_actor_row(&core.db, &activity.actor, &object).await?;
+    let account_id =
+        super::storage::upsert_remote_actor_row(&core.db, &activity.actor, &object).await?;
+    // An actor Update can change `attachment[]` — queue the `rel="me"`
+    // pass so changed link fields get verified without waiting for a
+    // profile read (unchanged fields keep their stamps via the upsert
+    // carry-over).
+    if let (Some(id), true) = (
+        account_id,
+        object
+            .get("attachment")
+            .and_then(|a| a.as_array())
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+    ) {
+        if let Err(e) =
+            crate::users::profile::enqueue_verification(&core.redis, &core.config.jobs, id).await
+        {
+            tracing::warn!(actor = %activity.actor, error = %e, "profile-link verify enqueue failed");
+        }
+    }
     Ok(())
 }
 
@@ -518,8 +537,30 @@ impl JobHandler for RemoteActorFetchJob {
                     .storage
                     .cache_remote_actor(&actor_url, &doc, None)
                     .map_err(crate::Error::Federation)?;
-                super::storage::upsert_remote_actor_row(&self.ctx.core.db, &actor_url, &doc)
-                    .await?;
+                let account_id =
+                    super::storage::upsert_remote_actor_row(&self.ctx.core.db, &actor_url, &doc)
+                        .await?;
+                // Fields carried by the doc get a `rel="me"`
+                // verification pass — fresh stamps land on profile
+                // reads; unchanged fields keep theirs via the upsert
+                // carry-over.
+                if let (Some(id), true) = (
+                    account_id,
+                    doc.get("attachment")
+                        .and_then(|a| a.as_array())
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false),
+                ) {
+                    if let Err(e) = crate::users::profile::enqueue_verification(
+                        &ctx.redis,
+                        &ctx.config.jobs,
+                        id,
+                    )
+                    .await
+                    {
+                        tracing::warn!(actor = %actor_url, error = %e, "profile-link verify enqueue failed");
+                    }
+                }
                 refresh_remote_counters(&self.ctx, &actor_url, &doc).await;
                 clear_fetch_markers(&self.ctx.core.db, &actor_url).await;
                 Ok(())

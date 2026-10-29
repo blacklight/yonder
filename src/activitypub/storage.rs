@@ -102,10 +102,23 @@ const REMOTE_FIELD_VALUE_CHARS: usize = 4096;
 /// fields alone" (a partial doc must not clobber), while a
 /// present-but-empty array clears them (the remote removed its
 /// fields). `value` arrives pre-rendered HTML — the same wire shape
-/// local entries store; `verified_at` stays null, a remote-claimed
-/// verification is never trusted.
-fn remote_profile_fields(actor_data: &Value) -> Option<Value> {
+/// local entries store; `verified_at` is carried over from
+/// `previous` for unchanged (name, value) pairs — a refresh that
+/// didn't touch the fields must not wipe our own verification
+/// stamps (a remote-claimed stamp is never trusted: the doc shape
+/// carries none).
+fn remote_profile_fields(actor_data: &Value, previous: &[Value]) -> Option<Value> {
     let attachments = actor_data.get("attachment")?.as_array()?;
+    let previous_stamp = |name: &str, value: &str| {
+        previous
+            .iter()
+            .find(|p| {
+                p.get("name").and_then(Value::as_str) == Some(name)
+                    && p.get("value").and_then(Value::as_str) == Some(value)
+            })
+            .and_then(|p| p.get("verified_at").cloned())
+            .unwrap_or(Value::Null)
+    };
     Some(Value::Array(
         attachments
             .iter()
@@ -127,10 +140,18 @@ fn remote_profile_fields(actor_data: &Value) -> Option<Value> {
                 if name.is_empty() || value.is_empty() {
                     return None;
                 }
+                let name = name
+                    .chars()
+                    .take(REMOTE_FIELD_NAME_CHARS)
+                    .collect::<String>();
+                let value = value
+                    .chars()
+                    .take(REMOTE_FIELD_VALUE_CHARS)
+                    .collect::<String>();
                 Some(json!({
-                    "name": name.chars().take(REMOTE_FIELD_NAME_CHARS).collect::<String>(),
-                    "value": value.chars().take(REMOTE_FIELD_VALUE_CHARS).collect::<String>(),
-                    "verified_at": Value::Null,
+                    "name": name,
+                    "value": value,
+                    "verified_at": previous_stamp(&name, &value),
                 }))
             })
             .take(REMOTE_PROFILE_FIELDS_CAP)
@@ -201,7 +222,20 @@ async fn upsert_remote_account(
     let followers_count = count("followersCount");
     let following_count = count("followingCount");
     let statuses_count = count("statusesCount");
-    let profile_fields = remote_profile_fields(actor_data);
+    // The stamp carry-over needs the stored list — only fetched when
+    // the doc actually projects fields.
+    let previous_fields: Vec<Value> = if actor_data.get("attachment").is_some() {
+        sqlx::query_scalar::<_, Value>("SELECT profile_fields FROM accounts WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(db_err)?
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let profile_fields = remote_profile_fields(actor_data, &previous_fields);
 
     let result = sqlx::query_scalar::<_, i64>(
         r#"

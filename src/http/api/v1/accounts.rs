@@ -322,6 +322,69 @@ async fn counters_refresh_due(db: &sqlx::PgPool, account_id: i64) -> bool {
     .unwrap_or(true)
 }
 
+/// One `VerifyProfileLinks` attempt per remote account per window —
+/// a permanently unreachable field URL must not re-fetch on every
+/// profile read. Actor refreshes re-verify independently of this
+/// flag (their fields may have changed).
+const VERIFY_FIELDS_READ_THROTTLE_SECONDS: usize = 3600;
+
+/// For remote accounts, enqueue `VerifyProfileLinks` when a
+/// link-valued field carries no `verified_at` stamp. Covers remote
+/// rows that never passed through a verification enqueue — actor
+/// upserts predate the job, `attachment`-less partial docs, and the
+/// 0028 backfill. Fresh ingest/refresh paths enqueue it themselves;
+/// this catches the rest. Never fails the read.
+async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::AccountRow) {
+    if account.domain.is_none() {
+        return;
+    }
+    let Some(fields) = account.profile_fields.as_array() else {
+        return;
+    };
+    let unverified = fields.iter().any(|e| {
+        e.get("verified_at").map(|v| v.is_null()).unwrap_or(true)
+            && crate::users::profile::field_verify_url(&state.config(), e).is_some()
+    });
+    if !unverified {
+        return;
+    }
+    let flag = state
+        .redis
+        .key(&format!("verify-remote-fields:{}", account.id));
+    let claimed = match state.redis.conn().await {
+        Ok(mut conn) => redis::cmd("SET")
+            .arg(&flag)
+            .arg("1")
+            .arg("NX")
+            .arg("EX")
+            .arg(VERIFY_FIELDS_READ_THROTTLE_SECONDS)
+            .query_async::<Option<String>>(&mut *conn)
+            .await
+            .map(|c| c.is_some())
+            .unwrap_or_else(|e| {
+                tracing::warn!(account_id = account.id, error = %e, "remote field-verify throttle check failed");
+                false
+            }),
+        Err(e) => {
+            tracing::warn!(account_id = account.id, error = %e, "redis unavailable — skipping remote field verify");
+            false
+        }
+    };
+    if !claimed {
+        return;
+    }
+    if let Err(e) =
+        crate::users::profile::enqueue_verification(&state.redis, &state.config().jobs, account.id)
+            .await
+    {
+        tracing::warn!(account_id = account.id, error = %e, "remote field verify enqueue failed");
+        let Ok(mut conn) = state.redis.conn().await else {
+            return;
+        };
+        let _: redis::RedisResult<()> = redis::cmd("DEL").arg(&flag).query_async(&mut *conn).await;
+    }
+}
+
 /// Claim the throttle flag for `actor_id`: `true` when this caller
 /// owns the slot and should enqueue; `false` when another recent read
 /// holds it or Redis is unavailable — the dispatcher lives on the
@@ -394,6 +457,7 @@ pub async fn get_account(
 async fn public_account_entity(state: &AppState, id: i64) -> Result<Value> {
     let account = load_public_account(state, id).await?;
     maybe_refresh_remote(state, &account).await;
+    maybe_verify_remote_fields(state, &account).await;
     let base_url = crate::activitypub::federation_base_url(&state.config());
     let mut entity =
         account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?;

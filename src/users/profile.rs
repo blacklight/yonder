@@ -22,7 +22,9 @@ use axum::{
     http::header,
 };
 use futures_util::StreamExt;
-use pubby_sdk::{http::HttpClient, is_linkable_url, render_bio_html, render_verified_link};
+use pubby_sdk::{
+    http::HttpClient, is_linkable_url, render_bio_html, render_link_anchor, render_verified_link,
+};
 use serde_json::{json, Value};
 use sqlx::Row;
 
@@ -495,6 +497,98 @@ fn entry_raw(entry: &Value) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+/// First `<a>` `href` in an HTML fragment — remote field values arrive
+/// pre-rendered and remote/local plain-text values may carry a
+/// linkified URL inside otherwise plain content.
+fn first_anchor_href(html: &str) -> Option<String> {
+    if !html.contains("<a") {
+        return None;
+    }
+    let selector = scraper::Selector::parse("a[href]").ok()?;
+    scraper::Html::parse_fragment(html)
+        .select(&selector)
+        .next()
+        .and_then(|a| a.value().attr("href").map(String::from))
+}
+
+/// The URL the `rel="me"` verifier should fetch for a stored field
+/// entry — Mastodon's `value_for_verification`: the raw value when it
+/// is itself a linkable URL (local rows, Funkwhale-style remote
+/// fields), otherwise the first anchor's href inside the rendered
+/// `value` HTML.
+pub(crate) fn field_verify_url(config: &Config, entry: &Value) -> Option<String> {
+    if let Some(raw) = entry_raw(entry) {
+        if is_url_field(config, raw) {
+            return Some(raw.to_string());
+        }
+    }
+    let value = entry.get("value").and_then(Value::as_str)?;
+    first_anchor_href(value).filter(|href| is_url_field(config, href))
+}
+
+/// A bare fediverse handle `@user@domain` → its `https://{domain}/@{user}`
+/// profile URL. The leading `@` disambiguates from email addresses
+/// (`user@domain` stays a mailto candidate). Mastodon renders mention
+/// fields as profile links the same way.
+fn handle_link(raw: &str) -> Option<String> {
+    let (user, domain) = raw.strip_prefix('@')?.split_once('@')?;
+    let user_ok = !user.is_empty()
+        && user
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-');
+    let domain_ok = domain.contains('.')
+        && domain
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '.')
+        && !domain.starts_with(['.', '-'])
+        && !domain.ends_with(['.', '-']);
+    (user_ok && domain_ok).then(|| format!("https://{domain}/@{user}"))
+}
+
+/// Re-render a field value submitted with markup: `<a>` elements are
+/// rebuilt as plain safe anchors (validated linkable href, escaped
+/// text content — `javascript:` and friends degrade to their text),
+/// `<br>` survives, every other tag is stripped with its text kept.
+/// Mastodon accepts anchors in field values and renders them as links.
+fn sanitize_field_html(raw: &str) -> String {
+    use scraper::node::Node;
+    fn walk(el: &scraper::ElementRef<'_>, out: &mut String) {
+        for child in el.children() {
+            match child.value() {
+                Node::Text(text) => out.push_str(&html_text(text)),
+                Node::Element(elem) => {
+                    let Some(eref) = scraper::ElementRef::wrap(child) else {
+                        continue;
+                    };
+                    if elem.name() == "a" {
+                        let text: String = eref.text().collect();
+                        match eref.value().attr("href") {
+                            Some(href) if is_linkable_url(href) => {
+                                out.push_str(&render_link_anchor(href, None, Some(text.trim())))
+                            }
+                            _ => out.push_str(&html_text(&text)),
+                        }
+                    } else if elem.name() == "br" {
+                        out.push_str("<br>");
+                    } else {
+                        walk(&eref, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let fragment = scraper::Html::parse_fragment(raw);
+    let mut out = String::new();
+    walk(&fragment.root_element(), &mut out);
+    out
+}
+
+/// Escape text content for [`sanitize_field_html`].
+fn html_text(text: &str) -> String {
+    pubby_sdk::content::html_escape(text)
+}
+
 /// Validate field inputs without touching storage: `max_profile_fields`
 /// counts *non-empty* entries (all-blank rows are dropped, matching
 /// Mastodon), and name/value char limits apply after trimming.
@@ -542,29 +636,39 @@ fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> 
         if name.is_empty() && raw.is_empty() {
             continue;
         }
-        let url_valued = is_url_field(config, raw);
-        let value = if url_valued {
-            render_verified_link(raw, None)
+        let value = if is_url_field(config, raw) {
+            // The full URL as link text — Mastodon's own wire shape.
+            // Its remote-field verifier only fetches entries whose
+            // sole element is an `<a>` with `href` equal to its text;
+            // a scheme-less label would never get checked. Display
+            // strips the scheme client-side.
+            render_verified_link(raw, Some(raw))
+        } else if raw.contains('<') {
+            sanitize_field_html(raw)
+        } else if let Some(url) = handle_link(raw) {
+            render_link_anchor(&url, None, Some(raw))
         } else {
             render_bio_html(raw)
         };
-        let verified_at = if url_valued {
-            previous
+        let mut entry = json!({
+            "name": name,
+            "value": value,
+            "value_raw": raw,
+            "verified_at": Value::Null,
+        });
+        // A link-valued entry keeps its stamp when the (name, raw)
+        // pair survives anywhere in the previous list — a reorder
+        // shouldn't cost a field its verification.
+        if field_verify_url(config, &entry).is_some() {
+            entry["verified_at"] = previous
                 .iter()
                 .find(|p| {
                     p.get("name").and_then(Value::as_str) == Some(name) && entry_raw(p) == Some(raw)
                 })
                 .and_then(|p| p.get("verified_at").cloned())
-                .unwrap_or(Value::Null)
-        } else {
-            Value::Null
-        };
-        out.push(json!({
-            "name": name,
-            "value": value,
-            "value_raw": raw,
-            "verified_at": verified_at,
-        }));
+                .unwrap_or(Value::Null);
+        }
+        out.push(entry);
     }
     Ok(out)
 }
@@ -765,15 +869,15 @@ pub async fn update_profile(
         || bot != row.get::<bool, _>("bot")
         || discoverable != row.get::<bool, _>("discoverable");
 
-    // Enqueue verification only when a URL-valued field was added or
-    // its value changed — an unrelated display-name edit shouldn't
+    // Enqueue verification only when a link-valued field was added or
+    // its target changed — an unrelated display-name edit shouldn't
     // re-fetch unchanged pages.
     let previous_urls: HashSet<(String, String)> = previous_fields
         .iter()
         .filter_map(|e| {
             let name = e.get("name").and_then(Value::as_str)?.to_string();
-            let raw = entry_raw(e)?.to_string();
-            is_url_field(config, &raw).then_some((name, raw))
+            let url = field_verify_url(config, e)?;
+            Some((name, url))
         })
         .collect();
     let urls_changed = fields
@@ -781,10 +885,8 @@ pub async fn update_profile(
         .map(|entries| {
             entries.iter().any(|e| {
                 let name = e.get("name").and_then(Value::as_str).unwrap_or_default();
-                match entry_raw(e) {
-                    Some(raw) if is_url_field(config, raw) => {
-                        !previous_urls.contains(&(name.to_string(), raw.to_string()))
-                    }
+                match field_verify_url(config, e) {
+                    Some(url) => !previous_urls.contains(&(name.to_string(), url)),
                     _ => false,
                 }
             })
@@ -868,18 +970,21 @@ pub async fn update_profile(
         }
     }
     if urls_changed {
-        enqueue_verification(state, auth.account_id).await?;
+        enqueue_verification(&state.redis, &config.jobs, auth.account_id).await?;
     }
     Ok(())
 }
 
 /// Deduplicated enqueue: a 60 s NX flag keeps rapid successive edits
-/// from queueing redundant fetches (the job itself is idempotent).
-async fn enqueue_verification(state: &AppState, account_id: i64) -> Result<()> {
-    let key = state
-        .redis
-        .key(&format!("verify-profile-links:{account_id}"));
-    let mut conn = state.redis.conn().await?;
+/// (and remote actor upserts) from queueing redundant fetches — the
+/// job itself is idempotent.
+pub(crate) async fn enqueue_verification(
+    redis: &crate::cache::Redis,
+    jobs: &crate::config::JobsConfig,
+    account_id: i64,
+) -> Result<()> {
+    let key = redis.key(&format!("verify-profile-links:{account_id}"));
+    let mut conn = redis.conn().await?;
     let fresh: Option<String> = redis::cmd("SET")
         .arg(&key)
         .arg("1")
@@ -889,8 +994,7 @@ async fn enqueue_verification(state: &AppState, account_id: i64) -> Result<()> {
         .query_async(&mut *conn)
         .await?;
     if fresh.is_some() {
-        state
-            .dispatcher
+        crate::jobs::Dispatcher::new(redis, jobs)
             .enqueue(
                 JobKind::VerifyProfileLinks,
                 json!({ "account_id": account_id }),
@@ -969,8 +1073,10 @@ fn fetch_verdict(client: &HttpClient, page_url: &str, targets: &[String]) -> Ver
 }
 
 /// `JobKind::VerifyProfileLinks` — `rel="me"` re-verification, either
-/// for one account (`{"account_id": …}`, enqueued on edit) or every
-/// local account with URL-valued fields (the cron sweep). All network
+/// for one account (`{"account_id": …}`, enqueued on edit, on remote
+/// actor ingest/refresh and on remote profile reads) or every local
+/// account with URL-valued fields (the cron sweep — remote accounts
+/// re-verify through the actor-refresh path instead). All network
 /// I/O lives here; PATCH never fetches.
 pub struct VerifyProfileLinksJob;
 
@@ -1009,8 +1115,11 @@ impl JobHandler for VerifyProfileLinksJob {
     }
 }
 
-/// Verify one local account's URL-valued fields and write the stamps
-/// back under a row lock.
+/// Verify one account's link-valued fields and write the stamps back
+/// under a row lock. Targets are the identity URLs a `rel="me"`
+/// backlink may point at — for local accounts the actor id and the
+/// `/@user` profile URL; for remote accounts the actor's own `id` and
+/// `url` (Mastodon checks its `uri`/`url` pair the same way).
 async fn verify_account(
     ctx: &JobContext,
     client: &HttpClient,
@@ -1018,8 +1127,8 @@ async fn verify_account(
     account_id: i64,
 ) -> Result<()> {
     let row = sqlx::query(
-        "SELECT username, profile_fields FROM accounts \
-         WHERE id = $1 AND domain IS NULL",
+        "SELECT username, domain, actor_id, url, profile_fields FROM accounts \
+         WHERE id = $1",
     )
     .bind(account_id)
     .fetch_optional(&ctx.db)
@@ -1034,12 +1143,26 @@ async fn verify_account(
         .cloned()
         .unwrap_or_default();
 
-    // (name, raw) pairs captured for the fetch, plus the deduped URL set.
-    let targets = vec![
-        format!("{base_url}/ap/users/{username}"),
-        format!("{base_url}/@{username}"),
-    ];
-    let mut pairs = HashSet::new();
+    let targets: Vec<String> = match row.get::<Option<String>, _>("domain") {
+        None => vec![
+            format!("{base_url}/ap/users/{username}"),
+            format!("{base_url}/@{username}"),
+        ],
+        Some(_) => {
+            let mut t = vec![row.get::<String, _>("actor_id")];
+            if let Some(url) = row.get::<Option<String>, _>("url") {
+                if !url.is_empty() && !t.contains(&url) {
+                    t.push(url);
+                }
+            }
+            t
+        }
+    };
+
+    // (name, raw) identity pairs → the URL each fetched, plus the
+    // deduped fetch set. `raw` is what identifies an entry across the
+    // fetch window; `url` is what the verifier requests.
+    let mut pairs: HashMap<(String, String), String> = HashMap::new();
     let mut urls: Vec<String> = Vec::new();
     let mut seen = HashSet::new();
     for entry in &entries {
@@ -1049,12 +1172,12 @@ async fn verify_account(
         let Some(raw) = entry_raw(entry) else {
             continue;
         };
-        if !is_url_field(&ctx.config, raw) {
+        let Some(url) = field_verify_url(&ctx.config, entry) else {
             continue;
-        }
-        pairs.insert((name.to_string(), raw.to_string()));
-        if seen.insert(raw.to_string()) {
-            urls.push(raw.to_string());
+        };
+        pairs.insert((name.to_string(), raw.to_string()), url.clone());
+        if seen.insert(url.clone()) {
+            urls.push(url);
         }
     }
     if urls.is_empty() {
@@ -1083,13 +1206,11 @@ async fn verify_account(
     // touch entries still carrying the (name, raw) pair that was
     // fetched — a concurrent edit can't get a stale stamp.
     let mut tx = ctx.db.begin().await?;
-    let stored: Option<Value> = sqlx::query_scalar(
-        "SELECT profile_fields FROM accounts \
-         WHERE id = $1 AND domain IS NULL FOR UPDATE",
-    )
-    .bind(account_id)
-    .fetch_optional(&mut *tx)
-    .await?;
+    let stored: Option<Value> =
+        sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1 FOR UPDATE")
+            .bind(account_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     let Some(stored) = stored else {
         tx.commit().await?;
         return Ok(());
@@ -1108,12 +1229,12 @@ async fn verify_account(
             .to_string();
         let raw = entry_raw(&entry).map(str::to_string);
         if let Some(raw) = raw {
-            if is_url_field(&ctx.config, &raw) {
+            if field_verify_url(&ctx.config, &entry).is_some() {
                 stored_pairs.insert((name.clone(), raw.clone()));
             }
-            if pairs.contains(&(name, raw.clone())) {
+            if let Some(url) = pairs.get(&(name, raw)) {
                 let before = entry.get("verified_at").cloned().unwrap_or(Value::Null);
-                match verdicts.get(&raw) {
+                match verdicts.get(url) {
                     Some(Verdict::Verified) => {
                         entry["verified_at"] = json!(now);
                     }
@@ -1131,7 +1252,7 @@ async fn verify_account(
     // fetches are inapplicable — re-enqueue so the new pairs get a
     // pass (the 60 s dedupe flag may still be set from the edit's own
     // enqueue, so bypass it).
-    let lost_race = pairs != stored_pairs;
+    let lost_race = stored_pairs != pairs.keys().cloned().collect::<HashSet<_>>();
     if touched {
         sqlx::query("UPDATE accounts SET profile_fields = $2, updated_at = now() WHERE id = $1")
             .bind(account_id)

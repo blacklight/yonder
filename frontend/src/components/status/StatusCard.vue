@@ -25,7 +25,7 @@ import { fileReport } from "@/api/reports";
 import { adminAccountAction, adminStatusAction } from "@/api/admin";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
-import type { Status } from "@/api/entities";
+import type { Status, StatusVisibility } from "@/api/entities";
 
 const props = defineProps<{
   status: Status;
@@ -86,6 +86,18 @@ const account = computed(() => shown.value.account);
 // private message.
 const isDirect = computed(
   () => props.directReply || shown.value.visibility === "direct",
+);
+// Mastodon's header glyph: globe / open lock / lock / envelope. The
+// labels reuse the composer's `vis_*` keys — `private` on the wire is
+// "Followers only" there, which is what the tooltip should say too.
+const VISIBILITY_ICONS: Record<StatusVisibility, string> = {
+  public: "globe",
+  unlisted: "lock-open",
+  private: "lock",
+  direct: "envelope",
+};
+const visIcon = computed(
+  () => VISIBILITY_ICONS[shown.value.visibility] ?? null,
 );
 const remoteDomain = computed(() => {
   const acct = account.value.acct;
@@ -380,6 +392,16 @@ async function onReact(emoji: string) {
           formatRelativeDate(shown.created_at)
         }}</time>
       </Tooltip>
+      <Tooltip v-if="visIcon" :text="t(`compose.vis_${shown.visibility}`)">
+        <span
+          class="status-card__visibility"
+          role="img"
+          :aria-label="t(`compose.vis_${shown.visibility}`)"
+          data-testid="visibility"
+        >
+          <FontAwesomeIcon :icon="visIcon" />
+        </span>
+      </Tooltip>
       <Menu :items="menuItems" :label="t('status.more')" @select="onMenu" />
     </header>
 
@@ -575,6 +597,12 @@ async function onReact(emoji: string) {
 .status-card__date {
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+.status-card__visibility {
+  color: var(--text-muted);
+  opacity: 0.75;
+  font-size: var(--text-sm);
+  display: inline-flex;
 }
 .status-card__content {
   overflow-wrap: break-word;

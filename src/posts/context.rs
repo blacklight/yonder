@@ -13,7 +13,8 @@
 //!
 //! The viewer predicates mirror `timelines::filter`'s shared fragments:
 //! author always sees own, `public`/`unlisted` are world-readable,
-//! `followers_only` needs an accepted `follows` row, `direct` needs a
+//! `followers_only` needs an accepted `follows` row or a mention (a
+//! mention grants audience — `posts::can_see`), `direct` needs a
 //! `status_mentions` row — plus live-author (`visibility::VISIBLE`),
 //! instance-suspension and (authenticated viewers) block/mute/
 //! domain-block exclusions. `$1` binds the viewer (`NULL` = anonymous,
@@ -52,9 +53,11 @@ fn visible_sql(viewer: Option<i64>) -> String {
     let mut p = String::from(
         "(s.account_id = $1 OR s.visibility IN ('public', 'unlisted') \
          OR (s.visibility IN ('followers_only', 'private') \
-             AND EXISTS (SELECT 1 FROM follows f \
-                         WHERE f.account_id = $1 \
-                           AND f.target_account_id = s.account_id)) \
+             AND (EXISTS (SELECT 1 FROM follows f \
+                          WHERE f.account_id = $1 \
+                            AND f.target_account_id = s.account_id) \
+                  OR EXISTS (SELECT 1 FROM status_mentions sm2 \
+                             WHERE sm2.status_id = s.id AND sm2.account_id = $1))) \
          OR (s.visibility = 'direct' \
              AND EXISTS (SELECT 1 FROM status_mentions sm \
                          WHERE sm.status_id = s.id AND sm.account_id = $1)))",

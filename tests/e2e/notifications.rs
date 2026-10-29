@@ -1327,3 +1327,109 @@ async fn email_job_follows_user_settings() {
         "payload leaks an address: {payload_text}"
     );
 }
+
+/// `status` events only reach recipients who could actually see the
+/// post: a `direct` status never emits one (the `mention` event is the
+/// DM surface — anything more would leak the conversation), and a
+/// followers-only post skips subscribers who don't follow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn status_notifications_respect_visibility() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    register(&env.app, "bob", "b@x.com").await;
+    let carol = register(&env.app, "carol", "c@x.com").await;
+    let dave = register(&env.app, "dave", "d@x.com").await;
+    let (a, b, c, d) = (
+        account_id(&env.state.db, "alice").await,
+        account_id(&env.state.db, "bob").await,
+        account_id(&env.state.db, "carol").await,
+        account_id(&env.state.db, "dave").await,
+    );
+
+    // Carol subscribes without following; dave follows with notify.
+    request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{a}/subscribe"),
+        Some(&carol),
+        Some(json!({})),
+    )
+    .await;
+    request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{a}/follow"),
+        Some(&dave),
+        Some(json!({"notify": true})),
+    )
+    .await;
+    run_pending_fanouts(&env).await; // consume the follow event
+
+    // A DM: only the mentioned account is notified — never subscribers
+    // or notify-flagged followers, who aren't in the conversation.
+    let dm = post(
+        &env.app,
+        &alice,
+        json!({"status": "@bob secret", "visibility": "direct"}),
+    )
+    .await;
+    run_pending_fanouts(&env).await;
+    assert_eq!(
+        rows_for(&env.state.db, b).await,
+        vec![("mention".into(), a)]
+    );
+    assert!(rows_for(&env.state.db, c).await.is_empty());
+    assert!(rows_for(&env.state.db, d).await.is_empty());
+
+    // Followers-only: the notify follower sees it, the
+    // notify-without-following subscriber can't — no event.
+    post(
+        &env.app,
+        &alice,
+        json!({"status": "for followers", "visibility": "private"}),
+    )
+    .await;
+    run_pending_fanouts(&env).await;
+    assert_eq!(rows_for(&env.state.db, d).await, vec![("status".into(), a)]);
+    assert!(rows_for(&env.state.db, c).await.is_empty());
+
+    // Public reaches both.
+    let public_id = post(&env.app, &alice, json!({"status": "hello all"})).await;
+    run_pending_fanouts(&env).await;
+    assert_eq!(rows_for(&env.state.db, c).await, vec![("status".into(), a)]);
+    assert_eq!(
+        rows_for(&env.state.db, d).await,
+        vec![("status".into(), a), ("status".into(), a)]
+    );
+
+    // Defense in depth: a stray `status` row pointing at a status the
+    // recipient can't see (rows predating the gate, or a mention an
+    // edit revoked) drops out of the read surface entirely.
+    let dm_id: i64 = dm.parse().unwrap();
+    notifications::insert(
+        &env.state.db,
+        c,
+        a,
+        notifications::NotificationType::Status,
+        Some(dm_id),
+        None,
+    )
+    .await
+    .unwrap();
+    let (_, _, list) = request(&env.app, "GET", "/api/v1/notifications", Some(&carol), None).await;
+    let types: Vec<&str> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|n| n["type"].as_str())
+        .collect();
+    assert_eq!(types, ["status"], "{list}");
+    assert_eq!(
+        list[0]["status"]["id"].as_str().unwrap(),
+        public_id,
+        "only the public post's notification survives"
+    );
+}

@@ -374,6 +374,24 @@ describe("StatusCard", () => {
     expect(router.currentRoute.value.path).toBe("/compose");
   });
 
+  it("shows a visibility icon with the matching label", () => {
+    const cases = [
+      ["public", "fa-globe", "Public"],
+      ["unlisted", "fa-lock-open", "Unlisted"],
+      ["private", "fa-lock", "Followers only"],
+      ["direct", "fa-envelope", "Direct"],
+    ] as const;
+    for (const [visibility, icon, label] of cases) {
+      const { wrapper } = mountWith(StatusCard, {
+        props: { status: status({ visibility }) },
+      });
+      const el = wrapper.get("[data-testid='visibility']");
+      expect(el.attributes("aria-label")).toBe(label);
+      expect(el.find(`.${icon}`).exists()).toBe(true);
+      wrapper.unmount();
+    }
+  });
+
   it("react/unreact via picker and existing chips", async () => {
     useAuthStore().setToken("t");
     const spy = mockApi(200, {});

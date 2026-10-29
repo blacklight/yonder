@@ -131,7 +131,7 @@ pub async fn validate(
         return Err(Error::Validation("status cannot be empty".to_string()));
     }
 
-    let visibility = match &params.visibility {
+    let mut visibility = match &params.visibility {
         Some(v) => super::normalize_visibility(v)?,
         None => super::default_visibility(&user_settings.default_visibility).to_string(),
     };
@@ -165,10 +165,45 @@ pub async fn validate(
             "a status is either a reply or a quote, not both".to_string(),
         ));
     }
-    if let Some(parent_id) = params.in_reply_to_id {
+    // The effective reply parent: the supplied id, or — on edit,
+    // which can't retarget — the status's stored parent (the UPDATE
+    // still writes `visibility`, so "post direct → edit to public"
+    // would otherwise bypass the guard). A direct parent pins the
+    // reply to `direct`: an explicit wider audience is a leak (422),
+    // an omitted one inherits the conversation's scope.
+    let effective_parent = match params.in_reply_to_id {
+        Some(id) => Some(id),
+        None => match editing_status_id {
+            Some(id) => sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT in_reply_to_id FROM statuses WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_optional(&ctx.db)
+            .await?
+            .flatten(),
+            None => None,
+        },
+    };
+    if let Some(parent_id) = effective_parent {
         match super::load(&ctx.db, parent_id).await? {
-            Some(parent) if super::can_see(&ctx.db, &parent, Some(auth.account_id)).await? => {}
-            _ => return Err(Error::NotFound("in_reply_to status".into())),
+            Some(parent) if super::can_see(&ctx.db, &parent, Some(auth.account_id)).await? => {
+                if parent.visibility == "direct" && visibility != "direct" {
+                    if params.visibility.is_none() {
+                        visibility = "direct".to_string();
+                    } else {
+                        return Err(Error::Validation(
+                            "a reply to a direct status must be direct".to_string(),
+                        ));
+                    }
+                }
+            }
+            // A *supplied* parent that fails to resolve is the client's
+            // 404; a stored one the author lost sight of is inherited
+            // context, not theirs to re-validate.
+            _ if params.in_reply_to_id.is_some() => {
+                return Err(Error::NotFound("in_reply_to status".into()));
+            }
+            _ => {}
         }
     }
     // A quote_id on edit is validated but not applied — Mastodon

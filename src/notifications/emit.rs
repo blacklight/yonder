@@ -17,8 +17,13 @@ use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::Stat
 /// Mentions reach every mentioned local account (`status_mentions` is
 /// the source of truth — `direct` posts still notify, which is how DMs
 /// surface). `status` events reach local followers with
-/// `follows.notify` and `subscriptions` rows — notify-without-following.
-/// `emit_notification_event` drops self/remote recipients itself.
+/// `follows.notify` and `subscriptions` rows — notify-without-following —
+/// but only where the recipient could actually see the post: a `direct`
+/// status never emits one (`mention` above is the DM surface — anything
+/// more would leak the conversation to non-participants), and a
+/// followers-only status reaches a subscriber only through an accepted
+/// follow. `emit_notification_event` drops self/remote recipients
+/// itself.
 pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &StatusRow) {
     let mentioned = match sqlx::query_scalar::<_, i64>(
         "SELECT sm.account_id FROM status_mentions sm \
@@ -47,12 +52,20 @@ pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &Stat
         )
         .await;
     }
+    if status.visibility == "direct" {
+        return;
+    }
     let subscribed = match sqlx::query_scalar::<_, i64>(
         "SELECT account_id FROM follows WHERE target_account_id = $1 AND notify \
          UNION \
-         SELECT account_id FROM subscriptions WHERE target_account_id = $1",
+         SELECT s.account_id FROM subscriptions s \
+         WHERE s.target_account_id = $1 \
+           AND ($2 IN ('public', 'unlisted') OR EXISTS ( \
+               SELECT 1 FROM follows f \
+               WHERE f.account_id = s.account_id AND f.target_account_id = $1))",
     )
     .bind(status.account_id)
+    .bind(&status.visibility)
     .fetch_all(db)
     .await
     {

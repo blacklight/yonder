@@ -148,6 +148,26 @@ fn row_to_notification(r: &sqlx::postgres::PgRow) -> NotificationRow {
 const NOTIFICATION_COLS: &str =
     "id, account_id, from_account_id, type, status_id, report_id, read, created_at";
 
+/// The notification's embedded status must be one the recipient
+/// (`$1`) can see — `posts::can_see` inlined so `list`/`unread_count`
+/// drop stray rows (fan-out predating the visibility gate, or a
+/// mention an edit revoked) instead of leaking them into pages and
+/// the unread badge. `status_id IS NULL` rows (follows, reports)
+/// always pass.
+fn status_visible(alias: &str) -> String {
+    format!(
+        "({alias}.status_id IS NULL OR EXISTS ( \
+         SELECT 1 FROM statuses vs WHERE vs.id = {alias}.status_id AND ( \
+             vs.account_id = $1 OR vs.visibility IN ('public', 'unlisted') \
+             OR EXISTS (SELECT 1 FROM status_mentions vsm \
+                        WHERE vsm.status_id = vs.id AND vsm.account_id = $1) \
+             OR (vs.visibility IN ('followers_only', 'private') \
+                 AND EXISTS (SELECT 1 FROM follows vf \
+                             WHERE vf.account_id = $1 \
+                               AND vf.target_account_id = vs.account_id)))))"
+    )
+}
+
 /// Idempotent insert — `Ok(None)` when the event already exists.
 ///
 /// The arbiter columns must mirror `ix_notifications_dedupe`,
@@ -219,9 +239,12 @@ pub async fn list(
            AND ($2::bigint IS NULL OR id < $2) \
            AND ($3::bigint IS NULL OR id > $3) \
            AND (cardinality($4) = 0 OR type = ANY($4)) \
-           AND (cardinality($5) = 0 OR type <> ALL($5)){} \
+           AND (cardinality($5) = 0 OR type <> ALL($5)) \
+           AND {}{} \
          ORDER BY id DESC LIMIT $6",
-        NOTIFICATION_COLS, hide_sql
+        NOTIFICATION_COLS,
+        status_visible("notifications"),
+        hide_sql
     );
     let mut q = sqlx::query(&sql)
         .bind(account_id)
@@ -279,8 +302,11 @@ pub async fn unread_count(
     account_id: i64,
     hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<i64> {
-    let mut sql =
-        String::from("SELECT COUNT(*) FROM notifications n WHERE n.account_id = $1 AND NOT n.read");
+    let mut sql = format!(
+        "SELECT COUNT(*) FROM notifications n \
+         WHERE n.account_id = $1 AND NOT n.read AND {}",
+        status_visible("n")
+    );
     let binds = match hide {
         Some(h) => {
             let (inner, binds) = h.numbered_inner(1);
@@ -343,17 +369,18 @@ pub async fn dismiss(db: &PgPool, account_id: i64, id: i64) -> Result<bool> {
 }
 
 /// The Mastodon `Notification` entity for a row — the single-row
-/// form of [`entities`].
+/// form of [`entities`]. 404s when the embedded status is one the
+/// recipient can't see (the page drops such rows entirely).
 pub async fn entity(
     ctx: &PostContext,
     row: &NotificationRow,
     rules: &[crate::filters::Rule],
 ) -> Result<Value> {
-    Ok(entities(ctx, std::slice::from_ref(row), rules)
+    entities(ctx, std::slice::from_ref(row), rules)
         .await?
         .into_iter()
         .next()
-        .expect("one entity per notification"))
+        .ok_or_else(|| Error::NotFound("notification".into()))
 }
 
 /// [`entity`] for a page of notifications. Every per-row lookup the
@@ -368,7 +395,7 @@ pub async fn entities(
     rows: &[NotificationRow],
     rules: &[crate::filters::Rule],
 ) -> Result<Vec<Value>> {
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, HashMap, HashSet};
     if rows.is_empty() {
         return Ok(Vec::new());
     }
@@ -387,12 +414,28 @@ pub async fn entities(
         }
     }
     let mut status_entities: HashMap<i64, Value> = HashMap::new();
+    // A notification must never surface a status its recipient can't
+    // see (a stray `status` row from before visibility-gated fan-out,
+    // or a mention an edit revoked). The whole notification drops out —
+    // even its existence would leak that the author posted.
+    let mut invisible: HashSet<(i64, i64)> = HashSet::new();
     for (owner, ids) in by_owner {
         let statuses = crate::posts::load_many(&ctx.db, &ids).await?;
         let status_rows: Vec<crate::posts::StatusRow> = ids
             .iter()
             .filter_map(|id| statuses.get(id))
             .cloned()
+            .collect();
+        let visible = crate::posts::visible_ids(&ctx.db, &status_rows, Some(owner)).await?;
+        let status_rows: Vec<crate::posts::StatusRow> = status_rows
+            .into_iter()
+            .filter(|s| {
+                let ok = visible.contains(&s.id);
+                if !ok {
+                    invisible.insert((owner, s.id));
+                }
+                ok
+            })
             .collect();
         match crate::posts::entity::status_entities(ctx, &status_rows, Some(owner)).await {
             Ok(mut ents) => {
@@ -499,7 +542,13 @@ pub async fn entities(
 
     Ok(rows
         .iter()
-        .map(|row| {
+        .filter_map(|row| {
+            if row
+                .status_id
+                .is_some_and(|sid| invisible.contains(&(row.account_id, sid)))
+            {
+                return None;
+            }
             let mut out = json!({
                 "id": row.id.to_string(),
                 "type": row.kind.as_str(),
@@ -521,7 +570,7 @@ pub async fn entities(
                     .cloned()
                     .unwrap_or(Value::Null);
             }
-            out
+            Some(out)
         })
         .collect())
 }

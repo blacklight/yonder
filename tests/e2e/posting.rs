@@ -2161,3 +2161,138 @@ async fn context_visibility_and_ancestors() {
         .collect();
     assert_eq!(ids, [priv_reply_id.as_str()]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reply_to_direct_must_be_direct() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "alice@x.com").await;
+    let bob = register(&env.app, "bob", "bob@x.com").await;
+
+    let (status, dm) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "@bob secret", "visibility": "direct"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{dm}");
+    let dm_id = dm["id"].as_str().unwrap();
+
+    // An explicit wider audience is a leak — 422.
+    for vis in ["public", "unlisted", "private"] {
+        let (status, body) = request(
+            &env.app,
+            "POST",
+            "/api/v1/statuses",
+            Some(&bob),
+            Some(json!({
+                "status": "@alice reply", "in_reply_to_id": dm_id, "visibility": vis,
+            })),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{vis}: {body}");
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap()
+                .contains("a reply to a direct status must be direct"),
+            "{body}"
+        );
+    }
+
+    // Omitted visibility inherits the conversation's scope.
+    let (status, reply) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&bob),
+        Some(json!({"status": "@alice reply", "in_reply_to_id": dm_id})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(reply["visibility"], "direct");
+    let reply_id = reply["id"].as_str().unwrap();
+
+    // An edit can't flip a DM reply out of the conversation either —
+    // the stored parent is the effective one when the body omits it.
+    let (status, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{reply_id}"),
+        Some(&bob),
+        Some(json!({"status": "@alice edited", "visibility": "public"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Editing while staying direct is fine.
+    let (status, edited) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{reply_id}"),
+        Some(&bob),
+        Some(json!({"status": "@alice edited", "visibility": "direct"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["visibility"], "direct");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mentioned_nonfollower_can_reply_to_followers_only() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "alice@x.com").await;
+    let carol = register(&env.app, "carol", "carol@x.com").await;
+
+    // A followers-only post mentioning carol — she doesn't follow
+    // alice, but a mention grants audience (Mastodon's `permitted?`):
+    // she can see it and reply to a thread addressed to her.
+    let (status, post) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "@carol psst", "visibility": "private"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{post}");
+    let post_id = post["id"].as_str().unwrap();
+
+    let (status, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{post_id}"),
+        Some(&carol),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, reply) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&carol),
+        Some(json!({
+            "status": "@alice hi back", "in_reply_to_id": post_id,
+            "visibility": "private",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+}

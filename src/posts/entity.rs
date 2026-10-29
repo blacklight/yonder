@@ -456,9 +456,11 @@ impl StatusBatch {
             }
         };
         // `posts::can_see` on the originals, batched: the cheap cases
-        // (own, public/unlisted, anonymous) resolve in memory; direct
-        // and follower-gated rows each need one lookup.
-        let mut direct_ids = Vec::new();
+        // (own, public/unlisted, anonymous) resolve in memory; all
+        // gated rows share one `status_mentions` lookup (a mention
+        // grants audience even on follower-gated posts), and
+        // follower-gated authors one `follows` lookup.
+        let mut gated_ids = Vec::new();
         let mut follow_targets = Vec::new();
         if viewer.is_some() {
             for o in originals.values() {
@@ -467,20 +469,19 @@ impl StatusBatch {
                 {
                     continue;
                 }
-                if o.visibility == "direct" {
-                    direct_ids.push(o.id);
-                } else {
+                gated_ids.push(o.id);
+                if o.visibility != "direct" {
                     follow_targets.push(o.account_id);
                 }
             }
         }
-        let direct_f = async {
-            match (viewer, direct_ids.is_empty()) {
+        let mention_f = async {
+            match (viewer, gated_ids.is_empty()) {
                 (Some(v), false) => sqlx::query_scalar::<_, i64>(
                     "SELECT status_id FROM status_mentions \
                      WHERE status_id = ANY($1) AND account_id = $2",
                 )
-                .bind(&direct_ids)
+                .bind(&gated_ids)
                 .bind(v)
                 .fetch_all(db)
                 .await
@@ -510,10 +511,10 @@ impl StatusBatch {
             vote_rows,
             voter_rows,
             own_rows,
-            direct_seen,
+            mention_seen_ids,
             followed,
         ) = tokio::try_join!(
-            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, direct_f, follows_f
+            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, mention_f, follows_f
         )?;
 
         let accounts: HashMap<i64, account_mapper::AccountRow> =
@@ -569,7 +570,7 @@ impl StatusBatch {
             );
         }
 
-        let direct_seen: HashSet<i64> = direct_seen.into_iter().collect();
+        let mention_seen: HashSet<i64> = mention_seen_ids.into_iter().collect();
         let followed: HashSet<i64> = followed.into_iter().collect();
         let mut visible = HashSet::new();
         for o in originals.values() {
@@ -580,9 +581,9 @@ impl StatusBatch {
             } else if viewer.is_none() {
                 false
             } else if o.visibility == "direct" {
-                direct_seen.contains(&o.id)
+                mention_seen.contains(&o.id)
             } else {
-                followed.contains(&o.account_id)
+                followed.contains(&o.account_id) || mention_seen.contains(&o.id)
             };
             if ok {
                 visible.insert(o.id);

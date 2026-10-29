@@ -333,8 +333,11 @@ pub async fn load_by_uri(db: &PgPool, uri: &str) -> Result<Option<StatusRow>> {
 /// The minimal read-side visibility primitive epic 15's timelines
 /// extend: the author always sees their own; `public`/`unlisted` are
 /// world-readable; `followers_only` needs an accepted `follows` row
-/// from viewer to author; `direct` needs a `status_mentions` row.
-/// Anonymous viewers (`None`) only see public/unlisted.
+/// from viewer to author *or* a `status_mentions` row (a mention
+/// grants audience — Mastodon's `permitted?` — otherwise the
+/// mentioned user could never reply to a thread addressed to them);
+/// `direct` needs a `status_mentions` row. Anonymous viewers (`None`)
+/// only see public/unlisted.
 pub async fn can_see(
     db: &PgPool,
     status: &StatusRow,
@@ -360,15 +363,84 @@ pub async fn can_see(
         _ => match viewer_account_id {
             Some(viewer) => Ok(sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM follows \
-                 WHERE account_id = $1 AND target_account_id = $2)",
+                 WHERE account_id = $1 AND target_account_id = $2) \
+                 OR EXISTS(SELECT 1 FROM status_mentions \
+                 WHERE status_id = $3 AND account_id = $1)",
             )
             .bind(viewer)
             .bind(status.account_id)
+            .bind(status.id)
             .fetch_one(db)
             .await?),
             None => Ok(false),
         },
     }
+}
+
+/// [`can_see`] for a page of statuses in at most two queries — the
+/// in-memory cases (own, world-readable, anonymous) resolve without
+/// I/O; `direct` and follower-gated rows share one `status_mentions`
+/// lookup, and follower-gated rows one `follows` lookup. Returns the
+/// visible status ids.
+pub async fn visible_ids(
+    db: &PgPool,
+    statuses: &[StatusRow],
+    viewer: Option<i64>,
+) -> Result<std::collections::HashSet<i64>> {
+    let mut visible = std::collections::HashSet::new();
+    let mut gated_ids = Vec::new();
+    let mut gated: Vec<&StatusRow> = Vec::new();
+    for s in statuses {
+        if Some(s.account_id) == viewer || matches!(s.visibility.as_str(), "public" | "unlisted") {
+            visible.insert(s.id);
+        } else if viewer.is_some() {
+            gated_ids.push(s.id);
+            gated.push(s);
+        }
+    }
+    let Some(v) = viewer else {
+        return Ok(visible);
+    };
+    if gated.is_empty() {
+        return Ok(visible);
+    }
+    let mentioned: std::collections::HashSet<i64> = sqlx::query_scalar::<_, i64>(
+        "SELECT status_id FROM status_mentions \
+         WHERE status_id = ANY($1) AND account_id = $2",
+    )
+    .bind(&gated_ids)
+    .bind(v)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .collect();
+    let targets: Vec<i64> = gated
+        .iter()
+        .filter(|s| s.visibility != "direct")
+        .map(|s| s.account_id)
+        .collect();
+    let followed: std::collections::HashSet<i64> = if targets.is_empty() {
+        Default::default()
+    } else {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT target_account_id FROM follows \
+             WHERE account_id = $1 AND target_account_id = ANY($2)",
+        )
+        .bind(v)
+        .bind(&targets)
+        .fetch_all(db)
+        .await?
+        .into_iter()
+        .collect()
+    };
+    for s in gated {
+        if mentioned.contains(&s.id)
+            || (s.visibility != "direct" && followed.contains(&s.account_id))
+        {
+            visible.insert(s.id);
+        }
+    }
+    Ok(visible)
 }
 
 /// Register this epic's job handlers, replacing the stubs. `ap` is

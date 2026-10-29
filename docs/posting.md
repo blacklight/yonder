@@ -36,10 +36,15 @@ scheduling, link previews and ActivityPub federation.
 Stored: `public`, `unlisted`, `followers_only`, `direct` (input
 `private` normalizes to `followers_only`; wire output maps back to
 `private`). `can_see` enforces author/followers/mention/public
-semantics; the same predicate guards the poll endpoints (a poll is
-only as visible as its status) and the AP object GET — private
-objects are never served from the shared doc-cache, and unsigned or
-unauthorized fetches of them get a 404, never a revealing 401.
+semantics (a mention grants audience even on follower-gated posts —
+otherwise the addressee could never reply); the same predicate guards
+the poll endpoints (a poll is only as visible as its status) and the
+AP object GET — private objects are never served from the shared
+doc-cache, and unsigned or unauthorized fetches of them get a 404,
+never a revealing 401. Replies to a `direct` status stay in the
+conversation: an omitted `visibility` inherits `direct`, an explicit
+wider audience is a 422, and the same guard applies to edits via the
+stored parent.
 
 ## Idempotency
 

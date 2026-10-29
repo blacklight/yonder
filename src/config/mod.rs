@@ -936,7 +936,13 @@ pub struct ContentConfig {
     /// `YONDER_CONTENT__DEEPL_API_KEY`).
     pub google_translate_api_key: Option<String>,
     pub deepl_api_key: Option<String>,
+    /// DeepL endpoint — defaults to the free tier
+    /// (`https://api-free.deepl.com`); pro keys use
+    /// `https://api.deepl.com`.
+    pub deepl_api_url: Option<String>,
     pub libretranslate_url: Option<String>,
+    /// Some LibreTranslate deployments require an API key.
+    pub libretranslate_api_key: Option<String>,
     pub default_post_content_type: PostContentType,
     /// Fetch Open Graph metadata for the first link of a status.
     pub link_previews: bool,
@@ -970,7 +976,9 @@ impl Default for ContentConfig {
             translation_backend: TranslationBackend::GoogleWeb,
             google_translate_api_key: None,
             deepl_api_key: None,
+            deepl_api_url: None,
             libretranslate_url: None,
+            libretranslate_api_key: None,
             default_post_content_type: PostContentType::TextPlain,
             link_previews: true,
             link_preview_cache_hours: 24,

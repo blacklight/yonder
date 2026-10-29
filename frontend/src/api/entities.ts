@@ -192,6 +192,18 @@ export interface StatusContext {
   descendants: Status[];
 }
 
+/** `statuses::translate` — the Mastodon Translation entity. */
+export interface Translation {
+  /** Translated HTML content. */
+  content: string;
+  /** BCP-47 code the backend detected, when reported. */
+  detected_source_language: string | null;
+  media_attachments: { id: string; description: string }[];
+  poll: { id: string; options: { title: string }[] } | null;
+  provider: string;
+  spoiler_text: string;
+}
+
 /** `posts::entity::scheduled_status_entity`. */
 export interface ScheduledStatus {
   id: string;
@@ -389,6 +401,9 @@ export interface InstanceEntity {
       max_characters_per_option?: number;
       min_expiration?: number;
       max_expiration?: number;
+    };
+    translation?: {
+      enabled?: boolean;
     };
   };
   rules?: { id: string; text: string }[];

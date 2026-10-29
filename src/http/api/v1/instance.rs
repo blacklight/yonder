@@ -62,6 +62,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
                 "min_expiration": 300,
                 "max_expiration": config.polls.max_duration_seconds,
             },
+            "translation": {"enabled": crate::translation::enabled(&config.content)},
         },
         "contact_account": Value::Null,
         "rules": config.instance.rules,

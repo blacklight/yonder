@@ -344,6 +344,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route("/api/v1/statuses/{id}/context", get(statuses::context))
         .route(
+            "/api/v1/statuses/{id}/translate",
+            axum::routing::post(statuses::translate)
+                .route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
             "/api/v1/media",
             axum::routing::post(media::upload)
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
@@ -744,6 +749,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     statuses::create,
     statuses::show,
     statuses::context,
+    statuses::translate,
     statuses::update,
     statuses::delete_status,
     interactions::favourite,

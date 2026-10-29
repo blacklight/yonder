@@ -14,6 +14,7 @@ scheduling, link previews and ActivityPub federation.
 | DELETE | `/api/v1/statuses/{id}` | `write:statuses` | owner → tombstone + `Delete` |
 | POST | `/api/v1/media` | `write:media` | multipart `file`/`description`/`focus` |
 | PUT | `/api/v1/media/{id}` | `write:media` | alt text + focus |
+| POST | `/api/v1/statuses/{id}/translate` | `read:statuses` | Translation entity; `lang` via query or body |
 | POST | `/api/v2/media` | `write:media` | same upload shape |
 | GET | `/api/v2/media/{id}` | `read:statuses` | processing status |
 | GET/POST | `/api/v1/polls/{id}`/`{id}/votes` | `read`/`write:statuses` | results + atomic voting |
@@ -104,6 +105,32 @@ create/edit, scheduled publish, and remote materialization — a
 fresh `Create` or an accepted `Update` re-runs it, and re-runs
 converge `preview_cards` to the status' current eligibility (media
 added or URL removed clears the card, a changed URL replaces it).
+
+## Translation
+
+`POST /api/v1/statuses/{id}/translate` returns the Mastodon
+Translation entity (`content`, `spoiler_text`, `poll.options`,
+`media_attachments[].description`, `detected_source_language`,
+`provider`). Target language is `lang` (query or body) → the viewer's
+interface locale → `i18n.fallback_locale`. `can_see` is the only
+audience gate — any status the viewer can see translates (including
+followers-only and direct, whose text is sent to the configured
+backend; stricter than that, Mastodon also limits it to
+public/unlisted). Results cache in
+Redis for 24h keyed by `(status, lang, sha256 of source strings)`, so
+edits and alt-text changes invalidate naturally.
+
+`content.translation_backend` picks the provider; the instance
+entities report `configuration.translation.enabled` only when it has
+what it needs (`google-web` always; `google-api` needs
+`google_translate_api_key`; `deepl` needs `deepl_api_key` and honours
+`deepl_api_url` — default `https://api-free.deepl.com`, pro keys use
+`https://api.deepl.com`; `libretranslate` needs `libretranslate_url`
+and honours `libretranslate_api_key`). Requests go through pubby's
+sync `HttpClient` in `block_in_place` — relaxed, since the target is
+either a hardcoded public host or an admin-configured URL that may
+legitimately live on a LAN. The API keys count as sensitive in the
+admin settings registry.
 
 ## ActivityPub
 

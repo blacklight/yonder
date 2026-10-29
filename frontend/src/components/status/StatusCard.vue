@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import Avatar from "@/components/ui/Avatar.vue";
@@ -18,14 +18,15 @@ import { sanitizeHtml } from "@/utils/sanitize";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
 import { FontAwesomeIcon } from "@/icons";
-import { deleteStatus, react, unreact } from "@/api/statuses";
+import { deleteStatus, react, translateStatus, unreact } from "@/api/statuses";
 import { blockAccount, muteAccount } from "@/api/accounts";
 import { blockDomain } from "@/api/domains";
 import { fileReport } from "@/api/reports";
 import { adminAccountAction, adminStatusAction } from "@/api/admin";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
-import type { Status, StatusVisibility } from "@/api/entities";
+import { useInstanceStore } from "@/stores/instance";
+import type { Status, StatusVisibility, Translation } from "@/api/entities";
 
 const props = defineProps<{
   status: Status;
@@ -37,10 +38,11 @@ const props = defineProps<{
   expanded?: boolean;
 }>();
 const emit = defineEmits<{ removed: [id: string] }>();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
 const compose = useComposeStore();
+const instance = useInstanceStore();
 
 // Boosts wrap the inner status — display it, keep the booster line.
 const shown = computed(() => props.status.reblog ?? props.status);
@@ -55,7 +57,6 @@ const shownContent = computed(() =>
       )
     : shown.value.content,
 );
-const safeContent = computed(() => sanitizeHtml(shownContent.value));
 
 // The whole card is the permalink's click target, Mastodon-style —
 // except interactive elements (links, buttons, the composer) and an
@@ -99,6 +100,92 @@ const VISIBILITY_ICONS: Record<StatusVisibility, string> = {
 const visIcon = computed(
   () => VISIBILITY_ICONS[shown.value.visibility] ?? null,
 );
+
+// Mastodon's translate affordance: offered when the post's language
+// differs from the interface locale (base subtag — `pt-BR` vs `pt`
+// doesn't count as foreign) and the backend advertises translation.
+// Any status the viewer can see qualifies — the admin chose the
+// backend gated content is sent to.
+const baseLang = (code: string | null | undefined) =>
+  code?.split("-")[0]?.toLowerCase() ?? null;
+const wantsTranslate = computed(() => {
+  const lang = baseLang(shown.value.language);
+  return !!lang && lang !== baseLang(locale.value);
+});
+const canTranslate = computed(
+  () => instance.translationEnabled && wantsTranslate.value,
+);
+const translation = ref<Translation | null>(null);
+const translating = ref(false);
+
+onMounted(() => {
+  // Only cards that could offer the button need the flag; `ensure()`
+  // dedupes the fetch across every card on the page.
+  if (wantsTranslate.value) void instance.ensure();
+});
+
+async function doTranslate() {
+  translating.value = true;
+  try {
+    translation.value = await translateStatus(
+      String(shown.value.id),
+      locale.value,
+    );
+  } catch (e) {
+    fail(e);
+  } finally {
+    translating.value = false;
+  }
+}
+
+/** Language name for the "Translated from" line, localized via
+ * `Intl.DisplayNames` with the raw code as fallback. */
+const translatedFromName = computed(() => {
+  const lang =
+    translation.value?.detected_source_language ?? shown.value.language;
+  if (!lang) return "";
+  try {
+    return (
+      new Intl.DisplayNames([locale.value], { type: "language" }).of(lang) ??
+      lang
+    );
+  } catch {
+    return lang;
+  }
+});
+
+// Translated content swaps in for the body, CW, poll options and alt
+// text — the card's other props (media, footer actions) stay on the
+// original entity.
+const displayedContent = computed(() =>
+  sanitizeHtml(translation.value?.content ?? shownContent.value),
+);
+const displayedSpoiler = computed(
+  () => translation.value?.spoiler_text || shown.value.spoiler_text,
+);
+const displayedStatus = computed(() => {
+  const tr = translation.value;
+  if (!tr) return shown.value;
+  const out = { ...shown.value };
+  if (out.poll && tr.poll?.options?.length) {
+    out.poll = {
+      ...out.poll,
+      options: out.poll.options.map((o, i) => ({
+        ...o,
+        title: tr.poll!.options[i]?.title ?? o.title,
+      })),
+    };
+  }
+  if (tr.media_attachments.length) {
+    const desc = new Map(
+      tr.media_attachments.map((m) => [m.id, m.description]),
+    );
+    out.media_attachments = out.media_attachments.map((m) =>
+      desc.has(m.id) ? { ...m, description: desc.get(m.id)! } : m,
+    );
+  }
+  return out;
+});
 const remoteDomain = computed(() => {
   const acct = account.value.acct;
   return acct.includes("@") ? acct.split("@").slice(1).join("@") : null;
@@ -407,16 +494,16 @@ async function onReact(emoji: string) {
 
     <p v-if="actionError" class="status-card__error">{{ actionError }}</p>
 
-    <CwBlock :spoiler-text="shown.spoiler_text">
+    <CwBlock :spoiler-text="displayedSpoiler">
       <!-- Only the text clamps — media, quotes and polls always
            render whole, never sliced by the fade. -->
       <ShowMore :disabled="!clampBody">
         <!-- eslint-disable-next-line vue/no-v-html -->
-        <div class="status-card__content" v-html="safeContent" />
+        <div class="status-card__content" v-html="displayedContent" />
       </ShowMore>
 
       <StatusMedia
-        :media="shown.media_attachments"
+        :media="displayedStatus.media_attachments"
         :sensitive="shown.sensitive && !shown.spoiler_text"
       />
       <StatusQuote
@@ -424,8 +511,40 @@ async function onReact(emoji: string) {
         @reply="(s) => guardDraft(() => replyTo(s))"
         @quote="(s) => guardDraft(() => compose.openQuote(s))"
       />
-      <StatusPoll :status="shown" />
+      <StatusPoll :status="displayedStatus" />
     </CwBlock>
+
+    <div v-if="canTranslate || translation" class="status-card__translation">
+      <template v-if="translation">
+        <span class="status-card__translated">
+          {{
+            t("status.translatedFrom", {
+              from: translatedFromName,
+              provider: translation.provider,
+            })
+          }}
+        </span>
+        <button
+          type="button"
+          class="status-card__translate"
+          data-testid="show-original"
+          @click="translation = null"
+        >
+          {{ t("status.showOriginal") }}
+        </button>
+      </template>
+      <button
+        v-else
+        type="button"
+        class="status-card__translate"
+        data-testid="translate"
+        :disabled="translating"
+        @click="doTranslate"
+      >
+        <FontAwesomeIcon icon="language" />
+        {{ translating ? t("status.translating") : t("status.translate") }}
+      </button>
+    </div>
 
     <a
       v-if="card"
@@ -601,8 +720,41 @@ async function onReact(emoji: string) {
 .status-card__visibility {
   color: var(--text-muted);
   opacity: 0.75;
-  font-size: var(--text-sm);
+  font-size: 0.75em;
   display: inline-flex;
+}
+.status-card__translation {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+}
+.status-card__translation button {
+  cursor: pointer;
+}
+.status-card__translated {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  opacity: 0.6;
+}
+.status-card__translate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-link);
+  font: inherit;
+  cursor: pointer;
+}
+.status-card__translate:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.status-card__translate:disabled {
+  color: var(--text-muted);
+  cursor: default;
 }
 .status-card__content {
   overflow-wrap: break-word;

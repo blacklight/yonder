@@ -443,6 +443,10 @@
     "cwShow": "Show more",
     "cwHide": "Show less",
     "showSensitive": "Sensitive content — click to show",
+    "translate": "Translate",
+    "translating": "Translating…",
+    "translatedFrom": "Translated from {from} via {provider}",
+    "showOriginal": "Show original",
     "altText": "Alt text",
     "media": {
       "view": "View media",

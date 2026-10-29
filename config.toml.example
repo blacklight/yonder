@@ -327,7 +327,11 @@ translation_backend = "google-web"
 # Prefer YONDER_CONTENT__GOOGLE_TRANSLATE_API_KEY / YONDER_CONTENT__DEEPL_API_KEY.
 # google_translate_api_key = ""
 # deepl_api_key = ""
+# DeepL endpoint override — defaults to the free tier
+# (https://api-free.deepl.com); pro keys use https://api.deepl.com.
+# deepl_api_url = "https://api.deepl.com"
 # libretranslate_url = "https://translate.example.com"
+# libretranslate_api_key = ""
 # text/plain | text/markdown
 default_post_content_type = "text/plain"
 # Fetch Open Graph metadata for the first link of a status.

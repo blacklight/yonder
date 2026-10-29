@@ -456,6 +456,10 @@
     "cwShow": "Mehr anzeigen",
     "cwHide": "Weniger anzeigen",
     "showSensitive": "Sensible Inhalte — Klicken zum Anzeigen",
+    "translate": "Übersetzen",
+    "translating": "Übersetzen…",
+    "translatedFrom": "Aus dem {from} übersetzt über {provider}",
+    "showOriginal": "Original anzeigen",
     "altText": "Alt-Text",
     "media": {
       "view": "Medien ansehen",

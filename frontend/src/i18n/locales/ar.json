@@ -456,6 +456,10 @@
     "cwShow": "إظهار المزيد",
     "cwHide": "إظهار أقل",
     "showSensitive": "محتوى حساس — انقر للإظهار",
+    "translate": "ترجمة",
+    "translating": "جارٍ الترجمة…",
+    "translatedFrom": "مُترجم من {from} عبر {provider}",
+    "showOriginal": "عرض الأصل",
     "altText": "النص البديل",
     "media": {
       "view": "عرض الوسائط",

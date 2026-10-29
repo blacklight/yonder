@@ -29,6 +29,7 @@ pub mod search;
 pub mod social;
 pub mod tags;
 pub mod timelines;
+pub mod translation;
 pub mod users;
 
 pub use error::{Error, Result};

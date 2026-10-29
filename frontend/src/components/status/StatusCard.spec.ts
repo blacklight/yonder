@@ -392,6 +392,117 @@ describe("StatusCard", () => {
     }
   });
 
+  it("translates a foreign-language public status and toggles back", async () => {
+    const { useInstanceStore } = await import("@/stores/instance");
+    useInstanceStore().entity = {
+      configuration: { translation: { enabled: true } },
+    };
+    useAuthStore().setToken("t");
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/translate")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: "<p>translated hello</p>",
+              detected_source_language: "de",
+              media_attachments: [{ id: "9", description: "alt-en" }],
+              poll: { id: "5", options: [{ title: "yes-en" }] },
+              provider: "TestTranslate",
+              spoiler_text: "spoiler-en",
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+    const { wrapper } = mountWith(StatusCard, {
+      props: {
+        status: status({
+          language: "de",
+          spoiler_text: "spoiler-de",
+          media_attachments: [
+            {
+              id: "9",
+              type: "image",
+              url: "https://x.test/i.png",
+              preview_url: null,
+              remote_url: null,
+              description: "alt-de",
+              blurhash: null,
+            },
+          ],
+          poll: {
+            id: "5",
+            expires_at: null,
+            expired: false,
+            multiple: false,
+            votes_count: 0,
+            voters_count: 0,
+            voted: false,
+            own_votes: [],
+            options: [{ title: "yes-de", votes_count: 0 }],
+          },
+        }),
+      },
+    });
+    await flushPromises();
+    const btn = wrapper.get("[data-testid='translate']");
+    expect(btn.text()).toContain("Translate");
+    await btn.trigger("click");
+    await flushPromises();
+
+    const call = spy.mock.calls.find(([i]) =>
+      String(i instanceof Request ? i.url : i).includes("/translate"),
+    );
+    expect(call).toBeTruthy();
+    expect(String(call![0] instanceof Request ? call![0].url : call![0])).toBe(
+      "/api/v1/statuses/1/translate",
+    );
+    expect(JSON.parse(String(call![1]?.body))).toEqual({ lang: "en" });
+
+    // Body, CW, poll options and alt text all swap to the translation.
+    expect(wrapper.find(".status-card__content").text()).toBe(
+      "translated hello",
+    );
+    expect(wrapper.text()).toContain("spoiler-en");
+    expect(wrapper.text()).toContain("yes-en");
+    expect(wrapper.find(".status-media img").attributes("alt")).toContain(
+      "alt-en",
+    );
+    expect(wrapper.text()).toContain("TestTranslate");
+
+    await wrapper.get("[data-testid='show-original']").trigger("click");
+    expect(wrapper.find(".status-card__content").text()).toBe("hello");
+    expect(wrapper.get("[data-testid='translate']").exists()).toBe(true);
+  });
+
+  it("hides translate when not eligible", async () => {
+    const { useInstanceStore } = await import("@/stores/instance");
+    const store = useInstanceStore();
+    const cases = [
+      // Same language as the interface.
+      [{ language: "en", visibility: "public" }, true, false],
+      // No declared language.
+      [{ language: null, visibility: "public" }, true, false],
+      // Foreign but the instance disabled translation.
+      [{ language: "de", visibility: "public" }, false, false],
+      // Foreign private/direct — visible to the viewer, so offered.
+      [{ language: "de", visibility: "private" }, true, true],
+      [{ language: "de", visibility: "direct" }, true, true],
+    ] as const;
+    for (const [over, enabled, expected] of cases) {
+      store.entity = { configuration: { translation: { enabled } } };
+      const { wrapper } = mountWith(StatusCard, {
+        props: { status: status(over) },
+      });
+      await flushPromises();
+      expect(wrapper.find("[data-testid='translate']").exists()).toBe(expected);
+      wrapper.unmount();
+    }
+  });
+
   it("react/unreact via picker and existing chips", async () => {
     useAuthStore().setToken("t");
     const spy = mockApi(200, {});

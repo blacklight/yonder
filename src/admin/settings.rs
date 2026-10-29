@@ -41,6 +41,7 @@ const SENSITIVE_KEYS: &[&str] = &[
     "http.vapid_private_key",
     "content.google_translate_api_key",
     "content.deepl_api_key",
+    "content.libretranslate_api_key",
     "media.s3_access_key",
     "media.s3_secret_key",
 ];

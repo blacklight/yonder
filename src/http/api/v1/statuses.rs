@@ -4,13 +4,15 @@
 //! pipeline.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
-    extract::{Path, Request, State},
+    extract::{Path, Query, Request, State},
     http::header,
     response::Json,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::{
     auth::scopes::require_scope,
@@ -25,6 +27,7 @@ use crate::{
         polls::PollParams,
         PostContext,
     },
+    translation::{self, Item, ItemFormat},
     Error, Result,
 };
 
@@ -219,6 +222,213 @@ pub async fn delete_status(
     let entity = entity::status_entity(&ctx, &before, Some(auth.account_id)).await?;
     posts::create::delete_status(&ctx, auth.account_id, id).await?;
     Ok(Json(entity))
+}
+
+/// `POST /api/v1/statuses/{id}/translate` — the Mastodon-compatible
+/// Translation entity. `can_see` is the only audience gate: the admin
+/// chose the backend (which may be a self-hosted LibreTranslate), so
+/// gated content is sent to it just like Mastodon sends public posts.
+/// The target language is `lang` (query or body) → the viewer's
+/// interface locale → `i18n.fallback_locale`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/statuses/{id}/translate",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    request_body(content_type = "application/json", content = TranslateSchema),
+    responses(
+        (status = 200, description = "The translation"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "Scope gate", body = crate::error::ErrorBody),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+        (status = 422, description = "Not configured or bad lang", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn translate(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Query(query): Query<TranslateQuery>,
+    Path(id): Path<i64>,
+    request: Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:statuses")?;
+    let config = state.config().clone();
+    if !translation::enabled(&config.content) {
+        return Err(Error::Validation(
+            "translation is not configured on this server".into(),
+        ));
+    }
+    let ctx = PostContext::new(&state);
+    let status = posts::load(&ctx.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !posts::can_see(&ctx.db, &status, Some(auth.account_id)).await? {
+        return Err(Error::NotFound("status".into()));
+    }
+    let body_lang = translate_body_lang(request).await?;
+    let target = match query.lang.or(body_lang) {
+        Some(lang) => {
+            // Loose BCP-47 — `en`, `pt-BR`, `zh-Hant`; anything else
+            // is a client bug, not a backend request.
+            if lang.len() > 35
+                || !lang
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(Error::Validation("invalid lang".into()));
+            }
+            lang
+        }
+        None => crate::users::settings::load(&state.db, auth.user_id)
+            .await?
+            .locale
+            .unwrap_or_else(|| config.i18n.fallback_locale.clone()),
+    };
+
+    // The same HTML the Status entity renders — translating it keeps
+    // mention/hashtag links intact through tag-aware backends.
+    let content = status
+        .content_html
+        .clone()
+        .unwrap_or_else(|| pubby_sdk::content::html_escape(&status.content));
+    let spoiler = status
+        .spoiler_text
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let poll_options: Vec<String> = match status.poll_id {
+        Some(pid) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT title FROM poll_options WHERE poll_id = $1 ORDER BY idx",
+            )
+            .bind(pid)
+            .fetch_all(&ctx.db)
+            .await?
+        }
+        None => Vec::new(),
+    };
+    let media: Vec<(i64, String)> = sqlx::query_as::<_, (i64, String)>(
+        "SELECT id, description FROM media_attachments \
+         WHERE status_id = $1 AND description <> '' ORDER BY id",
+    )
+    .bind(id)
+    .fetch_all(&ctx.db)
+    .await?;
+
+    // One Item per string, in assembly order: content, spoiler, poll
+    // options, media descriptions.
+    let mut items = vec![Item {
+        text: content,
+        format: ItemFormat::Html,
+    }];
+    if let Some(s) = &spoiler {
+        items.push(Item {
+            text: s.clone(),
+            format: ItemFormat::Plain,
+        });
+    }
+    items.extend(poll_options.iter().cloned().map(|text| Item {
+        text,
+        format: ItemFormat::Plain,
+    }));
+    items.extend(media.iter().map(|(_, d)| Item {
+        text: d.clone(),
+        format: ItemFormat::Plain,
+    }));
+
+    // Edits (body, CW) and alt-text updates change the source — the
+    // fingerprint invalidates stale entries without a schema version.
+    let fingerprint = {
+        let mut h = Sha256::new();
+        for item in &items {
+            h.update(item.text.as_bytes());
+            h.update([0]);
+        }
+        hex::encode(h.finalize())
+    };
+    let cache_key = format!("translate:{}:{}:{}", id, target, &fingerprint[..16]);
+    const TRANSLATE_TTL: Duration = Duration::from_secs(24 * 3600);
+    let poll_n = poll_options.len();
+    let translated = state
+        .cache
+        .get_or_load(&cache_key, TRANSLATE_TTL, || async {
+            translation::translate_all(&config, &items, &target)
+                .await
+                .map(|o| (o.texts, o.detected_language, o.provider.to_string()))
+        })
+        .await?;
+
+    let mut texts = translated.0.into_iter();
+    let content_t = texts.next().unwrap_or_default();
+    let spoiler_t = spoiler.map(|_| texts.next().unwrap_or_default());
+    let poll_t: Vec<String> = (0..poll_n)
+        .map(|_| texts.next().unwrap_or_default())
+        .collect();
+    let media_t: Vec<String> = texts.collect();
+    debug_assert_eq!(poll_t.len(), poll_n);
+    debug_assert_eq!(media_t.len(), media.len());
+
+    Ok(Json(json!({
+        "content": content_t,
+        "detected_source_language": translated.1,
+        "media_attachments": media
+            .iter()
+            .zip(media_t)
+            .map(|((mid, _), description)| json!({
+                "id": mid.to_string(),
+                "description": description,
+            }))
+            .collect::<Vec<_>>(),
+        "poll": match status.poll_id {
+            Some(pid) => json!({
+                "id": pid.to_string(),
+                "options": poll_t.into_iter().map(|title| json!({"title": title})).collect::<Vec<_>>(),
+            }),
+            None => Value::Null,
+        },
+        "provider": translated.2.as_str(),
+        "spoiler_text": spoiler_t.unwrap_or_default(),
+    })))
+}
+
+/// `lang` may arrive as a query param or inside the body (JSON or
+/// form — Mastodon clients differ).
+#[derive(Debug, serde::Deserialize)]
+pub struct TranslateQuery {
+    pub lang: Option<String>,
+}
+
+async fn translate_body_lang(request: Request) -> Result<Option<String>> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = axum::body::to_bytes(request.into_body(), 64 * 1024)
+        .await
+        .map_err(|e| Error::Validation(format!("failed to read body: {e}")))?;
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if content_type.starts_with("application/x-www-form-urlencoded") {
+        Ok(url::form_urlencoded::parse(&bytes)
+            .find(|(k, _)| k == "lang")
+            .map(|(_, v)| v.into_owned()))
+    } else {
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+        Ok(body
+            .get("lang")
+            .and_then(|v| v.as_str())
+            .map(str::to_string))
+    }
+}
+
+/// OpenAPI shape of the translate body.
+#[derive(Debug, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct TranslateSchema {
+    /// BCP-47 target language.
+    pub lang: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

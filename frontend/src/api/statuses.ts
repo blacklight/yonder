@@ -9,6 +9,7 @@ import type {
   StatusContext,
   StatusCreateBody,
   StatusVisibility,
+  Translation,
 } from "./entities";
 
 /** Cursor/limit query shared by every timeline endpoint. */
@@ -73,6 +74,19 @@ export function getStatus(id: string): Promise<Status> {
 export function getStatusContext(id: string): Promise<StatusContext> {
   return request<StatusContext>({
     path: `/statuses/${encodeURIComponent(id)}/context`,
+  });
+}
+
+/** `POST /api/v1/statuses/{id}/translate` — translate into `lang`
+ * (BCP-47). Public/unlisted statuses only, per the backend. */
+export function translateStatus(
+  id: string,
+  lang: string,
+): Promise<Translation> {
+  return request<Translation>({
+    path: `/statuses/${encodeURIComponent(id)}/translate`,
+    method: "POST",
+    body: { lang },
   });
 }
 

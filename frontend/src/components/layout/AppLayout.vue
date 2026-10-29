@@ -9,10 +9,9 @@ import MobileMenu from "./MobileMenu.vue";
 import QuoteComposeModal from "@/components/compose/QuoteComposeModal.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
-import { getInstance } from "@/api/instance";
-import type { InstanceEntity } from "@/api/entities";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
+import { useInstanceStore } from "@/stores/instance";
 import { useNotificationsStore } from "@/stores/notifications";
 import { useConversationsStore } from "@/stores/conversations";
 
@@ -21,6 +20,7 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const compose = useComposeStore();
+const instance = useInstanceStore();
 const notifications = useNotificationsStore();
 const conversations = useConversationsStore();
 const { resolvedMode, toggle } = useTheme();
@@ -38,13 +38,10 @@ const SOURCE_URL = "https://git.platypush.tech/blacklight/yonder";
 
 const menuOpen = ref(false);
 const searchQuery = ref("");
-const instance = ref<InstanceEntity | null>(null);
-const instanceTitle = computed(() => instance.value?.title ?? null);
+const instanceTitle = computed(() => instance.entity?.title ?? null);
 
 onMounted(() => {
-  void getInstance()
-    .then((i) => (instance.value = i))
-    .catch(() => {});
+  void instance.ensure();
   notifications.start();
   conversations.start();
 });
@@ -563,11 +560,11 @@ function clearSearch(which: "sidebar" | "aside") {
           >
         </div>
         <div class="layout__meta">
-          <span v-if="instance?.version" class="layout__meta-version">{{
-            instance.version
+          <span v-if="instance.entity?.version" class="layout__meta-version">{{
+            instance.entity.version
           }}</span>
-          <span v-if="instance?.domain" class="layout__meta-domain">{{
-            instance.domain
+          <span v-if="instance.entity?.domain" class="layout__meta-domain">{{
+            instance.entity.domain
           }}</span>
         </div>
         <nav class="layout__meta-links" :aria-label="t('footer.links')">

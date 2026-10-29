@@ -924,6 +924,7 @@
     "dm": "Direct message",
     "note": "Note",
     "lists": "Add to list",
+    "openOnInstance": "Open on {domain}",
     "hideBoosts": "Hide boosts",
     "showBoosts": "Show boosts",
     "mute": "Mute",

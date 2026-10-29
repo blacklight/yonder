@@ -1,15 +1,27 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { flushPromises } from "@vue/test-utils";
+import { DOMWrapper, flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
+import { useAuthStore } from "@/stores/auth";
 import ProfilePage from "./ProfilePage.vue";
 import { ApiError } from "@/api/errors";
 import type { Account } from "@/api/entities";
 
 vi.mock("@/api/accounts", async (orig) => {
   const m = await orig<typeof import("@/api/accounts")>();
-  return { ...m, lookup: vi.fn(), accountStatuses: vi.fn() };
+  return {
+    ...m,
+    lookup: vi.fn(),
+    accountStatuses: vi.fn(),
+    getRelationships: vi.fn(),
+  };
 });
-import { lookup, accountStatuses } from "@/api/accounts";
+import { lookup, accountStatuses, getRelationships } from "@/api/accounts";
+
+// The menu list teleports to <body> — query it at document level.
+const menuItems = () =>
+  [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].map(
+    (el) => new DOMWrapper(el),
+  );
 
 function account(partial: Partial<Account>): Account {
   return {
@@ -47,6 +59,8 @@ describe("ProfilePage", () => {
     vi.mocked(lookup).mockReset();
     vi.mocked(accountStatuses).mockReset();
     vi.mocked(accountStatuses).mockResolvedValue({ items: [] });
+    vi.mocked(getRelationships).mockReset();
+    vi.mocked(getRelationships).mockResolvedValue([]);
     document.title = "";
   });
 
@@ -154,6 +168,59 @@ describe("ProfilePage", () => {
     expect(link.attributes("href")).toBe("mailto:alice@example.org");
     expect(link.text()).toBe("alice@example.org");
     expect(link.attributes("target")).toBeUndefined();
+  });
+
+  it("offers 'Open on <domain>' for remote accounts, opening their url", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        acct: "alice@example.org",
+        url: "https://example.org/@alice",
+      }),
+    );
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const item = menuItems().find((i) =>
+      i.text().includes("Open on example.org"),
+    );
+    expect(item).toBeDefined();
+    await item!.trigger("click");
+    await flushPromises();
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://example.org/@alice",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("has no 'Open on' entry for local accounts", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".menu__trigger").trigger("click");
+    expect(menuItems().some((i) => i.text().includes("Open on"))).toBe(false);
+  });
+
+  it("marks destructive menu items as danger", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice@example.org" }));
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const items = menuItems();
+    const byText = (s: string) => items.find((i) => i.text().trim() === s);
+    for (const label of ["Mute", "Block", "Block domain", "Report"]) {
+      expect(byText(label)?.classes()).toContain("menu__item--danger");
+    }
+    for (const label of ["Mention", "Note", "Open on example.org"]) {
+      expect(byText(label)?.classes()).not.toContain("menu__item--danger");
+    }
   });
 
   it("shows a verified marker on fields with verified_at", async () => {

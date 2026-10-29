@@ -144,12 +144,19 @@ const menuItems = computed<MenuItem[]>(() => {
   const r = rel.value;
   const a = account.value;
   if (!a || r?.blocked_by) return [];
+  const domain = a.acct.split("@")[1];
   const items: MenuItem[] = [
     { id: "mention", label: t("profile.mention"), icon: "at" },
     { id: "dm", label: t("profile.dm"), icon: "envelope" },
     { id: "note", label: t("profile.note"), icon: "note-sticky" },
     { id: "lists", label: t("profile.lists"), icon: "list-ul" },
   ];
+  if (domain && safeHttpUrl(a.url))
+    items.push({
+      id: "open-remote",
+      label: t("profile.openOnInstance", { domain }),
+      icon: "arrow-up-right-from-square",
+    });
   if (r?.following)
     items.push({
       id: "hide-boosts",
@@ -164,31 +171,41 @@ const menuItems = computed<MenuItem[]>(() => {
       id: "mute",
       label: r?.muting ? t("profile.unmute") : t("profile.mute"),
       icon: "volume-xmark",
+      danger: true,
     },
     {
       id: "block",
       label: r?.blocking ? t("profile.unblock") : t("profile.block"),
       icon: "ban",
+      danger: true,
     },
   );
-  if (a.acct.includes("@"))
+  if (domain)
     items.push({
       id: "domain",
       label: t("profile.blockDomain"),
       icon: "globe",
+      danger: true,
     });
-  items.push({ id: "report", label: t("profile.report"), icon: "flag" });
+  items.push({
+    id: "report",
+    label: t("profile.report"),
+    icon: "flag",
+    danger: true,
+  });
   if (auth.isStaff && !isOwn.value) {
     items.push(
       {
         id: "admin-limit",
         label: t("profile.adminLimit"),
         icon: "comment-slash",
+        danger: true,
       },
       {
         id: "admin-suspend",
         label: t("profile.adminSuspend"),
         icon: "user-slash",
+        danger: true,
       },
     );
   }
@@ -198,6 +215,7 @@ const menuItems = computed<MenuItem[]>(() => {
         id: "admin-delete",
         label: t("profile.adminDelete"),
         icon: "user-xmark",
+        danger: true,
       },
       {
         id: "admin-mod",
@@ -362,6 +380,11 @@ async function run(id: string) {
       case "lists":
         await toggleListMembership();
         break;
+      case "open-remote": {
+        const url = safeHttpUrl(a.url);
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+        break;
+      }
       case "hide-boosts":
         await follow(a.id, {
           reblogs: !(rel.value?.showing_reblogs !== false),

@@ -8,6 +8,8 @@ export interface MenuItem {
   label: string;
   icon?: IconProp;
   disabled?: boolean;
+  /** Destructive actions render in the danger color. */
+  danger?: boolean;
 }
 
 const props = defineProps<{ items: MenuItem[]; label: string }>();
@@ -175,6 +177,7 @@ onUnmounted(() => {
           :class="{
             'menu__item--active': i === activeIndex,
             'menu__item--disabled': item.disabled,
+            'menu__item--danger': item.danger,
           }"
           :aria-disabled="item.disabled || undefined"
           @click="choose(item, i)"
@@ -248,5 +251,9 @@ onUnmounted(() => {
 .menu__item--disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+.menu__item--danger,
+.menu__item--danger .menu__icon {
+  color: var(--danger);
 }
 </style>

@@ -937,6 +937,7 @@
     "dm": "Direktnachricht",
     "note": "Notiz",
     "lists": "Zur Liste hinzufügen",
+    "openOnInstance": "Auf {domain} öffnen",
     "hideBoosts": "Geteilte ausblenden",
     "showBoosts": "Geteilte zeigen",
     "mute": "Stummschalten",

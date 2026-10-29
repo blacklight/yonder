@@ -937,6 +937,7 @@
     "dm": "Mensaje directo",
     "note": "Nota",
     "lists": "Añadir a lista",
+    "openOnInstance": "Abrir en {domain}",
     "hideBoosts": "Ocultar impulsos",
     "showBoosts": "Mostrar impulsos",
     "mute": "Silenciar",

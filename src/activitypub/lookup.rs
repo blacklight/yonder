@@ -164,7 +164,12 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
     };
     let private_key = pubby_sdk::crypto::keys::load_private_key(pem)
         .map_err(|e| Error::Validation(format!("invalid instance actor key: {e}")))?;
-    let key_id = format!("{}#main-key", actor.actor_id);
+    // Sign as the instance handler's canonical actor (`{base}/ap/actor`),
+    // not the account row's actor_id: WebFinger advertises the handler's
+    // URI as the `self` link, and remote instances (Mastodon
+    // authorized_fetch) reject a keyId that dereferences to a *different*
+    // actor URI than the WebFinger loopback returns.
+    let key_id = ap.multi.instance.key_id.clone();
     let user_agent = ap.core.config.federation.user_agent.clone();
     let http = http_client(ap);
     let url = url.to_string();

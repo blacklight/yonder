@@ -237,6 +237,17 @@ async fn upsert_remote_account(
     };
     let profile_fields = remote_profile_fields(actor_data, &previous_fields);
 
+    // The upsert keeps the row's existing username: a bare stub's
+    // last-URL-segment guess (e.g. the numeric id in `/ap/users/<id>`
+    // actor URIs) would otherwise survive forever, while renaming
+    // unconditionally inside the INSERT could collide with a second
+    // `accounts` row already owning the claimed `(domain, username)`
+    // (a duplicate alias for the same person via a different actor
+    // URI scheme). The follow-up guarded rename applies only what the
+    // document actually claims (`preferredUsername`), only when free.
+    let preferred_username =
+        doc_str(actor_data, "preferredUsername").map(|u| u.chars().take(200).collect::<String>());
+
     let result = sqlx::query_scalar::<_, i64>(
         r#"
         INSERT INTO accounts (
@@ -290,6 +301,32 @@ async fn upsert_remote_account(
     .await
     .map(Some)
     .map_err(db_err);
+    // Enrichment claim applied: sync `username` to the document's
+    // `preferredUsername` (skipping stub guesses from partial docs —
+    // `preferred_username` is None then). The NOT EXISTS guard keeps a
+    // claimed name already owned by another `accounts` row (a
+    // duplicate alias via a different actor URI) rather than failing
+    // the whole upsert on the unique index.
+    if let (Ok(Some(account_id)), Some(preferred)) = (&result, &preferred_username) {
+        if let Err(e) = sqlx::query(
+            "UPDATE accounts SET username = $2 \
+             WHERE id = $1 AND username IS DISTINCT FROM $2 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM accounts o \
+                   WHERE o.id <> $1 \
+                     AND lower(o.username) = lower($2) \
+                     AND lower(COALESCE(o.domain, '')) = lower(COALESCE($3, '')) \
+               )",
+        )
+        .bind(account_id)
+        .bind(preferred)
+        .bind(&domain)
+        .execute(pool)
+        .await
+        {
+            tracing::warn!(actor = %actor_id, error = %e, "remote username sync failed");
+        }
+    }
     // Epic 20 — actor-level `Emoji` tags (bio/display-name emoji)
     // recorded best-effort, same as status-level tags in
     // `posts::remote`. Never fails the upsert.

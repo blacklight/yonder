@@ -354,6 +354,181 @@ impl StatusBatch {
             })
             .collect();
 
+        // A boost's inner status may itself carry a quote — its target
+        // renders inside the reblog card (the one place a second-hop
+        // original is reachable), so those rows and their per-status
+        // projection join the batch too. Bounded at this one extra hop:
+        // a quote inside a quote never renders.
+        let grand_ids: Vec<i64> = originals
+            .values()
+            .filter_map(|o| o.quote_of_id)
+            .filter(|id| !originals.contains_key(id) && !all_ids.contains(id))
+            .collect();
+        let mut originals = originals;
+        let (
+            mut media_rows,
+            mut mention_rows,
+            mut tag_rows,
+            mut card_rows,
+            mut reaction_rows,
+            mut faved,
+            mut marked,
+            mut boosted,
+        ) = (
+            media_rows,
+            mention_rows,
+            tag_rows,
+            card_rows,
+            reaction_rows,
+            faved,
+            marked,
+            boosted,
+        );
+        if !grand_ids.is_empty() {
+            let grand_statuses_f = async {
+                sqlx::query(&format!(
+                    "SELECT {STATUS_COLS} FROM statuses WHERE id = ANY($1) AND NOT tombstone"
+                ))
+                .bind(&grand_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_media_f = async {
+                sqlx::query(&format!(
+                    "SELECT {MEDIA_COLS} FROM media_attachments \
+                     WHERE status_id = ANY($1) ORDER BY status_id, id"
+                ))
+                .bind(&grand_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_mentions_f = async {
+                sqlx::query(
+                    "SELECT sm.status_id, a.id, a.username, a.domain, a.url, a.actor_id \
+                     FROM status_mentions sm JOIN accounts a ON a.id = sm.account_id \
+                     WHERE sm.status_id = ANY($1) ORDER BY sm.status_id, a.id",
+                )
+                .bind(&grand_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_tags_f = async {
+                sqlx::query_as::<_, (i64, String)>(
+                    "SELECT st.status_id, t.name FROM status_tags st JOIN tags t ON t.id = st.tag_id \
+                     WHERE st.status_id = ANY($1) ORDER BY st.status_id, t.name",
+                )
+                .bind(&grand_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_cards_f = async {
+                sqlx::query(
+                    "SELECT status_id, url, title, description, image_path, author_name, author_url, \
+                            provider_name, provider_url FROM preview_cards \
+                     WHERE status_id = ANY($1) ORDER BY status_id, id",
+                )
+                .bind(&grand_ids)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_reactions_f = async {
+                sqlx::query_as::<_, (i64, String, Option<i64>, i64, Option<bool>)>(
+                    "SELECT status_id, emoji, custom_emoji_id, count(*)::bigint, \
+                            CASE WHEN $2::bigint IS NULL THEN NULL \
+                                 ELSE bool_or(account_id = $2) END AS me \
+                     FROM emoji_reactions WHERE status_id = ANY($1) \
+                     GROUP BY status_id, emoji, custom_emoji_id \
+                     ORDER BY status_id, min(created_at)",
+                )
+                .bind(&grand_ids)
+                .bind(viewer)
+                .fetch_all(db)
+                .await
+                .map_err(to_err)
+            };
+            let grand_faved_f = async {
+                match viewer {
+                    Some(v) => sqlx::query_scalar::<_, i64>(
+                        "SELECT status_id FROM favourites \
+                         WHERE account_id = $1 AND status_id = ANY($2)",
+                    )
+                    .bind(v)
+                    .bind(&grand_ids)
+                    .fetch_all(db)
+                    .await
+                    .map_err(to_err),
+                    None => Ok(Vec::new()),
+                }
+            };
+            let grand_marked_f = async {
+                match viewer {
+                    Some(v) => sqlx::query_scalar::<_, i64>(
+                        "SELECT status_id FROM bookmarks \
+                         WHERE account_id = $1 AND status_id = ANY($2)",
+                    )
+                    .bind(v)
+                    .bind(&grand_ids)
+                    .fetch_all(db)
+                    .await
+                    .map_err(to_err),
+                    None => Ok(Vec::new()),
+                }
+            };
+            let grand_boosted_f = async {
+                match viewer {
+                    Some(v) => sqlx::query_scalar::<_, i64>(
+                        "SELECT reblog_of_id FROM statuses WHERE account_id = $1 \
+                         AND reblog_of_id = ANY($2) AND NOT tombstone",
+                    )
+                    .bind(v)
+                    .bind(&grand_ids)
+                    .fetch_all(db)
+                    .await
+                    .map_err(to_err),
+                    None => Ok(Vec::new()),
+                }
+            };
+            let (
+                grand_statuses,
+                g_media,
+                g_mentions,
+                g_tags,
+                g_cards,
+                g_reactions,
+                g_faved,
+                g_marked,
+                g_boosted,
+            ) = tokio::try_join!(
+                grand_statuses_f,
+                grand_media_f,
+                grand_mentions_f,
+                grand_tags_f,
+                grand_cards_f,
+                grand_reactions_f,
+                grand_faved_f,
+                grand_marked_f,
+                grand_boosted_f
+            )?;
+            for r in &grand_statuses {
+                let s = super::row_to_status(r);
+                originals.insert(s.id, s);
+            }
+            media_rows.extend(g_media);
+            mention_rows.extend(g_mentions);
+            tag_rows.extend(g_tags);
+            card_rows.extend(g_cards);
+            reaction_rows.extend(g_reactions);
+            faved.extend(g_faved);
+            marked.extend(g_marked);
+            boosted.extend(g_boosted);
+            all_ids.extend(grand_ids);
+        }
+
         // ── Wave 2: inputs that depend on the originals ──
         let mut author_ids: Vec<i64> = rows
             .iter()
@@ -830,10 +1005,11 @@ impl StatusBatch {
             .unwrap_or(&self.empty_map)
     }
 
-    /// The Mastodon-4.4 quote block from batch state — the depth-0
-    /// `quoted_status` renders through [`Self::render`]; past one level
-    /// it is `null`, exactly as `interactions::entity::quote_json`
-    /// produced.
+    /// The Mastodon-4.4 quote block from batch state — `quoted_status`
+    /// renders through [`Self::render`] for entry-level statuses only
+    /// (`depth == 0`): the quote inside a reblog's inner status still
+    /// renders, but a quote inside a quote does not, as
+    /// `interactions::entity::quote_json` produces.
     fn quote_block(
         &self,
         ctx: &PostContext,
@@ -845,7 +1021,7 @@ impl StatusBatch {
             (Some(qid), _) => {
                 let quoted_status = match self.originals.get(&qid) {
                     Some(q) if depth == 0 && self.visible.contains(&qid) => {
-                        Some(self.render(ctx, q, viewer, 1)?)
+                        Some(self.render(ctx, q, viewer, depth + 1, false)?)
                     }
                     _ => None,
                 };
@@ -865,14 +1041,17 @@ impl StatusBatch {
     }
 
     /// Assemble one Status entity purely from batch state. `depth`
-    /// bounds reblog/quote nesting to one level — [`Self::render`]
-    /// calls itself at depth 1 and cannot go deeper.
+    /// counts *quote* nesting — a reblog's inner status renders at the
+    /// same depth (a boost doesn't consume quote budget, so its own
+    /// quote still renders), while `in_reblog` marks the inner status
+    /// so a reblog-of-reblog chain can't recurse.
     fn render(
         &self,
         ctx: &PostContext,
         status: &StatusRow,
         viewer: Option<i64>,
         depth: u8,
+        in_reblog: bool,
     ) -> Result<Value> {
         let base_url = ctx.base_url();
         let account = self
@@ -911,32 +1090,36 @@ impl StatusBatch {
         });
         let quote_block = self.quote_block(ctx, status, viewer, depth)?;
         let emoji_reactions = self.reactions.get(&status.id).cloned().unwrap_or_default();
-        let (reblog, content, spoiler, media_json, poll_json) = match (status.reblog_of_id, depth) {
-            (Some(orig), 0) => {
-                let nested = match self.originals.get(&orig) {
-                    Some(s) if self.visible.contains(&orig) => self.render(ctx, s, viewer, 1)?,
-                    _ => Value::Null,
-                };
-                // Mastodon renders "" for the boost wrapper's own text.
-                (
-                    nested,
-                    Value::String(String::new()),
-                    Value::String(String::new()),
-                    Vec::new(),
+        let reblog_inner = !in_reblog && depth == 0;
+        let (reblog, content, spoiler, media_json, poll_json) =
+            match (status.reblog_of_id, reblog_inner) {
+                (Some(orig), true) => {
+                    let nested = match self.originals.get(&orig) {
+                        Some(s) if self.visible.contains(&orig) => {
+                            self.render(ctx, s, viewer, depth, true)?
+                        }
+                        _ => Value::Null,
+                    };
+                    // Mastodon renders "" for the boost wrapper's own text.
+                    (
+                        nested,
+                        Value::String(String::new()),
+                        Value::String(String::new()),
+                        Vec::new(),
+                        Value::Null,
+                    )
+                }
+                _ => (
                     Value::Null,
-                )
-            }
-            _ => (
-                Value::Null,
-                Value::String(crate::emoji::render::substitute(&content, emoji_map)),
-                Value::String(crate::emoji::render::substitute(
-                    &status.spoiler_text.clone().unwrap_or_default(),
-                    emoji_map,
-                )),
-                media_json,
-                poll_json,
-            ),
-        };
+                    Value::String(crate::emoji::render::substitute(&content, emoji_map)),
+                    Value::String(crate::emoji::render::substitute(
+                        &status.spoiler_text.clone().unwrap_or_default(),
+                        emoji_map,
+                    )),
+                    media_json,
+                    poll_json,
+                ),
+            };
         Ok(json!({
             "id": status.id.to_string(),
             "uri": status.uri,
@@ -1031,11 +1214,11 @@ pub async fn status_entities(
     }
     let batch = StatusBatch::load(ctx, rows, viewer).await?;
     rows.iter()
-        .map(|s| batch.render(ctx, s, viewer, 0))
+        .map(|s| batch.render(ctx, s, viewer, 0, false))
         .collect()
 }
 
-/// `depth` bounds reblog/quote nesting to one level.
+/// `depth` counts quote nesting; reblog traversal doesn't consume it.
 /// `pub(crate)` — `interactions::entity::quote_json` recurses through
 /// it with `depth + 1`.
 pub(crate) async fn status_entity_inner(
@@ -1046,7 +1229,7 @@ pub(crate) async fn status_entity_inner(
 ) -> Result<Value> {
     StatusBatch::load(ctx, std::slice::from_ref(status), viewer)
         .await?
-        .render(ctx, status, viewer, depth)
+        .render(ctx, status, viewer, depth, false)
 }
 
 /// A `scheduled_statuses` row.

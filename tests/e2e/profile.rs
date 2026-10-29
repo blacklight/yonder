@@ -997,6 +997,75 @@ async fn rel_me_verification_marks_remote_fields() {
     assert!(fields[0]["verified_at"].is_null(), "{fields}");
 }
 
+/// A stub account created from an opaque actor URL (`/ap/users/<id>`,
+/// Mastodon's new scheme) gets its guessed numeric `username` replaced
+/// by the fetched document's `preferredUsername` — the enrichment
+/// upsert must sync the claimed name, not keep the stub guess.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_actor_fetch_syncs_username() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let base = format!("http://127.0.0.1:{port}");
+    let actor_url = format!("{base}/ap/users/999");
+    let doc = json!({
+        "id": actor_url,
+        "type": "Person",
+        "preferredUsername": "zed",
+        "url": format!("{base}/@zed"),
+        "inbox": format!("{base}/inbox"),
+    })
+    .to_string();
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new().route(
+                "/ap/users/999",
+                axum::routing::get(move || {
+                    let doc = doc.clone();
+                    async move { ([("content-type", "application/activity+json")], doc) }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+
+    // Bare stub first — the username is the last-segment guess (the
+    // same INSERT `upsert_remote_stub_row` makes).
+    let account_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ($1,$2,$3,$3,'') RETURNING id",
+    )
+    .bind("127.0.0.1")
+    .bind("999")
+    .bind(&actor_url)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let username: String = sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(username, "999");
+
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+    job.run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let username: String = sqlx::query_scalar("SELECT username FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(username, "zed");
+}
+
 /// Reading a remote profile with an unverified link field enqueues a
 /// `verify_profile_links` job — remote rows ingested before the job
 /// existed (or via `attachment`-less partial docs) get their check on

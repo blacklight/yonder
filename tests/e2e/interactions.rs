@@ -579,6 +579,60 @@ async fn quote_roundtrip() {
     assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+/// A boost of a quote-post must still render the inner status's
+/// `quoted_status` — the reblog's own nesting doesn't consume the
+/// quote budget, or the card falls back to "quoted post unavailable".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn boost_of_quote_renders_quoted_status() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    let carol = register(&env.app, "carol", "c@x.com").await;
+    let (target_id, _) = post(&env.app, &alice, "quote me", "public").await;
+
+    let (code, quote_post) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&bob),
+        Some(json!({"status": "thoughts", "quote_id": target_id})),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{quote_post}");
+    let quote_id = quote_post["id"].as_str().unwrap();
+
+    // Carol boosts bob's quote-post.
+    let (code, boost) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{quote_id}/reblog"),
+        Some(&carol),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{boost}");
+
+    // The boost wrapper embeds the inner status — and *its* quote
+    // still renders one level deep, target included.
+    let inner = &boost["reblog"];
+    assert_eq!(inner["id"].as_str().unwrap(), quote_id);
+    assert_eq!(inner["quote"]["state"], "accepted", "{boost}");
+    assert_eq!(
+        inner["quote"]["quoted_status"]["id"].as_str().unwrap(),
+        target_id,
+        "{boost}"
+    );
+
+    // …but the quote inside the quote stays suppressed (one level).
+    assert!(
+        inner["quote"]["quoted_status"]["quote"].is_null()
+            || inner["quote"]["quoted_status"]["quote"]["quoted_status"].is_null()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn emoji_reactions_roundtrip() {
     let _permit = harness::acquire().await;

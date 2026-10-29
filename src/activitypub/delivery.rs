@@ -261,13 +261,31 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
             }
         }
 
-        let pem: Option<String> = sqlx::query_scalar(
-            "SELECT private_key_pem FROM accounts WHERE actor_id = $1 AND domain IS NULL",
-        )
-        .bind(&actor_id)
-        .fetch_optional(&ctx.db)
-        .await?
-        .flatten();
+        // The instance actor's activity.actor is its canonical handler
+        // URI (`{base}/ap/actor`), which matches no `accounts.actor_id` —
+        // resolve its key by username and sign with the handler's keyId
+        // (the URI WebFinger advertises). Per-user activities keep the
+        // `{actor_id}#main-key` shape, which already matches their handler.
+        let (pem, key_id) = if actor_id == self.ctx.multi.instance.actor_id {
+            let pem: Option<String> = sqlx::query_scalar(
+                "SELECT private_key_pem FROM accounts \
+                 WHERE username = $1 AND domain IS NULL",
+            )
+            .bind(actors::INSTANCE_USERNAME)
+            .fetch_optional(&ctx.db)
+            .await?
+            .flatten();
+            (pem, self.ctx.multi.instance.key_id.clone())
+        } else {
+            let pem: Option<String> = sqlx::query_scalar(
+                "SELECT private_key_pem FROM accounts WHERE actor_id = $1 AND domain IS NULL",
+            )
+            .bind(&actor_id)
+            .fetch_optional(&ctx.db)
+            .await?
+            .flatten();
+            (pem, format!("{actor_id}#main-key"))
+        };
         let Some(pem) = pem else {
             // The instance actor signs its own deliveries; a missing key
             // is unrecoverable — mark failed rather than retry forever.
@@ -283,7 +301,6 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
         };
         let private_key = pubby_sdk::crypto::keys::load_private_key(&pem)
             .map_err(|e| crate::Error::Internal(format!("bad actor key: {e}")))?;
-        let key_id = format!("{actor_id}#main-key");
         let http = http_client(&self.ctx);
         let user_agent = self.ctx.core.config.federation.user_agent.clone();
 

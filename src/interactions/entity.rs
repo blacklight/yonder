@@ -56,9 +56,9 @@ pub async fn viewer_flags(
 /// The Mastodon 4.4 quote block: `quote_id`, the `quote` object
 /// (`state` + `quoted_status` when the viewer can see it) and the
 /// `yonder` extension carrying the quote uri. `Null` for non-quotes.
-/// `depth` bounds nesting: past one level `quoted_status` renders
-/// `null` — quote cycles (remote-constructible via the pending-quote
-/// backfill) would otherwise recurse without bound.
+/// `depth` counts quote nesting: past the entry level `quoted_status`
+/// renders `null` — quote cycles (remote-constructible via the
+/// pending-quote backfill) would otherwise recurse without bound.
 pub async fn quote_json(
     ctx: &PostContext,
     status: &StatusRow,

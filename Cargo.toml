@@ -50,7 +50,7 @@ lettre = { version = "0.11", default-features = false, features = [
 # VAPID keypair generation for the admin "generate keys" action (epic
 # 22; push delivery itself lands in a later epic).
 p256 = { version = "0.14", features = ["ecdsa", "arithmetic", "getrandom"] }
-pubby-sdk = { version = "0.6.5", features = ["axum", "redis", "async"] }
+pubby-sdk = { version = "0.6.6", features = ["axum", "redis", "async"] }
 redis = "0.27"
 rsa = "0.9"
 scraper = { version = "0.27", features = ["atomic"] }

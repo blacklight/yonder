@@ -960,6 +960,7 @@
     "signInToView": "Sign in to view this remote profile.",
     "confirmTitle": "Are you sure?",
     "noteTitle": "Private note",
+    "notePlaceholder": "Only you can see this note",
     "loadError": "Could not load this profile.",
     "lastAdmin": "The last admin cannot be demoted."
   },

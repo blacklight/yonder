@@ -973,6 +973,7 @@
     "signInToView": "Accedi per vedere questo profilo remoto.",
     "confirmTitle": "Sei sicuro?",
     "noteTitle": "Nota privata",
+    "notePlaceholder": "Solo tu puoi vedere questa nota",
     "loadError": "Impossibile caricare questo profilo.",
     "lastAdmin": "Non puoi retrocedere l'ultimo amministratore."
   },

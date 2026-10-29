@@ -61,6 +61,8 @@ const showBoosts = ref(true);
 const confirmAction = ref<MenuItem | null>(null);
 const noteText = ref("");
 const noteOpen = ref(false);
+const noteSaving = ref(false);
+const noteError = ref<string | null>(null);
 const visitedIds = new Set<string>();
 const MAX_HOPS = 5;
 
@@ -374,8 +376,7 @@ async function run(id: string) {
         router.push("/compose");
         break;
       case "note":
-        noteText.value = rel.value?.note ?? "";
-        noteOpen.value = true;
+        openNote();
         break;
       case "lists":
         await toggleListMembership();
@@ -440,11 +441,25 @@ async function toggleListMembership() {
   else if (mine[0]) await removeListMembers(mine[0].id, [a.id]);
 }
 
+function openNote() {
+  noteText.value = rel.value?.note ?? "";
+  noteError.value = null;
+  noteOpen.value = true;
+}
+
 async function saveNote() {
-  if (!account.value) return;
-  await setNote(account.value.id, noteText.value);
-  noteOpen.value = false;
-  await refreshRel();
+  if (!account.value || noteSaving.value) return;
+  noteSaving.value = true;
+  noteError.value = null;
+  try {
+    await setNote(account.value.id, noteText.value);
+    noteOpen.value = false;
+    await refreshRel();
+  } catch {
+    noteError.value = t("common.error");
+  } finally {
+    noteSaving.value = false;
+  }
 }
 
 async function confirmRun() {
@@ -618,6 +633,18 @@ watch([tab, showReplies, showBoosts], () => {
             </dd>
           </template>
         </dl>
+        <div v-if="rel?.note" class="profile__note">
+          <div class="profile__note-head">
+            <h2 class="profile__note-title">
+              <FontAwesomeIcon icon="note-sticky" />
+              {{ t("profile.noteTitle") }}
+            </h2>
+            <Button variant="secondary" size="sm" @click="openNote">
+              {{ t("status.edit") }}
+            </Button>
+          </div>
+          <p class="profile__note-text">{{ rel.note }}</p>
+        </div>
       </header>
       <Tabs v-model="tab" :items="tabs" :label="t('profile.tabs')" />
       <div v-if="tab === 'posts'" class="profile__toggles">
@@ -654,8 +681,25 @@ watch([tab, showReplies, showBoosts], () => {
       :title="t('profile.noteTitle')"
       @close="noteOpen = false"
     >
-      <textarea v-model="noteText" rows="3" />
-      <Button @click="saveNote">{{ t("common.save") }}</Button>
+      <textarea
+        v-model="noteText"
+        class="profile__note-input"
+        rows="4"
+        maxlength="2000"
+        :placeholder="t('profile.notePlaceholder')"
+        :aria-label="t('profile.noteTitle')"
+      />
+      <p v-if="noteError" class="profile__note-error" role="alert">
+        {{ noteError }}
+      </p>
+      <template #footer>
+        <Button variant="secondary" @click="noteOpen = false">
+          {{ t("ui.cancel") }}
+        </Button>
+        <Button :loading="noteSaving" @click="saveNote">
+          {{ t("common.save") }}
+        </Button>
+      </template>
     </Modal>
   </main>
 </template>
@@ -815,5 +859,49 @@ watch([tab, showReplies, showBoosts], () => {
 .profile__field--verified a {
   font-weight: 600;
   margin-right: var(--space-2);
+}
+.profile__note {
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+.profile__note-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.profile__note-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.profile__note-text {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.profile__note-input {
+  display: block;
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+.profile__note-error {
+  margin: var(--space-2) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
 }
 </style>

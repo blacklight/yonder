@@ -973,6 +973,7 @@
     "signInToView": "Anmelden, um dieses entfernte Profil zu sehen.",
     "confirmTitle": "Bist du sicher?",
     "noteTitle": "Private Notiz",
+    "notePlaceholder": "Nur du kannst diese Notiz sehen",
     "loadError": "Profil konnte nicht geladen werden.",
     "lastAdmin": "Der letzte Administrator kann nicht herabgestuft werden."
   },

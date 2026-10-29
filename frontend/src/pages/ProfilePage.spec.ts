@@ -244,4 +244,78 @@ describe("ProfilePage", () => {
     expect(cells[1].classes()).not.toContain("profile__field--verified");
     expect(cells[1].find(".verified").exists()).toBe(false);
   });
+
+  it("renders the private note on the profile when one is set", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: false,
+        followed_by: false,
+        blocking: false,
+        muting: false,
+        note: "Met at FOSDEM",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice@example.org");
+    const note = wrapper.find(".profile__note");
+    expect(note.exists()).toBe(true);
+    expect(note.find(".profile__note-title").text()).toContain("Private note");
+    expect(note.find(".profile__note-text").text()).toBe("Met at FOSDEM");
+  });
+
+  it("hides the private note block when no note is set", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: false,
+        followed_by: false,
+        blocking: false,
+        muting: false,
+        note: "",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice@example.org");
+    expect(wrapper.find(".profile__note").exists()).toBe(false);
+  });
+
+  it("opens the note editor prefilled, with modal buttons in the footer", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: false,
+        followed_by: false,
+        blocking: false,
+        muting: false,
+        note: "Met at FOSDEM",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.find(".profile__note-head button").trigger("click");
+    const input = document.querySelector<HTMLTextAreaElement>(
+      ".modal__panel .profile__note-input",
+    );
+    expect(input?.value).toBe("Met at FOSDEM");
+    const buttons = [...document.querySelectorAll(".modal__footer .btn")].map(
+      (b) => b.textContent?.trim(),
+    );
+    expect(buttons).toEqual(["Cancel", "Save"]);
+  });
 });

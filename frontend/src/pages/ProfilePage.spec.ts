@@ -223,6 +223,32 @@ describe("ProfilePage", () => {
     }
   });
 
+  it("hides 'Make moderator' on remote profiles", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    auth.role = "admin";
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice@example.org" }));
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const items = menuItems();
+    expect(items.some((i) => i.text().includes("Make moderator"))).toBe(false);
+    expect(items.some((i) => i.text().includes("Delete account"))).toBe(true);
+  });
+
+  it("shows 'Make moderator' on local profiles for admins", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    auth.role = "admin";
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".menu__trigger").trigger("click");
+    expect(menuItems().some((i) => i.text().includes("Make moderator"))).toBe(
+      true,
+    );
+  });
+
   it("shows a verified marker on fields with verified_at", async () => {
     vi.mocked(lookup).mockResolvedValue(
       account({

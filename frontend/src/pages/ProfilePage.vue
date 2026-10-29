@@ -212,19 +212,20 @@ const menuItems = computed<MenuItem[]>(() => {
     );
   }
   if (auth.isAdmin && !isOwn.value) {
-    items.push(
-      {
-        id: "admin-delete",
-        label: t("profile.adminDelete"),
-        icon: "user-xmark",
-        danger: true,
-      },
-      {
+    items.push({
+      id: "admin-delete",
+      label: t("profile.adminDelete"),
+      icon: "user-xmark",
+      danger: true,
+    });
+    // Roles live on local accounts only — `set_role` 404s on remote
+    // rows (domain IS NULL guard), so offering it there can only fail.
+    if (!domain)
+      items.push({
         id: "admin-mod",
         label: t("profile.adminMakeMod"),
         icon: "user-shield",
-      },
-    );
+      });
   }
   return items;
 });

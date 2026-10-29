@@ -872,12 +872,16 @@ pub async fn update_profile(
     // Enqueue verification only when a link-valued field was added or
     // its target changed — an unrelated display-name edit shouldn't
     // re-fetch unchanged pages.
-    let previous_urls: HashSet<(String, String)> = previous_fields
+    // Identity is the (name, raw) pair verification is stamped
+    // against — a changed raw (even one resolving to the same URL,
+    // e.g. a re-rendered anchor value) resets `verified_at` and must
+    // be re-checked.
+    let previous_pairs: HashSet<(String, String)> = previous_fields
         .iter()
         .filter_map(|e| {
             let name = e.get("name").and_then(Value::as_str)?.to_string();
-            let url = field_verify_url(config, e)?;
-            Some((name, url))
+            let raw = entry_raw(e)?.to_string();
+            Some((name, raw))
         })
         .collect();
     let urls_changed = fields
@@ -885,8 +889,10 @@ pub async fn update_profile(
         .map(|entries| {
             entries.iter().any(|e| {
                 let name = e.get("name").and_then(Value::as_str).unwrap_or_default();
-                match field_verify_url(config, e) {
-                    Some(url) => !previous_urls.contains(&(name.to_string(), url)),
+                match (entry_raw(e), field_verify_url(config, e)) {
+                    (Some(raw), Some(_)) => {
+                        !previous_pairs.contains(&(name.to_string(), raw.to_string()))
+                    }
                     _ => false,
                 }
             })

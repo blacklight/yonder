@@ -281,12 +281,49 @@ pub fn source_fields(profile_fields: &Value) -> Vec<Value> {
                 "name": entry.get("name").cloned().unwrap_or(Value::Null),
                 "value": entry
                     .get("value_raw")
-                    .or_else(|| entry.get("value"))
                     .cloned()
+                    .or_else(|| {
+                        // Legacy entries without `value_raw`: echoing
+                        // the rendered `value` back makes it editable,
+                        // but a subsequent save would store the markup
+                        // itself as the raw value. Recover the editable
+                        // text instead — `rel="me"`/`href==text` anchors
+                        // → the URL, other anchors → their label,
+                        // non-anchor values stay as-is.
+                        entry.get("value").and_then(Value::as_str).map(|v| {
+                            json!(sole_anchor_raw(v).unwrap_or_else(|| v.to_string()))
+                        })
+                    })
                     .unwrap_or(Value::Null),
             })
         })
         .collect()
+}
+
+/// Recover the editable raw value for a legacy field entry whose
+/// `value` is a single `<a>` element: `rel="me"` markers and anchors
+/// whose text equals their href map back to the URL itself; labelled
+/// anchors map to their text. `None` for non-anchor or multi-element
+/// values (the rendered HTML is returned unchanged instead).
+fn sole_anchor_raw(html: &str) -> Option<String> {
+    let frag = scraper::Html::parse_fragment(html);
+    let elements = scraper::Selector::parse("*").ok()?;
+    if frag.select(&elements).count() != 1 {
+        return None;
+    }
+    let a = frag.select(&scraper::Selector::parse("a[href]").ok()?).next()?;
+    let href = a.value().attr("href")?.to_string();
+    let text: String = a.text().collect();
+    let rel_me = a
+        .value()
+        .attr("rel")
+        .map(|r| r.split_whitespace().any(|w| w == "me"))
+        .unwrap_or(false);
+    if rel_me || text.trim() == href {
+        Some(href)
+    } else {
+        Some(text.trim().to_string())
+    }
 }
 
 /// Map an `accounts` row to a Mastodon Account entity. `base_url` is

@@ -355,6 +355,25 @@ describe("StatusCard", () => {
     expect(wrapper.find("[data-testid='compose']").exists()).toBe(false);
   });
 
+  it("a direct status hides boost/quote and reply seeds a DM draft", async () => {
+    useAuthStore().setToken("t");
+    const { useComposeStore } = await import("@/stores/compose");
+    const { wrapper, router } = mountWith(StatusCard, {
+      props: { status: status({ visibility: "direct" }) },
+    });
+    // No public surface — the buttons aren't rendered at all.
+    expect(wrapper.find("[data-testid='boost']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='quote']").exists()).toBe(false);
+    await wrapper.get("[data-testid='reply']").trigger("click");
+    await flushPromises();
+    const compose = useComposeStore();
+    expect(compose.draft.visibility).toBe("direct");
+    expect(compose.draft.inReplyToId).toBe("1");
+    // No inline composer for a DM — the seeded draft moves to /compose.
+    expect(compose.replyTargetId).toBeNull();
+    expect(router.currentRoute.value.path).toBe("/compose");
+  });
+
   it("react/unreact via picker and existing chips", async () => {
     useAuthStore().setToken("t");
     const spy = mockApi(200, {});

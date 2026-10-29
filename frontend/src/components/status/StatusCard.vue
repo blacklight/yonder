@@ -80,6 +80,13 @@ const booster = computed(() =>
 const clampBody = computed(() => !props.expanded && !shown.value.spoiler_text);
 
 const account = computed(() => shown.value.account);
+// A reply to a direct status is itself a DM — regardless of where the
+// card renders (thread page passes `directReply`, the home timeline
+// doesn't). Going through `openReply` would seed a public reply to a
+// private message.
+const isDirect = computed(
+  () => props.directReply || shown.value.visibility === "direct",
+);
 const remoteDomain = computed(() => {
   const acct = account.value.acct;
   return acct.includes("@") ? acct.split("@").slice(1).join("@") : null;
@@ -125,6 +132,18 @@ async function runPending() {
 function guardDraft(action: () => void) {
   if (compose.isDirty) confirmThen(t("compose.discardText"), action);
   else action();
+}
+
+/** Reply on a status — a direct status seeds a DM reply. The thread
+ * page has its own pinned composer; elsewhere there's no inline form
+ * for a DM, so land on /compose with the seeded draft. */
+function replyTo(s: Status) {
+  if (isDirect.value) {
+    compose.openDirectReply(s);
+    if (!props.directReply) void router.push("/compose");
+  } else {
+    compose.openReply(s);
+  }
 }
 
 function fail(e: unknown) {
@@ -380,14 +399,7 @@ async function onReact(emoji: string) {
       />
       <StatusQuote
         :status="shown"
-        @reply="
-          (s) =>
-            guardDraft(() =>
-              props.directReply
-                ? compose.openDirectReply(s)
-                : compose.openReply(s),
-            )
-        "
+        @reply="(s) => guardDraft(() => replyTo(s))"
         @quote="(s) => guardDraft(() => compose.openQuote(s))"
       />
       <StatusPoll :status="shown" />
@@ -442,14 +454,7 @@ async function onReact(emoji: string) {
     <div class="status-card__footer-wrap">
       <StatusFooter
         :status="shown"
-        @reply="
-          (s) =>
-            guardDraft(() =>
-              props.directReply
-                ? compose.openDirectReply(s)
-                : compose.openReply(s),
-            )
-        "
+        @reply="(s) => guardDraft(() => replyTo(s))"
         @quote="(s) => guardDraft(() => compose.openQuote(s))"
         @react="pickerOpen = !pickerOpen"
       />
@@ -457,7 +462,7 @@ async function onReact(emoji: string) {
     </div>
 
     <ComposeBox
-      v-if="!directReply && compose.replyTargetId === shown.id"
+      v-if="!isDirect && compose.replyTargetId === shown.id"
       class="status-card__reply"
     />
 

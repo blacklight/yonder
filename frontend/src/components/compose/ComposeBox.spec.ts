@@ -3,6 +3,7 @@ import { flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
+import { useSettingsStore } from "@/stores/settings";
 import ComposeBox from "./ComposeBox.vue";
 
 vi.mock("@/api/emojis", () => ({
@@ -392,5 +393,45 @@ describe("ComposeBox", () => {
     // of being dropped from the persisted draft.
     expect(wrapper.findAll(".compose__media-item")).toHaveLength(2);
     expect(useComposeStore().draft.mediaIds).toEqual(["m9", "flaky"]);
+  });
+
+  it("direct prop hides the visibility picker and pins the wire value", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox, { props: { direct: true } });
+    await flushPromises();
+    expect(wrapper.find("[data-testid='visibility']").exists()).toBe(false);
+    expect(wrapper.get(".compose__private").text()).toContain("Direct");
+    await wrapper.get("[data-testid='compose-text']").setValue("hello dm");
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.visibility).toBe("direct");
+  });
+
+  it("a direct draft hides the visibility picker as well", async () => {
+    useComposeStore().update({ visibility: "direct" });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    expect(wrapper.find("[data-testid='visibility']").exists()).toBe(false);
+    expect(wrapper.find(".compose__private").exists()).toBe(true);
+  });
+
+  it("account defaults never clobber a seeded direct draft", async () => {
+    // The old bug: an empty seeded DM draft took `default_visibility`
+    // on mount and silently flipped to public.
+    useSettingsStore().settings = { default_visibility: "public" } as never;
+    useComposeStore().update({ visibility: "direct" });
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(useComposeStore().draft.visibility).toBe("direct");
+  });
+
+  it("an untouched draft still takes the account default", async () => {
+    useSettingsStore().settings = {
+      default_visibility: "unlisted",
+    } as never;
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(useComposeStore().draft.visibility).toBe("unlisted");
   });
 });

@@ -30,6 +30,13 @@ import type {
   StatusVisibility,
 } from "@/api/entities";
 
+const props = defineProps<{
+  /** Composer embedded in a DM thread — the visibility is pinned to
+   * `direct` and the visibility picker is never shown, so a reply
+   * can't leak out of the private conversation. */
+  direct?: boolean;
+}>();
+
 const { t, locale } = useI18n();
 const route = useRoute();
 const compose = useComposeStore();
@@ -54,6 +61,12 @@ const idemKey = ref(crypto.randomUUID());
 let idemBody = "";
 
 const d = computed(() => compose.draft);
+// "Private conversation" — either the host pinned it (thread page)
+// or the draft itself is a DM. Either way the visibility picker is
+// replaced by a static label: there is no public side to flip to.
+const isDirect = computed(
+  () => props.direct || d.value.visibility === "direct",
+);
 const maxChars = computed(() => limits.value.maxCharacters);
 const overLimit = computed(() => charLen.value > maxChars.value);
 const charLen = computed(() => d.value.text.length);
@@ -208,11 +221,17 @@ onMounted(async () => {
     media.value = found.filter((m): m is MediaAttachment => m !== null);
     if (media.value.length !== d.value.mediaIds.length) syncMediaIds();
   }
-  // New drafts pick up the account defaults from settings.
+  // New drafts pick up the account defaults from settings. A seeded
+  // visibility (`direct` from a DM shortcut, or a pinned composer)
+  // is never overwritten — an untouched draft is the only one that
+  // takes the account default.
   const s = settings.settings as Record<string, unknown> | null;
-  if (s && !d.value.text && !d.value.inReplyToId) {
+  if (s && !props.direct && !d.value.text && !d.value.inReplyToId) {
     compose.update({
-      visibility: (s.default_visibility as StatusVisibility) ?? "public",
+      visibility:
+        d.value.visibility === "public"
+          ? ((s.default_visibility as StatusVisibility) ?? "public")
+          : d.value.visibility,
       language:
         (s.effective_posting_language as string | null) ??
         (s.default_posting_language as string | null) ??
@@ -443,7 +462,9 @@ async function submit() {
     const body = {
       status: d.value.text,
       content_type: d.value.contentType,
-      visibility: d.value.visibility,
+      // A thread composer can never leave the conversation — pin the
+      // wire value even if the draft somehow drifted.
+      visibility: props.direct ? "direct" : d.value.visibility,
       language: d.value.language || undefined,
       sensitive: d.value.sensitive || d.value.cwEnabled,
       spoiler_text: d.value.cwEnabled ? d.value.spoilerText : undefined,
@@ -714,7 +735,11 @@ async function submit() {
       </div>
 
       <div class="compose__options">
-        <span class="compose__select">
+        <span v-if="isDirect" class="compose__private">
+          <FontAwesomeIcon icon="lock" />
+          {{ t("compose.vis_direct") }}
+        </span>
+        <span v-else class="compose__select">
           <select
             :value="d.visibility"
             :aria-label="t('compose.visibility')"
@@ -953,6 +978,15 @@ async function submit() {
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+/* Static "Private" label standing in for the hidden visibility
+   picker on DM drafts — same footprint as a select row. */
+.compose__private {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
   color: var(--text-muted);
 }
 .compose__select {

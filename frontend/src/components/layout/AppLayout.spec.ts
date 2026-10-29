@@ -70,7 +70,8 @@ describe("AppLayout", () => {
     expect(names).toContain("Favourites");
     expect(names).toContain("Bookmarks");
     expect(names).toContain("Lists");
-    expect(names).toContain("Direct messages");
+    expect(names).toContain("Messages");
+    expect(names).not.toContain("Direct messages");
     expect(names).toContain("Sign out");
     expect(names).not.toContain("Moderation");
     expect(names).not.toContain("Admin");
@@ -225,27 +226,57 @@ describe("AppLayout", () => {
     expect(document.querySelector("[data-testid='mobile-menu']")).toBeNull();
   });
 
-  it("direct item opens compose in direct mode and navigates", async () => {
+  async function layoutAt(path: string) {
     const auth = useAuthStore();
     auth.setToken("t");
     const router = createRouter({
       history: createMemoryHistory(),
       routes: stubRoutes,
     });
+    await router.push(path);
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
       Promise.resolve(new Response("{}", { status: 200 })),
     );
     const w = mount(AppLayout, {
       global: { plugins: [i18n, router] },
     });
-    const direct = w
-      .findAll(".layout__sidebar .navmenu__button")
-      .find((b) => b.text().includes("Direct"));
-    expect(direct).toBeTruthy();
-    await direct!.trigger("click");
+    return { w, router };
+  }
+
+  it("compose on /messages becomes New message and seeds a direct draft", async () => {
+    const { w, router } = await layoutAt("/messages");
+    const btn = w.get("[data-testid='compose']");
+    expect(btn.text()).toContain("New message");
+    await btn.trigger("click");
     await flushPromises();
     const { useComposeStore } = await import("@/stores/compose");
     expect(useComposeStore().draft.visibility).toBe("direct");
+    expect(router.currentRoute.value.path).toBe("/compose");
+  });
+
+  it("compose outside /messages stays a plain public draft", async () => {
+    const { w, router } = await layoutAt("/local");
+    const btn = w.get("[data-testid='compose']");
+    expect(btn.text()).not.toContain("New message");
+    await btn.trigger("click");
+    await flushPromises();
+    const { useComposeStore } = await import("@/stores/compose");
+    expect(useComposeStore().draft.visibility).toBe("public");
+    expect(router.currentRoute.value.path).toBe("/compose");
+  });
+
+  it("compose on /messages never clobbers an in-progress draft", async () => {
+    const { useComposeStore } = await import("@/stores/compose");
+    const compose = useComposeStore();
+    compose.update({ text: "work in progress" });
+    const { w, router } = await layoutAt("/messages");
+    const btn = w.get("[data-testid='compose']");
+    // The draft is resumed, not re-purposed — the label stays honest.
+    expect(btn.text()).not.toContain("New message");
+    await btn.trigger("click");
+    await flushPromises();
+    expect(compose.draft.text).toBe("work in progress");
+    expect(compose.draft.visibility).toBe("public");
     expect(router.currentRoute.value.path).toBe("/compose");
   });
 });

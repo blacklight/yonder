@@ -39,6 +39,8 @@ export const stubRoutes: RouteRecordRaw[] = [
   { path: "/local", name: "local", component: stub },
   { path: "/explore", name: "explore", component: stub },
   { path: "/notifications", name: "notifications", component: stub },
+  { path: "/messages", name: "messages", component: stub },
+  { path: "/messages/:id", name: "conversation", component: stub },
   { path: "/favourites", name: "favourites", component: stub },
   { path: "/bookmarks", name: "bookmarks", component: stub },
   { path: "/lists", name: "lists", component: stub },

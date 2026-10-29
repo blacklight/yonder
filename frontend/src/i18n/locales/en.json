@@ -8,7 +8,6 @@
     "local": "Local",
     "explore": "Explore",
     "notifications": "Notifications",
-    "direct": "Direct messages",
     "favourites": "Favourites",
     "bookmarks": "Bookmarks",
     "lists": "Lists",
@@ -913,7 +912,8 @@
     "deleteTitle": "Hide conversation",
     "deleteBody": "Hide this conversation for you? It stays visible to other participants and reappears on a new message.",
     "empty": "No conversations yet.",
-    "notFound": "Conversation not found."
+    "notFound": "Conversation not found.",
+    "newMessage": "New message"
   },
   "profile": {
     "mention": "Mention",

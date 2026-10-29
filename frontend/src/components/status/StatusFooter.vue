@@ -85,7 +85,11 @@ async function toggle(
       <FontAwesomeIcon :icon="status.favourited ? 'heart' : ['far', 'heart']" />
       <span class="status-footer__count">{{ status.favourites_count }}</span>
     </button>
+    <!-- A direct status has no public surface — boosting or quoting
+         it would leak a private message, so the buttons don't render
+         at all (not merely disabled). -->
     <button
+      v-if="status.visibility !== 'direct'"
       type="button"
       class="status-footer__btn"
       :class="{ 'status-footer__btn--active': status.reblogged }"
@@ -99,6 +103,7 @@ async function toggle(
       <span class="status-footer__count">{{ status.reblogs_count }}</span>
     </button>
     <button
+      v-if="status.visibility !== 'direct'"
       type="button"
       class="status-footer__btn"
       :aria-label="t('status.quote')"

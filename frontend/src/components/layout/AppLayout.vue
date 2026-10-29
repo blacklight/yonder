@@ -75,7 +75,7 @@ interface MenuEntry extends NavItem {
 }
 
 // The data-driven menu — visibility follows auth/role; items without
-// `to` carry a `run` action (direct-message shortcut, sign out).
+// `to` carry a `run` action (sign out).
 const menuSource = computed<MenuEntry[]>(() => [
   {
     id: "home",
@@ -112,16 +112,6 @@ const menuSource = computed<MenuEntry[]>(() => [
     to: "/messages",
     icon: "comments",
     visible: auth.isLoggedIn,
-  },
-  {
-    id: "direct",
-    label: t("nav.direct"),
-    icon: "envelope",
-    visible: auth.isLoggedIn,
-    run: () => {
-      compose.openDirect();
-      void router.push("/compose");
-    },
   },
   {
     id: "favourites",
@@ -208,6 +198,24 @@ const menuSource = computed<MenuEntry[]>(() => [
     },
   },
 ]);
+
+// Inside the DM area the compose affordances become "New message" —
+// they seed a direct draft instead of a public one. An in-progress
+// draft is never clobbered: a dirty draft just resumes on /compose.
+const inMessages = computed(() => route.path.startsWith("/messages"));
+const seedsDirect = computed(() => inMessages.value && !compose.isDirty);
+const composeLabel = computed(() =>
+  seedsDirect.value ? t("messages.newMessage") : t("nav.compose"),
+);
+
+function seedDirect() {
+  if (seedsDirect.value) compose.openDirect();
+}
+
+function composeAction() {
+  seedDirect();
+  void router.push("/compose");
+}
 
 const menuItems = computed<NavItem[]>(() =>
   menuSource.value
@@ -341,7 +349,7 @@ const mobileItems = computed<NavItem[]>(() =>
       ? [
           {
             id: "compose",
-            label: t("nav.compose"),
+            label: composeLabel.value,
             to: "/compose",
             icon: "pen-to-square",
           },
@@ -352,7 +360,10 @@ const mobileItems = computed<NavItem[]>(() =>
 
 function onSelect(item: NavItem) {
   menuOpen.value = false;
-  menuSource.value.find((m) => m.id === item.id)?.run?.();
+  // The drawer's compose entry isn't in `menuSource` — its `to` link
+  // navigates by itself, but the direct-draft seeding still applies.
+  if (item.id === "compose") seedDirect();
+  else menuSource.value.find((m) => m.id === item.id)?.run?.();
 }
 
 async function setLocale(code: string) {
@@ -411,10 +422,11 @@ function clearSearch(which: "sidebar" | "aside") {
       <Button
         v-if="auth.isLoggedIn && !inAdmin"
         class="layout__compose"
-        @click="router.push('/compose')"
+        data-testid="compose"
+        @click="composeAction"
       >
         <FontAwesomeIcon icon="pen-to-square" />
-        {{ t("nav.compose") }}</Button
+        {{ composeLabel }}</Button
       >
 
       <NavMenu :items="navItems" @select="onSelect" />

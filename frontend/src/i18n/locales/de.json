@@ -8,7 +8,6 @@
     "local": "Lokal",
     "explore": "Entdecken",
     "notifications": "Mitteilungen",
-    "direct": "Direktnachrichten",
     "favourites": "Favoriten",
     "bookmarks": "Lesezeichen",
     "lists": "Listen",
@@ -926,7 +925,8 @@
     "deleteTitle": "Unterhaltung verbergen",
     "deleteBody": "Diese Unterhaltung für dich verbergen? Sie bleibt für andere sichtbar und erscheint bei einer neuen Nachricht wieder.",
     "empty": "Noch keine Unterhaltungen.",
-    "notFound": "Unterhaltung nicht gefunden."
+    "notFound": "Unterhaltung nicht gefunden.",
+    "newMessage": "Neue Nachricht"
   },
   "profile": {
     "mention": "Erwähnen",

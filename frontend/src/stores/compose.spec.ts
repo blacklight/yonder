@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useComposeStore } from "./compose";
+import { useAuthStore } from "./auth";
 import type { Status } from "@/api/entities";
 
 function status(id: string, acct: string): Status {
@@ -99,6 +100,54 @@ describe("compose store", () => {
     expect(c.draft.visibility).toBe("direct");
     expect(c.draft.inReplyToId).toBe("42");
     expect(c.draft.text).toBe("@frank@y.test ");
+  });
+
+  it("openDirectReply seeds every participant of the latest message", () => {
+    const c = useComposeStore();
+    const parent = {
+      id: "7",
+      account: { acct: "alice@x.test" },
+      mentions: [
+        { id: "1", acct: "bob@y.test" },
+        { id: "2", acct: "carol@z.test" },
+        // A repeat of the author is deduped.
+        { id: "3", acct: "alice@x.test" },
+      ],
+    } as Status;
+    c.openDirectReply(parent);
+    expect(c.draft.text).toBe("@alice@x.test @bob@y.test @carol@z.test ");
+    expect(c.draft.visibility).toBe("direct");
+  });
+
+  it("openDirectReply drops the viewer from the recipients", () => {
+    useAuthStore().account = { acct: "me@home.test" } as never;
+    const c = useComposeStore();
+    const parent = {
+      id: "7",
+      account: { acct: "alice@x.test" },
+      mentions: [
+        { id: "1", acct: "me@home.test" },
+        { id: "2", acct: "bob@y.test" },
+      ],
+    } as Status;
+    c.openDirectReply(parent);
+    expect(c.draft.text).toBe("@alice@x.test @bob@y.test ");
+  });
+
+  it("isUntouchedSeed tracks seed vs typed text", () => {
+    const c = useComposeStore();
+    c.openDirectReply(status("42", "frank@y.test"));
+    expect(c.isUntouchedSeed).toBe(true);
+    // Any edit turns context into user input.
+    c.update({ text: "@frank@y.test typed" });
+    expect(c.isUntouchedSeed).toBe(false);
+    c.reset();
+    expect(c.isUntouchedSeed).toBe(false);
+    c.openMention("dan@x.test");
+    expect(c.isUntouchedSeed).toBe(true);
+    // A CW toggle on a seed is user input too.
+    c.update({ cwEnabled: true });
+    expect(c.isUntouchedSeed).toBe(false);
   });
 
   it("clearPersisted drops draft and stash from localStorage", () => {

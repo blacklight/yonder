@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import type { Status, StatusVisibility } from "@/api/entities";
+import { useAuthStore } from "./auth";
 
 const DRAFT_KEY = "yonder.compose.draft";
 const STASH_KEY = "yonder.compose.stashed";
@@ -13,6 +14,10 @@ export interface PollDraft {
 
 export interface ComposeDraft {
   text: string;
+  /** Text an `open*` action seeded (mention/recipient line). When
+   * `text` still equals it, the draft carries only context — not
+   * user input — and a new context may replace it freely. */
+  seededText: string;
   contentType: string;
   visibility: StatusVisibility;
   language: string | null;
@@ -33,6 +38,7 @@ export interface ComposeDraft {
 function emptyDraft(): ComposeDraft {
   return {
     text: "",
+    seededText: "",
     contentType: "text/plain",
     visibility: "public",
     language: null,
@@ -90,6 +96,18 @@ export const useComposeStore = defineStore("compose", {
         s.draft.mediaIds.length ||
         s.draft.poll,
       ),
+    /** The draft still holds only what an `open*` action seeded —
+     *  context, not user input — so a new context can replace it
+     *  without asking. */
+    isUntouchedSeed: (s) =>
+      Boolean(
+        s.draft.seededText &&
+        s.draft.text === s.draft.seededText &&
+        !s.draft.spoilerText.trim() &&
+        !s.draft.cwEnabled &&
+        !s.draft.mediaIds.length &&
+        !s.draft.poll,
+      ),
   },
   actions: {
     persist() {
@@ -112,6 +130,7 @@ export const useComposeStore = defineStore("compose", {
         inReplyToId: target.id,
         replyToAcct: acct,
         text: `@${acct} `,
+        seededText: `@${acct} `,
       });
       this.replyTargetId = target.id;
       this.openSignal++;
@@ -134,35 +153,53 @@ export const useComposeStore = defineStore("compose", {
      * that's `openDirect`). */
     openMention(acct: string) {
       this.reset();
-      this.update({ text: `@${acct} ` });
+      this.update({ text: `@${acct} `, seededText: `@${acct} ` });
       this.openSignal++;
     },
 
     /** Direct-message mode; seeds `@a @b ` for one or more recipients. */
     openDirect(acct?: string | string[]) {
       const accts = Array.isArray(acct) ? acct : acct ? [acct] : [];
+      const seed = accts.length
+        ? `${accts.map((a) => `@${a}`).join(" ")} `
+        : "";
       this.reset();
       this.update({
         visibility: "direct",
-        text: accts.length ? `${accts.map((a) => `@${a}`).join(" ")} ` : "",
+        text: seed,
+        seededText: seed,
       });
       this.openSignal++;
     },
 
     /**
-     * Reply inside a DM thread — `openReply` seeding plus
-     * `visibility: "direct"` (openReply alone would post a public
-     * "DM"). The server's mention carry-over keeps the participant
-     * set — and therefore the conversation key — stable.
+     * Reply inside a DM thread — `visibility: "direct"` (openReply
+     * alone would post a public "DM") and the full participant line
+     * of the parent message: its author plus every mentioned account,
+     * minus the viewer and duplicates. The server's mention
+     * carry-over keeps the conversation key stable; the seed makes
+     * the recipients visible to the author.
      */
     openDirectReply(status: Status) {
       const target = status.reblog ?? status;
-      const acct = target.account.acct;
+      const self = useAuthStore().account?.acct;
+      const seen = new Set<string>();
+      const recipients = [target.account, ...(target.mentions ?? [])]
+        .map((a) => a.acct)
+        .filter((acct) => {
+          if (acct === self || seen.has(acct)) return false;
+          seen.add(acct);
+          return true;
+        });
+      const seed = recipients.length
+        ? `${recipients.map((a) => `@${a}`).join(" ")} `
+        : "";
       this.reset();
       this.update({
         inReplyToId: target.id,
-        replyToAcct: acct,
-        text: `@${acct} `,
+        replyToAcct: target.account.acct,
+        text: seed,
+        seededText: seed,
         visibility: "direct",
       });
       this.openSignal++;

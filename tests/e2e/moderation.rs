@@ -653,6 +653,100 @@ async fn public_listing_gated_by_config() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// `GET /api/v1/instance/peers` — the sorted union of remote account
+/// domains, delivery-target hosts and relay hosts, minus
+/// silence/suspend-blocked domains (Mastodon's `Instance.searchable`
+/// semantics). The local domain never appears.
+#[tokio::test]
+async fn peers_lists_known_domains_minus_blocked() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    // A local account exercises the `domain IS NULL` exclusion.
+    register(&env.app, "root", "root@x.test").await;
+
+    sqlx::query(
+        "INSERT INTO accounts (username, domain, actor_id, url) VALUES \
+         ('ra', 'zeta.example', 'https://zeta.example/users/ra', 'https://zeta.example/@ra'), \
+         ('rb', 'beta.example', 'https://beta.example/users/rb', 'https://beta.example/@rb'), \
+         ('rc', 'blocked.example', 'https://blocked.example/users/rc', 'https://blocked.example/@rc'), \
+         ('rd', 'quiet.example', 'https://quiet.example/users/rd', 'https://quiet.example/@rd')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    // A delivery inbox host not covered by any known account domain.
+    sqlx::query(
+        "INSERT INTO activities (activity_id, type, actor_id) \
+         VALUES ('https://zeta.example/activities/1', 'Create', \
+                 'https://zeta.example/users/ra')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO deliveries (activity_id, inbox_url) \
+         SELECT id, 'https://delivered.example/inbox' FROM activities \
+         WHERE activity_id = 'https://zeta.example/activities/1'",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    // Relay hosts join too; case/port normalize to the bare host.
+    sqlx::query("INSERT INTO relays (inbox_url) VALUES ('https://Relay.Example:8443/inbox')")
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO domain_blocks (domain, severity) VALUES \
+         ('blocked.example', 'suspend'), ('quiet.example', 'silence')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let (status, _, peers) = request(&env.app, "GET", "/api/v1/instance/peers", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{peers}");
+    let list: Vec<String> = peers
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap().to_string())
+        .collect();
+    for expected in [
+        "zeta.example",
+        "beta.example",
+        "delivered.example",
+        "relay.example",
+    ] {
+        assert!(
+            list.contains(&expected.to_string()),
+            "{expected} in {list:?}"
+        );
+    }
+    for hidden in ["blocked.example", "quiet.example", "localhost"] {
+        assert!(!list.contains(&hidden.to_string()), "{hidden} in {list:?}");
+    }
+    let mut sorted = list.clone();
+    sorted.sort();
+    assert_eq!(list, sorted, "peers sorted alphabetically");
+}
+
+/// `instance.peers_api_enabled = false` → the endpoint 404s, like
+/// Mastodon's namesake setting.
+#[tokio::test]
+async fn peers_gated_by_config() {
+    let mut config = Config::default();
+    config.instance.peers_api_enabled = false;
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let (status, _, _) = request(&env.app, "GET", "/api/v1/instance/peers", None, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn action_guards_staff_and_self() {
     let _permit = harness::acquire().await;

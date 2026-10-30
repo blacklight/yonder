@@ -83,6 +83,8 @@ languages = ["en"]
 rules = []
 # Publish the list of moderated instances over API/UI.
 expose_moderated_instances = true
+# Serve the list of known remote domains at /api/v1/instance/peers.
+peers_api_enabled = true
 # Enable the profile directory.
 directory_enabled = true
 

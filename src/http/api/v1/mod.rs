@@ -138,6 +138,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // `route_layer` wraps only routes registered *before* it.
         .route_layer(ratelimit::layer(state, "authentication"))
         .route("/api/v1/instance", get(instance::instance))
+        // Known remote domains (Mastodon's peers listing).
+        .route("/api/v1/instance/peers", get(instance::peers))
         // Epic 21 — public moderated-instances listing.
         .route(
             "/api/v1/instance/domain_blocks",
@@ -725,6 +727,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     two_factor::webauthn_delete,
     two_factor::disable,
     instance::instance,
+    instance::peers,
     instance::domain_blocks,
     settings::preferences,
     settings::get_settings,

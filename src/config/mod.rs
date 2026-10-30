@@ -321,6 +321,9 @@ pub struct InstanceConfig {
     pub rules: Vec<String>,
     /// Publish the list of moderated instances over API/UI.
     pub expose_moderated_instances: bool,
+    /// Serve `GET /api/v1/instance/peers` (Mastodon's
+    /// `peers_api_enabled`) — off means 404.
+    pub peers_api_enabled: bool,
     /// Enable the profile directory.
     pub directory_enabled: bool,
 }
@@ -340,6 +343,7 @@ impl Default for InstanceConfig {
             banner_path: None,
             rules: Vec::new(),
             expose_moderated_instances: true,
+            peers_api_enabled: true,
             directory_enabled: true,
         }
     }

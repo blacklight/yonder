@@ -85,6 +85,12 @@ Public listing `GET /api/v1/instance/domain_blocks` returns domain
 (obfuscated when marked), severity and `public_comment`; gated by
 `instance.expose_moderated_instances` (default `true`) → 404 when off.
 
+`GET /api/v1/instance/peers` lists the domains the server is aware of
+(remote account domains ∪ delivery targets ∪ relays), matching
+Mastodon's `Instance.searchable` semantics — `silence`/`suspend`
+blocks hide their domain from the listing. Gated by
+`instance.peers_api_enabled` (default `true`) → 404 when off.
+
 ### Enforcement map
 
 | Path | Mechanism |

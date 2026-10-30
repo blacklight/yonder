@@ -69,6 +69,46 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
     })))
 }
 
+/// `GET /api/v1/instance/peers` — the domains this server is aware
+/// of (Mastodon-compatible): remote account domains ∪ delivery
+/// targets ∪ configured relays, minus silence/suspend-blocked
+/// domains — Mastodon's `Instance.searchable` semantics keep
+/// moderated names from leaking through the listing. Gated by
+/// `instance.peers_api_enabled` — off means 404.
+#[utoipa::path(
+    get,
+    path = "/api/v1/instance/peers",
+    tag = "instance",
+    responses(
+        (status = 200, description = "Array of known remote domains"),
+        (status = 404, description = "Listing disabled", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<Vec<String>>> {
+    if !state.config().instance.peers_api_enabled {
+        return Err(Error::NotFound("peers".into()));
+    }
+    let domains = sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT d FROM ( \
+             SELECT domain AS d FROM accounts WHERE domain IS NOT NULL \
+             UNION \
+             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM relays \
+             UNION \
+             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM deliveries \
+         ) sub \
+         WHERE d IS NOT NULL \
+           AND d ~ '^[a-z0-9][a-z0-9.-]*$' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM domain_blocks b \
+               WHERE b.domain = sub.d AND b.severity IN ('silence', 'suspend') \
+           ) \
+         ORDER BY d",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(domains))
+}
+
 /// `GET /api/v1/instance/domain_blocks` — the public
 /// moderated-instances listing (Mastodon-compatible): domain,
 /// severity, `public_comment`; `obfuscate` masks the domain. Gated

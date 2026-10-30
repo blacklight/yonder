@@ -164,8 +164,8 @@ pub async fn publish(ctx: &ApContext, username: &str, activity: &Value) -> Resul
 
 /// Publish an actor `Update` after a profile change (epic 09): drop
 /// the stale handler-LRU entry first (it caches `ActorConfig`),
-/// re-resolve, inject the banner `image` pubby can't emit
-/// (`ActorConfig` has no banner field), then let pubby store the
+/// re-resolve so `get_actor_document` rebuilds with the current
+/// fields (banner `image` included), then let pubby store the
 /// `activities` row, invalidate its doc-cache prefixes and fan out to
 /// follower inboxes through [`deliver_fn`].
 pub async fn publish_actor_update(ctx: &ApContext, username: &str) -> Result<Value> {
@@ -175,18 +175,7 @@ pub async fn publish_actor_update(ctx: &ApContext, username: &str) -> Result<Val
         .for_username(username)
         .map_err(|e| crate::Error::Internal(format!("resolver failed: {e}")))?
         .ok_or_else(|| crate::Error::NotFound(format!("actor {username}")))?;
-    let mut doc = handler.get_actor_document();
-    let actor = actors::load_local_actor(&ctx.core.db, username).await?;
-    if let Some(actor) = actor {
-        let banner = actor.banner_remote_url.or_else(|| {
-            actor
-                .banner_path
-                .map(|k| crate::media::public_url(&ctx.core.config, &ctx.core.base_url, &k))
-        });
-        if let Some(url) = banner {
-            doc["image"] = json!({ "type": "Image", "url": url });
-        }
-    }
+    let doc = handler.get_actor_document();
     actors::sync_call(move || handler.publish_actor_update(Some(&doc)))
         .map_err(crate::Error::Federation)
 }

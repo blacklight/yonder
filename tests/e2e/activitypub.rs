@@ -365,7 +365,8 @@ async fn actor_doc_advertises_per_actor_endpoints() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let alice = seed_actor(&pool, "alice").await;
+    let mut alice = seed_actor(&pool, "alice").await;
+    alice.banner_path = Some("headers/test.png".into());
     let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
     let handler = actors::handler_for(
         storage,
@@ -388,6 +389,12 @@ async fn actor_doc_advertises_per_actor_endpoints() {
         doc["publicKey"]["id"],
         format!("{BASE}/ap/users/alice#main-key")
     );
+    // The banner federates as `image` (Mastodon's profile header).
+    assert_eq!(doc["image"]["type"], "Image");
+    assert!(doc["image"]["url"]
+        .as_str()
+        .unwrap()
+        .ends_with("/headers/test.png"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

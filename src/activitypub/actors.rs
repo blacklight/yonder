@@ -300,6 +300,16 @@ fn actor_config(
                 .map(|k| crate::media::public_url(config, base_url, k))
         })
         .unwrap_or_default();
+    cfg.image_url = actor
+        .banner_remote_url
+        .clone()
+        .or_else(|| {
+            actor
+                .banner_path
+                .as_ref()
+                .map(|k| crate::media::public_url(config, base_url, k))
+        })
+        .unwrap_or_default();
     cfg.actor_path = actor_path.to_string();
     cfg.actor_type = if actor.bot {
         "Service".to_string()

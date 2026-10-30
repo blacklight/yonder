@@ -111,7 +111,12 @@ onMounted(() => {
         <div
           v-if="c.last_status"
           class="preview"
-          v-html="sanitizeHtml(c.last_status.content)"
+          v-html="
+            sanitizeHtml(c.last_status.content, {
+              mentions: c.last_status.mentions,
+              tags: c.last_status.tags,
+            })
+          "
         />
       </li>
       <li

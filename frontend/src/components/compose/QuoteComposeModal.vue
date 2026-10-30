@@ -15,7 +15,12 @@ import type { Status } from "@/api/entities";
 const props = defineProps<{ status: Status }>();
 const { t } = useI18n();
 const compose = useComposeStore();
-const html = computed(() => sanitizeHtml(props.status.content));
+const html = computed(() =>
+  sanitizeHtml(props.status.content, {
+    mentions: props.status.mentions,
+    tags: props.status.tags,
+  }),
+);
 </script>
 
 <template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import type { Status } from "@/api/entities";
@@ -31,6 +31,15 @@ const unavailable =
 
 const pickerOpen = ref(false);
 const actionError = ref("");
+
+const contentHtml = computed(() =>
+  quoted
+    ? sanitizeHtml(quoted.content, {
+        mentions: quoted.mentions,
+        tags: quoted.tags,
+      })
+    : "",
+);
 
 // Click through to the quoted post — interactive elements (links,
 // buttons, the footer row) keep their own behaviour.
@@ -82,7 +91,7 @@ async function onReact(emoji: string) {
       }}</time>
     </header>
     <!-- eslint-disable-next-line vue/no-v-html -->
-    <div class="quote__content" v-html="sanitizeHtml(quoted.content)" />
+    <div class="quote__content" v-html="contentHtml" />
     <p v-if="actionError" class="quote__error" role="alert">
       {{ actionError }}
     </p>

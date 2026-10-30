@@ -174,7 +174,10 @@ const translatedFromName = computed(() => {
 // text — the card's other props (media, footer actions) stay on the
 // original entity.
 const displayedContent = computed(() =>
-  sanitizeHtml(translation.value?.content ?? shownContent.value),
+  sanitizeHtml(translation.value?.content ?? shownContent.value, {
+    mentions: shown.value.mentions,
+    tags: shown.value.tags,
+  }),
 );
 const displayedSpoiler = computed(
   () => translation.value?.spoiler_text || shown.value.spoiler_text,

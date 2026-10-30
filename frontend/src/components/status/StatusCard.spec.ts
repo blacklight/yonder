@@ -98,6 +98,32 @@ describe("StatusCard", () => {
     expect(wrapper.find(".status-card__favicon").exists()).toBe(false); // local
   });
 
+  it("renders mentions and hashtags as local same-tab routes", () => {
+    const s = status({
+      content:
+        '<p><a class="u-url mention" href="https://remote.test/@bob">@bob</a> ' +
+        '<a class="mention hashtag" rel="tag" href="https://remote.test/tags/rust">#rust</a> ' +
+        '<a href="https://x.test/post">link</a></p>',
+      mentions: [
+        {
+          id: "9",
+          username: "bob",
+          acct: "bob@remote.test",
+          url: "https://remote.test/@bob",
+        },
+      ],
+      tags: [{ name: "rust", url: "https://remote.test/tags/rust" }],
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    const links = wrapper.findAll(".status-card__content a");
+    expect(links[0].attributes("href")).toBe("/@bob@remote.test");
+    expect(links[0].attributes("target")).toBeUndefined();
+    expect(links[0].attributes("rel")).toBeUndefined();
+    expect(links[1].attributes("href")).toBe("/tags/rust");
+    // Plain remote links keep the new-tab treatment.
+    expect(links[2].attributes("target")).toBe("_blank");
+  });
+
   it("shows favicon for remote accounts and hides it on error", async () => {
     const s = status();
     s.account.acct = "bob@remote.test";

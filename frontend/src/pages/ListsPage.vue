@@ -7,8 +7,10 @@ import { search } from "@/api/search";
 import type { Account, ListEntity } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
+import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
 import Modal from "@/components/ui/Modal.vue";
+import { FontAwesomeIcon } from "@/icons";
 
 const { t } = useI18n();
 const store = useListsStore();
@@ -20,6 +22,8 @@ const form = ref({
   replies_policy: "followed" as const,
   exclusive: false,
 });
+const creating = ref(false);
+const formError = ref<string | null>(null);
 const memberQuery = ref("");
 const memberHits = ref<Account[]>([]);
 const deleting = ref<ListEntity | null>(null);
@@ -35,6 +39,8 @@ async function toggle(l: ListEntity) {
     return;
   }
   open.value = l.id;
+  memberQuery.value = "";
+  memberHits.value = [];
   const page = await listMembers(l.id);
   members.value = page.items;
   membersNext.value = page.next;
@@ -50,9 +56,17 @@ async function moreMembers() {
 }
 
 async function create() {
-  if (!form.value.title.trim()) return;
-  await store.create({ ...form.value });
-  form.value.title = "";
+  if (!form.value.title.trim() || creating.value) return;
+  creating.value = true;
+  formError.value = null;
+  try {
+    await store.create({ ...form.value });
+    form.value.title = "";
+  } catch {
+    formError.value = t("common.error");
+  } finally {
+    creating.value = false;
+  }
 }
 
 let memberSeq = 0;
@@ -103,50 +117,93 @@ onMounted(() => store.fetch());
 </script>
 
 <template>
-  <main class="page">
-    <h1>{{ t("nav.lists") }}</h1>
-    <form @submit.prevent="create">
-      <Input v-model="form.title" :label="t('lists.titleLabel')" />
-      <select
-        v-model="form.replies_policy"
-        :aria-label="t('lists.repliesPolicy')"
-      >
-        <option value="followed">{{ t("lists.policyFollowed") }}</option>
-        <option value="list">{{ t("lists.policyList") }}</option>
-        <option value="none">{{ t("lists.policyNone") }}</option>
-      </select>
-      <label>
-        <input v-model="form.exclusive" type="checkbox" />
-        {{ t("lists.exclusive") }}
-      </label>
-      <Button type="submit">{{ t("lists.create") }}</Button>
-    </form>
-    <ul>
-      <li v-for="l in store.lists" :key="l.id">
-        <router-link :to="`/lists/${l.id}`">{{ l.title }}</router-link>
-        <Button size="sm" variant="secondary" @click="toggle(l)">{{
-          t("lists.members")
-        }}</Button>
-        <Button size="sm" variant="danger" @click="deleting = l">{{
-          t("common.delete")
-        }}</Button>
-        <div v-if="open === l.id" class="members">
+  <main class="page lists">
+    <div class="page-head">
+      <h1>{{ t("nav.lists") }}</h1>
+    </div>
+
+    <Card class="lists__create">
+      <form class="lists__form" @submit.prevent="create">
+        <Input v-model="form.title" :label="t('lists.titleLabel')" />
+        <div class="lists__form-row">
+          <label class="lists__field">
+            <span class="lists__label">{{ t("lists.repliesPolicy") }}</span>
+            <select
+              v-model="form.replies_policy"
+              class="lists__select"
+              :aria-label="t('lists.repliesPolicy')"
+            >
+              <option value="followed">
+                {{ t("lists.policyFollowed") }}
+              </option>
+              <option value="list">{{ t("lists.policyList") }}</option>
+              <option value="none">{{ t("lists.policyNone") }}</option>
+            </select>
+          </label>
+          <label class="lists__exclusive">
+            <input v-model="form.exclusive" type="checkbox" />
+            {{ t("lists.exclusive") }}
+          </label>
+        </div>
+        <p v-if="formError" class="lists__error" role="alert">
+          {{ formError }}
+        </p>
+        <div class="lists__form-actions">
+          <Button
+            type="submit"
+            :loading="creating"
+            :disabled="!form.title.trim()"
+          >
+            {{ t("lists.create") }}
+          </Button>
+        </div>
+      </form>
+    </Card>
+
+    <p v-if="store.loading && !store.lists.length" class="lists__state">
+      {{ t("common.loading") }}
+    </p>
+    <p v-else-if="!store.lists.length" class="lists__state">
+      {{ t("lists.empty") }}
+    </p>
+    <ul v-else class="lists__list">
+      <li v-for="l in store.lists" :key="l.id" class="lists__item">
+        <div class="lists__row">
+          <FontAwesomeIcon icon="list-ul" class="lists__icon" />
+          <router-link :to="`/lists/${l.id}`" class="lists__title">
+            {{ l.title }}
+          </router-link>
+          <div class="lists__actions">
+            <Button size="sm" variant="secondary" @click="toggle(l)">
+              {{ t("lists.members") }}
+            </Button>
+            <Button size="sm" variant="danger" @click="deleting = l">
+              {{ t("common.delete") }}
+            </Button>
+          </div>
+        </div>
+        <div v-if="open === l.id" class="lists__members">
           <Input
             v-model="memberQuery"
             :label="t('lists.addMember')"
             clearable
           />
-          <ul v-if="memberHits.length">
-            <li v-for="a in memberHits" :key="a.id">
-              <Avatar :src="a.avatar" :name="a.acct" size="sm" /> @{{ a.acct }}
-              <Button size="sm" @click="addMember(a.id)">{{
-                t("lists.add")
-              }}</Button>
+          <ul v-if="memberHits.length" class="lists__people">
+            <li v-for="a in memberHits" :key="a.id" class="lists__person">
+              <Avatar :src="a.avatar" :name="a.acct" size="sm" />
+              <span class="lists__acct">@{{ a.acct }}</span>
+              <Button size="sm" @click="addMember(a.id)">
+                {{ t("lists.add") }}
+              </Button>
             </li>
           </ul>
-          <ul>
-            <li v-for="m in members" :key="m.id">
-              <Avatar :src="m.avatar" :name="m.acct" size="sm" /> @{{ m.acct }}
+          <p v-if="!members.length" class="lists__members-empty">
+            {{ t("lists.membersEmpty") }}
+          </p>
+          <ul v-else class="lists__people">
+            <li v-for="m in members" :key="m.id" class="lists__person">
+              <Avatar :src="m.avatar" :name="m.acct" size="sm" />
+              <span class="lists__acct">@{{ m.acct }}</span>
               <Button size="sm" variant="danger" @click="removeMember(m.id)">
                 {{ t("lists.remove") }}
               </Button>
@@ -163,16 +220,163 @@ onMounted(() => store.fetch());
         </div>
       </li>
     </ul>
-    <p v-if="!store.loading && !store.lists.length">{{ t("lists.empty") }}</p>
     <Modal
       v-if="deleting"
       :title="t('lists.deleteTitle')"
       @close="deleting = null"
     >
       <p>{{ t("lists.deleteBody") }}</p>
-      <Button variant="danger" @click="confirmDelete">{{
-        t("common.confirm")
-      }}</Button>
+      <template #footer>
+        <Button variant="secondary" @click="deleting = null">
+          {{ t("ui.cancel") }}
+        </Button>
+        <Button variant="danger" @click="confirmDelete">
+          {{ t("common.confirm") }}
+        </Button>
+      </template>
     </Modal>
   </main>
 </template>
+
+<style scoped>
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.page-head h1 {
+  margin: 0;
+}
+.lists__create {
+  margin-bottom: var(--space-4);
+}
+.lists__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.lists__form-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.lists__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.lists__label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.lists__select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+.lists__exclusive {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  font-size: var(--text-sm);
+}
+.lists__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+.lists__form-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.lists__state {
+  margin: 0;
+  padding: var(--space-5) 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+/* Rows mirror `.conv-list`: raised cards separated by dim borders
+   inside a rounded container. */
+.lists__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.lists__item {
+  background: var(--bg-raised);
+}
+.lists__item + .lists__item {
+  border-top: 1px solid var(--border-dim);
+}
+.lists__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.lists__icon {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.lists__title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lists__title:hover {
+  text-decoration: underline;
+}
+.lists__actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.lists__members {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border-dim);
+  background: var(--bg-sunken);
+}
+.lists__people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.lists__person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.lists__acct {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lists__members-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+</style>

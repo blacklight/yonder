@@ -20,7 +20,12 @@ import {
 import { blockDomain, unblockDomain } from "@/api/domains";
 import { fileReport } from "@/api/reports";
 import { adminAccountAction, setRole } from "@/api/admin";
-import { addListMembers, removeListMembers } from "@/api/lists";
+import {
+  addListMembers,
+  createList,
+  listLists,
+  removeListMembers,
+} from "@/api/lists";
 import { ApiError } from "@/api/errors";
 import type { Account, ListEntity, Relationship, Status } from "@/api/entities";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
@@ -28,6 +33,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
+import Input from "@/components/ui/Input.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
@@ -401,7 +407,7 @@ async function run(id: string) {
         openNote();
         break;
       case "lists":
-        await toggleListMembership();
+        openListPicker();
         break;
       case "open-remote": {
         const url = safeHttpUrl(a.url);
@@ -450,17 +456,77 @@ async function run(id: string) {
   });
 }
 
-async function toggleListMembership() {
+const listsOpen = ref(false);
+const listsLoading = ref(false);
+const listsError = ref<string | null>(null);
+const myLists = ref<ListEntity[]>([]);
+const listMemberIds = ref<Set<string>>(new Set());
+const listsBusy = ref<Set<string>>(new Set());
+const newListTitle = ref("");
+const listCreating = ref(false);
+
+function openListPicker() {
+  listsOpen.value = true;
+  listsLoading.value = true;
+  listsError.value = null;
+  newListTitle.value = "";
   const a = account.value;
   if (!a) return;
-  const [mine, memberOf] = await Promise.all([
-    import("@/api/lists").then((m) => m.listLists()),
-    getAccountLists(a.id),
-  ]);
-  const member = new Set(memberOf.map((l: ListEntity) => l.id));
-  const target = mine.find((l) => !member.has(l.id));
-  if (target) await addListMembers(target.id, [a.id]);
-  else if (mine[0]) await removeListMembers(mine[0].id, [a.id]);
+  Promise.all([listLists(), getAccountLists(a.id)])
+    .then(([mine, memberOf]) => {
+      myLists.value = mine;
+      listMemberIds.value = new Set(memberOf.map((l) => l.id));
+    })
+    .catch(() => {
+      listsError.value = t("common.error");
+    })
+    .finally(() => {
+      listsLoading.value = false;
+    });
+}
+
+async function toggleListMembership(list: ListEntity) {
+  const a = account.value;
+  if (!a || listsBusy.value.has(list.id)) return;
+  const busy = new Set(listsBusy.value);
+  busy.add(list.id);
+  listsBusy.value = busy;
+  const member = listMemberIds.value.has(list.id);
+  try {
+    if (member) await removeListMembers(list.id, [a.id]);
+    else await addListMembers(list.id, [a.id]);
+    const next = new Set(listMemberIds.value);
+    if (member) next.delete(list.id);
+    else next.add(list.id);
+    listMemberIds.value = next;
+  } catch {
+    listsError.value = t("common.error");
+  } finally {
+    const done = new Set(listsBusy.value);
+    done.delete(list.id);
+    listsBusy.value = done;
+  }
+}
+
+// Creating from the picker adds the account straight onto the new
+// list — that's the intent behind opening "Add to list".
+async function createListFromPicker() {
+  const a = account.value;
+  const title = newListTitle.value.trim();
+  if (!a || !title || listCreating.value) return;
+  listCreating.value = true;
+  listsError.value = null;
+  try {
+    const l = await createList({ title });
+    myLists.value = [...myLists.value, l];
+    newListTitle.value = "";
+    await addListMembers(l.id, [a.id]);
+    listMemberIds.value = new Set(listMemberIds.value).add(l.id);
+  } catch {
+    listsError.value = t("common.error");
+  } finally {
+    listCreating.value = false;
+  }
 }
 
 function openNote() {
@@ -756,6 +822,57 @@ watch([tab, showReplies, showBoosts], () => {
         </Button>
       </template>
     </Modal>
+    <Modal
+      v-if="listsOpen"
+      :title="t('profile.listsTitle')"
+      @close="listsOpen = false"
+    >
+      <p v-if="listsLoading" aria-busy="true">{{ t("common.loading") }}</p>
+      <template v-else>
+        <form class="profile__lists-new" @submit.prevent="createListFromPicker">
+          <Input
+            v-model="newListTitle"
+            :label="t('lists.titleLabel')"
+            :placeholder="t('profile.listsNewPlaceholder')"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            :loading="listCreating"
+            :disabled="!newListTitle.trim()"
+          >
+            {{ t("lists.create") }}
+          </Button>
+        </form>
+        <ul v-if="myLists.length" class="profile__lists">
+          <li v-for="l in myLists" :key="l.id">
+            <label class="profile__list-row">
+              <input
+                type="checkbox"
+                :checked="listMemberIds.has(l.id)"
+                :disabled="listsBusy.has(l.id)"
+                @change="toggleListMembership(l)"
+              />
+              <span class="profile__list-title">{{ l.title }}</span>
+              <FontAwesomeIcon
+                v-if="listMemberIds.has(l.id)"
+                icon="check"
+                class="profile__list-check"
+              />
+            </label>
+          </li>
+        </ul>
+        <div v-else class="profile__lists-empty">
+          <p>{{ t("profile.listsEmpty") }}</p>
+          <router-link to="/lists" @click="listsOpen = false">{{
+            t("profile.listsManage")
+          }}</router-link>
+        </div>
+        <p v-if="listsError" class="profile__lists-error" role="alert">
+          {{ listsError }}
+        </p>
+      </template>
+    </Modal>
   </main>
 </template>
 
@@ -955,6 +1072,59 @@ watch([tab, showReplies, showBoosts], () => {
   resize: vertical;
 }
 .profile__note-error {
+  margin: var(--space-2) 0 0;
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+.profile__lists-new {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.profile__lists-new :deep(.field) {
+  flex: 1;
+  min-width: 0;
+}
+.profile__lists {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.profile__list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.profile__list-row:hover {
+  background: var(--bg-sunken);
+}
+.profile__list-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile__list-check {
+  color: var(--accent);
+}
+.profile__lists-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.profile__lists-empty p {
+  margin: 0;
+  color: var(--text-muted);
+}
+.profile__lists-error {
   margin: var(--space-2) 0 0;
   color: var(--danger);
   font-size: var(--text-sm);

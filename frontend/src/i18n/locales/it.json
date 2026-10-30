@@ -916,7 +916,8 @@
     "add": "Aggiungi",
     "remove": "Rimuovi",
     "deleteTitle": "Elimina lista",
-    "deleteBody": "Eliminare questa lista? I membri non sono interessati."
+    "deleteBody": "Eliminare questa lista? I membri non sono interessati.",
+    "membersEmpty": "Ancora nessun membro."
   },
   "notifications": {
     "filters": "Filtri delle notifiche",
@@ -1005,7 +1006,11 @@
     "noteTitle": "Nota privata",
     "notePlaceholder": "Solo tu puoi vedere questa nota",
     "loadError": "Impossibile caricare questo profilo.",
-    "lastAdmin": "Non puoi retrocedere l'ultimo amministratore."
+    "lastAdmin": "Non puoi retrocedere l'ultimo amministratore.",
+    "listsTitle": "Aggiungi a liste",
+    "listsEmpty": "Non hai ancora nessuna lista.",
+    "listsManage": "Gestisci liste",
+    "listsNewPlaceholder": "Nome della lista"
   },
   "register": {
     "title": "Crea un account",

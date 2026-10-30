@@ -903,7 +903,8 @@
     "add": "Add",
     "remove": "Remove",
     "deleteTitle": "Delete list",
-    "deleteBody": "Delete this list? Members are not affected."
+    "deleteBody": "Delete this list? Members are not affected.",
+    "membersEmpty": "No members yet."
   },
   "notifications": {
     "filters": "Notification filters",
@@ -992,7 +993,11 @@
     "noteTitle": "Private note",
     "notePlaceholder": "Only you can see this note",
     "loadError": "Could not load this profile.",
-    "lastAdmin": "The last admin cannot be demoted."
+    "lastAdmin": "The last admin cannot be demoted.",
+    "listsTitle": "Add to lists",
+    "listsEmpty": "You don't have any lists yet.",
+    "listsManage": "Manage lists",
+    "listsNewPlaceholder": "New list name"
   },
   "register": {
     "title": "Create an account",

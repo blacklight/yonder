@@ -916,7 +916,8 @@
     "add": "Añadir",
     "remove": "Quitar",
     "deleteTitle": "Eliminar lista",
-    "deleteBody": "¿Eliminar esta lista? Los miembros no se ven afectados."
+    "deleteBody": "¿Eliminar esta lista? Los miembros no se ven afectados.",
+    "membersEmpty": "Aún no hay miembros."
   },
   "notifications": {
     "filters": "Filtros de notificaciones",
@@ -1005,7 +1006,11 @@
     "noteTitle": "Nota privada",
     "notePlaceholder": "Solo tú puedes ver esta nota",
     "loadError": "No se pudo cargar este perfil.",
-    "lastAdmin": "No se puede degradar al último administrador."
+    "lastAdmin": "No se puede degradar al último administrador.",
+    "listsTitle": "Añadir a listas",
+    "listsEmpty": "Aún no tienes listas.",
+    "listsManage": "Gestionar listas",
+    "listsNewPlaceholder": "Nombre de la lista"
   },
   "register": {
     "title": "Crear una cuenta",

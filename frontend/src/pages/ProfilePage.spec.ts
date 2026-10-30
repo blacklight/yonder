@@ -13,9 +13,31 @@ vi.mock("@/api/accounts", async (orig) => {
     lookup: vi.fn(),
     accountStatuses: vi.fn(),
     getRelationships: vi.fn(),
+    getAccountLists: vi.fn(),
   };
 });
-import { lookup, accountStatuses, getRelationships } from "@/api/accounts";
+vi.mock("@/api/lists", async (orig) => {
+  const m = await orig<typeof import("@/api/lists")>();
+  return {
+    ...m,
+    listLists: vi.fn(),
+    createList: vi.fn(),
+    addListMembers: vi.fn(),
+    removeListMembers: vi.fn(),
+  };
+});
+import {
+  lookup,
+  accountStatuses,
+  getRelationships,
+  getAccountLists,
+} from "@/api/accounts";
+import {
+  listLists,
+  createList,
+  addListMembers,
+  removeListMembers,
+} from "@/api/lists";
 
 // The menu list teleports to <body> — query it at document level.
 const menuItems = () =>
@@ -100,6 +122,13 @@ describe("ProfilePage", () => {
     vi.mocked(accountStatuses).mockResolvedValue({ items: [] });
     vi.mocked(getRelationships).mockReset();
     vi.mocked(getRelationships).mockResolvedValue([]);
+    vi.mocked(getAccountLists).mockReset();
+    vi.mocked(getAccountLists).mockResolvedValue([]);
+    vi.mocked(listLists).mockReset();
+    vi.mocked(listLists).mockResolvedValue([]);
+    vi.mocked(addListMembers).mockReset();
+    vi.mocked(removeListMembers).mockReset();
+    vi.mocked(createList).mockReset();
     document.title = "";
   });
 
@@ -411,5 +440,143 @@ describe("ProfilePage", () => {
     expect(
       vi.mocked(accountStatuses).mock.calls.some(([, q]) => q?.pinned === true),
     ).toBe(true);
+  });
+
+  it("opens a list picker with membership checkboxes", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(listLists).mockResolvedValue([
+      { id: "10", title: "Friends", replies_policy: "followed" },
+      { id: "11", title: "Work", replies_policy: "followed" },
+    ]);
+    vi.mocked(getAccountLists).mockResolvedValue([
+      { id: "10", title: "Friends", replies_policy: "followed" },
+    ]);
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Add to list"))!
+      .trigger("click");
+    await flushPromises();
+
+    const panel = [...document.querySelectorAll(".modal__panel")].at(-1)!;
+    const rows = panel.querySelectorAll(".profile__list-row");
+    expect(rows).toHaveLength(2);
+    const boxes = [
+      ...panel.querySelectorAll<HTMLInputElement>(
+        ".profile__list-row input[type='checkbox']",
+      ),
+    ];
+    expect(boxes[0].checked).toBe(true);
+    expect(boxes[1].checked).toBe(false);
+    expect(vi.mocked(getAccountLists)).toHaveBeenCalledWith("1");
+  });
+
+  it("adds and removes the account via the list picker", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(listLists).mockResolvedValue([
+      { id: "10", title: "Friends", replies_policy: "followed" },
+    ]);
+    vi.mocked(getAccountLists).mockResolvedValue([]);
+    vi.mocked(addListMembers).mockResolvedValue({});
+    vi.mocked(removeListMembers).mockResolvedValue({});
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Add to list"))!
+      .trigger("click");
+    await flushPromises();
+
+    const panel = [...document.querySelectorAll(".modal__panel")].at(-1)!;
+    const box = panel.querySelector<HTMLInputElement>(
+      ".profile__list-row input[type='checkbox']",
+    )!;
+    box.click();
+    await flushPromises();
+    expect(vi.mocked(addListMembers)).toHaveBeenCalledWith("10", ["1"]);
+    expect(box.checked).toBe(true);
+
+    box.click();
+    await flushPromises();
+    expect(vi.mocked(removeListMembers)).toHaveBeenCalledWith("10", ["1"]);
+    expect(box.checked).toBe(false);
+  });
+
+  it("points to list management when the viewer has no lists", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(listLists).mockResolvedValue([]);
+    vi.mocked(getAccountLists).mockResolvedValue([]);
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Add to list"))!
+      .trigger("click");
+    await flushPromises();
+
+    const panel = [...document.querySelectorAll(".modal__panel")].at(-1)!;
+    const empty = panel.querySelector(".profile__lists-empty");
+    expect(empty?.textContent).toContain("don't have any lists");
+    const link = empty?.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/lists");
+  });
+
+  it("creates a list from the picker and adds the account to it", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(listLists).mockResolvedValue([]);
+    vi.mocked(getAccountLists).mockResolvedValue([]);
+    vi.mocked(createList).mockResolvedValue({
+      id: "20",
+      title: "Close friends",
+      replies_policy: "followed",
+    });
+    vi.mocked(addListMembers).mockResolvedValue({});
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Add to list"))!
+      .trigger("click");
+    await flushPromises();
+
+    const panel = [...document.querySelectorAll(".modal__panel")].at(-1)!;
+    const input = panel.querySelector<HTMLInputElement>(
+      ".profile__lists-new .field__input",
+    )!;
+    input.value = "Close friends";
+    input.dispatchEvent(new Event("input"));
+    await flushPromises();
+    const submit = [
+      ...panel.querySelectorAll<HTMLButtonElement>("button"),
+    ].find((b) => b.textContent?.trim() === "Create list")!;
+    submit.click();
+    await flushPromises();
+
+    expect(vi.mocked(createList)).toHaveBeenCalledWith({
+      title: "Close friends",
+    });
+    expect(vi.mocked(addListMembers)).toHaveBeenCalledWith("20", ["1"]);
+    const box = panel.querySelector<HTMLInputElement>(
+      ".profile__list-row input[type='checkbox']",
+    )!;
+    expect(box.checked).toBe(true);
+    expect(panel.textContent).toContain("Close friends");
   });
 });

@@ -916,7 +916,8 @@
     "add": "Hinzufügen",
     "remove": "Entfernen",
     "deleteTitle": "Liste löschen",
-    "deleteBody": "Diese Liste löschen? Mitglieder bleiben unberührt."
+    "deleteBody": "Diese Liste löschen? Mitglieder bleiben unberührt.",
+    "membersEmpty": "Noch keine Mitglieder."
   },
   "notifications": {
     "filters": "Benachrichtigungsfilter",
@@ -1005,7 +1006,11 @@
     "noteTitle": "Private Notiz",
     "notePlaceholder": "Nur du kannst diese Notiz sehen",
     "loadError": "Profil konnte nicht geladen werden.",
-    "lastAdmin": "Der letzte Administrator kann nicht herabgestuft werden."
+    "lastAdmin": "Der letzte Administrator kann nicht herabgestuft werden.",
+    "listsTitle": "Zu Listen hinzufügen",
+    "listsEmpty": "Du hast noch keine Listen.",
+    "listsManage": "Listen verwalten",
+    "listsNewPlaceholder": "Neuer Listenname"
   },
   "register": {
     "title": "Konto erstellen",

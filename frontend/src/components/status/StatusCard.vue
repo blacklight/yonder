@@ -581,6 +581,7 @@ async function onReact(emoji: string) {
           data-testid="edited"
         >
           <FontAwesomeIcon icon="pen-to-square" />
+          <span class="visually-hidden">{{ t("status.edited") }}</span>
         </time>
       </Tooltip>
       <Tooltip v-if="visIcon" :text="t(`compose.vis_${shown.visibility}`)">

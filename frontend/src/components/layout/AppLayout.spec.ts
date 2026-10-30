@@ -25,6 +25,8 @@ function layout() {
       return Promise.resolve(
         new Response(JSON.stringify({ count: 0 }), { status: 200 }),
       );
+    if (url.includes("/conversations"))
+      return Promise.resolve(new Response("[]", { status: 200 }));
     return Promise.resolve(new Response("{}", { status: 200 }));
   });
   const router = createRouter({
@@ -99,8 +101,12 @@ describe("AppLayout", () => {
       routes: stubRoutes,
     });
     await router.push("/admin");
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(new Response("{}", { status: 200 })),
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(
+        new Response(String(input).includes("/conversations") ? "[]" : "{}", {
+          status: 200,
+        }),
+      ),
     );
     const w = mount(AppLayout, {
       global: { plugins: [i18n, router] },
@@ -117,6 +123,52 @@ describe("AppLayout", () => {
     // The Back entry leads out of the panel to the main app.
     const back = w.findAll(".layout__sidebar .navmenu__link")[0];
     expect(back.attributes("href")).toBe("/");
+  });
+
+  it("mobile bottom bar: anonymous sees browse shortcuts", () => {
+    const w = layout();
+    const links = w.findAll(".bottomnav__link");
+    expect(links.map((l) => l.attributes("href"))).toEqual([
+      "/",
+      "/search",
+      "/login",
+    ]);
+    expect(links.map((l) => l.attributes("aria-label"))).toEqual([
+      "Home",
+      "Search",
+      "Sign in",
+    ]);
+    expect(w.find(".bottomnav .avatar").exists()).toBe(false);
+  });
+
+  it("mobile bottom bar: logged-in sees app shortcuts with badges", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = {
+      acct: "alice",
+      avatar: "https://a.example/av.png",
+    } as never;
+    const n = useNotificationsStore();
+    n.unread = 3;
+    const { useConversationsStore } = await import("@/stores/conversations");
+    useConversationsStore().items = [{ id: "c1", unread: true }] as never;
+
+    const w = layout();
+    const links = w.findAll(".bottomnav__link");
+    expect(links.map((l) => l.attributes("href"))).toEqual([
+      "/home",
+      "/search",
+      "/messages",
+      "/notifications",
+      "/profile",
+    ]);
+    // Count bubble on notifications, bare dot for unread DMs.
+    const badges = w.findAll(".bottomnav__badge");
+    expect(badges.map((b) => b.text())).toEqual(["", "3"]);
+    expect(badges[0].classes()).toContain("bottomnav__badge--dot");
+    expect(w.get(".bottomnav .avatar__img").attributes("src")).toBe(
+      "https://a.example/av.png",
+    );
   });
 
   it("renders the unread badge on notifications", () => {
@@ -211,8 +263,12 @@ describe("AppLayout", () => {
       history: createMemoryHistory(),
       routes: stubRoutes,
     });
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(new Response("{}", { status: 200 })),
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(
+        new Response(String(input).includes("/conversations") ? "[]" : "{}", {
+          status: 200,
+        }),
+      ),
     );
     const w = mount(AppLayout, {
       global: { plugins: [i18n, router] },
@@ -234,8 +290,12 @@ describe("AppLayout", () => {
       routes: stubRoutes,
     });
     await router.push(path);
-    vi.spyOn(globalThis, "fetch").mockImplementation(() =>
-      Promise.resolve(new Response("{}", { status: 200 })),
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) =>
+      Promise.resolve(
+        new Response(String(input).includes("/conversations") ? "[]" : "{}", {
+          status: 200,
+        }),
+      ),
     );
     const w = mount(AppLayout, {
       global: { plugins: [i18n, router] },

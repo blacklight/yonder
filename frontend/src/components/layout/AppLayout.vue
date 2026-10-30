@@ -6,6 +6,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import NavMenu, { type NavItem } from "./NavMenu.vue";
 import MobileMenu from "./MobileMenu.vue";
+import BottomNav, { type BottomNavItem } from "./BottomNav.vue";
 import QuoteComposeModal from "@/components/compose/QuoteComposeModal.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
@@ -355,6 +356,68 @@ const mobileItems = computed<NavItem[]>(() =>
       : menuItems.value,
 );
 
+// Mastodon-style mobile bar — the sidebar is unreachable below 768px,
+// so the primary shortcuts live at the thumb zone. Signed-out visitors
+// get the browse shortcuts (the timeline on `/`, search) plus sign-in.
+const bottomItems = computed<BottomNavItem[]>(() => {
+  if (!auth.isLoggedIn)
+    return [
+      { id: "home", label: t("nav.home"), to: "/", icon: "house" },
+      {
+        id: "search",
+        label: t("nav.search"),
+        to: "/search",
+        icon: "magnifying-glass",
+      },
+      {
+        id: "sign-in",
+        label: t("nav.signIn"),
+        to: "/login",
+        icon: "right-to-bracket",
+      },
+    ];
+  return [
+    {
+      id: "home",
+      label: t("nav.home"),
+      to: "/home",
+      icon: "house",
+      // `/` renders the same home timeline — keep both lit.
+      active: route.path === "/",
+    },
+    {
+      id: "search",
+      label: t("nav.search"),
+      to: "/search",
+      icon: "magnifying-glass",
+    },
+    {
+      id: "messages",
+      label: t("nav.messages"),
+      to: "/messages",
+      icon: "comments",
+      // No aggregate count — any unread conversation flags a dot.
+      badge: conversations.items.some((c) => c.unread) || undefined,
+    },
+    {
+      id: "notifications",
+      label: t("nav.notifications"),
+      to: "/notifications",
+      icon: "bell",
+      badge: notifications.unread || undefined,
+    },
+    {
+      id: "profile",
+      label: t("nav.profile"),
+      to: "/profile",
+      avatar: true,
+      avatarSrc: auth.account?.avatar,
+      // /profile redirects to /@acct — router-link-active can't see it.
+      active: !!auth.account && route.params.acct === auth.account.acct,
+    },
+  ];
+});
+
 function onSelect(item: NavItem) {
   menuOpen.value = false;
   // The drawer's compose entry isn't in `menuSource` — its `to` link
@@ -576,6 +639,8 @@ function clearSearch(which: "sidebar" | "aside") {
       </div>
     </aside>
 
+    <BottomNav :items="bottomItems" />
+
     <QuoteComposeModal
       v-if="compose.quoteTarget"
       :status="compose.quoteTarget"
@@ -620,6 +685,8 @@ function clearSearch(which: "sidebar" | "aside") {
 }
 .layout__main {
   padding: var(--space-4);
+  /* Room for the fixed bottom navigation bar on mobile. */
+  padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
   max-width: 44rem;
   width: 100%;
   margin: 0 auto;
@@ -660,6 +727,7 @@ function clearSearch(which: "sidebar" | "aside") {
     flex: 0 1 44rem;
     margin: 0;
     min-height: 100vh;
+    padding-bottom: var(--space-4);
   }
 }
 

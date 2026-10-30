@@ -110,6 +110,7 @@ onMounted(() => {
           :label="t('nav.search')"
           type="search"
           autocomplete="off"
+          autofocus
           clearable
           :placeholder="t('nav.searchPlaceholder')"
           @update:model-value="onInput"

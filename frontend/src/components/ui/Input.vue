@@ -24,6 +24,7 @@ const props = withDefaults(
       | "search";
     required?: boolean;
     clearable?: boolean;
+    autofocus?: boolean;
   }>(),
   { modelValue: "", type: "text", disabled: false, clearable: false },
 );
@@ -68,6 +69,7 @@ function clear() {
         :autocomplete="autocomplete"
         :inputmode="inputmode"
         :required="required"
+        :autofocus="autofocus"
         :aria-invalid="!!error"
         :aria-describedby="describedBy"
         @input="onInput"

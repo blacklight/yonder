@@ -305,7 +305,7 @@ pub fn source_fields(profile_fields: &Value) -> Vec<Value> {
 /// whose text equals their href map back to the URL itself; labelled
 /// anchors map to their text. `None` for non-anchor or multi-element
 /// values (the rendered HTML is returned unchanged instead).
-fn sole_anchor_raw(html: &str) -> Option<String> {
+pub(crate) fn sole_anchor_raw(html: &str) -> Option<String> {
     let frag = scraper::Html::parse_fragment(html);
     let elements = scraper::Selector::parse("*").ok()?;
     if frag.select(&elements).count() != 1 {

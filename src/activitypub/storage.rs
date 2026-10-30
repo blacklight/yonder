@@ -96,6 +96,36 @@ const REMOTE_PROFILE_FIELDS_CAP: usize = 32;
 const REMOTE_FIELD_NAME_CHARS: usize = 255;
 const REMOTE_FIELD_VALUE_CHARS: usize = 4096;
 
+/// The link a stored/incoming field entry ultimately points at — a
+/// bare `http(s)` value or the first anchor `href` inside rendered
+/// `value` HTML. This is the stable identity for stamp carry-over:
+/// remote `attachment` values arrive pre-rendered and the remote
+/// software re-renders them freely (attribute order, invisible
+/// spans, added `rel` tokens — Mastodon rewrites its field markup
+/// between versions), so comparing the literal `value` string drops
+/// `verified_at` on every cosmetic re-render. The verification only
+/// cares where the link points, so the target URL is what must stay
+/// stable.
+fn field_link_identity(entry: &Value) -> Option<String> {
+    let raw = entry
+        .get("value_raw")
+        .or_else(|| entry.get("value"))
+        .and_then(Value::as_str)?;
+    let http = |s: &str| {
+        url::Url::parse(s)
+            .map(|u| matches!(u.scheme(), "http" | "https"))
+            .unwrap_or(false)
+    };
+    if http(raw) {
+        return Some(raw.to_string());
+    }
+    entry
+        .get("value")
+        .and_then(Value::as_str)
+        .and_then(crate::users::profile::first_anchor_href)
+        .filter(|href| http(href))
+}
+
 /// Remote actor `attachment[]` `PropertyValue` entries → the
 /// `profile_fields` JSONB shape. `None` when the document carries no
 /// `attachment` array — the caller treats absent as "leave stored
@@ -103,18 +133,26 @@ const REMOTE_FIELD_VALUE_CHARS: usize = 4096;
 /// present-but-empty array clears them (the remote removed its
 /// fields). `value` arrives pre-rendered HTML — the same wire shape
 /// local entries store; `verified_at` is carried over from
-/// `previous` for unchanged (name, value) pairs — a refresh that
-/// didn't touch the fields must not wipe our own verification
-/// stamps (a remote-claimed stamp is never trusted: the doc shape
-/// carries none).
+/// `previous` for unchanged fields — a refresh that didn't touch
+/// where a field links must not wipe our own verification stamp,
+/// even when the markup around that link was re-rendered (a
+/// remote-claimed stamp is never trusted: the doc shape carries
+/// none).
 fn remote_profile_fields(actor_data: &Value, previous: &[Value]) -> Option<Value> {
     let attachments = actor_data.get("attachment")?.as_array()?;
     let previous_stamp = |name: &str, value: &str| {
+        let identity = field_link_identity(&json!({ "value": value }));
         previous
             .iter()
             .find(|p| {
-                p.get("name").and_then(Value::as_str) == Some(name)
-                    && p.get("value").and_then(Value::as_str) == Some(value)
+                if p.get("name").and_then(Value::as_str) != Some(name) {
+                    return false;
+                }
+                match (&identity, field_link_identity(p)) {
+                    (Some(a), Some(b)) => crate::users::profile::url_eq(a, &b),
+                    (None, None) => p.get("value").and_then(Value::as_str) == Some(value),
+                    _ => false,
+                }
             })
             .and_then(|p| p.get("verified_at").cloned())
             .unwrap_or(Value::Null)
@@ -148,11 +186,20 @@ fn remote_profile_fields(actor_data: &Value, previous: &[Value]) -> Option<Value
                     .chars()
                     .take(REMOTE_FIELD_VALUE_CHARS)
                     .collect::<String>();
-                Some(json!({
+                let mut entry = json!({
                     "name": name,
                     "value": value,
                     "verified_at": previous_stamp(&name, &value),
-                }))
+                });
+                // Anchor-valued entries store the link target as
+                // `value_raw` — the stable (name, raw) identity the
+                // verifier pairs on. Without it `entry_raw` falls
+                // back to the rendered `value`, so a markup-only
+                // re-render would register as a changed pair.
+                if let Some(href) = crate::users::profile::first_anchor_href(&value) {
+                    entry["value_raw"] = json!(href);
+                }
+                Some(entry)
             })
             .take(REMOTE_PROFILE_FIELDS_CAP)
             .collect(),

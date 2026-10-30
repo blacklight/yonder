@@ -500,7 +500,7 @@ fn entry_raw(entry: &Value) -> Option<&str> {
 /// First `<a>` `href` in an HTML fragment — remote field values arrive
 /// pre-rendered and remote/local plain-text values may carry a
 /// linkified URL inside otherwise plain content.
-fn first_anchor_href(html: &str) -> Option<String> {
+pub(crate) fn first_anchor_href(html: &str) -> Option<String> {
     if !html.contains("<a") {
         return None;
     }
@@ -631,7 +631,21 @@ fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> 
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
         let name = input.name.trim();
-        let raw = input.value.trim();
+        // A client that echoes the rendered `value` (a sole `<a>`
+        // element) back as the field's raw would store the markup
+        // itself — the (name, raw) pair no longer matches the
+        // previous entry, the stamp drops, and the editor keeps
+        // round-tripping the corruption. Collapse sole
+        // `rel="me"`/`href==text` anchors back to their URL;
+        // labelled anchors keep their markup so the label survives.
+        let raw_owned;
+        let raw = match crate::users::account::sole_anchor_raw(input.value.trim()) {
+            Some(v) if is_url_field(config, &v) => {
+                raw_owned = v;
+                raw_owned.as_str()
+            }
+            _ => input.value.trim(),
+        };
         // A fully-empty entry is skipped, matching Mastodon.
         if name.is_empty() && raw.is_empty() {
             continue;
@@ -976,37 +990,28 @@ pub async fn update_profile(
         }
     }
     if urls_changed {
-        enqueue_verification(&state.redis, &config.jobs, auth.account_id).await?;
+        enqueue_verification_forced(&state.redis, &config.jobs, auth.account_id).await?;
     }
     Ok(())
 }
 
-/// Deduplicated enqueue: a 60 s NX flag keeps rapid successive edits
-/// (and remote actor upserts) from queueing redundant fetches — the
-/// job itself is idempotent.
-pub(crate) async fn enqueue_verification(
+/// Enqueue `VerifyProfileLinks` for one account. Deliberately
+/// unconditional — no coalescing flag: every caller fires only when
+/// `profile_fields` materially changed (a field edit, an actor
+/// upsert, a throttled profile read that spotted unverified links),
+/// and a deduped enqueue can leave fields unverified for up to the
+/// read-throttle window. The job itself is idempotent.
+pub(crate) async fn enqueue_verification_forced(
     redis: &crate::cache::Redis,
     jobs: &crate::config::JobsConfig,
     account_id: i64,
 ) -> Result<()> {
-    let key = redis.key(&format!("verify-profile-links:{account_id}"));
-    let mut conn = redis.conn().await?;
-    let fresh: Option<String> = redis::cmd("SET")
-        .arg(&key)
-        .arg("1")
-        .arg("NX")
-        .arg("EX")
-        .arg(60)
-        .query_async(&mut *conn)
+    crate::jobs::Dispatcher::new(redis, jobs)
+        .enqueue(
+            JobKind::VerifyProfileLinks,
+            json!({ "account_id": account_id }),
+        )
         .await?;
-    if fresh.is_some() {
-        crate::jobs::Dispatcher::new(redis, jobs)
-            .enqueue(
-                JobKind::VerifyProfileLinks,
-                json!({ "account_id": account_id }),
-            )
-            .await?;
-    }
     Ok(())
 }
 
@@ -1029,7 +1034,7 @@ enum Verdict {
 }
 
 /// Case/URL-normalized comparison for `href` candidates.
-fn url_eq(candidate: &str, target: &str) -> bool {
+pub(crate) fn url_eq(candidate: &str, target: &str) -> bool {
     match (url::Url::parse(candidate), url::Url::parse(target)) {
         (Ok(a), Ok(b)) => a == b,
         _ => candidate == target,
@@ -1096,8 +1101,8 @@ fn fetch_verdict(client: &HttpClient, page_url: &str, targets: &[String]) -> Ver
 /// for one account (`{"account_id": …}`, enqueued on edit, on remote
 /// actor ingest/refresh and on remote profile reads) or every local
 /// account with URL-valued fields (the cron sweep — remote accounts
-/// re-verify through the actor-refresh path instead). All network
-/// I/O lives here; PATCH never fetches.
+/// re-verify through the actor-refresh and profile-read paths). All
+/// network I/O lives here; PATCH never fetches.
 pub struct VerifyProfileLinksJob;
 
 /// In-flight fetch bound per job run — one runaway sweep must not
@@ -1168,12 +1173,21 @@ async fn verify_account(
             format!("{base_url}/ap/users/{username}"),
             format!("{base_url}/@{username}"),
         ],
-        Some(_) => {
+        Some(domain) => {
             let mut t = vec![row.get::<String, _>("actor_id")];
             if let Some(url) = row.get::<Option<String>, _>("url") {
                 if !url.is_empty() && !t.contains(&url) {
                     t.push(url);
                 }
+            }
+            // Pages often link the `/@user` profile alias even when the
+            // actor doc's `url` is the `/users/` form (or vice versa) —
+            // both spellings are the same identity. Always the actor's
+            // own domain+username, so it can never arm someone else's
+            // page.
+            let alias = format!("https://{domain}/@{username}");
+            if !t.contains(&alias) {
+                t.push(alias);
             }
             t
         }
@@ -1205,7 +1219,7 @@ async fn verify_account(
     }
 
     // Bounded parallel fetches — pubby's client is sync.
-    let verdicts: HashMap<String, Verdict> = futures_util::stream::iter(urls)
+    let mut verdicts: HashMap<String, Verdict> = futures_util::stream::iter(urls.to_vec())
         .map(|url| {
             let client = client.clone();
             let targets = targets.clone();
@@ -1221,6 +1235,42 @@ async fn verify_account(
         .buffer_unordered(VERIFY_CONCURRENCY)
         .collect()
         .await;
+
+    // Armed URLs map to entries that already carry a stamp. A single
+    // miss must not clear one: transient 2xx pages without the link
+    // (CDN edge errors, bot interstitials, deploy windows) would flap
+    // verified → unverified on every actor refresh. Confirm a clear
+    // with a second fetch — a repeated miss is definitive enough.
+    let armed: HashSet<String> = entries
+        .iter()
+        .filter(|e| e.get("verified_at").map(|v| !v.is_null()).unwrap_or(false))
+        .filter_map(|e| field_verify_url(&ctx.config, e))
+        .collect();
+    let confirmations: Vec<(String, Verdict)> = futures_util::stream::iter(
+        urls.iter()
+            .filter(|u| armed.contains(*u) && verdicts.get(*u) == Some(&Verdict::NotVerified))
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
+    .map(|url| {
+        let client = client.clone();
+        let targets = targets.clone();
+        async move {
+            let u = url.clone();
+            let verdict = tokio::task::spawn_blocking(move || fetch_verdict(&client, &u, &targets))
+                .await
+                .unwrap_or(Verdict::Keep);
+            (url, verdict)
+        }
+    })
+    .buffer_unordered(VERIFY_CONCURRENCY)
+    .collect()
+    .await;
+    for (url, verdict) in confirmations {
+        if verdict != Verdict::NotVerified {
+            verdicts.insert(url, verdict);
+        }
+    }
 
     // Guarded write-back: re-read under FOR UPDATE and only
     // touch entries still carrying the (name, raw) pair that was

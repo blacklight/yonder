@@ -220,8 +220,7 @@ const REMOTE_REFRESH_AFTER_SECONDS: i64 = REMOTE_ACTOR_STALE_SECONDS;
 /// One `RemoteActorFetch` enqueue per stale actor per this window —
 /// the flag covers the pending fetch so a burst of reads on a hot
 /// stale profile can't flood the queue (the job is idempotent; the
-/// dedup is queue pressure, not correctness). Matches the
-/// `enqueue_verification` NX-flag convention.
+/// dedup is queue pressure, not correctness).
 const REFRESH_ENQUEUE_THROTTLE_SECONDS: usize = 300;
 
 /// Load the profile's account row and apply the public-read rules:
@@ -326,7 +325,7 @@ async fn counters_refresh_due(db: &sqlx::PgPool, account_id: i64) -> bool {
 /// a permanently unreachable field URL must not re-fetch on every
 /// profile read. Actor refreshes re-verify independently of this
 /// flag (their fields may have changed).
-const VERIFY_FIELDS_READ_THROTTLE_SECONDS: usize = 3600;
+const VERIFY_FIELDS_READ_THROTTLE_SECONDS: usize = 900;
 
 /// For remote accounts, enqueue `VerifyProfileLinks` when a
 /// link-valued field carries no `verified_at` stamp. Covers remote
@@ -373,9 +372,15 @@ async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::
     if !claimed {
         return;
     }
-    if let Err(e) =
-        crate::users::profile::enqueue_verification(&state.redis, &state.config().jobs, account.id)
-            .await
+    // Forced: the 1h flag above is already the throttle — letting the
+    // 60 s coalescing flag swallow this enqueue would leave the fields
+    // unverified until the flag lapses.
+    if let Err(e) = crate::users::profile::enqueue_verification_forced(
+        &state.redis,
+        &state.config().jobs,
+        account.id,
+    )
+    .await
     {
         tracing::warn!(account_id = account.id, error = %e, "remote field verify enqueue failed");
         let Ok(mut conn) = state.redis.conn().await else {

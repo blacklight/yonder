@@ -288,7 +288,8 @@ async fn handle_actor_update(core: &Arc<ApCore>, activity: &Activity, raw: &Valu
             .unwrap_or(false),
     ) {
         if let Err(e) =
-            crate::users::profile::enqueue_verification(&core.redis, &core.config.jobs, id).await
+            crate::users::profile::enqueue_verification_forced(&core.redis, &core.config.jobs, id)
+                .await
         {
             tracing::warn!(actor = %activity.actor, error = %e, "profile-link verify enqueue failed");
         }
@@ -551,7 +552,7 @@ impl JobHandler for RemoteActorFetchJob {
                         .map(|a| !a.is_empty())
                         .unwrap_or(false),
                 ) {
-                    if let Err(e) = crate::users::profile::enqueue_verification(
+                    if let Err(e) = crate::users::profile::enqueue_verification_forced(
                         &ctx.redis,
                         &ctx.config.jobs,
                         id,

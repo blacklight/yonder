@@ -636,10 +636,17 @@ async fn avatar_replace_and_clear_delete_stale_object() {
 
 /// Serve `body` on `127.0.0.1:0` — the rel="me" fixture page.
 async fn serve_once(body: impl Into<String>) -> String {
-    let body = body.into();
+    serve_bodies(vec![body.into()]).await
+}
+
+/// Serve each body in turn, then keep serving the last one — enough
+/// requests for a first fetch plus the stamp-clearing confirmation
+/// fetch (and any retries the job adds later).
+async fn serve_bodies(bodies: Vec<String>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
+        let mut served = 0usize;
         for _ in 0..16 {
             let Ok((mut sock, _)) = listener.accept().await else {
                 continue;
@@ -649,13 +656,14 @@ async fn serve_once(body: impl Into<String>) -> String {
             if sock.read(&mut buf).await.is_err() {
                 continue;
             }
+            let body = &bodies[served.min(bodies.len() - 1)];
+            served += 1;
             let resp = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 body.len(),
                 body
             );
             let _ = sock.write_all(resp.as_bytes()).await;
-            return;
         }
     });
     format!("http://127.0.0.1:{port}/page")
@@ -822,6 +830,62 @@ async fn rel_me_stamp_lifecycle() {
     assert_eq!(fields[0]["verified_at"], "2025-01-01T00:00:00Z", "{fields}");
 }
 
+/// A stamped field whose page misses once but links back on the
+/// confirmation fetch keeps its stamp — a single transient "2xx
+/// without the link" (CDN edge page, bot wall, deploy window) must
+/// not flap verified → unverified.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rel_me_single_miss_keeps_stamp() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let token = token_for(&env.app, "irene").await;
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'irene'")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    async fn fields_of(env: &Env, id: i64) -> Value {
+        sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+            .bind(id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap()
+    }
+    // Requests: the initial verify, then a transient miss, then the
+    // confirmation fetch finds the link again.
+    let good =
+        "<html><body><a rel=\"me\" href=\"http://127.0.0.1:4000/@irene\">me</a></body></html>";
+    let page = serve_bodies(vec![
+        good.to_string(),
+        "<html><body>maintenance</body></html>".to_string(),
+        good.to_string(),
+    ])
+    .await;
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req(
+                "PATCH",
+                PATCH,
+                json!({ "fields_attributes": [{"name": "site", "value": page}] }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    run_verify_job(&env, account_id).await;
+    let fields = fields_of(&env, account_id).await;
+    assert!(fields[0]["verified_at"].is_string(), "{fields}");
+
+    // Second pass: first fetch misses, the confirmation fetch sees
+    // the link again — the stamp survives.
+    run_verify_job(&env, account_id).await;
+    let fields = fields_of(&env, account_id).await;
+    assert!(fields[0]["verified_at"].is_string(), "{fields}");
+}
+
 /// With `allow_private_targets = false` the guarded client refuses a
 /// loopback field URL — no fetch, no stamp (W5/W10 SSRF).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -972,6 +1036,30 @@ async fn rel_me_verification_marks_remote_fields() {
         .unwrap();
     assert_eq!(fields[0]["verified_at"], stamp, "{fields}");
     assert!(fields[1]["verified_at"].is_string(), "{fields}");
+
+    // A refresh whose attachment re-renders the SAME links with
+    // different markup (attribute order, added rel tokens, invisible
+    // spans — Mastodon rewrites its field HTML between versions)
+    // keeps the stamps: the link target is the identity, not the
+    // literal `value` string.
+    *doc.lock().unwrap() = doc_for(json!([
+        {"type": "PropertyValue", "name": "Site",
+         "value": format!("<a rel=\"me\" target=\"_blank\" href=\"{page_a}\"><span class=\"invisible\">https://</span><span>site</span></a>")},
+        {"type": "PropertyValue", "name": "Blog",
+         "value": format!("<a href=\"{page_b}\" rel=\"me\">blog</a>")},
+        {"type": "PropertyValue", "name": "Pronouns", "value": "he/him"},
+    ]));
+    job.run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let fields: Value = sqlx::query_scalar("SELECT profile_fields FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(fields[0]["verified_at"], stamp, "{fields}");
+    assert!(fields[1]["verified_at"].is_string(), "{fields}");
+    assert!(fields[2]["verified_at"].is_null(), "{fields}");
 
     // A changed field value resets the stamp; the next verification
     // pass leaves it null when the new page doesn't link back.

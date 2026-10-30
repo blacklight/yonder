@@ -138,12 +138,23 @@ fn redact_url_userinfo(message: &str) -> String {
 
 /// Render a command error: `--json` writes
 /// `{"error": "...", "kind": "..."}` on stderr, human mode writes
-/// `error: ...`. The message is the client-facing
+/// `error: ...`. Machine output keeps the client-facing
 /// [`Error::public_message`] — infrastructure variants stay generic
 /// so internals (and any config value a figment error might echo)
-/// never leak, and URL user-info is scrubbed either way.
+/// never leak, and URL user-info is scrubbed either way. Human mode
+/// shows the real message (a migration checksum mismatch is
+/// undiagnosable behind "Internal server error") — except `Config`,
+/// whose figment text can echo config-file values.
 pub fn render_error(error: &Error, json: bool) {
-    let message = redact_url_userinfo(&error.public_message());
+    let raw = if json {
+        error.public_message().into_owned()
+    } else {
+        match error {
+            Error::Config(_) => error.public_message().into_owned(),
+            e => e.to_string(),
+        }
+    };
+    let message = redact_url_userinfo(&raw);
     if json {
         let body = serde_json::json!({
             "error": message,

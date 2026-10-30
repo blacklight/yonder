@@ -82,6 +82,14 @@ export interface PreviewCard {
   title: string;
   description: string;
   image: string | null;
+  /** `video` cards carry an iframeable player (`embed_url`). */
+  type?: "link" | "photo" | "video" | "rich";
+  /** Mastodon-compat synthesized `<iframe>` markup. */
+  html?: string;
+  /** iframeable player URL (video cards only). */
+  embed_url?: string;
+  width?: number;
+  height?: number;
   author_name?: string;
   author_url?: string;
   provider_name?: string;

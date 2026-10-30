@@ -259,7 +259,8 @@ impl StatusBatch {
         let cards_f = async {
             sqlx::query(
                 "SELECT status_id, url, title, description, image_path, author_name, author_url, \
-                        provider_name, provider_url FROM preview_cards \
+                        provider_name, provider_url, embed_url, embed_width, embed_height \
+                 FROM preview_cards \
                  WHERE status_id = ANY($1) ORDER BY status_id, id",
             )
             .bind(&all_ids)
@@ -428,7 +429,8 @@ impl StatusBatch {
             let grand_cards_f = async {
                 sqlx::query(
                     "SELECT status_id, url, title, description, image_path, author_name, author_url, \
-                            provider_name, provider_url FROM preview_cards \
+                            provider_name, provider_url, embed_url, embed_width, embed_height \
+                     FROM preview_cards \
                      WHERE status_id = ANY($1) ORDER BY status_id, id",
                 )
                 .bind(&grand_ids)
@@ -925,11 +927,35 @@ impl StatusBatch {
             cards
                 .entry(r.get::<i64, _>("status_id"))
                 .or_insert_with(|| {
+                    let embed_url: String = r.get("embed_url");
+                    let embed_width: i32 = r.get("embed_width");
+                    let embed_height: i32 = r.get("embed_height");
+                    let video = !embed_url.is_empty();
+                    // `html` mirrors Mastodon's card entity — clients
+                    // that embed cards render it verbatim. We
+                    // synthesize the iframe from the stored URL (an
+                    // `http(s)` `twitter:player`/`og:video` target);
+                    // quotes/angle brackets can't appear in a parsed
+                    // Url, so attribute interpolation is safe.
+                    let html = if video {
+                        format!(
+                            "<iframe src=\"{embed_url}\" width=\"{embed_width}\" \
+                             height=\"{embed_height}\" allowfullscreen \
+                             sandbox=\"allow-scripts allow-same-origin allow-presentation \
+                             allow-popups allow-popups-to-escape-sandbox\"></iframe>"
+                        )
+                    } else {
+                        String::new()
+                    };
                     json!({
                         "url": r.get::<String, _>("url"),
                         "title": r.get::<String, _>("title"),
                         "description": r.get::<String, _>("description"),
-                        "type": "link",
+                        "type": if video { "video" } else { "link" },
+                        "html": html,
+                        "embed_url": embed_url,
+                        "width": embed_width,
+                        "height": embed_height,
                         "author_name": r.get::<String, _>("author_name"),
                         "author_url": r.get::<String, _>("author_url"),
                         "provider_name": r.get::<String, _>("provider_name"),

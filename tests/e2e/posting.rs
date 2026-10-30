@@ -16,6 +16,7 @@ use axum::{
 };
 use redis::AsyncCommands;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 use yonder::{
     activitypub,
@@ -951,7 +952,13 @@ async fn remote_video_synthesizes_attachment() {
 /// Drain every pending entry from the `default` job stream and return
 /// the decoded envelopes — the test stands in for the worker.
 async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
-    let key = env.state.redis.key("queue:default");
+    drain_queue(env, "default").await
+}
+
+/// Same drain for any queue name — the preview sweep fans out on
+/// `bulk`.
+async fn drain_queue(env: &Env, queue: &str) -> Vec<JobEnvelope> {
+    let key = env.state.redis.key(&format!("queue:{queue}"));
     let mut conn = env.state.redis.conn().await.unwrap();
     let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
     let mut out = Vec::new();
@@ -1194,6 +1201,257 @@ async fn link_preview_job_converges_cards() {
     assert!(
         !urls.iter().any(|u| u == "https://example.com/old"),
         "stale card must be reconciled: {urls:?}"
+    );
+}
+
+/// Video-platform pages (YouTube, Vimeo, …) declare an iframeable
+/// player via `twitter:player` / `og:video`+`text/html` — the card
+/// entity upgrades to `type: "video"` with the embed, so the client
+/// renders click-to-play instead of a bare link. A `video/mp4`
+/// `og:video` is a raw media file, not a player, and stays `link`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link_preview_video_card_embeds() {
+    let _permit = harness::acquire().await;
+
+    const PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 98, 0, 1, 0, 0, 5, 0, 1,
+        13, 10, 45, 180, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let watch_page = format!(
+        "<html><head>\
+         <meta property=\"og:title\" content=\"Cool video\">\
+         <meta property=\"og:site_name\" content=\"VidTest\">\
+         <meta property=\"og:image\" content=\"{origin}/thumb.png\">\
+         <meta name=\"twitter:player\" content=\"{origin}/embed/abc\">\
+         <meta name=\"twitter:player:width\" content=\"560\">\
+         <meta name=\"twitter:player:height\" content=\"315\">\
+         </head><body>watch</body></html>"
+    );
+    // `og:video` alone doubles for raw media — only a `text/html`
+    // player is iframeable (Vimeo-shape, no twitter:player).
+    let og_page = format!(
+        "<html><head>\
+         <meta property=\"og:title\" content=\"OG player\">\
+         <meta property=\"og:video:secure_url\" content=\"{origin}/player/42\">\
+         <meta property=\"og:video:type\" content=\"text/html\">\
+         <meta property=\"og:video:width\" content=\"640\">\
+         <meta property=\"og:video:height\" content=\"360\">\
+         </head><body>og</body></html>"
+    );
+    let raw_page = format!(
+        "<html><head>\
+         <meta property=\"og:title\" content=\"Raw clip\">\
+         <meta property=\"og:video\" content=\"{origin}/files/clip.mp4\">\
+         <meta property=\"og:video:type\" content=\"video/mp4\">\
+         </head><body>raw</body></html>"
+    );
+    // Second player page — the rescan part needs an URL the earlier
+    // fetches haven't already populated the v2 metadata cache for.
+    let watch2_page = format!(
+        "<html><head>\
+         <meta property=\"og:title\" content=\"Fresh video\">\
+         <meta name=\"twitter:player\" content=\"{origin}/embed2/abc\">\
+         </head><body>watch2</body></html>"
+    );
+    let fake = Router::new()
+        .route(
+            "/watch",
+            axum::routing::get(move || {
+                let page = watch_page.clone();
+                async move { axum::response::Html(page) }
+            }),
+        )
+        .route(
+            "/og",
+            axum::routing::get(move || {
+                let page = og_page.clone();
+                async move { axum::response::Html(page) }
+            }),
+        )
+        .route(
+            "/raw",
+            axum::routing::get(move || {
+                let page = raw_page.clone();
+                async move { axum::response::Html(page) }
+            }),
+        )
+        .route(
+            "/watch2",
+            axum::routing::get(move || {
+                let page = watch2_page.clone();
+                async move { axum::response::Html(page) }
+            }),
+        )
+        .route(
+            "/thumb.png",
+            axum::routing::get(|| async { ([("content-type", "image/png")], PNG) }),
+        );
+    tokio::spawn(async move { axum::serve(listener, fake).await.unwrap() });
+
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "vicky", "vicky@example.com").await;
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let job = FetchLinkPreviewJob::new(env.state.ap.clone());
+    let jctx = JobContext {
+        db: env.state.db.clone(),
+        redis: env.state.redis.clone(),
+        config: env.state.config().clone(),
+        media: env.state.media.clone(),
+    };
+    let db = env.state.db.clone();
+    let status_id = move |n: i64| {
+        let db = db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT id FROM statuses WHERE uri = $1")
+                .bind(format!("https://remote.test/objects/prev-{n}"))
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let app = env.app.clone();
+    let card_of = move |id: i64| {
+        let app = app.clone();
+        let token = token.clone();
+        async move {
+            let (status, body) = request(
+                &app,
+                "GET",
+                &format!("/api/v1/statuses/{id}"),
+                Some(&token),
+                None,
+                &[],
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["card"].clone()
+        }
+    };
+
+    // twitter:player → video card, thumbnail downloaded, dims kept.
+    let create = preview_create(10, json!({"content": format!("<p>see {origin}/watch</p>")}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let id = status_id(10).await;
+    job.run(&jctx, &json!({"status_id": id})).await.unwrap();
+    let (embed, w, h): (String, i32, i32) = sqlx::query_as(
+        "SELECT embed_url, embed_width, embed_height FROM preview_cards WHERE status_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(embed, format!("{origin}/embed/abc"));
+    assert_eq!((w, h), (560, 315));
+    let card = card_of(id).await;
+    assert_eq!(card["type"], "video", "{card}");
+    assert_eq!(card["embed_url"], format!("{origin}/embed/abc"));
+    assert_eq!(card["width"], 560);
+    assert_eq!(card["height"], 315);
+    assert!(card["image"].is_string(), "{card}");
+    assert_eq!(card["provider_name"], "VidTest");
+    let html = card["html"].as_str().unwrap();
+    assert!(
+        html.contains(&format!("src=\"{origin}/embed/abc\"")),
+        "synthesized iframe: {html}"
+    );
+
+    // og:video text/html without twitter:player → same upgrade.
+    let create = preview_create(11, json!({"content": format!("<p>see {origin}/og</p>")}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let id = status_id(11).await;
+    job.run(&jctx, &json!({"status_id": id})).await.unwrap();
+    let card = card_of(id).await;
+    assert_eq!(card["type"], "video", "{card}");
+    assert_eq!(card["embed_url"], format!("{origin}/player/42"));
+    assert_eq!(card["width"], 640);
+    assert_eq!(card["height"], 360);
+
+    // A raw-media og:video stays a plain link card — no player.
+    let create = preview_create(12, json!({"content": format!("<p>see {origin}/raw</p>")}));
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let id = status_id(12).await;
+    job.run(&jctx, &json!({"status_id": id})).await.unwrap();
+    let card = card_of(id).await;
+    assert_eq!(card["type"], "link", "{card}");
+    assert_eq!(card["embed_url"], "");
+    assert_eq!(card["html"], "");
+
+    // ---- Existing posts: rescan sweep + cache-version bump ----
+    // A card row written by pre-embed code (scan_version = 0, no
+    // embed fields) is what an upgraded instance holds. The sweep
+    // (`{}` payload — `yonder run-job fetch_link_preview`) marks it
+    // scanned and fans out a per-status job on `bulk`.
+    let create = preview_create(
+        13,
+        json!({"content": format!("<p>see {origin}/watch2</p>")}),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let id = status_id(13).await;
+    sqlx::query("INSERT INTO preview_cards (status_id, url, title) VALUES ($1, $2, 'Old link')")
+        .bind(id)
+        .bind(format!("{origin}/watch2"))
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    // A poisoned pre-bump cache envelope — v2 must ignore it
+    // entirely, or the rescan would re-stamp a link card.
+    let v1_key = env.state.redis.key(&format!(
+        "cache:preview:{}",
+        &hex::encode(Sha256::digest(format!("{origin}/watch2").as_bytes()))[..32]
+    ));
+    {
+        let mut conn = env.state.redis.conn().await.unwrap();
+        let envelope = json!({
+            "v": {
+                "title": "STALE-CACHE", "description": "", "image": null,
+                "author_name": "", "author_url": "",
+                "provider_name": "", "provider_url": "",
+            },
+            "e": 4_000_000_000f64,
+        });
+        let _: () = conn.set(&v1_key, envelope.to_string()).await.unwrap();
+    }
+
+    job.run(&jctx, &json!({})).await.unwrap();
+    let scan: i32 =
+        sqlx::query_scalar("SELECT scan_version FROM preview_cards WHERE status_id = $1")
+            .bind(id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(scan, 1, "sweep must mark the row scanned");
+    let jobs = drain_queue(&env, "bulk").await;
+    let swept: Vec<_> = jobs
+        .iter()
+        .filter(|j| j.kind == JobKind::FetchLinkPreview)
+        .collect();
+    // Only the stale row fans out — the scan_version=1 cards written
+    // above are not re-enqueued.
+    assert_eq!(swept.len(), 1, "{jobs:?}");
+    assert_eq!(swept[0].payload["status_id"], id);
+
+    // The fanned-out job refreshes the card — video embed in spite
+    // of the poisoned v1 envelope.
+    job.run(&jctx, &swept[0].payload).await.unwrap();
+    let card = card_of(id).await;
+    assert_eq!(card["type"], "video", "{card}");
+    assert_eq!(card["title"], "Fresh video", "{card}");
+    assert_eq!(card["embed_url"], format!("{origin}/embed2/abc"));
+
+    // A second sweep finds nothing stale — the marker converged.
+    job.run(&jctx, &json!({})).await.unwrap();
+    assert!(
+        drain_queue(&env, "bulk")
+            .await
+            .iter()
+            .all(|j| j.kind != JobKind::FetchLinkPreview),
+        "converged cards must not be re-enqueued"
     );
 }
 

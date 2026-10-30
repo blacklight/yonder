@@ -192,6 +192,60 @@ describe("StatusCard", () => {
     expect(w2.find(".status-card__preview").exists()).toBe(false);
   });
 
+  it("renders video cards click-to-play — the iframe loads only on demand", async () => {
+    const video = status({
+      card: {
+        url: "https://tube.test/watch/1",
+        title: "Cool video",
+        description: "",
+        image: "https://img.test/t.jpg",
+        type: "video",
+        embed_url: "https://tube.test/embed/1",
+        width: 560,
+        height: 315,
+        provider_name: "TubeTest",
+      } as never,
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: video } });
+    // Thumbnail + play affordance; no third-party iframe yet and the
+    // plain link card is not rendered alongside it.
+    expect(wrapper.find(".status-card__player-iframe").exists()).toBe(false);
+    expect(wrapper.find(".status-card__preview").exists()).toBe(false);
+    expect(wrapper.get(".status-card__player-img").attributes("src")).toBe(
+      "https://img.test/t.jpg",
+    );
+    expect(wrapper.get(".status-card__player").attributes("style")).toContain(
+      "aspect-ratio: 560 / 315",
+    );
+    expect(wrapper.get(".status-card__player-btn").text()).toContain(
+      "Cool video",
+    );
+
+    await wrapper.get(".status-card__player-btn").trigger("click");
+    const iframe = wrapper.get(".status-card__player-iframe");
+    expect(iframe.attributes("src")).toBe(
+      "https://tube.test/embed/1?autoplay=1",
+    );
+  });
+
+  it("video cards fall back to a link card on a non-http(s) embed URL", () => {
+    const evil = status({
+      card: {
+        url: "https://tube.test/watch/2",
+        title: "t",
+        description: "",
+        image: null,
+        type: "video",
+        embed_url: "javascript:alert(1)",
+      } as never,
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: evil } });
+    expect(wrapper.find(".status-card__player").exists()).toBe(false);
+    expect(wrapper.get(".status-card__preview").attributes("href")).toBe(
+      "https://tube.test/watch/2",
+    );
+  });
+
   it("sanitizes content", () => {
     const s = status({ content: "<p>ok</p><script>alert(1)</script>" });
     const { wrapper } = mountWith(StatusCard, { props: { status: s } });

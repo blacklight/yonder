@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import Avatar from "@/components/ui/Avatar.vue";
@@ -240,6 +240,38 @@ const actionError = ref("");
 const card = computed(() => {
   const c = shown.value.card;
   return c && /^https?:\/\//i.test(c.url) ? c : null;
+});
+
+// Video cards (YouTube, Vimeo, … — `twitter:player`/`og:video`
+// metadata) render click-to-play: the thumbnail with a play button,
+// and the third-party iframe only loads once requested — never
+// eagerly per card on a timeline.
+const cardPlaying = ref(false);
+watch(
+  () => shown.value.id,
+  () => (cardPlaying.value = false),
+);
+const videoEmbed = computed(() => {
+  const c = card.value;
+  if (c?.type !== "video" || !c.embed_url) return null;
+  return /^https?:\/\//i.test(c.embed_url) ? c.embed_url : null;
+});
+// Clicking play should actually play — `autoplay=1` is honored by
+// YouTube/Vimeo and ignored by players that don't know it.
+const embedSrc = computed(() => {
+  if (!videoEmbed.value) return "";
+  try {
+    const u = new URL(videoEmbed.value);
+    u.searchParams.set("autoplay", "1");
+    return u.toString();
+  } catch {
+    return videoEmbed.value;
+  }
+});
+const playerStyle = computed(() => {
+  const w = card.value?.width ?? 0;
+  const h = card.value?.height ?? 0;
+  return { aspectRatio: w > 0 && h > 0 ? `${w} / ${h}` : "16 / 9" };
 });
 
 // Destructive menu entries are routed through a confirm dialog first.
@@ -651,8 +683,44 @@ async function onReact(emoji: string) {
       </button>
     </div>
 
+    <div
+      v-if="card && videoEmbed"
+      class="status-card__player"
+      :style="playerStyle"
+    >
+      <iframe
+        v-if="cardPlaying"
+        :src="embedSrc"
+        :title="card.title || card.provider_name || t('status.media.play')"
+        class="status-card__player-iframe"
+        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+        sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
+        allowfullscreen
+      />
+      <button
+        v-else
+        type="button"
+        class="status-card__player-btn"
+        :aria-label="t('status.media.play')"
+        @click="cardPlaying = true"
+      >
+        <img
+          v-if="card.image"
+          :src="card.image"
+          alt=""
+          class="status-card__player-img"
+        />
+        <span class="status-card__player-play" aria-hidden="true">
+          <FontAwesomeIcon icon="play" />
+        </span>
+        <span class="status-card__player-info">
+          <strong v-if="card.title">{{ card.title }}</strong>
+          <span v-if="card.provider_name">{{ card.provider_name }}</span>
+        </span>
+      </button>
+    </div>
     <a
-      v-if="card"
+      v-else-if="card"
       :href="card.url"
       class="status-card__preview"
       target="_blank"
@@ -931,6 +999,82 @@ async function onReact(emoji: string) {
 }
 .status-card__preview-provider {
   color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.status-card__player {
+  position: relative;
+  margin: var(--space-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #000;
+  max-height: 26rem;
+}
+.status-card__player-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.status-card__player-btn {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+.status-card__player-btn:focus-visible {
+  outline: 2px solid var(--accent-link);
+  outline-offset: -2px;
+}
+.status-card__player-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.status-card__player-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.65);
+  font-size: 1.25rem;
+  transition: background 0.15s ease;
+}
+.status-card__player-btn:hover .status-card__player-play,
+.status-card__player-btn:focus-visible .status-card__player-play {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.status-card__player-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-size: var(--text-sm);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+}
+.status-card__player-info > span {
+  color: rgba(255, 255, 255, 0.75);
   font-size: var(--text-xs);
 }
 .status-card__reactions {

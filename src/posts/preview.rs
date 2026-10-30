@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     activitypub::ApContext,
-    jobs::{JobContext, JobHandler, JobKind},
+    jobs::{Dispatcher, JobContext, JobHandler, JobKind, Queue},
     Error, Result,
 };
 
@@ -99,8 +99,13 @@ fn url_scan(source: &str) -> Vec<&str> {
 // Job
 // ---------------------------------------------------------------------------
 
-/// `JobKind::FetchLinkPreview` — `{status_id}`; never fails (a failed
-/// fetch/parse is logged and acked, not retried).
+/// `JobKind::FetchLinkPreview` — `{status_id}` refreshes one status;
+/// never fails (a failed fetch/parse is logged and acked, not
+/// retried). An empty payload is the rescan sweep: it fans out one
+/// per-status job per `preview_cards` row whose `scan_version`
+/// predates [`CARD_SCAN_VERSION`] — how cards stored before a
+/// card-shape change (e.g. video embeds) get re-fetched
+/// (`yonder run-job fetch_link_preview`).
 pub struct FetchLinkPreviewJob {
     ap: Option<ApContext>,
 }
@@ -110,13 +115,57 @@ impl FetchLinkPreviewJob {
     pub fn new(ap: Option<ApContext>) -> Self {
         FetchLinkPreviewJob { ap }
     }
+
+    /// Sweep mode: mark one batch of stale card rows as scanned, then
+    /// enqueue a per-status job for each on `Queue::Bulk` (the sweep
+    /// must not crowd the interactive queue). Marking at enqueue
+    /// time — not at fetch time — bounds the fan-out: a page that
+    /// keeps failing can't be re-enqueued forever, and a full batch
+    /// re-enqueues the sweep itself so the remainder is covered.
+    async fn sweep(&self, ctx: &JobContext) -> Result<()> {
+        let status_ids: Vec<i64> = sqlx::query_scalar(
+            "UPDATE preview_cards SET scan_version = $1 \
+             WHERE status_id IN ( \
+                 SELECT DISTINCT status_id FROM preview_cards \
+                 WHERE scan_version < $1 ORDER BY status_id LIMIT $2 \
+             ) \
+             RETURNING status_id",
+        )
+        .bind(CARD_SCAN_VERSION)
+        .bind(SWEEP_BATCH_CAP)
+        .fetch_all(&ctx.db)
+        .await?;
+        if status_ids.is_empty() {
+            return Ok(());
+        }
+        let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+        let mut status_ids = status_ids;
+        status_ids.sort_unstable();
+        status_ids.dedup();
+        let hit_cap = status_ids.len() as i64 >= SWEEP_BATCH_CAP;
+        for status_id in status_ids {
+            dispatcher
+                .enqueue_on(
+                    Queue::Bulk,
+                    JobKind::FetchLinkPreview,
+                    json!({"status_id": status_id}),
+                )
+                .await?;
+        }
+        if hit_cap {
+            dispatcher
+                .enqueue_on(Queue::Bulk, JobKind::FetchLinkPreview, json!({}))
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl JobHandler for FetchLinkPreviewJob {
     async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
         let Some(status_id) = payload.get("status_id").and_then(Value::as_i64) else {
-            return Ok(());
+            return self.sweep(ctx).await;
         };
         let post_ctx = PostContext::from_job(ctx, self.ap.clone());
         if let Err(e) = fetch_card(&post_ctx, status_id).await {
@@ -136,11 +185,31 @@ struct CardMeta {
     author_url: String,
     provider_name: String,
     provider_url: String,
+    // `serde(default)` — cache entries written before embeds existed
+    // still deserialize.
+    #[serde(default)]
+    embed_url: String,
+    #[serde(default)]
+    embed_width: i32,
+    #[serde(default)]
+    embed_height: i32,
 }
 
+/// `preview_cards.scan_version` stamped on every upsert — bump when
+/// the stored card shape changes so the sweep can rescan rows
+/// written by older code (v1 = video-embed fields).
+const CARD_SCAN_VERSION: i32 = 1;
+
+/// Per-run cap on the rescan sweep — one fan-out must not flood the
+/// queue unboundedly; a full batch re-enqueues the sweep until no
+/// stale rows remain.
+const SWEEP_BATCH_CAP: i64 = 1000;
+
 fn cache_key(url: &str) -> String {
+    // `v2` — pre-embed envelopes would otherwise serve stale meta
+    // for the whole cache TTL and keep stamping `link` cards.
     format!(
-        "preview:{}",
+        "preview:v2:{}",
         &hex::encode(Sha256::digest(url.as_bytes()))[..32]
     )
 }
@@ -209,7 +278,7 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
     }
     // Truncate on a char boundary — a raw byte slice could panic.
     let doc = body.get(..MAX_DOC).unwrap_or(&body);
-    let meta = parse_metadata(doc);
+    let meta = parse_metadata(doc, &url);
 
     // Optional card image: download, sniff, store under `previews/`.
     let image_key = match meta.image.as_deref() {
@@ -230,9 +299,14 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
     Ok(())
 }
 
+/// Embed URL cap — `twitter:player`/`og:video` content is
+/// page-controlled, so bound what lands in the database.
+const MAX_EMBED_URL: usize = 2048;
+
 /// Parse Open Graph metadata with `twitter:*` and `<title>`/
-/// `<meta name=description>` fallbacks.
-fn parse_metadata(doc: &str) -> CardMeta {
+/// `<meta name=description>` fallbacks. `page_url` resolves
+/// relative embed-player URLs.
+fn parse_metadata(doc: &str, page_url: &str) -> CardMeta {
     let html = Html::parse_document(doc);
     let og = |name: &str| -> Option<String> {
         let sel = Selector::parse(&format!("meta[property=\"og:{name}\"]")).ok()?;
@@ -256,6 +330,41 @@ fn parse_metadata(doc: &str) -> CardMeta {
             html.select(&sel).next().map(|e| e.text().collect())
         })
         .unwrap_or_default();
+    // Embeddable players: `twitter:player` is always an iframeable
+    // URL per the card spec; `og:video*` doubles for raw media files
+    // (`video/mp4`), so only a `text/html` player qualifies.
+    let embed_url = meta_name("twitter:player").or_else(|| {
+        let is_html_player = og("video:type")
+            .map(|t| t.eq_ignore_ascii_case("text/html"))
+            .unwrap_or(false);
+        is_html_player
+            .then(|| {
+                og("video:secure_url")
+                    .or_else(|| og("video:url"))
+                    .or_else(|| og("video"))
+            })
+            .flatten()
+    });
+    let embed_url = embed_url.and_then(|u| normalize_embed_url(&u, page_url));
+    let dim = |name: &str| -> i32 {
+        name.parse::<i32>()
+            .ok()
+            .filter(|n| (1..=100_000).contains(n))
+            .unwrap_or(0)
+    };
+    let player_dim = |axis: &str| -> i32 {
+        meta_name(&format!("twitter:player:{axis}"))
+            .as_deref()
+            .map(dim)
+            .filter(|d| *d > 0)
+            .or_else(|| og(&format!("video:{axis}")).as_deref().map(dim))
+            .unwrap_or(0)
+    };
+    let (embed_width, embed_height) = if embed_url.is_some() {
+        (player_dim("width"), player_dim("height"))
+    } else {
+        (0, 0)
+    };
     CardMeta {
         title,
         description: og("description")
@@ -268,7 +377,25 @@ fn parse_metadata(doc: &str) -> CardMeta {
         author_url: String::new(),
         provider_name: og("site_name").unwrap_or_default(),
         provider_url: String::new(),
+        embed_url: embed_url.unwrap_or_default(),
+        embed_width,
+        embed_height,
     }
+}
+
+/// Validate an embed-player URL: resolve against the page, require
+/// `http(s)` (the iframe `src` sink), bound the length. `None`
+/// disqualifies — the card stays a plain link.
+fn normalize_embed_url(raw: &str, page_url: &str) -> Option<String> {
+    let parsed = match url::Url::parse(raw) {
+        Ok(u) => u,
+        Err(_) => url::Url::parse(page_url).ok()?.join(raw).ok()?,
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let s = parsed.to_string();
+    (s.chars().count() <= MAX_EMBED_URL).then_some(s)
 }
 
 /// Download and store the card image under `previews/{uuid}.{ext}`;
@@ -337,13 +464,16 @@ async fn upsert_card(
     sqlx::query(
         "INSERT INTO preview_cards \
              (status_id, url, title, description, image_path, author_name, author_url, \
-              provider_name, provider_url) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) \
+              provider_name, provider_url, embed_url, embed_width, embed_height, \
+              scan_version) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) \
          ON CONFLICT (status_id, url) DO UPDATE SET \
              title = EXCLUDED.title, description = EXCLUDED.description, \
              image_path = EXCLUDED.image_path, author_name = EXCLUDED.author_name, \
              author_url = EXCLUDED.author_url, provider_name = EXCLUDED.provider_name, \
-             provider_url = EXCLUDED.provider_url",
+             provider_url = EXCLUDED.provider_url, embed_url = EXCLUDED.embed_url, \
+             embed_width = EXCLUDED.embed_width, embed_height = EXCLUDED.embed_height, \
+             scan_version = EXCLUDED.scan_version",
     )
     .bind(status_id)
     .bind(url)
@@ -354,6 +484,10 @@ async fn upsert_card(
     .bind(&meta.author_url)
     .bind(&meta.provider_name)
     .bind(&meta.provider_url)
+    .bind(&meta.embed_url)
+    .bind(meta.embed_width)
+    .bind(meta.embed_height)
+    .bind(CARD_SCAN_VERSION)
     .execute(&ctx.db)
     .await?;
     Ok(())

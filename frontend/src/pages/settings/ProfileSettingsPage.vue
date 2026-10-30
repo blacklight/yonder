@@ -44,14 +44,16 @@ const avatarInput = ref<HTMLInputElement | null>(null);
 const headerInput = ref<HTMLInputElement | null>(null);
 const currentAvatar = ref<string | undefined>();
 const currentHeader = ref<string | null>(null);
-let avatarObjectUrl: string | null = null;
-let headerObjectUrl: string | null = null;
+const avatarObjectUrl = ref<string | null>(null);
+const headerObjectUrl = ref<string | null>(null);
 
 const avatarPreview = computed(() =>
-  avatarClear.value ? undefined : (avatarObjectUrl ?? currentAvatar.value),
+  avatarClear.value
+    ? undefined
+    : (avatarObjectUrl.value ?? currentAvatar.value),
 );
 const headerPreview = computed(() =>
-  headerClear.value ? null : (headerObjectUrl ?? currentHeader.value),
+  headerClear.value ? null : (headerObjectUrl.value ?? currentHeader.value),
 );
 
 function pick(kind: "avatar" | "header") {
@@ -64,13 +66,13 @@ function onFile(kind: "avatar" | "header", e: Event) {
   const file = input.files?.[0] ?? null;
   const url = file ? URL.createObjectURL(file) : null;
   if (kind === "avatar") {
-    if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-    avatarObjectUrl = url;
+    if (avatarObjectUrl.value) URL.revokeObjectURL(avatarObjectUrl.value);
+    avatarObjectUrl.value = url;
     avatarFile.value = file;
     if (file) avatarClear.value = false;
   } else {
-    if (headerObjectUrl) URL.revokeObjectURL(headerObjectUrl);
-    headerObjectUrl = url;
+    if (headerObjectUrl.value) URL.revokeObjectURL(headerObjectUrl.value);
+    headerObjectUrl.value = url;
     headerFile.value = file;
     if (file) headerClear.value = false;
   }
@@ -82,13 +84,13 @@ function clearImage(kind: "avatar" | "header") {
   if (kind === "avatar") {
     avatarClear.value = true;
     avatarFile.value = null;
-    if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-    avatarObjectUrl = null;
+    if (avatarObjectUrl.value) URL.revokeObjectURL(avatarObjectUrl.value);
+    avatarObjectUrl.value = null;
   } else {
     headerClear.value = true;
     headerFile.value = null;
-    if (headerObjectUrl) URL.revokeObjectURL(headerObjectUrl);
-    headerObjectUrl = null;
+    if (headerObjectUrl.value) URL.revokeObjectURL(headerObjectUrl.value);
+    headerObjectUrl.value = null;
   }
 }
 
@@ -141,10 +143,10 @@ async function save() {
     headerFile.value = null;
     avatarClear.value = false;
     headerClear.value = false;
-    if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-    if (headerObjectUrl) URL.revokeObjectURL(headerObjectUrl);
-    avatarObjectUrl = null;
-    headerObjectUrl = null;
+    if (avatarObjectUrl.value) URL.revokeObjectURL(avatarObjectUrl.value);
+    if (headerObjectUrl.value) URL.revokeObjectURL(headerObjectUrl.value);
+    avatarObjectUrl.value = null;
+    headerObjectUrl.value = null;
     saved.value = true;
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -180,8 +182,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  if (avatarObjectUrl) URL.revokeObjectURL(avatarObjectUrl);
-  if (headerObjectUrl) URL.revokeObjectURL(headerObjectUrl);
+  if (avatarObjectUrl.value) URL.revokeObjectURL(avatarObjectUrl.value);
+  if (headerObjectUrl.value) URL.revokeObjectURL(headerObjectUrl.value);
 });
 </script>
 

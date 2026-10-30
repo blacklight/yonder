@@ -15,6 +15,7 @@ import {
 } from "@/api/followRequests";
 import type { Account, Notification } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
@@ -206,8 +207,10 @@ onUnmounted(() => {
                     v-if="n.account"
                     :to="`/@${n.account.acct}`"
                     class="notif-name"
-                    >{{ displayName(n.account) }}</router-link
-                  >
+                    ><EmojiText
+                      :text="displayName(n.account)"
+                      :emojis="n.account.emojis"
+                  /></router-link>
                 </template>
               </I18nT>
               <Tooltip :text="formatAbsoluteDate(n.created_at)">

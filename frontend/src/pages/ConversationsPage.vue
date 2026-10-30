@@ -6,6 +6,7 @@ import { useConversationsStore } from "@/stores/conversations";
 import { useComposeStore } from "@/stores/compose";
 import type { Conversation } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
@@ -19,10 +20,6 @@ const router = useRouter();
 const store = useConversationsStore();
 const compose = useComposeStore();
 const deleting = ref<Conversation | null>(null);
-
-function names(c: Conversation): string {
-  return c.accounts.map((a) => a.display_name || a.acct).join(", ");
-}
 
 function open(c: Conversation) {
   void router.push(`/messages/${c.id}`);
@@ -84,7 +81,13 @@ onMounted(() => {
               size="md"
             />
           </span>
-          <strong class="conv-names">{{ names(c) }}</strong>
+          <strong class="conv-names"
+            ><template v-for="(a, i) in c.accounts" :key="a.id"
+              ><template v-if="i > 0">, </template
+              ><EmojiText
+                :text="a.display_name || a.acct"
+                :emojis="a.emojis" /></template
+          ></strong>
           <span
             v-if="c.unread"
             class="dot"
@@ -115,6 +118,7 @@ onMounted(() => {
             sanitizeHtml(c.last_status.content, {
               mentions: c.last_status.mentions,
               tags: c.last_status.tags,
+              emojis: c.last_status.emojis,
             })
           "
         />

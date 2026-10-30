@@ -3,9 +3,13 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
 import { useSettingsStore } from "@/stores/settings";
+import EmojiText from "@/components/ui/EmojiText.vue";
+import type { EmojiRef } from "@/utils/emoji";
 
 const props = defineProps<{
   spoilerText: string;
+  /** `status.emojis` — expands `:shortcode:` in the spoiler text. */
+  emojis?: EmojiRef[];
 }>();
 const { t } = useI18n();
 const settings = useSettingsStore();
@@ -30,7 +34,9 @@ const label = computed(() =>
 <template>
   <div class="cw">
     <div v-if="spoilerText" class="cw__header">
-      <span class="cw__text">{{ spoilerText }}</span>
+      <span class="cw__text"
+        ><EmojiText :text="spoilerText" :emojis="emojis"
+      /></span>
       <button
         type="button"
         class="cw__toggle"

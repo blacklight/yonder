@@ -1138,10 +1138,11 @@ impl StatusBatch {
                 _ => (
                     Value::Null,
                     Value::String(crate::emoji::render::substitute(&content, emoji_map)),
-                    Value::String(crate::emoji::render::substitute(
-                        &status.spoiler_text.clone().unwrap_or_default(),
-                        emoji_map,
-                    )),
+                    // `spoiler_text` stays plain text like `display_name`
+                    // — Mastodon serves it raw and clients substitute
+                    // `:code:` themselves from `emojis`, whose haystack
+                    // already covers the spoiler below.
+                    Value::String(status.spoiler_text.clone().unwrap_or_default()),
                     media_json,
                     poll_json,
                 ),

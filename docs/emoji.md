@@ -19,9 +19,11 @@ Substitution is **read-time** (`src/emoji/render.rs`): stored
 and feed item content all run
 `emoji::render::substitute` when building entities — so emoji uploaded
 *after* a post was written still render, and disabled/renamed emoji
-stop resolving immediately. `display_name` stays plain text like
-Mastodon — shortcodes in it appear in the account's `emojis` array
-and clients render them themselves.
+stop resolving immediately. `display_name` and `spoiler_text` stay
+plain text like Mastodon — shortcodes in them appear in the entity's
+`emojis` array and clients render them themselves (the SPA expands
+both client-side, and also expands leftover `:code:` in translated
+status HTML the same way).
 
 - The map is **domain-scoped**: remote statuses/accounts resolve
   `:code:` against the author's domain (recorded remote emoji), never

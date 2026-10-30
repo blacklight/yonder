@@ -3,6 +3,7 @@ import { computed, onMounted, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import Button from "@/components/ui/Button.vue";
 import NavMenu, { type NavItem } from "./NavMenu.vue";
 import MobileMenu from "./MobileMenu.vue";
@@ -499,9 +500,11 @@ function clearSearch(which: "sidebar" | "aside") {
             size="sm"
           />
           <span class="layout__user-names">
-            <span class="layout__user-display">{{
-              auth.account.display_name || auth.account.username
-            }}</span>
+            <span class="layout__user-display"
+              ><EmojiText
+                :text="auth.account.display_name || auth.account.username"
+                :emojis="auth.account.emojis"
+            /></span>
             <span class="layout__user-acct">@{{ auth.account.acct }}</span>
           </span>
         </router-link>

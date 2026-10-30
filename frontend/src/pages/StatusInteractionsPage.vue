@@ -15,6 +15,7 @@ import {
 import { ApiError } from "@/api/errors";
 import type { Account, Status } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Tabs from "@/components/ui/Tabs.vue";
@@ -150,9 +151,11 @@ watch(() => [props.id, props.kind], load, { immediate: true });
             size="sm"
           />
           <span class="interactions__names">
-            <span class="interactions__display">
-              {{ status.account.display_name || status.account.username }}
-            </span>
+            <span class="interactions__display"
+              ><EmojiText
+                :text="status.account.display_name || status.account.username"
+                :emojis="status.account.emojis"
+            /></span>
             <span class="interactions__acct">@{{ status.account.acct }}</span>
           </span>
         </router-link>
@@ -191,9 +194,11 @@ watch(() => [props.id, props.kind], load, { immediate: true });
                 size="sm"
               />
               <span class="interactions__names">
-                <span class="interactions__display">
-                  {{ a.display_name || a.username }}
-                </span>
+                <span class="interactions__display"
+                  ><EmojiText
+                    :text="a.display_name || a.username"
+                    :emojis="a.emojis"
+                /></span>
                 <span class="interactions__acct">@{{ a.acct }}</span>
               </span>
             </router-link>

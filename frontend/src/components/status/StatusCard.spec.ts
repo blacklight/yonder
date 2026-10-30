@@ -839,4 +839,26 @@ describe("StatusCard", () => {
     });
     expect(fresh.find("[data-testid='edited']").exists()).toBe(false);
   });
+
+  it("expands :shortcode: in the author display name and CW", () => {
+    const emoji = {
+      shortcode: "blobcat",
+      url: "https://remote.test/emoji/blobcat.png",
+      visible_in_picker: false,
+    };
+    const s = status({
+      spoiler_text: "warn :blobcat:",
+      emojis: [emoji],
+    });
+    s.account = {
+      ...s.account,
+      display_name: "Alice :blobcat:",
+      emojis: [emoji],
+    };
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    const nameImg = wrapper.get(".status-card__display img.emoji");
+    expect(nameImg.attributes("src")).toBe(emoji.url);
+    const cwImg = wrapper.get(".cw__text img.emoji");
+    expect(cwImg.attributes("alt")).toBe(":blobcat:");
+  });
 });

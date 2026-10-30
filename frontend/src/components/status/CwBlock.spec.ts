@@ -4,7 +4,10 @@ import { mountWith } from "@/test/render";
 import { useSettingsStore } from "@/stores/settings";
 import CwBlock from "./CwBlock.vue";
 
-function mountBlock(props: { spoilerText: string }) {
+function mountBlock(props: {
+  spoilerText: string;
+  emojis?: { shortcode: string; url: string }[];
+}) {
   return mountWith(CwBlock, {
     props,
     slots: { default: '<p class="cw-body-test">the body</p>' },
@@ -18,6 +21,22 @@ describe("CwBlock", () => {
     expect(
       (wrapper.find(".cw__body").element as HTMLElement).style.display,
     ).not.toBe("none");
+  });
+
+  it("expands :shortcode: in the spoiler from status emojis", () => {
+    const { wrapper } = mountBlock({
+      spoilerText: "spoilers :blobcat: ahead",
+      emojis: [
+        {
+          shortcode: "blobcat",
+          url: "https://remote.test/emoji/blobcat.png",
+        },
+      ],
+    });
+    const img = wrapper.get(".cw__text img.emoji");
+    expect(img.attributes("src")).toBe("https://remote.test/emoji/blobcat.png");
+    expect(img.attributes("alt")).toBe(":blobcat:");
+    expect(wrapper.get(".cw__text").text()).toBe("spoilers  ahead");
   });
 
   it("collapses behind the spoiler text", () => {

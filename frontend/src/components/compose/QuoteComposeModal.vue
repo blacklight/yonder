@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import Modal from "@/components/ui/Modal.vue";
 import CwBlock from "@/components/status/CwBlock.vue";
 import StatusMedia from "@/components/status/StatusMedia.vue";
@@ -19,6 +20,7 @@ const html = computed(() =>
   sanitizeHtml(props.status.content, {
     mentions: props.status.mentions,
     tags: props.status.tags,
+    emojis: props.status.emojis,
   }),
 );
 </script>
@@ -33,13 +35,15 @@ const html = computed(() =>
           size="sm"
         />
         <div class="quote-compose__names">
-          <span class="quote-compose__display">{{
-            status.account.display_name || status.account.username
-          }}</span>
+          <span class="quote-compose__display"
+            ><EmojiText
+              :text="status.account.display_name || status.account.username"
+              :emojis="status.account.emojis"
+          /></span>
           <span class="quote-compose__acct">@{{ status.account.acct }}</span>
         </div>
       </header>
-      <CwBlock :spoiler-text="status.spoiler_text">
+      <CwBlock :spoiler-text="status.spoiler_text" :emojis="status.emojis">
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="quote-compose__content" v-html="html" />
         <StatusMedia

@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
-import type { StatusMention, StatusTag } from "@/api/entities";
+import type { CustomEmoji, StatusMention, StatusTag } from "@/api/entities";
+import { emojifyHtml } from "@/utils/emoji";
 
 let hooked = false;
 
@@ -14,6 +15,17 @@ function ensureHook() {
       if ((node.getAttribute("href") ?? "").startsWith("/")) return;
       node.setAttribute("rel", "nofollow noopener");
       node.setAttribute("target", "_blank");
+    } else if (
+      node.tagName === "IMG" &&
+      /^:[A-Za-z0-9_]{1,100}:$/.test(node.getAttribute("alt") ?? "")
+    ) {
+      // Custom emoji — the `class` FORBID_ATTR entry strips the
+      // backend's `class="emoji"`, so it's restored post-sanitize
+      // (a fixed value; every `<img>` reaching this point is an
+      // emoji — inbound sanitizing drops remote `img` tags).
+      node.setAttribute("class", "emoji");
+      node.setAttribute("draggable", "false");
+      node.setAttribute("loading", "lazy");
     }
   });
 }
@@ -23,6 +35,9 @@ function ensureHook() {
 export interface RichLinkEntities {
   mentions?: Pick<StatusMention, "acct" | "url">[];
   tags?: Pick<StatusTag, "name" | "url">[];
+  /** `status.emojis` — expands literal `:shortcode:` left in the HTML
+   * (translated content comes from the translate API unexpanded). */
+  emojis?: Pick<CustomEmoji, "shortcode" | "url">[];
 }
 
 // NOTE: server-side sanitizing strips every attribute but `href` from
@@ -236,7 +251,8 @@ function localizeAnchors(html: string, links?: RichLinkEntities): string {
  */
 export function sanitizeHtml(html: string, links?: RichLinkEntities): string {
   ensureHook();
-  return DOMPurify.sanitize(localizeAnchors(html, links), {
+  const emojified = emojifyHtml(html, links?.emojis);
+  return DOMPurify.sanitize(localizeAnchors(emojified, links), {
     FORBID_TAGS: ["style", "form", "input", "button", "select", "textarea"],
     FORBID_CONTENTS: ["style"],
     FORBID_ATTR: ["class", "title"],

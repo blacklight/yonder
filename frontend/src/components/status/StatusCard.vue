@@ -7,6 +7,7 @@ import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
 import CwBlock from "./CwBlock.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import ShowMore from "./ShowMore.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusQuote from "./StatusQuote.vue";
@@ -177,6 +178,8 @@ const displayedContent = computed(() =>
   sanitizeHtml(translation.value?.content ?? shownContent.value, {
     mentions: shown.value.mentions,
     tags: shown.value.tags,
+    // Translated HTML keeps literal `:code:` — `emojis` expands it.
+    emojis: shown.value.emojis,
   }),
 );
 const displayedSpoiler = computed(
@@ -563,9 +566,13 @@ async function onReact(emoji: string) {
   <article class="status-card" :data-status-id="status.id" @click="onCardClick">
     <p v-if="booster" class="status-card__boost">
       <FontAwesomeIcon icon="retweet" />
-      {{
-        t("status.boosted", { name: booster.display_name || booster.username })
-      }}
+      <i18n-t keypath="status.boosted" tag="span">
+        <template #name
+          ><EmojiText
+            :text="booster.display_name || booster.username"
+            :emojis="booster.emojis"
+        /></template>
+      </i18n-t>
     </p>
     <p
       v-else-if="pinnedContext && shown.pinned"
@@ -583,9 +590,11 @@ async function onReact(emoji: string) {
           size="md"
         />
         <div class="status-card__names">
-          <span class="status-card__display">{{
-            account.display_name || account.username
-          }}</span>
+          <span class="status-card__display"
+            ><EmojiText
+              :text="account.display_name || account.username"
+              :emojis="account.emojis"
+          /></span>
           <span class="status-card__acct">@{{ account.acct }}</span>
         </div>
       </router-link>
@@ -634,7 +643,7 @@ async function onReact(emoji: string) {
 
     <p v-if="actionError" class="status-card__error">{{ actionError }}</p>
 
-    <CwBlock :spoiler-text="displayedSpoiler">
+    <CwBlock :spoiler-text="displayedSpoiler" :emojis="shown.emojis">
       <!-- Only the text clamps — media, quotes and polls always
            render whole, never sliced by the fade. -->
       <ShowMore :disabled="!clampBody">

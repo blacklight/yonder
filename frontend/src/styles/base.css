@@ -17,6 +17,16 @@ img,
 svg {
   max-width: 100%;
 }
+/* Custom emoji — inline in text, sized relative to the font (the
+   backend's fixed 20px width/height attrs are overridden here). */
+img.emoji {
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  margin: -0.2ex 0.1em 0.2ex;
+  vertical-align: middle;
+  object-fit: contain;
+}
 button,
 input,
 select,

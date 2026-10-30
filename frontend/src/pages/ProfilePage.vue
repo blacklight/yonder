@@ -32,6 +32,7 @@ import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import Button from "@/components/ui/Button.vue";
 import Skeleton from "@/components/ui/Skeleton.vue";
 import Spinner from "@/components/ui/Spinner.vue";
@@ -692,7 +693,10 @@ watch([tab, showReplies, showBoosts], () => {
           </div>
         </div>
         <h1 class="profile__name">
-          {{ account.display_name || account.username }}
+          <EmojiText
+            :text="account.display_name || account.username"
+            :emojis="account.emojis"
+          />
         </h1>
         <p class="profile__handle">{{ handle }}</p>
         <p v-if="rel?.followed_by" class="profile__badge">

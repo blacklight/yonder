@@ -145,4 +145,36 @@ describe("sanitizeHtml", () => {
     expect(out).toContain('href="https://video.example/@chan"');
     expect(out).toContain('target="_blank"');
   });
+
+  it("keeps emoji imgs styled — class restored after FORBID_ATTR", () => {
+    // The backend emits `<img class="emoji" alt=":code:" …>` for
+    // substituted shortcodes; `class`/`title` are forbidden attrs, so
+    // the hook re-adds the fixed `emoji` class.
+    const out = sanitizeHtml(
+      `<p>x <img class="emoji" alt=":blobcat:" title=":blobcat:" ` +
+        `src="https://remote.test/emoji/blobcat.png" width="20" height="20"></p>`,
+    );
+    expect(out).toContain('class="emoji"');
+    expect(out).toContain('alt=":blobcat:"');
+    expect(out).toContain('draggable="false"');
+  });
+
+  it("expands :shortcode: in content through links.emojis", () => {
+    // Translated content arrives with literal shortcodes — the status
+    // `emojis` array expands them, skipping link text.
+    const out = sanitizeHtml(
+      `<p>wow :blobcat: <a href="https://x.test">:blobcat:</a></p>`,
+      {
+        emojis: [
+          {
+            shortcode: "blobcat",
+            url: "https://remote.test/emoji/blobcat.png",
+          },
+        ],
+      },
+    );
+    expect(out.match(/<img /g)).toHaveLength(1);
+    expect(out).toContain('src="https://remote.test/emoji/blobcat.png"');
+    expect(out).toContain(">:blobcat:</a>");
+  });
 });

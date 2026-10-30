@@ -6,6 +6,7 @@ import { followers, following, lookup } from "@/api/accounts";
 import { ApiError } from "@/api/errors";
 import type { Account } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Tabs from "@/components/ui/Tabs.vue";
@@ -128,9 +129,11 @@ watch([() => route.fullPath, () => props.direction], load, {
             size="sm"
           />
           <span class="network__names">
-            <span class="network__display">
-              {{ account.display_name || account.username }}
-            </span>
+            <span class="network__display"
+              ><EmojiText
+                :text="account.display_name || account.username"
+                :emojis="account.emojis"
+            /></span>
             <span class="network__acct">@{{ account.acct }}</span>
           </span>
         </router-link>
@@ -154,9 +157,11 @@ watch([() => route.fullPath, () => props.direction], load, {
               size="sm"
             />
             <span class="network__names">
-              <span class="network__display">
-                {{ a.display_name || a.username }}
-              </span>
+              <span class="network__display"
+                ><EmojiText
+                  :text="a.display_name || a.username"
+                  :emojis="a.emojis"
+              /></span>
               <span class="network__acct">@{{ a.acct }}</span>
             </span>
           </router-link>

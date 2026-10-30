@@ -8,6 +8,7 @@ import { formatRelativeDate } from "@/utils/relativeDate";
 import { react, unreact } from "@/api/statuses";
 import { useAuthStore } from "@/stores/auth";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
 
@@ -37,6 +38,7 @@ const contentHtml = computed(() =>
     ? sanitizeHtml(quoted.content, {
         mentions: quoted.mentions,
         tags: quoted.tags,
+        emojis: quoted.emojis,
       })
     : "",
 );
@@ -80,9 +82,11 @@ async function onReact(emoji: string) {
           size="sm"
         />
         <div class="quote__names">
-          <span class="quote__display">{{
-            quoted.account.display_name || quoted.account.username
-          }}</span>
+          <span class="quote__display"
+            ><EmojiText
+              :text="quoted.account.display_name || quoted.account.username"
+              :emojis="quoted.account.emojis"
+          /></span>
           <span class="quote__acct">@{{ quoted.account.acct }}</span>
         </div>
       </router-link>

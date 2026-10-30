@@ -6,6 +6,7 @@ import { useSearchStore } from "@/stores/search";
 import { useAuthStore } from "@/stores/auth";
 import { ApiError } from "@/api/errors";
 import Avatar from "@/components/ui/Avatar.vue";
+import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
@@ -132,9 +133,11 @@ onMounted(() => {
         >
           <Avatar :src="a.avatar" :name="a.display_name || a.acct" size="sm" />
           <span class="search__names">
-            <span class="search__display">
-              {{ a.display_name || a.username }}
-            </span>
+            <span class="search__display"
+              ><EmojiText
+                :text="a.display_name || a.username"
+                :emojis="a.emojis"
+            /></span>
             <span class="search__acct">@{{ a.acct }}</span>
           </span>
         </li>
@@ -182,9 +185,11 @@ onMounted(() => {
         >
           <Avatar :src="a.avatar" :name="a.display_name || a.acct" size="sm" />
           <span class="search__names">
-            <span class="search__display">
-              {{ a.display_name || a.username }}
-            </span>
+            <span class="search__display"
+              ><EmojiText
+                :text="a.display_name || a.username"
+                :emojis="a.emojis"
+            /></span>
             <span class="search__acct">@{{ a.acct }}</span>
           </span>
         </li>

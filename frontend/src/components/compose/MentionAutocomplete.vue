@@ -2,6 +2,7 @@
 import { nextTick, onMounted, onUnmounted, onUpdated, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { Account } from "@/api/entities";
+import EmojiText from "@/components/ui/EmojiText.vue";
 
 const props = defineProps<{
   accounts: Account[];
@@ -173,7 +174,9 @@ watch(
       @mousedown.prevent="emit('select', a)"
     >
       <img :src="a.avatar" alt="" class="mention-ac__avatar" />
-      <span class="mention-ac__name">{{ a.display_name || a.username }}</span>
+      <span class="mention-ac__name"
+        ><EmojiText :text="a.display_name || a.username" :emojis="a.emojis"
+      /></span>
       <span class="mention-ac__acct" dir="ltr">@{{ a.acct }}</span>
     </li>
   </ul>

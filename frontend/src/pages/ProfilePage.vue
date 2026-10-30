@@ -1027,6 +1027,7 @@ watch([tab, showReplies, showBoosts], () => {
   border: 1px solid var(--border);
 }
 .profile__fields dt {
+  max-width: 17.5em;
   font-weight: 600;
   color: var(--text-muted);
 }

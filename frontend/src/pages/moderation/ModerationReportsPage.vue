@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { ApiError } from "@/api/errors";
 import { listAdminReports, type AdminReport } from "@/api/moderation";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 
 const { t } = useI18n();
 
@@ -40,7 +41,16 @@ onMounted(load);
         {{ t("moderation.showResolved") }}
       </label>
     </div>
-    <p v-if="loading" class="reports__status">{{ t("common.loading") }}</p>
+    <ul
+      v-if="loading"
+      class="reports__list"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li v-for="n in 4" :key="n" class="reports__item reports__item--skel">
+        <AccountRowSkeleton :avatar="false" />
+      </li>
+    </ul>
     <p v-else-if="error" class="reports__error" role="alert">{{ error }}</p>
     <p v-else-if="reports.length === 0" class="reports__status">
       {{ t("moderation.empty") }}
@@ -95,6 +105,10 @@ onMounted(load);
 .reports__item {
   border-top: 1px solid var(--border);
   padding: var(--space-3) 0;
+}
+/* The skeleton row supplies its own padding. */
+.reports__item--skel {
+  padding: 0;
 }
 .reports__link {
   display: flex;

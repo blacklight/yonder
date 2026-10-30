@@ -15,6 +15,7 @@ import {
 } from "@/api/followRequests";
 import type { Account, Notification } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tabs from "@/components/ui/Tabs.vue";
@@ -57,6 +58,7 @@ const tabs = computed(() =>
   ).map((f) => ({ key: f, label: t(`notifications.filter.${f}`) })),
 );
 const actionError = ref<string | null>(null);
+const acting = ref<Set<string>>(new Set());
 
 function displayName(a: Account | null): string {
   return a?.display_name || a?.acct || "";
@@ -69,7 +71,9 @@ function reportLink(n: Notification): string | null {
 }
 
 async function act(n: Notification, action: "authorize" | "reject") {
+  if (acting.value.has(n.id)) return;
   actionError.value = null;
+  acting.value = new Set(acting.value).add(n.id);
   try {
     if (!n.account) return;
     if (action === "authorize") await authorizeFollowRequest(n.account.id);
@@ -80,6 +84,10 @@ async function act(n: Notification, action: "authorize" | "reject") {
       actionError.value = t("common.error");
       return;
     }
+  } finally {
+    const done = new Set(acting.value);
+    done.delete(n.id);
+    acting.value = done;
   }
   await store.dismiss(n.id);
 }
@@ -167,7 +175,7 @@ onUnmounted(() => {
         {{ t("notifications.clear") }}
       </Button>
     </Tabs>
-    <ul ref="listEl" class="notif-list">
+    <ul ref="listEl" class="notif-list" :aria-busy="store.loading || undefined">
       <li v-for="n in store.items" :key="n.id" class="notif" role="article">
         <div class="notif-head" :data-notif-id="n.id">
           <span
@@ -235,13 +243,28 @@ onUnmounted(() => {
         </div>
         <StatusCard v-if="n.status" :status="n.status" />
         <div v-if="n.type === 'follow_request' && n.account" class="fr-actions">
-          <Button size="sm" @click="act(n, 'authorize')">{{
-            t("notifications.accept")
-          }}</Button>
-          <Button size="sm" variant="secondary" @click="act(n, 'reject')">
+          <Button
+            size="sm"
+            :loading="acting.has(n.id)"
+            @click="act(n, 'authorize')"
+            >{{ t("notifications.accept") }}</Button
+          >
+          <Button
+            size="sm"
+            variant="secondary"
+            :disabled="acting.has(n.id)"
+            @click="act(n, 'reject')"
+          >
             {{ t("notifications.reject") }}
           </Button>
         </div>
+      </li>
+      <li
+        v-for="n in store.loading && !store.items.length ? 4 : 0"
+        :key="`skel-${n}`"
+        class="notif notif--skel"
+      >
+        <AccountRowSkeleton />
       </li>
     </ul>
     <p v-if="actionError" role="alert">{{ actionError }}</p>
@@ -279,6 +302,10 @@ onUnmounted(() => {
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+}
+/* The skeleton brings its own row padding — the card chrome stays. */
+.notif--skel {
+  padding: 0 var(--space-1);
 }
 .notif-head {
   display: flex;

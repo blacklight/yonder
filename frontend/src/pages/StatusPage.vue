@@ -6,6 +6,7 @@ import { request } from "@/api/client";
 import { getStatusContext } from "@/api/statuses";
 import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
+import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { ApiError } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import { useStreamingStore } from "@/stores/streaming";
@@ -176,7 +177,14 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
     </template>
     <p v-else-if="error === 404">{{ t("status.notFound") }}</p>
     <p v-else-if="error">{{ t("status.loadError") }}</p>
-    <p v-else aria-busy="true">{{ t("common.loading") }}</p>
+    <div
+      v-else
+      class="timeline"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <StatusCardSkeleton v-for="n in 2" :key="n" />
+    </div>
   </main>
 </template>
 

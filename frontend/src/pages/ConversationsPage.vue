@@ -6,6 +6,7 @@ import { useConversationsStore } from "@/stores/conversations";
 import { useComposeStore } from "@/stores/compose";
 import type { Conversation } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
@@ -57,7 +58,11 @@ onMounted(() => {
       </Button>
     </div>
 
-    <ul v-if="store.items.length" class="conv-list">
+    <ul
+      v-if="store.items.length || store.loading"
+      class="conv-list"
+      :aria-busy="store.loading || undefined"
+    >
       <li
         v-for="c in store.items"
         :key="c.id"
@@ -109,12 +114,16 @@ onMounted(() => {
           v-html="sanitizeHtml(c.last_status.content)"
         />
       </li>
+      <li
+        v-for="n in store.loading && !store.items.length ? 3 : 0"
+        :key="`skel-${n}`"
+        class="conv conv--skel"
+      >
+        <AccountRowSkeleton size="md" />
+      </li>
     </ul>
 
-    <p v-if="store.loading && !store.items.length" class="conv-state">
-      {{ t("common.loading") }}
-    </p>
-    <p v-else-if="!store.items.length" class="conv-state">
+    <p v-if="!store.loading && !store.items.length" class="conv-state">
       {{ t("messages.empty") }}
     </p>
     <p v-if="store.error" class="conv-state" role="alert">{{ store.error }}</p>
@@ -167,6 +176,11 @@ onMounted(() => {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-dim);
   cursor: pointer;
+}
+/* The skeleton brings its own row padding; it isn't clickable. */
+.conv--skel {
+  padding: 0 var(--space-1);
+  cursor: default;
 }
 .conv:last-child {
   border-bottom: 0;

@@ -15,9 +15,11 @@ import {
 import { ApiError } from "@/api/errors";
 import type { Account, Status } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
 import {
   dropFromStatusList,
@@ -34,6 +36,7 @@ const router = useRouter();
 const status = ref<Status | null>(null);
 const accounts = ref<Account[]>([]);
 const quotes = ref<Status[]>([]);
+const listLoading = ref(false);
 const nextCursor = ref<string | undefined>();
 const state = ref<"loading" | "ok" | "not-found" | "error">("loading");
 
@@ -65,17 +68,22 @@ async function loadList(more = false, gen = generation) {
           "max_id",
         ) ?? undefined)
       : undefined;
-  if (props.kind === "quotes") {
-    const page = await statusQuotes(props.id, { max_id });
-    if (gen !== generation) return;
-    quotes.value = more ? [...quotes.value, ...page.items] : page.items;
-    nextCursor.value = page.next;
-  } else {
-    const fetcher = props.kind === "boosts" ? rebloggedBy : favouritedBy;
-    const page = await fetcher(props.id, { max_id });
-    if (gen !== generation) return;
-    accounts.value = more ? [...accounts.value, ...page.items] : page.items;
-    nextCursor.value = page.next;
+  listLoading.value = true;
+  try {
+    if (props.kind === "quotes") {
+      const page = await statusQuotes(props.id, { max_id });
+      if (gen !== generation) return;
+      quotes.value = more ? [...quotes.value, ...page.items] : page.items;
+      nextCursor.value = page.next;
+    } else {
+      const fetcher = props.kind === "boosts" ? rebloggedBy : favouritedBy;
+      const page = await fetcher(props.id, { max_id });
+      if (gen !== generation) return;
+      accounts.value = more ? [...accounts.value, ...page.items] : page.items;
+      nextCursor.value = page.next;
+    }
+  } finally {
+    if (gen === generation) listLoading.value = false;
   }
 }
 
@@ -121,9 +129,14 @@ watch(() => [props.id, props.kind], load, { immediate: true });
 
 <template>
   <main class="page">
-    <p v-if="state === 'loading'" aria-busy="true">
-      {{ t("common.loading") }}
-    </p>
+    <ul
+      v-if="state === 'loading'"
+      class="interactions__list"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li v-for="n in 6" :key="n"><AccountRowSkeleton /></li>
+    </ul>
     <p v-else-if="state === 'not-found'">{{ t("status.notFound") }}</p>
     <p v-else-if="state === 'error'" role="alert">
       {{ t("status.loadError") }}
@@ -157,12 +170,19 @@ watch(() => [props.id, props.kind], load, { immediate: true });
           :status="s"
           @removed="removed"
         />
-        <p v-if="!quotes.length" class="interactions__empty">
+        <template v-if="listLoading">
+          <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
+        </template>
+        <p v-if="!quotes.length && !listLoading" class="interactions__empty">
           {{ t("lists.empty") }}
         </p>
       </template>
       <template v-else>
-        <ul class="interactions__list">
+        <ul
+          v-if="accounts.length || listLoading"
+          class="interactions__list"
+          :aria-busy="listLoading || undefined"
+        >
           <li v-for="a in accounts" :key="a.id">
             <router-link :to="`/@${a.acct}`" class="interactions__row">
               <Avatar
@@ -178,13 +198,20 @@ watch(() => [props.id, props.kind], load, { immediate: true });
               </span>
             </router-link>
           </li>
+          <li v-for="n in listLoading ? 3 : 0" :key="`skel-${n}`">
+            <AccountRowSkeleton />
+          </li>
         </ul>
-        <p v-if="!accounts.length" class="interactions__empty">
+        <p v-if="!accounts.length && !listLoading" class="interactions__empty">
           {{ t("lists.empty") }}
         </p>
       </template>
       <div v-if="nextCursor" class="interactions__more">
-        <Button variant="secondary" @click="loadList(true)">
+        <Button
+          variant="secondary"
+          :loading="listLoading"
+          @click="loadList(true)"
+        >
           {{ t("common.loadMore") }}
         </Button>
       </div>

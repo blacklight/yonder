@@ -6,6 +6,7 @@ import { useSearchStore } from "@/stores/search";
 import { useAuthStore } from "@/stores/auth";
 import { ApiError } from "@/api/errors";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
 import Tabs from "@/components/ui/Tabs.vue";
@@ -156,9 +157,16 @@ onMounted(() => {
     <p v-else-if="store.error" class="search__alert" role="alert">
       {{ store.error }}
     </p>
-    <p v-if="store.loading && !store.results" class="search__state">
-      {{ t("common.loading") }}
-    </p>
+    <ul
+      v-if="store.loading && !store.results"
+      class="search__results"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li v-for="n in 4" :key="n" class="search__result">
+        <AccountRowSkeleton class="search__skel" />
+      </li>
+    </ul>
     <template v-if="store.results">
       <Tabs v-model="tab" :items="tabs" :label="t('search.resultTypes')" />
       <ul v-if="tab === 'accounts'" class="search__results">
@@ -263,6 +271,12 @@ onMounted(() => {
 }
 .search__result:hover {
   background: var(--bg-hover, var(--bg-sunken));
+}
+/* Skeleton fills the row — the result li's own padding would double it. */
+.search__skel {
+  flex: 1;
+  min-width: 0;
+  margin: calc(-1 * var(--space-3));
 }
 .search__names {
   display: flex;

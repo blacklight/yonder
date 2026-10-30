@@ -6,6 +6,7 @@ import { useComposeStore } from "@/stores/compose";
 import { ApiError } from "@/api/errors";
 import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
+import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import ComposeBox from "@/components/compose/ComposeBox.vue";
 import Button from "@/components/ui/Button.vue";
 
@@ -15,6 +16,7 @@ const store = useConversationsStore();
 const compose = useComposeStore();
 const notFound = ref(false);
 const loadError = ref(false);
+const olderLoading = ref(false);
 
 const validKey = computed(() => /^[0-9a-f]{64}$/.test(props.id));
 const newest = computed(() => store.activeThread?.statuses[0]);
@@ -64,6 +66,15 @@ async function openConversation() {
   }
 }
 
+async function loadOlder() {
+  olderLoading.value = true;
+  try {
+    await store.fetchOlder();
+  } finally {
+    olderLoading.value = false;
+  }
+}
+
 onMounted(openConversation);
 // The route is unkeyed — `/messages/A` → `/messages/B` reuses this
 // component, so the param change re-opens the thread and re-seeds.
@@ -85,11 +96,14 @@ watch(() => props.id, openConversation);
       <Button
         v-if="store.activeThread.next"
         variant="secondary"
-        @click="store.fetchOlder()"
+        :loading="olderLoading"
+        @click="loadOlder"
       >
         {{ t("common.loadMore") }}
       </Button>
     </template>
-    <p v-else aria-busy="true">{{ t("common.loading") }}</p>
+    <div v-else role="status" :aria-label="t('common.loading')">
+      <StatusCardSkeleton v-for="n in 2" :key="n" />
+    </div>
   </main>
 </template>

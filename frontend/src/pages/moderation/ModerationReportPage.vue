@@ -14,6 +14,7 @@ import { adminStatusAction } from "@/api/admin";
 import { showAdminAccount, type AdminAccount } from "@/api/adminUsers";
 import { useAuthStore } from "@/stores/auth";
 import Button from "@/components/ui/Button.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import AccountActions from "@/components/admin/AccountActions.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 
@@ -87,7 +88,7 @@ function acct(a: AdminReport["target_account"]) {
 
 <template>
   <main class="page">
-    <p v-if="loading" class="report__status">{{ t("common.loading") }}</p>
+    <p v-if="loading" class="report__status"><Spinner /></p>
     <p v-else-if="error && !report" class="report__error" role="alert">
       {{ error }}
     </p>

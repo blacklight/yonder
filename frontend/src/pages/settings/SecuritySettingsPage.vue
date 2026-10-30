@@ -31,6 +31,7 @@ import { useAuthStore } from "@/stores/auth";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import SettingsNav from "@/components/settings/SettingsNav.vue";
 import { FontAwesomeIcon } from "@/icons";
 
@@ -246,6 +247,7 @@ async function runGate() {
 
 const sessions = ref<SessionEntity[]>([]);
 const apps = ref<AuthorizedApp[]>([]);
+const listsLoading = ref(true);
 const listError = ref("");
 
 async function revokeSessionById(id: string) {
@@ -269,6 +271,8 @@ onMounted(async () => {
     apps.value = await listAuthorizedApps();
   } catch (e) {
     listError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    listsLoading.value = false;
   }
 });
 </script>
@@ -670,7 +674,10 @@ onMounted(async () => {
           <h3 class="security__group-title">
             {{ t("settingsSecurity.groupSessions") }}
           </h3>
-          <ul v-if="sessions.length" class="security__list">
+          <div v-if="listsLoading" class="security__loading">
+            <Spinner />
+          </div>
+          <ul v-else-if="sessions.length" class="security__list">
             <li v-for="s in sessions" :key="s.id" class="security__list-row">
               <div class="security__list-main">
                 <span class="security__list-title">
@@ -708,7 +715,10 @@ onMounted(async () => {
           <h3 class="security__group-title">
             {{ t("settingsSecurity.groupApps") }}
           </h3>
-          <ul v-if="apps.length" class="security__list">
+          <div v-if="listsLoading" class="security__loading">
+            <Spinner />
+          </div>
+          <ul v-else-if="apps.length" class="security__list">
             <li v-for="app in apps" :key="app.id" class="security__list-row">
               <div class="security__list-main">
                 <span class="security__list-title">{{ app.name }}</span>
@@ -820,6 +830,10 @@ onMounted(async () => {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+.security__loading {
+  display: flex;
+  padding: var(--space-2) 0;
 }
 .security__hint-inline {
   font-size: var(--text-sm);

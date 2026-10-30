@@ -9,6 +9,7 @@ import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { useAuthStore } from "@/stores/auth";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
+import Skeleton from "@/components/ui/Skeleton.vue";
 import SettingsNav from "@/components/settings/SettingsNav.vue";
 
 const { t } = useI18n();
@@ -198,7 +199,20 @@ onMounted(async () => {
           <p v-if="listError" class="invites__error" role="alert">
             {{ listError }}
           </p>
-          <ul v-if="invites.length" class="invites__list">
+          <ul
+            v-if="loading"
+            class="invites__list"
+            role="status"
+            :aria-label="t('common.loading')"
+          >
+            <li v-for="n in 2" :key="n" class="invites__row">
+              <div class="invites__main invites__skel">
+                <Skeleton width="45%" />
+                <Skeleton width="60%" height="0.75em" />
+              </div>
+            </li>
+          </ul>
+          <ul v-else-if="invites.length" class="invites__list">
             <li v-for="invite in invites" :key="invite.id" class="invites__row">
               <div class="invites__main">
                 <span class="invites__name">
@@ -348,6 +362,12 @@ onMounted(async () => {
   padding: var(--space-2) 0;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
+}
+.invites__skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 .invites__main {
   display: flex;

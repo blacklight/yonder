@@ -18,6 +18,7 @@ import {
 } from "@/api/adminEmoji";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 
 const { t } = useI18n();
@@ -332,7 +333,7 @@ async function removePack() {
           </option>
         </select>
       </div>
-      <p v-if="loading" class="emojis__status">{{ t("common.loading") }}</p>
+      <p v-if="loading" class="emojis__status"><Spinner /></p>
       <p v-else-if="emojis.length === 0" class="emojis__status">
         {{ t("admin.emojis.empty") }}
       </p>

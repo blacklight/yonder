@@ -2,7 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import StatusCard from "@/components/status/StatusCard.vue";
+import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTimelineStore, type TimelineKey } from "@/stores/timeline";
 import { useStreamingStore } from "@/stores/streaming";
@@ -79,9 +81,13 @@ onBeforeUnmount(() => {
       {{ t("timeline.newPosts", { count: timelines.pendingCount(timeline) }) }}
     </button>
 
-    <p v-if="tl.loading && !tl.loaded" class="timeline__state">
-      {{ t("ui.loading") }}
-    </p>
+    <div
+      v-if="tl.loading && !tl.loaded"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <StatusCardSkeleton v-for="n in 3" :key="n" />
+    </div>
     <div v-else-if="tl.error" class="timeline__state timeline__error">
       <p>{{ tl.error }}</p>
       <!-- A failed `loadMore` must resume from the cursor — `load`
@@ -106,9 +112,9 @@ onBeforeUnmount(() => {
     />
 
     <div ref="sentinel" class="timeline__sentinel" aria-hidden="true" />
-    <p v-if="tl.loading && tl.loaded" class="timeline__state">
-      {{ t("ui.loading") }}
-    </p>
+    <div v-if="tl.loading && tl.loaded" class="timeline__state">
+      <Spinner />
+    </div>
     <p
       v-else-if="tl.loaded && !timelines.hasMore(timeline) && tl.items.length"
       class="timeline__state"

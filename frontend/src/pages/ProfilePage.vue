@@ -33,12 +33,15 @@ import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
+import Skeleton from "@/components/ui/Skeleton.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import Input from "@/components/ui/Input.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
 import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
@@ -54,7 +57,9 @@ const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">(
   "loading",
 );
 const actionError = ref<string | null>(null);
+const actionBusy = ref(false);
 const statuses = ref<Status[]>([]);
+const statusesLoading = ref(false);
 // The profile's pinned set — fetched once per account (the endpoint
 // returns the capped list, no cursors) and refreshed when a card on
 // this page pins/unpins. Renders on the posts tab only.
@@ -250,16 +255,21 @@ async function loadStatuses(more = false) {
           "max_id",
         ) ?? undefined)
       : undefined;
-  const page = await accountStatuses(account.value.id, {
-    max_id,
-    only_media: tab.value === "media" || undefined,
-    exclude_replies:
-      tab.value === "posts" && !showReplies.value ? true : undefined,
-    exclude_reblogs:
-      tab.value === "posts" && !showBoosts.value ? true : undefined,
-  });
-  statuses.value = more ? [...statuses.value, ...page.items] : page.items;
-  nextCursor.value = page.next;
+  statusesLoading.value = true;
+  try {
+    const page = await accountStatuses(account.value.id, {
+      max_id,
+      only_media: tab.value === "media" || undefined,
+      exclude_replies:
+        tab.value === "posts" && !showReplies.value ? true : undefined,
+      exclude_reblogs:
+        tab.value === "posts" && !showBoosts.value ? true : undefined,
+    });
+    statuses.value = more ? [...statuses.value, ...page.items] : page.items;
+    nextCursor.value = page.next;
+  } finally {
+    statusesLoading.value = false;
+  }
 }
 
 /** `?pinned=true` — local pins and remote featured items alike.
@@ -333,7 +343,9 @@ async function resolve(): Promise<void> {
 
 /** Surface action failures instead of dropping them on the floor. */
 async function tryRun(fn: () => Promise<void>) {
+  if (actionBusy.value) return;
   actionError.value = null;
+  actionBusy.value = true;
   try {
     await fn();
   } catch (e) {
@@ -341,6 +353,8 @@ async function tryRun(fn: () => Promise<void>) {
       e instanceof ApiError && e.status === 409
         ? t("profile.lastAdmin")
         : t("common.error");
+  } finally {
+    actionBusy.value = false;
   }
 }
 
@@ -603,7 +617,21 @@ watch([tab, showReplies, showBoosts], () => {
 
 <template>
   <main class="page profile">
-    <p v-if="state === 'loading'" aria-busy="true">{{ t("common.loading") }}</p>
+    <template v-if="state === 'loading'">
+      <div role="status" :aria-label="t('common.loading')">
+        <Skeleton class="profile-skel__banner" height="10rem" />
+        <div class="profile-skel__top">
+          <Skeleton circle width="96px" />
+          <div class="profile-skel__names">
+            <Skeleton width="40%" height="1.4em" />
+            <Skeleton width="60%" height="0.85em" />
+          </div>
+        </div>
+        <div class="timeline">
+          <StatusCardSkeleton v-for="n in 2" :key="n" />
+        </div>
+      </div>
+    </template>
     <p v-else-if="state === 'not-found'">{{ t("profile.notFound") }}</p>
     <p v-else-if="state === 'error'" role="alert">
       {{ t("profile.loadError") }}
@@ -630,7 +658,7 @@ watch([tab, showReplies, showBoosts], () => {
               >{{ t("profile.edit") }}</router-link
             >
             <template v-else-if="auth.isLoggedIn">
-              <Button @click="toggleFollow">
+              <Button :loading="actionBusy" @click="toggleFollow">
                 <FontAwesomeIcon
                   :icon="rel?.following ? 'user-check' : 'user-plus'"
                 />
@@ -645,6 +673,7 @@ watch([tab, showReplies, showBoosts], () => {
               <Button
                 v-if="rel?.following"
                 variant="secondary"
+                :disabled="actionBusy"
                 @click="toggleSubscribe"
               >
                 {{
@@ -762,7 +791,7 @@ watch([tab, showReplies, showBoosts], () => {
           {{ t("profile.showBoostsTab") }}</label
         >
       </div>
-      <div class="timeline">
+      <div class="timeline" :aria-busy="statusesLoading || undefined">
         <template v-if="tab === 'posts'">
           <StatusCard
             v-for="s in pinnedStatuses"
@@ -780,8 +809,15 @@ watch([tab, showReplies, showBoosts], () => {
           @removed="dropRemoved"
           @pinned="loadPinned"
         />
+        <template v-if="statusesLoading">
+          <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
+        </template>
         <div v-if="nextCursor" class="profile__more">
-          <Button variant="secondary" @click="loadStatuses(true)">
+          <Button
+            variant="secondary"
+            :loading="statusesLoading"
+            @click="loadStatuses(true)"
+          >
             {{ t("common.loadMore") }}
           </Button>
         </div>
@@ -827,7 +863,9 @@ watch([tab, showReplies, showBoosts], () => {
       :title="t('profile.listsTitle')"
       @close="listsOpen = false"
     >
-      <p v-if="listsLoading" aria-busy="true">{{ t("common.loading") }}</p>
+      <div v-if="listsLoading" class="profile__lists-loading">
+        <Spinner />
+      </div>
       <template v-else>
         <form class="profile__lists-new" @submit.prevent="createListFromPicker">
           <Input
@@ -1011,6 +1049,31 @@ watch([tab, showReplies, showBoosts], () => {
   border-radius: var(--radius-md);
   overflow: hidden;
 }
+/* The loading stand-in mirrors the real header: banner strip, the
+   avatar overlapping it, then the name/handle lines. */
+.profile-skel__banner {
+  width: 100%;
+  border-radius: var(--radius-lg);
+}
+.profile-skel__top {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin-top: calc(-1 * var(--space-7));
+  margin-bottom: var(--space-3);
+}
+.profile-skel__top > .skeleton {
+  margin-left: var(--space-2);
+  border: 4px solid var(--bg);
+}
+.profile-skel__names {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+}
 .profile__more {
   margin-top: var(--space-4);
   text-align: center;
@@ -1114,6 +1177,11 @@ watch([tab, showReplies, showBoosts], () => {
 }
 .profile__list-check {
   color: var(--accent);
+}
+.profile__lists-loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0;
 }
 .profile__lists-empty {
   display: flex;

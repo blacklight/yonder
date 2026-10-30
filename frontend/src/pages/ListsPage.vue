@@ -6,6 +6,7 @@ import { listMembers } from "@/api/lists";
 import { search } from "@/api/search";
 import type { Account, ListEntity } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
@@ -16,6 +17,7 @@ const { t } = useI18n();
 const store = useListsStore();
 const open = ref<string | null>(null);
 const members = ref<Account[]>([]);
+const membersLoading = ref(false);
 const membersNext = ref<string | undefined>();
 const form = ref({
   title: "",
@@ -41,18 +43,28 @@ async function toggle(l: ListEntity) {
   open.value = l.id;
   memberQuery.value = "";
   memberHits.value = [];
-  const page = await listMembers(l.id);
-  members.value = page.items;
-  membersNext.value = page.next;
+  membersLoading.value = true;
+  try {
+    const page = await listMembers(l.id);
+    members.value = page.items;
+    membersNext.value = page.next;
+  } finally {
+    membersLoading.value = false;
+  }
 }
 
 async function moreMembers() {
   if (!open.value || !membersNext.value) return;
-  const page = await listMembers(open.value, {
-    max_id: cursor(membersNext.value),
-  });
-  members.value = [...members.value, ...page.items];
-  membersNext.value = page.next;
+  membersLoading.value = true;
+  try {
+    const page = await listMembers(open.value, {
+      max_id: cursor(membersNext.value),
+    });
+    members.value = [...members.value, ...page.items];
+    membersNext.value = page.next;
+  } finally {
+    membersLoading.value = false;
+  }
 }
 
 async function create() {
@@ -160,9 +172,16 @@ onMounted(() => store.fetch());
       </form>
     </Card>
 
-    <p v-if="store.loading && !store.lists.length" class="lists__state">
-      {{ t("common.loading") }}
-    </p>
+    <ul
+      v-if="store.loading && !store.lists.length"
+      class="lists__list"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li v-for="n in 3" :key="n" class="lists__item lists__item--skel">
+        <AccountRowSkeleton :avatar="false" />
+      </li>
+    </ul>
     <p v-else-if="!store.lists.length" class="lists__state">
       {{ t("lists.empty") }}
     </p>
@@ -197,7 +216,15 @@ onMounted(() => store.fetch());
               </Button>
             </li>
           </ul>
-          <p v-if="!members.length" class="lists__members-empty">
+          <ul
+            v-if="membersLoading && !members.length"
+            class="lists__people"
+            role="status"
+            :aria-label="t('common.loading')"
+          >
+            <li v-for="n in 2" :key="n"><AccountRowSkeleton /></li>
+          </ul>
+          <p v-else-if="!members.length" class="lists__members-empty">
             {{ t("lists.membersEmpty") }}
           </p>
           <ul v-else class="lists__people">
@@ -213,6 +240,7 @@ onMounted(() => store.fetch());
             v-if="membersNext"
             size="sm"
             variant="secondary"
+            :loading="membersLoading"
             @click="moreMembers"
           >
             {{ t("common.loadMore") }}

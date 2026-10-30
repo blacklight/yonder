@@ -15,6 +15,7 @@ import type { AdminRole } from "@/api/admin";
 import { useAuthStore } from "@/stores/auth";
 import Input from "@/components/ui/Input.vue";
 import Button from "@/components/ui/Button.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 
 const { t } = useI18n();
@@ -203,9 +204,20 @@ async function go() {
       </Button>
     </form>
 
-    <p v-if="loading && accounts.length === 0" class="admin-users__status">
-      {{ t("common.loading") }}
-    </p>
+    <ul
+      v-if="loading && accounts.length === 0"
+      class="admin-users__list"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li
+        v-for="n in 4"
+        :key="n"
+        class="admin-users__item admin-users__item--skel"
+      >
+        <AccountRowSkeleton :avatar="false" />
+      </li>
+    </ul>
     <p v-else-if="accounts.length === 0" class="admin-users__status">
       {{ t("admin.users.empty") }}
     </p>
@@ -247,7 +259,9 @@ async function go() {
               class="admin-users__badge admin-users__badge--warn"
               >{{ t("admin.users.state.pending") }}</span
             >
-            <span v-if="a.email_verified === false" class="admin-users__badge"
+            <span
+              v-if="a.email_verified === false"
+              class="admin-users__badge"
               >{{ t("admin.users.state.unverified") }}</span
             >
           </div>
@@ -322,7 +336,9 @@ async function go() {
                 <option value="moderator">
                   {{ t("admin.users.roles.moderator") }}
                 </option>
-                <option value="admin">{{ t("admin.users.roles.admin") }}</option>
+                <option value="admin">
+                  {{ t("admin.users.roles.admin") }}
+                </option>
               </select>
             </label>
           </div>
@@ -336,7 +352,9 @@ async function go() {
             type="submit"
             :loading="creating"
             :disabled="
-              !create.username.trim() || !create.email.trim() || !create.password
+              !create.username.trim() ||
+              !create.email.trim() ||
+              !create.password
             "
           >
             {{ t("admin.users.create.submit") }}
@@ -418,6 +436,10 @@ async function go() {
   gap: var(--space-3);
   padding: var(--space-3) 0;
   border-top: 1px solid var(--border);
+}
+/* The skeleton row supplies its own padding. */
+.admin-users__item--skel {
+  padding: 0;
 }
 .admin-users__main {
   flex: 1 1 16rem;

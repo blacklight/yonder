@@ -6,6 +6,7 @@ import { ApiError } from "@/api/errors";
 import { verifyEmail } from "@/api/accounts";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 
 // Landing page for the `/verify-email/:token` link in the
 // verification mail — the token is consumed by POSTing it to
@@ -41,7 +42,8 @@ watch(
   <Card class="verify-email">
     <template #header>{{ t("verifyEmail.title") }}</template>
     <div class="verify-email__body">
-      <p v-if="state === 'pending'" role="status">
+      <p v-if="state === 'pending'" role="status" class="verify-email__pending">
+        <span aria-hidden="true"><Spinner /></span>
         {{ t("verifyEmail.verifying") }}
       </p>
       <template v-else-if="state === 'verified'">
@@ -74,6 +76,11 @@ watch(
 }
 .verify-email__body p {
   margin: 0;
+}
+.verify-email__pending {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .verify-email__error {
   color: var(--danger);

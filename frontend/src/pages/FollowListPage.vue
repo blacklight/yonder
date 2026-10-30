@@ -6,6 +6,7 @@ import { followers, following, lookup } from "@/api/accounts";
 import { ApiError } from "@/api/errors";
 import type { Account } from "@/api/entities";
 import Avatar from "@/components/ui/Avatar.vue";
+import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 
@@ -16,6 +17,7 @@ const router = useRouter();
 
 const account = ref<Account | null>(null);
 const members = ref<Account[]>([]);
+const membersLoading = ref(false);
 const nextCursor = ref<string | undefined>();
 const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">(
   "loading",
@@ -44,10 +46,15 @@ async function loadMembers(more = false, gen = generation) {
         ) ?? undefined)
       : undefined;
   const fetchPage = props.direction === "followers" ? followers : following;
-  const page = await fetchPage(account.value.id, { max_id });
-  if (gen !== generation) return;
-  members.value = more ? [...members.value, ...page.items] : page.items;
-  nextCursor.value = page.next;
+  membersLoading.value = true;
+  try {
+    const page = await fetchPage(account.value.id, { max_id });
+    if (gen !== generation) return;
+    members.value = more ? [...members.value, ...page.items] : page.items;
+    nextCursor.value = page.next;
+  } finally {
+    if (gen === generation) membersLoading.value = false;
+  }
 }
 
 async function load() {
@@ -96,7 +103,14 @@ watch([() => route.fullPath, () => props.direction], load, {
 
 <template>
   <main class="page network">
-    <p v-if="state === 'loading'" aria-busy="true">{{ t("common.loading") }}</p>
+    <ul
+      v-if="state === 'loading'"
+      class="network__list"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
+      <li v-for="n in 6" :key="n"><AccountRowSkeleton /></li>
+    </ul>
     <p v-else-if="state === 'not-found'">{{ t("profile.notFound") }}</p>
     <p v-else-if="state === 'error'" role="alert">
       {{ t("profile.loadError") }}
@@ -127,7 +141,11 @@ watch([() => route.fullPath, () => props.direction], load, {
         :label="t('profile.networkTabs')"
         @update:model-value="onTab"
       />
-      <ul class="network__list">
+      <ul
+        v-if="members.length || membersLoading"
+        class="network__list"
+        :aria-busy="membersLoading || undefined"
+      >
         <li v-for="a in members" :key="a.id">
           <router-link :to="`/@${a.acct}`" class="network__row">
             <Avatar
@@ -143,12 +161,19 @@ watch([() => route.fullPath, () => props.direction], load, {
             </span>
           </router-link>
         </li>
+        <li v-for="n in membersLoading ? 3 : 0" :key="`skel-${n}`">
+          <AccountRowSkeleton />
+        </li>
       </ul>
-      <p v-if="!members.length" class="network__empty">
+      <p v-if="!members.length && !membersLoading" class="network__empty">
         {{ t("lists.empty") }}
       </p>
       <div v-if="nextCursor" class="network__more">
-        <Button variant="secondary" @click="loadMembers(true)">
+        <Button
+          variant="secondary"
+          :loading="membersLoading"
+          @click="loadMembers(true)"
+        >
           {{ t("common.loadMore") }}
         </Button>
       </div>

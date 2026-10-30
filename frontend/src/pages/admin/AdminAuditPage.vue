@@ -9,6 +9,7 @@ import {
 } from "@/api/adminAudit";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 
 const { t } = useI18n();
 
@@ -111,7 +112,7 @@ onMounted(() => load());
     </form>
 
     <p v-if="loading && entries.length === 0" class="audit__status">
-      {{ t("common.loading") }}
+      <Spinner />
     </p>
     <p v-else-if="error" class="audit__error" role="alert">{{ error }}</p>
     <p v-else-if="entries.length === 0" class="audit__status">

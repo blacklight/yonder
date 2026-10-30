@@ -12,6 +12,7 @@ import {
 } from "@/api/adminFrontends";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 import SettingsSection from "@/components/admin/SettingsSection.vue";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
@@ -164,7 +165,7 @@ async function remove() {
 <template>
   <div class="frontends">
     <h2>{{ t("admin.nav.frontends") }}</h2>
-    <p v-if="loading" class="frontends__status">{{ t("common.loading") }}</p>
+    <p v-if="loading" class="frontends__status"><Spinner /></p>
     <template v-else-if="data">
       <ul class="frontends__list">
         <li v-for="f in data.frontends" :key="f.name" class="frontends__item">

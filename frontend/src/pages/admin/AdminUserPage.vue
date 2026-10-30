@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { ApiError } from "@/api/errors";
 import { showAdminAccount, type AdminAccount } from "@/api/adminUsers";
 import AccountActions from "@/components/admin/AccountActions.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
@@ -41,7 +42,7 @@ function onUpdated(a: AdminAccount) {
 
 <template>
   <div class="admin-user">
-    <p v-if="loading" class="admin-user__status">{{ t("common.loading") }}</p>
+    <p v-if="loading" class="admin-user__status"><Spinner /></p>
     <p v-else-if="error" class="admin-user__error" role="alert">{{ error }}</p>
     <template v-else-if="account">
       <h2>@{{ acct }}</h2>

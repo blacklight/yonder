@@ -11,6 +11,7 @@ import {
 } from "@/api/adminDomainBlocks";
 import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 
 const { t } = useI18n();
@@ -152,7 +153,7 @@ async function remove() {
       </Button>
     </form>
 
-    <p v-if="loading" class="blocks__status">{{ t("common.loading") }}</p>
+    <p v-if="loading" class="blocks__status"><Spinner /></p>
     <p v-else-if="blocks.length === 0" class="blocks__status">
       {{ t("admin.domainBlocks.empty") }}
     </p>

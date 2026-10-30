@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { ApiError } from "@/api/errors";
 import { useAdminSettingsStore } from "@/stores/adminSettings";
 import SettingsSection from "@/components/admin/SettingsSection.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 
 // Generic admin settings page — one per route; `sections` lists the
 // top-level config sections this page renders and `extraKeys` pulls
@@ -43,7 +44,7 @@ onMounted(async () => {
   <div class="admin-settings">
     <h2 class="admin-settings__title">{{ t(props.titleKey) }}</h2>
     <p v-if="loading" class="admin-settings__status">
-      {{ t("common.loading") }}
+      <Spinner />
     </p>
     <p v-else-if="error" class="admin-settings__error" role="alert">
       {{ error }}

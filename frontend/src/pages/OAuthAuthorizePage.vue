@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 import {
@@ -145,7 +146,9 @@ function deny() {
     <p v-if="loadError" class="authorize__error" role="alert">
       {{ loadError }}
     </p>
-    <p v-else-if="loading" class="authorize__muted">…</p>
+    <div v-else-if="loading" class="authorize__loading">
+      <Spinner />
+    </div>
     <p v-else-if="denied" class="authorize__muted" role="status">
       {{ t("oauth.denied") }}
     </p>
@@ -198,6 +201,11 @@ function deny() {
 .authorize__muted {
   color: var(--text-muted);
   margin: 0;
+}
+.authorize__loading {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0;
 }
 .authorize__scopes {
   margin: 0;

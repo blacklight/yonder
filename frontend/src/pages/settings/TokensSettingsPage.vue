@@ -9,6 +9,7 @@ import { useAuthStore } from "@/stores/auth";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import Skeleton from "@/components/ui/Skeleton.vue";
 import SettingsNav from "@/components/settings/SettingsNav.vue";
 
 const { t } = useI18n();
@@ -212,7 +213,20 @@ onMounted(refresh);
           <p v-if="listError" class="tokens__error" role="alert">
             {{ listError }}
           </p>
-          <ul v-if="tokens.length" class="tokens__list">
+          <ul
+            v-if="loading"
+            class="tokens__list"
+            role="status"
+            :aria-label="t('common.loading')"
+          >
+            <li v-for="n in 2" :key="n" class="tokens__row">
+              <div class="tokens__main tokens__skel">
+                <Skeleton width="30%" />
+                <Skeleton width="55%" height="0.75em" />
+              </div>
+            </li>
+          </ul>
+          <ul v-else-if="tokens.length" class="tokens__list">
             <li v-for="token in tokens" :key="token.id" class="tokens__row">
               <div class="tokens__main">
                 <span class="tokens__name">
@@ -374,6 +388,12 @@ onMounted(refresh);
   padding: var(--space-2) 0;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
+}
+.tokens__skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
 }
 .tokens__main {
   display: flex;

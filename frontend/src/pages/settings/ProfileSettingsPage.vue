@@ -8,6 +8,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
 import Input from "@/components/ui/Input.vue";
+import Skeleton from "@/components/ui/Skeleton.vue";
 import SettingsNav from "@/components/settings/SettingsNav.vue";
 import { FontAwesomeIcon } from "@/icons";
 
@@ -192,6 +193,15 @@ onUnmounted(() => {
       <p v-if="state === 'error'" class="profile-edit__error" role="alert">
         {{ error || t("settingsProfile.loadError") }}
       </p>
+      <div
+        v-else-if="state === 'loading'"
+        class="profile-edit-skel"
+        role="status"
+        :aria-label="t('common.loading')"
+      >
+        <Skeleton circle width="96px" />
+        <Skeleton v-for="n in 4" :key="n" height="2.25rem" />
+      </div>
       <form
         v-else-if="state === 'ok'"
         class="profile-edit"
@@ -388,6 +398,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+}
+.profile-edit-skel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 26rem;
 }
 .profile-edit__group {
   display: flex;

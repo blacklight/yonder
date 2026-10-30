@@ -45,6 +45,11 @@ function hide() {
   bottom: calc(100% + var(--space-1));
   left: 50%;
   transform: translateX(-50%);
+  /* max-content: the bubble is otherwise constrained to the trigger's
+     width (e.g. a "2h" timestamp) and wraps to a sliver. Cap it so
+     longer strings still wrap. */
+  width: max-content;
+  max-width: 40ch;
   /* pre-line: explicit \n breaks (admin setting help) without
      wrapping otherwise. */
   white-space: pre-line;

@@ -733,4 +733,28 @@ describe("StatusCard", () => {
     });
     expect(plain.find(".status-card__pin").exists()).toBe(false);
   });
+
+  it("edited badge renders only on edited statuses, incl. boosts", () => {
+    const edited = "2024-06-01T12:34:56.000Z";
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: status({ edited_at: edited }) },
+    });
+    const badge = wrapper.get("[data-testid='edited']");
+    expect(badge.text()).toContain("Edited");
+    expect(badge.attributes("datetime")).toBe(edited);
+    wrapper.unmount();
+
+    const { wrapper: boost } = mountWith(StatusCard, {
+      props: {
+        status: status({ reblog: status({ edited_at: edited }) }),
+      },
+    });
+    expect(boost.find("[data-testid='edited']").exists()).toBe(true);
+    boost.unmount();
+
+    const { wrapper: fresh } = mountWith(StatusCard, {
+      props: { status: status() },
+    });
+    expect(fresh.find("[data-testid='edited']").exists()).toBe(false);
+  });
 });

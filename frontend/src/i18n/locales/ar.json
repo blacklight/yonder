@@ -458,6 +458,8 @@
     "pin": "تثبيت في الملف الشخصي",
     "unpin": "إلغاء التثبيت من الملف الشخصي",
     "pinned": "مثبّت",
+    "edited": "معدَّل",
+    "editedAt": "عُدِّل في {date}",
     "adminMarkSensitive": "وضع علامة حساس",
     "adminDeleteInstance": "حذف من الخادم",
     "adminDeleteProfile": "حذف من الملف",

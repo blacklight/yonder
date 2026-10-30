@@ -458,6 +458,8 @@
     "pin": "Im Profil anheften",
     "unpin": "Vom Profil lösen",
     "pinned": "Angeheftet",
+    "edited": "Bearbeitet",
+    "editedAt": "Bearbeitet am {date}",
     "adminMarkSensitive": "Als sensibel markieren",
     "adminDeleteInstance": "Von Instanz löschen",
     "adminDeleteProfile": "Vom Profil löschen",

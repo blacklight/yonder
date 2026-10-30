@@ -458,6 +458,8 @@
     "pin": "Fijar en el perfil",
     "unpin": "Desfijar del perfil",
     "pinned": "Fijado",
+    "edited": "Editado",
+    "editedAt": "Editado el {date}",
     "adminMarkSensitive": "Marcar sensible",
     "adminDeleteInstance": "Eliminar de la instancia",
     "adminDeleteProfile": "Eliminar del perfil",

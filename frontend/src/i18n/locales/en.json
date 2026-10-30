@@ -445,6 +445,8 @@
     "pin": "Pin on profile",
     "unpin": "Unpin from profile",
     "pinned": "Pinned",
+    "edited": "Edited",
+    "editedAt": "Edited {date}",
     "adminMarkSensitive": "Mark sensitive",
     "adminDeleteInstance": "Delete from instance",
     "adminDeleteProfile": "Delete from profile",

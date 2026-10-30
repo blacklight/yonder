@@ -567,6 +567,22 @@ async function onReact(emoji: string) {
           formatRelativeDate(shown.created_at)
         }}</time>
       </Tooltip>
+      <Tooltip
+        v-if="shown.edited_at"
+        :text="
+          t('status.editedAt', {
+            date: formatAbsoluteDate(shown.edited_at),
+          })
+        "
+      >
+        <time
+          class="status-card__edited"
+          :datetime="shown.edited_at"
+          data-testid="edited"
+        >
+          <FontAwesomeIcon icon="pen-to-square" />
+        </time>
+      </Tooltip>
       <Tooltip v-if="visIcon" :text="t(`compose.vis_${shown.visibility}`)">
         <span
           class="status-card__visibility"
@@ -820,9 +836,20 @@ async function onReact(emoji: string) {
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
+.status-card__edited {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.status-card__edited::before {
+  content: "·";
+  margin-right: var(--space-1);
+}
+.status-card__visibility,
+.status-card__edited {
+  opacity: 0.75;
+}
 .status-card__visibility {
   color: var(--text-muted);
-  opacity: 0.75;
   font-size: 0.75em;
   display: inline-flex;
 }

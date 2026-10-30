@@ -458,6 +458,8 @@
     "pin": "Fissa sul profilo",
     "unpin": "Rimuovi dal profilo",
     "pinned": "Fissato in alto",
+    "edited": "Modificato",
+    "editedAt": "Modificato il {date}",
     "adminMarkSensitive": "Segna sensibile",
     "adminDeleteInstance": "Elimina dall'istanza",
     "adminDeleteProfile": "Elimina dal profilo",

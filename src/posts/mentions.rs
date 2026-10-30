@@ -61,6 +61,7 @@ impl ResolvedMention {
             Some(MentionLink {
                 token: self.token.clone(),
                 href: self.profile_url.clone(),
+                acct: self.acct.trim_start_matches('@').to_string(),
             })
         }
     }

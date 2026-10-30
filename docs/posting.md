@@ -95,7 +95,9 @@ resubmitted.
 ## Link previews
 
 `FetchLinkPreview` extracts the first eligible URL (skips own-instance
-and disallowed schemes) — never when media is attached — fetches via
+and disallowed schemes, and any URL that is the target of a status
+mention or hashtag — matching Mastodon, which never cards a
+mention/tag anchor) — never when media is attached — fetches via
 pubby's SSRF-guarded client, parses Open Graph (with `twitter:` /
 `<title>` fallbacks), stores a `previews/` card image, and upserts
 `preview_cards`. Metadata caches in Redis for

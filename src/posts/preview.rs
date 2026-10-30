@@ -39,10 +39,16 @@ const MAX_IMAGE: u64 = 5 * 1024 * 1024;
 /// Enqueue `FetchLinkPreview` when the status qualifies (no media,
 /// previews enabled). Best-effort — enqueue failures only log.
 pub async fn enqueue(ctx: &PostContext, status: &StatusRow, media_ids: &[i64]) {
-    if !ctx.config.content.link_previews || !media_ids.is_empty() {
+    if !ctx.config.content.link_previews
+        || !media_ids.is_empty()
+        || !status.content.contains("http")
+    {
         return;
     }
-    if extract_first_url(ctx, &status.content).is_none() {
+    let excl = link_exclusions(&ctx.db, status.id)
+        .await
+        .unwrap_or_default();
+    if extract_first_url(ctx, &status.content, &excl).is_none() {
         return;
     }
     if let Err(e) = ctx
@@ -55,8 +61,11 @@ pub async fn enqueue(ctx: &PostContext, status: &StatusRow, media_ids: &[i64]) {
 }
 
 /// The first allowed, non-own-instance URL in `source` (trailing
-/// punctuation stripped). `None` → no preview.
-pub fn extract_first_url(ctx: &PostContext, source: &str) -> Option<String> {
+/// punctuation stripped). Mention and hashtag link targets are
+/// excluded — a mention at the top of a post must never produce a
+/// profile-page card (Mastodon skips `mention`/`hashtag` anchors the
+/// same way). `None` → no preview.
+pub fn extract_first_url(ctx: &PostContext, source: &str, excl: &LinkExclusions) -> Option<String> {
     let base = ctx.base_url();
     let domain = ctx.config.instance.domain.to_lowercase();
     for m in url_scan(source) {
@@ -71,9 +80,138 @@ pub fn extract_first_url(ctx: &PostContext, source: &str) -> Option<String> {
         {
             continue;
         }
+        if url_excluded(url, excl) {
+            continue;
+        }
         return Some(url.to_string());
     }
     None
+}
+
+/// Mention/tag references whose targets never qualify for a card —
+/// built from the status' `status_mentions`/`status_tags` rows. With
+/// href-only sanitized HTML the entities are the reliable markers.
+#[derive(Debug, Default)]
+pub struct LinkExclusions {
+    /// Normalized `host/path` (lowercase, trailing `/` trimmed) of
+    /// every mentioned account's `url` and `actor_id`.
+    urls: std::collections::HashSet<String>,
+    /// `(lowercase username, lowercase domain)` — catches mention
+    /// links whose path shape differs from the stored profile URL
+    /// (`/@alice` vs `/users/alice` on the same host).
+    handles: std::collections::HashSet<(String, String)>,
+    /// Lowercased status tag names.
+    tags: std::collections::HashSet<String>,
+}
+
+/// Mention + tag entities for `status_id`, as link exclusions.
+async fn link_exclusions(db: &sqlx::PgPool, status_id: i64) -> Result<LinkExclusions> {
+    let mentions = sqlx::query_as::<_, (String, Option<String>, Option<String>, String)>(
+        "SELECT a.username, a.domain, a.url, a.actor_id FROM accounts a \
+         JOIN status_mentions m ON m.account_id = a.id WHERE m.status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_all(db)
+    .await?;
+    let tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM tags t JOIN status_tags s ON s.tag_id = t.id \
+         WHERE s.status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_all(db)
+    .await?;
+    let mut excl = LinkExclusions::default();
+    for (username, domain, url, actor_id) in mentions {
+        if let Some(d) = domain {
+            excl.handles
+                .insert((username.to_lowercase(), d.to_lowercase()));
+        }
+        for u in [url, Some(actor_id)].into_iter().flatten() {
+            if let Ok(p) = url::Url::parse(&u) {
+                excl.urls.insert(normalize_url(&p));
+            }
+        }
+    }
+    excl.tags = tags.into_iter().map(|t| t.to_lowercase()).collect();
+    Ok(excl)
+}
+
+/// `host/path` lowercased, trailing slashes stripped — scheme-agnostic
+/// so `http`/`https` forms of the same target compare equal.
+fn normalize_url(u: &url::Url) -> String {
+    format!(
+        "{}{}",
+        u.host_str().unwrap_or_default().to_lowercase(),
+        u.path().trim_end_matches('/')
+    )
+}
+
+/// Percent-decode one path segment (`+` stays literal — path, not query).
+fn decode_segment(seg: &str) -> String {
+    let bytes = seg.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&seg[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Whether `url` points at one of the status' mentioned accounts or
+/// hashtags — matched by stored entity URL, by `@user`/`user` path
+/// basename on the mention's domain, or by a tag-shaped
+/// `/tags|tag/<name>` path or `?tag=<name>` query naming a status tag.
+fn url_excluded(url: &str, excl: &LinkExclusions) -> bool {
+    if excl.urls.is_empty() && excl.handles.is_empty() && excl.tags.is_empty() {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if excl.urls.contains(&normalize_url(&parsed)) {
+        return true;
+    }
+    let host = parsed.host_str().unwrap_or_default().to_lowercase();
+    let basename = decode_segment(
+        parsed
+            .path()
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or_default(),
+    )
+    .trim_start_matches('@')
+    .to_lowercase();
+    if !basename.is_empty() && excl.handles.contains(&(basename, host)) {
+        return true;
+    }
+    let segs: Vec<&str> = parsed
+        .path_segments()
+        .map(|s| s.collect())
+        .unwrap_or_default();
+    let tag_name = segs
+        .windows(2)
+        .find_map(|w| {
+            (w[0].eq_ignore_ascii_case("tags") || w[0].eq_ignore_ascii_case("tag"))
+                .then(|| decode_segment(w[1]).to_lowercase())
+        })
+        .or_else(|| {
+            parsed
+                .query_pairs()
+                .find(|(k, _)| k == "tag")
+                .map(|(_, v)| v.to_lowercase())
+        });
+    tag_name
+        .map(|n| !n.is_empty() && excl.tags.contains(&n))
+        .unwrap_or(false)
 }
 
 /// Yield raw `http(s)://…` spans (pre-trailing-punctuation).
@@ -196,9 +334,11 @@ struct CardMeta {
 }
 
 /// `preview_cards.scan_version` stamped on every upsert — bump when
-/// the stored card shape changes so the sweep can rescan rows
-/// written by older code (v1 = video-embed fields).
-const CARD_SCAN_VERSION: i32 = 1;
+/// the stored card shape or candidate rules change so the sweep can
+/// rescan rows written by older code (v1 = video-embed fields,
+/// v2 = mention/hashtag links excluded from candidates — mention
+/// cards are cleared and any later eligible link is re-fetched).
+const CARD_SCAN_VERSION: i32 = 2;
 
 /// Per-run cap on the rescan sweep — one fan-out must not flood the
 /// queue unboundedly; a full batch re-enqueues the sweep until no
@@ -232,7 +372,10 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
         clear_cards(&ctx.db, status_id, None).await?;
         return Ok(());
     }
-    let Some(url) = extract_first_url(ctx, &status.content) else {
+    let excl = link_exclusions(&ctx.db, status_id)
+        .await
+        .unwrap_or_default();
+    let Some(url) = extract_first_url(ctx, &status.content, &excl) else {
         clear_cards(&ctx.db, status_id, None).await?;
         return Ok(());
     };
@@ -499,4 +642,67 @@ pub(crate) fn register(registry: &mut crate::jobs::Registry, ap: Option<&ApConte
         JobKind::FetchLinkPreview,
         FetchLinkPreviewJob::new(ap.cloned()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn excl() -> LinkExclusions {
+        let mut e = LinkExclusions::default();
+        e.urls.insert("remote.test/@alice".to_string());
+        e.handles
+            .insert(("alice".to_string(), "remote.test".to_string()));
+        e.tags.insert("rust".to_string());
+        e.tags.insert("応援".to_string());
+        e
+    }
+
+    #[test]
+    fn mention_url_and_handle_are_excluded() {
+        let e = excl();
+        // Stored profile URL — exact and scheme-agnostic.
+        assert!(url_excluded("https://remote.test/@alice", &e));
+        assert!(url_excluded("http://remote.test/@alice", &e));
+        assert!(url_excluded("https://remote.test/@alice/", &e));
+        // Same user on the mention's domain, different path shape.
+        assert!(url_excluded("https://remote.test/users/alice", &e));
+        assert!(url_excluded("https://remote.test/profile/alice", &e));
+        // Other domains / users are not mentions.
+        assert!(!url_excluded("https://other.test/@alice", &e));
+        assert!(!url_excluded("https://remote.test/users/bob", &e));
+    }
+
+    #[test]
+    fn tag_links_are_excluded() {
+        let e = excl();
+        for u in [
+            "https://x.test/tags/rust",
+            "https://x.test/tag/rust",
+            "https://x.test/explore/tags/rust",
+            "https://x.test/search?tag=rust",
+            // Percent-encoded unicode tag name.
+            "https://x.test/tags/%E5%BF%9C%E6%8F%B4",
+        ] {
+            assert!(url_excluded(u, &e), "{u}");
+        }
+        // Tag-shaped paths naming *other* tags stay eligible.
+        assert!(!url_excluded("https://x.test/tags/python", &e));
+        assert!(!url_excluded("https://blog.example/tags/post", &e));
+    }
+
+    #[test]
+    fn plain_links_are_not_excluded() {
+        let e = excl();
+        assert!(!url_excluded("https://example.com/article", &e));
+        assert!(!url_excluded("https://remote.test/blog/post", &e));
+    }
+
+    #[test]
+    fn decode_segment_handles_percent_and_plus() {
+        assert_eq!(decode_segment("%E5%BF%9C"), "応");
+        assert_eq!(decode_segment("a+b"), "a+b");
+        assert_eq!(decode_segment("100%25"), "100%");
+        assert_eq!(decode_segment("%zz"), "%zz");
+    }
 }

@@ -47,6 +47,10 @@ pub struct MentionLink {
     pub token: String,
     /// Absolute URL the anchor points to.
     pub href: String,
+    /// The resolved acct without a leading `@` — `alice` for a local
+    /// account, `alice@remote.example` for a remote one. Drives the
+    /// anchor label (see [`mention_label`]).
+    pub acct: String,
 }
 
 /// The `#tag` target URL: `{base}/tags/{name}` — Mastodon's shape.
@@ -296,6 +300,27 @@ pub(crate) fn scheme_allowed(url: &str, config: &Config) -> bool {
     }
 }
 
+/// Mastodon's mention-label rule: `@user`, unless another resolved
+/// mention shares the username under a different acct — then the
+/// domain stays on every colliding label so the links remain
+/// distinguishable.
+fn mention_label(m: &MentionLink, mentions: &[MentionLink]) -> String {
+    let user = m.acct.split('@').next().unwrap_or(m.acct.as_str());
+    let ambiguous = mentions.iter().any(|o| {
+        o.acct != m.acct
+            && o.acct
+                .split('@')
+                .next()
+                .map(|u| u.eq_ignore_ascii_case(user))
+                .unwrap_or(false)
+    });
+    if ambiguous {
+        format!("@{}", m.acct)
+    } else {
+        format!("@{user}")
+    }
+}
+
 /// Tokenize one text segment and emit enhanced HTML. URLs become
 /// anchors (scheme-less label via pubby's `render_link_anchor` default
 /// label), `#tags` get `rel="tag"` and resolved `@mentions` get
@@ -345,10 +370,13 @@ fn enhance_segment(
                 && boundary_ok(segment, pos)
             {
                 let normalized = name.to_lowercase();
-                out.push_str(&render_link_anchor(
-                    &hashtag_url(&normalized),
-                    Some("tag"),
-                    Some(&segment[pos..name_end]),
+                // Mastodon's `class="mention hashtag" rel="tag"` markup
+                // — remote card scanners skip tagged anchors on both
+                // signals (pubby's anchor helper can't emit `class`).
+                out.push_str(&format!(
+                    "<a href=\"{}\" class=\"mention hashtag\" rel=\"tag\">{}</a>",
+                    html_escape(&hashtag_url(&normalized)),
+                    html_escape(&segment[pos..name_end]),
                 ));
                 if !hashtags.contains(&normalized) {
                     hashtags.push(normalized);
@@ -372,7 +400,13 @@ fn enhance_segment(
                     Some(ch) => !(ch.is_alphanumeric() || ch == '_' || ch == '@'),
                 };
                 if terminates {
-                    out.push_str(&render_link_anchor(&m.href, None, Some(&m.token)));
+                    // `class="u-url mention"` is what remote servers
+                    // (and card scanners) use to spot mention anchors.
+                    out.push_str(&format!(
+                        "<a href=\"{}\" class=\"u-url mention\">{}</a>",
+                        html_escape(&m.href),
+                        html_escape(&mention_label(m, mentions)),
+                    ));
                     pos = end;
                     continue;
                 }
@@ -416,6 +450,7 @@ mod tests {
         let mentions = vec![MentionLink {
             token: "@alice".to_string(),
             href: "https://y.test/@alice".to_string(),
+            acct: "alice".to_string(),
         }];
         let r = render(
             "hey @alice, look",
@@ -426,7 +461,54 @@ mod tests {
         );
         assert!(r
             .html
-            .contains("<a href=\"https://y.test/@alice\">@alice</a>"));
+            .contains("<a href=\"https://y.test/@alice\" class=\"u-url mention\">@alice</a>"));
+    }
+
+    #[test]
+    fn mention_remote_label_drops_domain() {
+        // Mastodon convention: the anchor text is `@user`, the domain
+        // only lives in the href.
+        let mentions = vec![MentionLink {
+            token: "@alice@remote.example".to_string(),
+            href: "https://remote.example/@alice".to_string(),
+            acct: "alice@remote.example".to_string(),
+        }];
+        let r = render(
+            "hey @alice@remote.example, look",
+            "text/plain",
+            &mentions,
+            "https://y.test",
+            &cfg(),
+        );
+        assert!(r.html.contains(
+            "<a href=\"https://remote.example/@alice\" class=\"u-url mention\">@alice</a>"
+        ));
+    }
+
+    #[test]
+    fn mention_label_keeps_domain_when_ambiguous() {
+        // Same username on two domains — labels stay fully qualified.
+        let mentions = vec![
+            MentionLink {
+                token: "@alice@a.example".to_string(),
+                href: "https://a.example/@alice".to_string(),
+                acct: "alice@a.example".to_string(),
+            },
+            MentionLink {
+                token: "@alice@b.example".to_string(),
+                href: "https://b.example/users/alice".to_string(),
+                acct: "alice@b.example".to_string(),
+            },
+        ];
+        let r = render(
+            "cc @alice@a.example @alice@b.example",
+            "text/plain",
+            &mentions,
+            "https://y.test",
+            &cfg(),
+        );
+        assert!(r.html.contains(">@alice@a.example</a>"));
+        assert!(r.html.contains(">@alice@b.example</a>"));
     }
 
     #[test]
@@ -434,6 +516,7 @@ mod tests {
         let mentions = vec![MentionLink {
             token: "@alice".to_string(),
             href: "https://y.test/@alice".to_string(),
+            acct: "alice".to_string(),
         }];
         let r = render(
             "see https://ex.com/@alice here",

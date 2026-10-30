@@ -1204,6 +1204,81 @@ async fn link_preview_job_converges_cards() {
     );
 }
 
+/// Mention and hashtag links never qualify as card candidates — a
+/// mention at the top of a post must not render a profile-page card.
+/// Mastodon skips `mention`/`hashtag` anchors; our equivalent check
+/// is the status' own `status_mentions`/`status_tags` entities.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link_preview_skips_mentions_and_tags() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let job = FetchLinkPreviewJob::new(env.state.ap.clone());
+    let jctx = JobContext {
+        db: env.state.db.clone(),
+        redis: env.state.redis.clone(),
+        config: env.state.config().clone(),
+        media: env.state.media.clone(),
+    };
+
+    // A known remote account so its Mention tag lands in
+    // `status_mentions`.
+    sqlx::query(
+        "INSERT INTO accounts (username, domain, actor_id, url) \
+         VALUES ('alice', 'remote.test', 'https://remote.test/users/alice', \
+                 'https://remote.test/@alice') \
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    // `source` puts the link targets into `statuses.content` — the
+    // mention profile URL and the tag page URL are the only links.
+    let create = preview_create(
+        7,
+        json!({
+            "content": "<p><a href=\"https://remote.test/@alice\">@alice</a> \
+                        check <a href=\"https://remote.test/tags/rust\">#rust</a></p>",
+            "source": {"content": "@alice@remote.test check https://remote.test/@alice \
+                                   and https://remote.test/tags/rust"},
+            "tag": [
+                {"type": "Mention", "href": "https://remote.test/users/alice",
+                 "name": "@alice@remote.test"},
+                {"type": "Hashtag", "name": "#rust",
+                 "href": "https://remote.test/tags/rust"},
+            ],
+        }),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-7'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    // Stale cards on the mention/tag targets are reconciled away —
+    // before the exclusion the mention URL was the preview candidate.
+    for url in [
+        "https://remote.test/@alice",
+        "https://remote.test/tags/rust",
+    ] {
+        sqlx::query("INSERT INTO preview_cards (status_id, url, title) VALUES ($1, $2, 'Stale')")
+            .bind(status_id)
+            .bind(url)
+            .execute(&env.state.db)
+            .await
+            .unwrap();
+    }
+    job.run(&jctx, &json!({"status_id": status_id}))
+        .await
+        .unwrap();
+    assert_eq!(card_count(&env.state.db, status_id).await, 0);
+}
+
 /// Video-platform pages (YouTube, Vimeo, …) declare an iframeable
 /// player via `twitter:player` / `og:video`+`text/html` — the card
 /// entity upgrades to `type: "video"` with the embed, so the client
@@ -1425,7 +1500,7 @@ async fn link_preview_video_card_embeds() {
             .fetch_one(&env.state.db)
             .await
             .unwrap();
-    assert_eq!(scan, 1, "sweep must mark the row scanned");
+    assert_eq!(scan, 2, "sweep must mark the row scanned");
     let jobs = drain_queue(&env, "bulk").await;
     let swept: Vec<_> = jobs
         .iter()

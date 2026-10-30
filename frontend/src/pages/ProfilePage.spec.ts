@@ -4,7 +4,7 @@ import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import ProfilePage from "./ProfilePage.vue";
 import { ApiError } from "@/api/errors";
-import type { Account } from "@/api/entities";
+import type { Account, Status } from "@/api/entities";
 
 vi.mock("@/api/accounts", async (orig) => {
   const m = await orig<typeof import("@/api/accounts")>();
@@ -44,6 +44,45 @@ function account(partial: Partial<Account>): Account {
     moved: null,
     ...partial,
   };
+}
+
+function status(over: Partial<Status> = {}): Status {
+  return {
+    id: "10",
+    uri: "https://example.org/s/10",
+    url: "https://example.org/s/10",
+    account: account({ id: "1" }) as Status["account"],
+    content: "<p>regular</p>",
+    created_at: new Date().toISOString(),
+    edited_at: null,
+    visibility: "public",
+    sensitive: false,
+    spoiler_text: "",
+    media_attachments: [],
+    mentions: [],
+    tags: [],
+    emojis: [],
+    card: null,
+    poll: null,
+    application: null,
+    language: "en",
+    in_reply_to_id: null,
+    in_reply_to_account_id: null,
+    reblog: null,
+    replies_count: 0,
+    reblogs_count: 0,
+    favourites_count: 0,
+    quotes_count: 0,
+    quote_id: null,
+    quote: null,
+    reblogged: false,
+    favourited: false,
+    bookmarked: false,
+    pinned: false,
+    muted: false,
+    pleroma: { emoji_reactions: [] },
+    ...over,
+  } as Status;
 }
 
 async function openProfile(path: string) {
@@ -343,5 +382,34 @@ describe("ProfilePage", () => {
       (b) => b.textContent?.trim(),
     );
     expect(buttons).toEqual(["Cancel", "Save"]);
+  });
+
+  it("renders the pinned set first, marker only on the pinned card", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({}));
+    vi.mocked(accountStatuses).mockImplementation((_id, q) =>
+      Promise.resolve({
+        items: q?.pinned
+          ? [
+              status({
+                id: "9",
+                pinned: true,
+                content: "<p>pinned post</p>",
+              }),
+            ]
+          : [status()],
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const cards = wrapper.findAll(".status-card");
+    expect(cards).toHaveLength(2);
+    // The pinned card leads and carries the marker; the same flag in
+    // the chronological list gets none (Mastodon's profile rule).
+    expect(cards[0].text()).toContain("pinned post");
+    expect(cards[0].find(".status-card__pin").exists()).toBe(true);
+    expect(cards[1].text()).toContain("regular");
+    expect(cards[1].find(".status-card__pin").exists()).toBe(false);
+    expect(
+      vi.mocked(accountStatuses).mock.calls.some(([, q]) => q?.pinned === true),
+    ).toBe(true);
   });
 });

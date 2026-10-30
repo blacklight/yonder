@@ -8,7 +8,6 @@ import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
 import ComposeBox from "@/components/compose/ComposeBox.vue";
 import Button from "@/components/ui/Button.vue";
-import Modal from "@/components/ui/Modal.vue";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
@@ -16,17 +15,17 @@ const store = useConversationsStore();
 const compose = useComposeStore();
 const notFound = ref(false);
 const loadError = ref(false);
-// A user-typed draft from another context — held behind a confirm
-// before the new conversation's seed replaces it.
-const pendingReseed = ref<Status | null>(null);
 
 const validKey = computed(() => /^[0-9a-f]{64}$/.test(props.id));
 const newest = computed(() => store.activeThread?.statuses[0]);
 
 /** Seed the composer for this conversation. A reply draft already
  * targeting this thread resumes untouched; an empty draft or an
- * untouched seed from a previous context is replaced; typed text
- * from another context is kept behind a discard confirm. */
+ * untouched seed from a previous context is replaced. Typed text
+ * from another context is kept — but the composer is pinned to this
+ * conversation, so the stale `in_reply_to` is re-pointed at this
+ * thread (never silently kept: a submission must not land in a
+ * foreign conversation). */
 function seedComposer(latest: Status) {
   const sameThread =
     compose.draft.inReplyToId !== null &&
@@ -36,15 +35,17 @@ function seedComposer(latest: Status) {
   if (sameThread) return;
   if (!compose.isDirty || compose.isUntouchedSeed) {
     compose.openDirectReply(latest);
-  } else {
-    pendingReseed.value = latest;
+    return;
   }
-}
-
-function confirmReseed() {
-  const s = pendingReseed.value;
-  pendingReseed.value = null;
-  if (s) compose.openDirectReply(s);
+  compose.update({
+    inReplyToId: latest.id,
+    replyToAcct: latest.account.acct,
+    quoteId: null,
+    quotedAcct: null,
+    seededText: "",
+    visibility: "direct",
+  });
+  compose.contextIsLive = true;
 }
 
 async function openConversation() {
@@ -90,34 +91,5 @@ watch(() => props.id, openConversation);
       </Button>
     </template>
     <p v-else aria-busy="true">{{ t("common.loading") }}</p>
-
-    <Modal
-      v-if="pendingReseed"
-      :title="t('status.confirm.title')"
-      @close="pendingReseed = null"
-    >
-      <p>{{ t("compose.discardText") }}</p>
-      <div class="confirm-btns">
-        <Button variant="secondary" @click="pendingReseed = null">
-          {{ t("ui.cancel") }}
-        </Button>
-        <Button
-          variant="danger"
-          data-testid="reseed-confirm"
-          @click="confirmReseed"
-        >
-          {{ t("ui.confirm") }}
-        </Button>
-      </div>
-    </Modal>
   </main>
 </template>
-
-<style scoped>
-.confirm-btns {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-</style>

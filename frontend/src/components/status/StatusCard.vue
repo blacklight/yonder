@@ -18,7 +18,14 @@ import { sanitizeHtml } from "@/utils/sanitize";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
 import { FontAwesomeIcon } from "@/icons";
-import { deleteStatus, react, translateStatus, unreact } from "@/api/statuses";
+import {
+  deleteStatus,
+  pin,
+  react,
+  translateStatus,
+  unpin,
+  unreact,
+} from "@/api/statuses";
 import { blockAccount, muteAccount } from "@/api/accounts";
 import { blockDomain } from "@/api/domains";
 import { fileReport } from "@/api/reports";
@@ -36,8 +43,17 @@ const props = defineProps<{
   /** Render the body in full — the focal status on its permalink page
    * opts out of the long-post clamp. */
   expanded?: boolean;
+  /** Profile pages set this so an author-pinned status carries the
+   * "Pinned" marker line — Mastodon only annotates pins there, not on
+   * timelines where the same flag is also true. */
+  pinnedContext?: boolean;
 }>();
-const emit = defineEmits<{ removed: [id: string] }>();
+const emit = defineEmits<{
+  removed: [id: string];
+  /** Own-status pin/unpin succeeded — the profile re-reads its pinned
+   * list; everywhere else it's ignored. */
+  pinned: [status: Status];
+}>();
 const { t, locale } = useI18n();
 const router = useRouter();
 const auth = useAuthStore();
@@ -306,6 +322,15 @@ const menuItems = computed<MenuItem[]>(() => {
         icon: "globe",
       });
     if (auth.account?.id === account.value.id) {
+      // The backend rejects direct pins and boost pins — mirror that
+      // here so the item never offers a doomed action.
+      if (shown.value.visibility !== "direct" && !props.status.reblog) {
+        items.push({
+          id: "pin",
+          label: shown.value.pinned ? t("status.unpin") : t("status.pin"),
+          icon: "thumbtack",
+        });
+      }
       items.push(
         { id: "edit", label: t("status.edit"), icon: "pen" },
         { id: "delete", label: t("status.delete"), icon: "trash-can" },
@@ -402,6 +427,15 @@ async function runAction(item: MenuItem) {
         reportComment.value = "";
         reportOpen.value = true;
         break;
+      case "pin": {
+        const updated = s.pinned ? await unpin(s.id) : await pin(s.id);
+        // Write-through like `mark-sensitive`: every card sharing the
+        // entity picks up the flag; the profile listens for `pinned`
+        // to refresh its pinned section.
+        s.pinned = updated.pinned;
+        emit("pinned", updated);
+        break;
+      }
       case "edit":
         await router.push({ path: "/compose", query: { edit: s.id } });
         break;
@@ -471,6 +505,13 @@ async function onReact(emoji: string) {
       {{
         t("status.boosted", { name: booster.display_name || booster.username })
       }}
+    </p>
+    <p
+      v-else-if="pinnedContext && shown.pinned"
+      class="status-card__boost status-card__pin"
+    >
+      <FontAwesomeIcon icon="thumbtack" />
+      {{ t("status.pinned") }}
     </p>
 
     <header class="status-card__header">

@@ -455,6 +455,9 @@
     "blockDomain": "Bloquear dominio {domain}",
     "edit": "Editar",
     "delete": "Eliminar",
+    "pin": "Fijar en el perfil",
+    "unpin": "Desfijar del perfil",
+    "pinned": "Fijado",
     "adminMarkSensitive": "Marcar sensible",
     "adminDeleteInstance": "Eliminar de la instancia",
     "adminDeleteProfile": "Eliminar del perfil",
@@ -561,7 +564,14 @@
     "discardText": "Tu borrador actual será reemplazado.",
     "mediaLimit": "Se permiten como máximo {n} archivos adjuntos.",
     "mediaRemove": "Quitar media",
-    "mentionSuggestions": "Sugerencias de mención"
+    "mentionSuggestions": "Sugerencias de mención",
+    "drafts": "Borradores",
+    "draftSave": "Guardar en borradores",
+    "draftsEmpty": "Aún no hay borradores.",
+    "draftDelete": "Eliminar borrador",
+    "draftUntitled": "(sin texto)",
+    "draftMedia": "{n} archivo | {n} archivos",
+    "draftReplyTo": "Responder a @{user}"
   },
   "moderation": {
     "showResolved": "Mostrar resueltos",

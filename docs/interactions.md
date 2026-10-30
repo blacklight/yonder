@@ -46,6 +46,11 @@ a Redis marker — repeat ingests and re-reads don't pile up fetches.
 - `POST /api/v1/statuses/{id}/pin|unpin` — own non-`direct` statuses,
   capped by `content.max_pinned_posts`; reflected in
   `/ap/users/{u}/collections/featured` (public/unlisted pins only).
+  Inbound, `RemoteActorFetch` syncs each actor's `featured`
+  collection into `status_pins` in collection order (a remote unpin
+  propagates on refresh); items we haven't materialized park in
+  `remote_pin_refs` and back-fill once their `RemoteStatusFetch`
+  lands, so remote pinned posts surface on profiles like local ones.
 
 List endpoints paginate with `max_id`/`min_id`/`limit` + `Link`
 headers (`http::paginate`).

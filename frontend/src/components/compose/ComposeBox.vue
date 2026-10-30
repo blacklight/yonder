@@ -35,6 +35,11 @@ const props = defineProps<{
    * `direct` and the visibility picker is never shown, so a reply
    * can't leak out of the private conversation. */
   direct?: boolean;
+  /** The standalone `/compose` surface — a *new* compose window.
+   *  A draft's reply/quote/DM context is only live while the session
+   *  that opened it is running; a stale persisted context is stripped
+   *  on mount so a submission can't mis-target another thread. */
+  standalone?: boolean;
 }>();
 
 const { t, locale } = useI18n();
@@ -197,11 +202,24 @@ onMounted(async () => {
         cwEnabled: Boolean(s.spoiler_text),
         spoilerText: s.spoiler_text,
         mediaIds: s.media_attachments.map((m) => m.id),
+        // An edit never carries reply/quote context.
+        inReplyToId: null,
+        replyToAcct: null,
+        quoteId: null,
+        quotedAcct: null,
+        seededText: "",
+        refId: null,
       });
       return;
     } catch (e) {
       error.value = e instanceof ApiError ? e.message : String(e);
     }
+  }
+  // A fresh standalone window drops stale reply/quote/DM context
+  // (persisted from a previous session — no live opener owns it).
+  // Typed text, media and settings survive; only the targeting goes.
+  if (props.standalone && compose.hasContext && !compose.contextIsLive) {
+    compose.clearContext();
   }
   // A persisted draft keeps attachment ids across reloads — rehydrate
   // them via the owner-only media endpoint so the previews come back.
@@ -468,7 +486,9 @@ async function submit() {
       language: d.value.language || undefined,
       sensitive: d.value.sensitive || d.value.cwEnabled,
       spoiler_text: d.value.cwEnabled ? d.value.spoilerText : undefined,
-      in_reply_to_id: d.value.inReplyToId ?? undefined,
+      in_reply_to_id: editId.value
+        ? undefined
+        : (d.value.inReplyToId ?? undefined),
       media_ids: media.value.length ? media.value.map((m) => m.id) : undefined,
       poll: d.value.poll
         ? {
@@ -520,6 +540,8 @@ async function submit() {
       }
     }
     const wasEdit = editId.value !== null;
+    // A posted draft leaves the drafts list — it's been sent.
+    if (d.value.refId) compose.removeDraft(d.value.refId);
     compose.reset();
     media.value = [];
     editId.value = null;

@@ -455,6 +455,9 @@
     "blockDomain": "حظر النطاق {domain}",
     "edit": "تحرير",
     "delete": "حذف",
+    "pin": "تثبيت في الملف الشخصي",
+    "unpin": "إلغاء التثبيت من الملف الشخصي",
+    "pinned": "مثبّت",
     "adminMarkSensitive": "وضع علامة حساس",
     "adminDeleteInstance": "حذف من الخادم",
     "adminDeleteProfile": "حذف من الملف",
@@ -561,7 +564,14 @@
     "discardText": "سيُستبدل مسودتك الحالية.",
     "mediaLimit": "يُسمح بـ {n} مرفقات كحد أقصى.",
     "mediaRemove": "إزالة الوسائط",
-    "mentionSuggestions": "اقتراحات الإشارة"
+    "mentionSuggestions": "اقتراحات الإشارة",
+    "drafts": "المسودات",
+    "draftSave": "حفظ في المسودات",
+    "draftsEmpty": "لا توجد مسودات بعد.",
+    "draftDelete": "حذف المسودة",
+    "draftUntitled": "(لا نص)",
+    "draftMedia": "{n} مرفق | {n} مرفقات",
+    "draftReplyTo": "رد على @{user}"
   },
   "moderation": {
     "showResolved": "عرض المحلولة",

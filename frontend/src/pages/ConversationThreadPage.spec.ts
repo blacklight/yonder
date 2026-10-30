@@ -112,38 +112,30 @@ describe("ConversationThreadPage", () => {
     expect(compose.draft.inReplyToId).toBe("s-b");
   });
 
-  it("asks before discarding typed text from another context", async () => {
+  it("typed text from another context is kept, re-threaded here", async () => {
     const compose = useComposeStore();
     compose.openDirectReply(STATUS_A);
     compose.update({ text: "@x@a.test draft for A" });
     mockApi();
     const { wrapper } = mount(KEY_B);
     await flushPromises();
-    // Typed text isn't context — it's held behind a confirm.
-    const panel = document.querySelector(".modal__panel");
-    expect(panel).not.toBeNull();
+    // No confirm modal — the words are the user's, but the composer
+    // is pinned to this conversation, so the stale reply target is
+    // re-pointed rather than silently kept.
+    expect(document.querySelector(".modal__panel")).toBeNull();
     expect(compose.draft.text).toBe("@x@a.test draft for A");
-    panel!
-      .querySelector<HTMLElement>("[data-testid='reseed-confirm']")!
-      .click();
-    await flushPromises();
-    expect(compose.draft.text).toBe("@y@b.test ");
     expect(compose.draft.inReplyToId).toBe("s-b");
+    expect(compose.draft.visibility).toBe("direct");
     expect(wrapper.find(".compose__private").exists()).toBe(true);
   });
 
-  it("cancelling the confirm keeps the foreign draft", async () => {
+  it("a foreign reply target never survives into this thread", async () => {
     const compose = useComposeStore();
     compose.openDirectReply(STATUS_A);
     compose.update({ text: "@x@a.test draft for A" });
     mockApi();
     mount(KEY_B);
     await flushPromises();
-    document
-      .querySelector<HTMLElement>(".modal__panel .btn--secondary")!
-      .click();
-    await flushPromises();
-    expect(compose.draft.text).toBe("@x@a.test draft for A");
-    expect(compose.draft.inReplyToId).toBe("s-a");
+    expect(compose.draft.inReplyToId).not.toBe("s-a");
   });
 });

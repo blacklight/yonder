@@ -49,6 +49,10 @@ const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">(
 );
 const actionError = ref<string | null>(null);
 const statuses = ref<Status[]>([]);
+// The profile's pinned set — fetched once per account (the endpoint
+// returns the capped list, no cursors) and refreshed when a card on
+// this page pins/unpins. Renders on the posts tab only.
+const pinnedStatuses = ref<Status[]>([]);
 const nextCursor = ref<string | undefined>();
 const tab = ref<"posts" | "media">("posts");
 const tabs = computed(
@@ -252,6 +256,20 @@ async function loadStatuses(more = false) {
   nextCursor.value = page.next;
 }
 
+/** `?pinned=true` — local pins and remote featured items alike.
+ * Best-effort: a failed read just leaves the section empty rather
+ * than blanking the whole profile. */
+async function loadPinned() {
+  if (!account.value) return;
+  try {
+    pinnedStatuses.value = (
+      await accountStatuses(account.value.id, { pinned: true })
+    ).items;
+  } catch {
+    pinnedStatuses.value = [];
+  }
+}
+
 async function resolve(): Promise<void> {
   state.value = "loading";
   actionError.value = null;
@@ -296,8 +314,9 @@ async function resolve(): Promise<void> {
       }
     }
     statuses.value = [];
+    pinnedStatuses.value = [];
     nextCursor.value = undefined;
-    await loadStatuses();
+    await Promise.all([loadStatuses(), loadPinned()]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) state.value = "sign-in";
     else if (e instanceof ApiError && (e.status === 404 || e.status === 422))
@@ -484,11 +503,21 @@ watch([account, state], () => {
   }
 });
 
+// A card's own delete — or a streamed one — drops the status from
+// both lists without waiting for a reload.
+function dropRemoved(id: string) {
+  statuses.value = dropFromStatusList(statuses.value, id);
+  pinnedStatuses.value = dropFromStatusList(pinnedStatuses.value, id);
+}
+
 // Live edits/deletes land on the displayed statuses — the profile
 // timeline is not store-backed, so it patches its own list.
 useStatusEvents({
-  onStatus: (s) => (statuses.value = patchStatusList(statuses.value, s)),
-  onDelete: (id) => (statuses.value = dropFromStatusList(statuses.value, id)),
+  onStatus: (s) => {
+    statuses.value = patchStatusList(statuses.value, s);
+    pinnedStatuses.value = patchStatusList(pinnedStatuses.value, s);
+  },
+  onDelete: dropRemoved,
 });
 
 watch(
@@ -668,7 +697,23 @@ watch([tab, showReplies, showBoosts], () => {
         >
       </div>
       <div class="timeline">
-        <StatusCard v-for="s in statuses" :key="s.id" :status="s" />
+        <template v-if="tab === 'posts'">
+          <StatusCard
+            v-for="s in pinnedStatuses"
+            :key="`pinned-${s.id}`"
+            :status="s"
+            pinned-context
+            @removed="dropRemoved"
+            @pinned="loadPinned"
+          />
+        </template>
+        <StatusCard
+          v-for="s in statuses"
+          :key="s.id"
+          :status="s"
+          @removed="dropRemoved"
+          @pinned="loadPinned"
+        />
         <div v-if="nextCursor" class="profile__more">
           <Button variant="secondary" @click="loadStatuses(true)">
             {{ t("common.loadMore") }}

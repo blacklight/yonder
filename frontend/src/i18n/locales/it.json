@@ -455,6 +455,9 @@
     "blockDomain": "Blocca dominio {domain}",
     "edit": "Modifica",
     "delete": "Elimina",
+    "pin": "Fissa sul profilo",
+    "unpin": "Rimuovi dal profilo",
+    "pinned": "Fissato in alto",
     "adminMarkSensitive": "Segna sensibile",
     "adminDeleteInstance": "Elimina dall'istanza",
     "adminDeleteProfile": "Elimina dal profilo",
@@ -561,7 +564,14 @@
     "discardText": "La tua bozza attuale verrà sostituita.",
     "mediaLimit": "Sono consentiti al massimo {n} allegati.",
     "mediaRemove": "Rimuovi media",
-    "mentionSuggestions": "Suggerimenti per le menzioni"
+    "mentionSuggestions": "Suggerimenti per le menzioni",
+    "drafts": "Bozze",
+    "draftSave": "Salva nelle bozze",
+    "draftsEmpty": "Ancora nessuna bozza.",
+    "draftDelete": "Elimina bozza",
+    "draftUntitled": "(nessun testo)",
+    "draftMedia": "{n} allegato | {n} allegati",
+    "draftReplyTo": "Rispondi a @{user}"
   },
   "moderation": {
     "showResolved": "Mostra risolte",

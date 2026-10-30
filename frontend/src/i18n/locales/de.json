@@ -455,6 +455,9 @@
     "blockDomain": "Domain {domain} blockieren",
     "edit": "Bearbeiten",
     "delete": "Löschen",
+    "pin": "Im Profil anheften",
+    "unpin": "Vom Profil lösen",
+    "pinned": "Angeheftet",
     "adminMarkSensitive": "Als sensibel markieren",
     "adminDeleteInstance": "Von Instanz löschen",
     "adminDeleteProfile": "Vom Profil löschen",
@@ -561,7 +564,14 @@
     "discardText": "Dein aktueller Entwurf wird ersetzt.",
     "mediaLimit": "Maximal {n} Anhänge sind erlaubt.",
     "mediaRemove": "Medien entfernen",
-    "mentionSuggestions": "Erwähnungsvorschläge"
+    "mentionSuggestions": "Erwähnungsvorschläge",
+    "drafts": "Entwürfe",
+    "draftSave": "Als Entwurf speichern",
+    "draftsEmpty": "Noch keine Entwürfe.",
+    "draftDelete": "Entwurf löschen",
+    "draftUntitled": "(kein Text)",
+    "draftMedia": "{n} Anhang | {n} Anhänge",
+    "draftReplyTo": "Antwort an @{user}"
   },
   "moderation": {
     "showResolved": "Erledigte anzeigen",

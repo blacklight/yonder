@@ -4,6 +4,8 @@ import { useAuthStore } from "./auth";
 
 const DRAFT_KEY = "yonder.compose.draft";
 const STASH_KEY = "yonder.compose.stashed";
+const DRAFTS_KEY = "yonder.compose.drafts";
+const DRAFTS_MAX = 50;
 
 export interface PollDraft {
   options: string[];
@@ -33,6 +35,15 @@ export interface ComposeDraft {
   quoteId: string | null;
   quotedAcct: string | null;
   scheduledAt: string | null;
+  /** Saved-draft entry this working draft was loaded from. */
+  refId: string | null;
+}
+
+/** A named draft kept in the drafts list. */
+export interface DraftEntry extends ComposeDraft {
+  id: string;
+  /** ISO timestamp of the last save. */
+  updatedAt: string;
 }
 
 function emptyDraft(): ComposeDraft {
@@ -52,6 +63,7 @@ function emptyDraft(): ComposeDraft {
     quoteId: null,
     quotedAcct: null,
     scheduledAt: null,
+    refId: null,
   };
 }
 
@@ -64,6 +76,20 @@ function loadDraft(): ComposeDraft {
     return { ...emptyDraft(), ...parsed };
   } catch {
     return emptyDraft();
+  }
+}
+
+function loadDrafts(): DraftEntry[] {
+  try {
+    const raw = localStorage.getItem(DRAFTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((e): e is DraftEntry => !!e && typeof e.id === "string")
+      .map((e) => ({ ...emptyDraft(), ...e }));
+  } catch {
+    return [];
   }
 }
 
@@ -80,6 +106,16 @@ function loadDraft(): ComposeDraft {
 export const useComposeStore = defineStore("compose", {
   state: () => ({
     draft: loadDraft() as ComposeDraft,
+    /** Explicitly-saved drafts — the dedicated drafts list on /compose. */
+    drafts: loadDrafts() as DraftEntry[],
+    /**
+     * Session flag: `true` while the draft's context was set by an
+     * `open*` action (or a deliberate draft load) *in this session*.
+     * Not persisted — after a reload a draft's reply/quote/DM context
+     * is stale, and a fresh compose surface strips it (`clearContext`)
+     * instead of letting a submission mis-target another thread.
+     */
+    contextIsLive: false,
     /** Bumped to force the compose box open (reply from a card). */
     openSignal: 0,
     /** Id of the status whose card shows the inline reply form. */
@@ -108,15 +144,49 @@ export const useComposeStore = defineStore("compose", {
         !s.draft.mediaIds.length &&
         !s.draft.poll,
       ),
+    /** The draft carries reply/quote/DM targeting context. */
+    hasContext: (s) =>
+      Boolean(
+        s.draft.inReplyToId ||
+        s.draft.quoteId ||
+        s.draft.seededText ||
+        s.draft.visibility === "direct",
+      ),
   },
   actions: {
     persist() {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(this.draft));
     },
 
+    persistDrafts() {
+      localStorage.setItem(DRAFTS_KEY, JSON.stringify(this.drafts));
+    },
+
     update(patch: Partial<ComposeDraft>) {
       Object.assign(this.draft, patch);
       this.persist();
+    },
+
+    /**
+     * Strip reply/quote/DM targeting — a fresh compose window must
+     * never inherit another conversation's `in_reply_to_id`. Text the
+     * user actually typed survives; a seed-only shell collapses
+     * fully (seeded mention line, direct visibility).
+     */
+    clearContext() {
+      const d = this.draft;
+      const seedOnly = Boolean(d.seededText) && d.text === d.seededText;
+      this.update({
+        inReplyToId: null,
+        replyToAcct: null,
+        quoteId: null,
+        quotedAcct: null,
+        seededText: "",
+        text: seedOnly ? "" : d.text,
+        visibility:
+          d.visibility === "direct" && seedOnly ? "public" : d.visibility,
+      });
+      this.contextIsLive = false;
     },
 
     /** Reply — the server carries over the parent's mentions; the
@@ -133,6 +203,7 @@ export const useComposeStore = defineStore("compose", {
         seededText: `@${acct} `,
       });
       this.replyTargetId = target.id;
+      this.contextIsLive = true;
       this.openSignal++;
     },
 
@@ -146,6 +217,7 @@ export const useComposeStore = defineStore("compose", {
         quotedAcct: target.account.acct,
       });
       this.quoteTarget = target;
+      this.contextIsLive = true;
       this.openSignal++;
     },
 
@@ -154,6 +226,7 @@ export const useComposeStore = defineStore("compose", {
     openMention(acct: string) {
       this.reset();
       this.update({ text: `@${acct} `, seededText: `@${acct} ` });
+      this.contextIsLive = true;
       this.openSignal++;
     },
 
@@ -169,6 +242,7 @@ export const useComposeStore = defineStore("compose", {
         text: seed,
         seededText: seed,
       });
+      this.contextIsLive = true;
       this.openSignal++;
     },
 
@@ -202,17 +276,22 @@ export const useComposeStore = defineStore("compose", {
         seededText: seed,
         visibility: "direct",
       });
+      this.contextIsLive = true;
       this.openSignal++;
     },
 
-    /** Drop the persisted draft + stash (explicit logout / account deletion). */
+    /** Drop the persisted draft + stash + drafts (explicit logout /
+     * account deletion). */
     clearPersisted() {
       localStorage.removeItem(DRAFT_KEY);
       localStorage.removeItem(STASH_KEY);
+      localStorage.removeItem(DRAFTS_KEY);
+      this.drafts = [];
     },
 
     reset() {
       this.draft = emptyDraft();
+      this.contextIsLive = false;
       this.persist();
       // Posting (or cancelling) also dismisses any embedded composer.
       this.closeEmbed();
@@ -242,9 +321,51 @@ export const useComposeStore = defineStore("compose", {
           ...(JSON.parse(raw) as Partial<ComposeDraft>),
         };
         this.persist();
+        this.contextIsLive = this.hasContext;
       } catch {
         /* corrupt stash — drop it */
       }
+    },
+
+    /** Save the current draft into the drafts list — updates in place
+     * when it was loaded from an entry, appends otherwise. */
+    saveAsDraft(): string | null {
+      if (!this.isDirty && !this.hasContext) return null;
+      const id = this.draft.refId ?? crypto.randomUUID();
+      const entry: DraftEntry = {
+        ...this.draft,
+        refId: id,
+        id,
+        updatedAt: new Date().toISOString(),
+      };
+      const i = this.drafts.findIndex((e) => e.id === id);
+      if (i !== -1) this.drafts[i] = entry;
+      else this.drafts.unshift(entry);
+      if (this.drafts.length > DRAFTS_MAX) this.drafts.length = DRAFTS_MAX;
+      this.persistDrafts();
+      this.update({ refId: id });
+      return id;
+    },
+
+    /** Load a saved draft into the composer — a deliberate action,
+     *  so its context is live even though it came from storage. */
+    loadDraftEntry(id: string) {
+      const entry = this.drafts.find((e) => e.id === id);
+      if (!entry) return;
+      const fields: Partial<DraftEntry> = { ...entry };
+      delete fields.id;
+      delete fields.updatedAt;
+      this.draft = { ...emptyDraft(), ...fields, refId: id };
+      this.persist();
+      this.contextIsLive = this.hasContext;
+      this.openSignal++;
+    },
+
+    /** Delete a saved-draft entry — the explicit drafts-list action. */
+    removeDraft(id: string) {
+      this.drafts = this.drafts.filter((e) => e.id !== id);
+      this.persistDrafts();
+      if (this.draft.refId === id) this.update({ refId: null });
     },
   },
 });

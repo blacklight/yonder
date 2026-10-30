@@ -210,3 +210,91 @@ describe("compose store", () => {
     );
   });
 });
+
+describe("context hygiene + drafts", () => {
+  beforeEach(() => {
+    localStorage.removeItem("yonder.compose.draft");
+    localStorage.removeItem("yonder.compose.drafts");
+  });
+
+  it("clearContext strips targeting but keeps typed text", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob@x.test"));
+    c.update({ text: "@bob@x.test a real reply" });
+    c.clearContext();
+    expect(c.draft.inReplyToId).toBeNull();
+    expect(c.draft.replyToAcct).toBeNull();
+    expect(c.draft.seededText).toBe("");
+    expect(c.draft.text).toBe("@bob@x.test a real reply");
+    expect(c.contextIsLive).toBe(false);
+  });
+
+  it("clearContext collapses a seed-only shell entirely", () => {
+    const c = useComposeStore();
+    c.openDirectReply(status("10", "bob@x.test"));
+    c.clearContext();
+    expect(c.draft.text).toBe("");
+    expect(c.draft.visibility).toBe("public");
+    expect(c.hasContext).toBe(false);
+  });
+
+  it("open* actions mark context live; reset clears it", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob"));
+    expect(c.contextIsLive).toBe(true);
+    c.reset();
+    expect(c.contextIsLive).toBe(false);
+    expect(c.hasContext).toBe(false);
+  });
+
+  it("save/load/delete draft entries round-trip", () => {
+    const c = useComposeStore();
+    c.update({ text: "half-written post" });
+    const id = c.saveAsDraft();
+    expect(id).toBeTruthy();
+    expect(c.drafts).toHaveLength(1);
+    expect(c.draft.refId).toBe(id);
+
+    c.reset();
+    expect(c.draft.text).toBe("");
+    c.loadDraftEntry(id!);
+    expect(c.draft.text).toBe("half-written post");
+    expect(c.draft.refId).toBe(id);
+    expect(c.contextIsLive).toBe(false); // no context on this draft
+
+    // Saving again updates the same entry, not a new one.
+    c.update({ text: "half-written post, more" });
+    c.saveAsDraft();
+    expect(c.drafts).toHaveLength(1);
+    expect(c.drafts[0].text).toBe("half-written post, more");
+
+    c.removeDraft(id!);
+    expect(c.drafts).toHaveLength(0);
+    expect(c.draft.refId).toBeNull();
+  });
+
+  it("saved drafts keep their context and revive it on load", () => {
+    const c = useComposeStore();
+    c.openReply(status("10", "bob"));
+    const id = c.saveAsDraft();
+    c.reset();
+    expect(c.contextIsLive).toBe(false);
+    c.loadDraftEntry(id!);
+    expect(c.draft.inReplyToId).toBe("10");
+    expect(c.contextIsLive).toBe(true);
+  });
+
+  it("saveAsDraft refuses an empty draft", () => {
+    const c = useComposeStore();
+    expect(c.saveAsDraft()).toBeNull();
+    expect(c.drafts).toHaveLength(0);
+  });
+
+  it("entries persist to localStorage", () => {
+    const c = useComposeStore();
+    c.update({ text: "persisted" });
+    c.saveAsDraft();
+    const raw = localStorage.getItem("yonder.compose.drafts");
+    expect(raw).toContain("persisted");
+  });
+});

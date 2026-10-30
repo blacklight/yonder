@@ -804,6 +804,186 @@ async fn pin_roundtrip_and_cap() {
     assert_eq!(code, StatusCode::OK);
 }
 
+/// `RemoteActorFetch` also syncs the actor's `featured` collection:
+/// items already materialized become `status_pins` rows in collection
+/// order, unresolved ones park in `remote_pin_refs` and link when the
+/// `RemoteStatusFetch` they spawn lands — and a remote unpin
+/// propagates on the next sync.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_featured_syncs_pins() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let viewer = register(&env.app, "viewer", "v@x.com").await;
+
+    // Loopback origin: actor doc + mutable featured collection + the
+    // not-yet-known Note doc.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let base = format!("http://{addr}");
+    let actor_url = format!("{base}/users/eve");
+    let known_uri = format!("{base}/objects/known");
+    let unknown_uri = format!("{base}/objects/unknown");
+    let featured_items = std::sync::Arc::new(tokio::sync::RwLock::new(vec![
+        unknown_uri.clone(),
+        known_uri.clone(),
+    ]));
+    let actor_doc = json!({
+        "id": actor_url,
+        "type": "Person",
+        "preferredUsername": "eve",
+        "url": format!("{base}/@eve"),
+        "inbox": format!("{base}/inbox"),
+        "featured": format!("{base}/collections/featured"),
+    })
+    .to_string();
+    let unknown_doc = json!({
+        "id": unknown_uri,
+        "type": "Note",
+        "attributedTo": actor_url,
+        "content": "<p>featured late</p>",
+        "to": [PUBLIC],
+        "published": "2025-01-02T00:00:00Z",
+    });
+    let items_state = featured_items.clone();
+    let app = Router::new()
+        .route(
+            "/users/eve",
+            axum::routing::get(move || {
+                let doc = actor_doc.clone();
+                async move { ([("content-type", "application/activity+json")], doc) }
+            }),
+        )
+        .route(
+            "/collections/featured",
+            axum::routing::get(move || {
+                let items = items_state.clone();
+                let base = base.clone();
+                async move {
+                    let ordered = items.read().await.clone();
+                    axum::Json(json!({
+                        "id": format!("{base}/collections/featured"),
+                        "type": "OrderedCollection",
+                        "totalItems": ordered.len(),
+                        "orderedItems": ordered,
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/objects/unknown",
+            axum::routing::get(move || {
+                let doc = unknown_doc.clone();
+                async move { axum::Json(doc) }
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    // The known item materializes first via a normal inbound Create.
+    let (act, raw) = activity(
+        "Create",
+        &actor_url,
+        json!({
+            "id": known_uri,
+            "type": "Note",
+            "attributedTo": actor_url,
+            "content": "<p>featured early</p>",
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
+        .bind(&actor_url)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+
+    // Actor refresh → featured sync: resolved pin + parked ref + a
+    // fetch job for the unresolved item.
+    activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone())
+        .run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let pins: Vec<(i64, i32)> =
+        sqlx::query_as("SELECT status_id, idx FROM status_pins WHERE account_id = $1 ORDER BY idx")
+            .bind(account_id)
+            .fetch_all(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(pins.len(), 1, "only the resolved item pins: {pins:?}");
+    assert_eq!(
+        pins[0].1, 1,
+        "collection order preserved, not materialization order"
+    );
+    let refs: Vec<(String, i32)> =
+        sqlx::query_as("SELECT object_uri, idx FROM remote_pin_refs WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_all(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(refs, vec![(unknown_uri.clone(), 0)]);
+    let fetches: Vec<JobEnvelope> = queued_jobs(&env)
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::RemoteStatusFetch)
+        .collect();
+    assert!(
+        fetches
+            .iter()
+            .any(|j| j.payload["uri"] == json!(unknown_uri)),
+        "a fetch job covers the unresolved item: {fetches:?}"
+    );
+
+    // The fetch materializes the Note and back-fills the pin.
+    remote::RemoteStatusFetchJob::new(env.state.ap.clone())
+        .run(&job_ctx(&env.state), &json!({"uri": unknown_uri}))
+        .await
+        .unwrap();
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{account_id}/statuses?pinned=true"),
+        Some(&viewer),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let contents: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["content"].as_str().unwrap())
+        .collect();
+    // Collection order (unknown first), not materialization order.
+    assert_eq!(contents, ["<p>featured late</p>", "<p>featured early</p>"]);
+    assert_eq!(body[0]["pinned"], true);
+    assert_eq!(body[1]["pinned"], true);
+    let ref_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM remote_pin_refs WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(ref_count, 0, "resolved refs are consumed");
+
+    // A remote unpin propagates on the next featured sync.
+    featured_items.write().await.retain(|u| u != &known_uri);
+    activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone())
+        .run(&job_ctx(&env.state), &json!({"actor_url": actor_url}))
+        .await
+        .unwrap();
+    let pins: Vec<i64> =
+        sqlx::query_scalar("SELECT status_id FROM status_pins WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_all(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(pins.len(), 1, "dropped collection item unpins: {pins:?}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbound_like_announce_emojireact() {
     let _permit = harness::acquire().await;

@@ -562,6 +562,9 @@ impl JobHandler for RemoteActorFetchJob {
                     }
                 }
                 refresh_remote_counters(&self.ctx, &actor_url, &doc).await;
+                if let Some(id) = account_id {
+                    refresh_remote_featured(&self.ctx, id, &doc).await;
+                }
                 clear_fetch_markers(&self.ctx.core.db, &actor_url).await;
                 Ok(())
             }
@@ -729,6 +732,114 @@ async fn refresh_remote_counters(ctx: &ApContext, actor_id: &str, doc: &Value) {
     .await
     {
         tracing::warn!(actor = %actor_id, error = %e, "counters sync stamp failed");
+    }
+}
+
+/// Cap on featured items synced per actor — generous vs Mastodon's
+/// five, so a hostile or nonstandard collection can't write unbounded
+/// pin rows.
+const FEATURED_SYNC_CAP: usize = 50;
+
+/// Best-effort featured-collection sync — the remote's pinned posts.
+/// Items already materialized replace the account's `status_pins`
+/// wholesale, so a remote unpin propagates; unresolved URIs park in
+/// `remote_pin_refs` and get a `RemoteStatusFetch` each —
+/// `backfill_pending_pins` links them when the object lands.
+/// Failures only log and never wipe state: an unfetchable collection
+/// must not clobber a previously good pin set.
+async fn refresh_remote_featured(ctx: &ApContext, account_id: i64, doc: &Value) {
+    let Some(uri) = super::lookup::actor_collection_uri(doc, "featured") else {
+        return;
+    };
+    let coll = match super::lookup::fetch_remote_object(ctx, &uri).await {
+        Ok(Some(f)) => f.doc,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(account_id, error = %e, "featured collection fetch failed");
+            return;
+        }
+    };
+    // Items usually sit inline in `orderedItems`; a paged collection
+    // carries them on `first`. Entries are bare URIs or `{id}`
+    // references — embedded objects just donate their `id`.
+    let items_node = coll
+        .get("orderedItems")
+        .or_else(|| coll.get("items"))
+        .or_else(|| {
+            coll.get("first")
+                .and_then(|f| f.get("orderedItems").or_else(|| f.get("items")))
+        });
+    let Some(items) = items_node.and_then(Value::as_array) else {
+        return;
+    };
+    let uris: Vec<String> = items
+        .iter()
+        .filter_map(|i| {
+            i.as_str()
+                .map(String::from)
+                .or_else(|| i.get("id").and_then(|v| v.as_str()).map(String::from))
+        })
+        .take(FEATURED_SYNC_CAP)
+        .collect();
+    let mut status_ids: Vec<i64> = Vec::new();
+    let mut resolved_idx: Vec<i32> = Vec::new();
+    let mut pending: Vec<(i32, String)> = Vec::new();
+    for (idx, uri) in uris.iter().enumerate() {
+        match crate::posts::load_by_uri(&ctx.core.db, uri).await {
+            Ok(Some(row)) if !row.tombstone => {
+                status_ids.push(row.id);
+                resolved_idx.push(idx as i32);
+            }
+            _ => pending.push((idx as i32, uri.clone())),
+        }
+    }
+    // Replace the pin set and the parked refs atomically — the
+    // collection is authoritative, so remote unpins propagate and a
+    // ref for a since-materialized item re-resolves next refresh.
+    // `account_id` always belongs to the remote actor just upserted —
+    // `status_pins` on remote accounts is only ever written here.
+    let replaced = async {
+        let mut tx = ctx.core.db.begin().await?;
+        sqlx::query("DELETE FROM status_pins WHERE account_id = $1")
+            .bind(account_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO status_pins (account_id, status_id, idx) \
+             SELECT $1, status_id, idx \
+             FROM unnest($2::bigint[], $3::int[]) AS t(status_id, idx) \
+             ON CONFLICT (account_id, status_id) DO NOTHING",
+        )
+        .bind(account_id)
+        .bind(&status_ids)
+        .bind(&resolved_idx)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM remote_pin_refs WHERE account_id = $1")
+            .bind(account_id)
+            .execute(&mut *tx)
+            .await?;
+        for (idx, uri) in &pending {
+            sqlx::query(
+                "INSERT INTO remote_pin_refs (account_id, object_uri, idx) \
+                 VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+            )
+            .bind(account_id)
+            .bind(uri)
+            .bind(idx)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await
+    };
+    if let Err(e) = replaced.await {
+        tracing::warn!(account_id, error = %e, "featured pin replace failed");
+        return;
+    }
+    for (_, uri) in pending {
+        if let Err(e) = crate::posts::remote::enqueue_pin_resolve(&ctx.core, &uri).await {
+            tracing::warn!(account_id, uri, error = %e, "pin resolve enqueue failed");
+        }
     }
 }
 

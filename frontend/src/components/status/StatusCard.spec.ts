@@ -558,4 +558,94 @@ describe("StatusCard", () => {
     });
     expect(wrapper.find(".status-card__stats").exists()).toBe(false);
   });
+
+  it("own status gets a pin item that posts and flips the flag", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = { id: "7" } as never;
+    const s = status();
+    const spy = mockApi(200, { ...s, pinned: true });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Pin on profile"))!
+      .trigger("click");
+    await flushPromises();
+    const call = spy.mock.calls.find((c) =>
+      String(c[0]).includes("/statuses/1/pin"),
+    );
+    expect(call).toBeTruthy();
+    expect(s.pinned).toBe(true);
+    expect(wrapper.emitted("pinned")?.[0][0]).toMatchObject({ pinned: true });
+  });
+
+  it("pinned own status offers unpin; foreign/direct/boost never offer pin", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = { id: "7" } as never;
+    const spy = mockApi(200, status({ pinned: false }));
+
+    // Pinned own status → "Unpin from profile".
+    const s = status({ pinned: true });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Unpin from profile"))!
+      .trigger("click");
+    await flushPromises();
+    expect(
+      spy.mock.calls.some((c) => String(c[0]).includes("/statuses/1/unpin")),
+    ).toBe(true);
+    expect(s.pinned).toBe(false);
+    wrapper.unmount();
+
+    const texts = async (st: Status) => {
+      const { wrapper: w } = mountWith(StatusCard, {
+        props: { status: st },
+      });
+      await w.get(".menu__trigger").trigger("click");
+      const labels = menuItems().map((i) => i.text());
+      w.unmount();
+      document
+        .querySelectorAll("[role='menuitem']")
+        .forEach((el) => el.remove());
+      return labels;
+    };
+    // Someone else's post — account.id differs from the viewer's.
+    expect(
+      (await texts(status({ account: { ...status().account, id: "9" } }))).some(
+        (x) => x.includes("Pin"),
+      ),
+    ).toBe(false);
+    // Direct posts can't be pinned.
+    expect(
+      (await texts(status({ visibility: "direct" }))).some((x) =>
+        x.includes("Pin"),
+      ),
+    ).toBe(false);
+    // A boost wrapper can't be pinned even when it's ours.
+    const boost = status({ reblog: status({ id: "9" }) });
+    boost.account.id = "7";
+    expect((await texts(boost)).some((x) => x.includes("Pin"))).toBe(false);
+  });
+
+  it("pin marker renders only in profile context on a pinned status", () => {
+    const pinned = status({ pinned: true });
+    const { wrapper: timeline } = mountWith(StatusCard, {
+      props: { status: pinned },
+    });
+    expect(timeline.find(".status-card__pin").exists()).toBe(false);
+    timeline.unmount();
+
+    const { wrapper: profile } = mountWith(StatusCard, {
+      props: { status: pinned, pinnedContext: true },
+    });
+    expect(profile.get(".status-card__pin").text()).toContain("Pinned");
+    profile.unmount();
+
+    const { wrapper: plain } = mountWith(StatusCard, {
+      props: { status: status(), pinnedContext: true },
+    });
+    expect(plain.find(".status-card__pin").exists()).toBe(false);
+  });
 });

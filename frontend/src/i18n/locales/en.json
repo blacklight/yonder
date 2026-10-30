@@ -442,6 +442,9 @@
     "blockDomain": "Block domain {domain}",
     "edit": "Edit",
     "delete": "Delete",
+    "pin": "Pin on profile",
+    "unpin": "Unpin from profile",
+    "pinned": "Pinned",
     "adminMarkSensitive": "Mark sensitive",
     "adminDeleteInstance": "Delete from instance",
     "adminDeleteProfile": "Delete from profile",
@@ -548,7 +551,14 @@
     "discardText": "Your current draft will be replaced.",
     "mediaLimit": "At most {n} attachments are allowed.",
     "mediaRemove": "Remove media",
-    "mentionSuggestions": "Mention suggestions"
+    "mentionSuggestions": "Mention suggestions",
+    "drafts": "Drafts",
+    "draftSave": "Save to drafts",
+    "draftsEmpty": "No drafts yet.",
+    "draftDelete": "Delete draft",
+    "draftUntitled": "(no text)",
+    "draftMedia": "{n} attachment | {n} attachments",
+    "draftReplyTo": "Reply to @{user}"
   },
   "moderation": {
     "showResolved": "Show resolved",

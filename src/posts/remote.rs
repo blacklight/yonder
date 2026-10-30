@@ -887,8 +887,11 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
 
     // Late-arriving quoted posts back-fill pending quotes — the
     // counter bump applies to *this* status only (it is the quoted
-    // target); the pending quoters point at it via quote_uri.
+    // target); the pending quoters point at it via quote_uri. Same
+    // for parked featured refs: a remote pin waiting on this object
+    // becomes a `status_pins` row now.
     backfill_pending_quotes(&core.db, status_id, &object_id).await?;
+    backfill_pending_pins(&core.db, status_id, &object_id).await?;
 
     // A still-pending quote target gets an active fetch — passive
     // backfill alone never resolves quotes whose target's server
@@ -928,6 +931,32 @@ pub(crate) async fn backfill_pending_quotes(
          WHERE id = $1",
     )
     .bind(target_id)
+    .bind(uri)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Link every parked featured ref (`remote_pin_refs.object_uri` =
+/// `uri`) to the now-materialized `status_id` — the pin counterpart
+/// of [`backfill_pending_quotes`]. Copying preserves the remote's
+/// collection order via `idx`; the ref is consumed so a later
+/// featured re-sync stays the sole authority on the pin set.
+pub(crate) async fn backfill_pending_pins(
+    db: &sqlx::PgPool,
+    status_id: i64,
+    uri: &str,
+) -> Result<()> {
+    sqlx::query(
+        "WITH moved AS ( \
+             DELETE FROM remote_pin_refs WHERE object_uri = $2 \
+             RETURNING account_id, idx \
+         ) \
+         INSERT INTO status_pins (account_id, status_id, idx) \
+         SELECT account_id, $1, idx FROM moved \
+         ON CONFLICT (account_id, status_id) DO NOTHING",
+    )
+    .bind(status_id)
     .bind(uri)
     .execute(db)
     .await?;
@@ -1201,6 +1230,23 @@ pub async fn enqueue_quote_resolve(core: &ApCore, uri: &str) -> Result<()> {
         backfill_pending_quotes(&core.db, target.id, uri).await?;
         return Ok(());
     }
+    enqueue_status_fetch(core, uri).await
+}
+
+/// Enqueue a `RemoteStatusFetch` for a parked featured item — the
+/// pin counterpart of [`enqueue_quote_resolve`]. An already-known
+/// URI links its `remote_pin_refs` rows inline instead.
+pub async fn enqueue_pin_resolve(core: &ApCore, uri: &str) -> Result<()> {
+    if let Some(target) = super::load_by_uri(&core.db, uri).await? {
+        backfill_pending_pins(&core.db, target.id, uri).await?;
+        return Ok(());
+    }
+    enqueue_status_fetch(core, uri).await
+}
+
+/// Shared dedup + enqueue for `RemoteStatusFetch` — the marker keeps
+/// repeat ingest/read triggers from piling up jobs for one URI.
+async fn enqueue_status_fetch(core: &ApCore, uri: &str) -> Result<()> {
     let cache = RedisCache::new(core.redis.clone());
     let key = fetch_marker_key(uri);
     if cache.get(&key).await.ok().flatten().is_some() {
@@ -1260,6 +1306,7 @@ impl JobHandler for RemoteStatusFetchJob {
             // here first).
             if let Some(target) = super::load_by_uri(&ctx.db, uri).await? {
                 backfill_pending_quotes(&ctx.db, target.id, uri).await?;
+                backfill_pending_pins(&ctx.db, target.id, uri).await?;
                 let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
                 return Ok(());
             }
@@ -1304,6 +1351,7 @@ impl JobHandler for RemoteStatusFetchJob {
                     // ingest-side CTE only matches `object_id`.
                     Some(crate::search::resolve::ResolvedHit::Status(id)) => {
                         backfill_pending_quotes(&ctx.db, id, uri).await?;
+                        backfill_pending_pins(&ctx.db, id, uri).await?;
                         // Refresh re-materializes an existing row, so
                         // the ingest-side `is_new`/Update gate skipped
                         // the preview enqueue — run it here or

@@ -99,20 +99,22 @@ describe("StatusCard", () => {
   });
 
   it("renders mentions and hashtags as local same-tab routes", () => {
+    // The backend strips class/rel from remote anchors — detection
+    // leans on the entity acct/tag name, not markup markers.
     const s = status({
       content:
-        '<p><a class="u-url mention" href="https://remote.test/@bob">@bob</a> ' +
-        '<a class="mention hashtag" rel="tag" href="https://remote.test/tags/rust">#rust</a> ' +
+        '<p><a href="https://remote.test/@bob">@bob</a> ' +
+        '<a href="https://remote.test/tags/rust">#rust</a> ' +
         '<a href="https://x.test/post">link</a></p>',
       mentions: [
         {
           id: "9",
           username: "bob",
           acct: "bob@remote.test",
-          url: "https://remote.test/@bob",
+          url: "https://remote.test/users/bob",
         },
       ],
-      tags: [{ name: "rust", url: "https://remote.test/tags/rust" }],
+      tags: [{ name: "rust", url: `${location.origin}/tags/rust` }],
     });
     const { wrapper } = mountWith(StatusCard, { props: { status: s } });
     const links = wrapper.findAll(".status-card__content a");

@@ -24,16 +24,22 @@ describe("sanitizeHtml", () => {
     expect(out).not.toContain("data:");
   });
 
-  it("keeps backend-style mention/hashtag anchors with rel+target", () => {
-    // The server emits plain <a href> — no classes.
+  it("localizes markerless mention/hashtag links via their text", () => {
+    // The backend strips every attribute but href from remote HTML —
+    // an `@name`/`#tag` link label is what identifies the reference.
     const out = sanitizeHtml(
       `<p>hey <a href="https://remote.test/users/alice">@alice</a> ` +
         `<a href="https://x.test/tags/rust">#rust</a></p>`,
     );
-    expect(out).toContain('href="https://remote.test/users/alice"');
-    expect(out).toContain('rel="nofollow noopener"');
-    expect(out).toContain('target="_blank"');
-    expect(out).not.toContain("class=");
+    expect(out).toContain('href="/@alice@remote.test"');
+    expect(out).toContain('href="/tags/rust"');
+    expect(out).not.toContain("target=");
+    // Ordinary links stay external.
+    const ext = sanitizeHtml(`<a href="https://x.test/post">a post</a>`);
+    expect(ext).toContain('href="https://x.test/post"');
+    expect(ext).toContain('rel="nofollow noopener"');
+    expect(ext).toContain('target="_blank"');
+    expect(ext).not.toContain("class=");
   });
 
   it("drops non-href attributes on anchors", () => {
@@ -94,6 +100,26 @@ describe("sanitizeHtml", () => {
       },
     );
     expect(out).toContain('href="/@bob@remote.test"');
+    expect(out).toContain('href="/tags/rust"');
+  });
+
+  it("matches entities by text/tag-path when URLs don't align", () => {
+    // Real shape of our API: `tags[].url` is THIS instance's tag URL,
+    // `mentions[].url` the actor URL — neither equals the remote href.
+    const out = sanitizeHtml(
+      `<a href="https://remote.test/@alice">@alice</a>` +
+        `<a href="https://remote.test/tags/rust">#rust</a>`,
+      {
+        mentions: [
+          {
+            acct: "alice@remote.test",
+            url: "https://remote.test/users/alice",
+          },
+        ],
+        tags: [{ name: "rust", url: `${location.origin}/tags/rust` }],
+      },
+    );
+    expect(out).toContain('href="/@alice@remote.test"');
     expect(out).toContain('href="/tags/rust"');
   });
 

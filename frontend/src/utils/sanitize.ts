@@ -19,10 +19,22 @@ function ensureHook() {
 }
 
 /** Mention/tag entities from the status entity — the authoritative
- * acct/tag-name mapping when the anchor's href matches the entity URL. */
+ * acct/tag-name mapping for the anchors they describe. */
 export interface RichLinkEntities {
   mentions?: Pick<StatusMention, "acct" | "url">[];
   tags?: Pick<StatusTag, "name" | "url">[];
+}
+
+// NOTE: server-side sanitizing strips every attribute but `href` from
+// inbound remote HTML, so `class="mention"` / `rel="tag"` markers are
+// usually gone by render time. Detection therefore leans on the
+// status entities and the anchor's own `@name`/`#tag` link text —
+// markers are still checked (cheap) for content that keeps them.
+const MENTION_TEXT = /^@([\p{L}\p{N}._'-]+)(?:@([\w.%:-]+))?$/u;
+const TAG_TEXT = /^#([^\s#]+)$/u;
+
+function ciEq(a: string, b: string): boolean {
+  return a.localeCompare(b, undefined, { sensitivity: "base" }) === 0;
 }
 
 function sameRemoteUrl(a: string, b: string): boolean {
@@ -36,6 +48,74 @@ function sameRemoteUrl(a: string, b: string): boolean {
   } catch {
     return a === b;
   }
+}
+
+function lastPathSegment(url: URL): string {
+  const seg = url.pathname.replace(/\/+$/, "").split("/").pop() ?? "";
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
+/** A status `mentions[]` row the anchor points to — by entity URL, or
+ * by the `@name`/`@name@dom` link text naming that account. */
+function matchMention(
+  mentions: RichLinkEntities["mentions"],
+  a: Element,
+  url: URL,
+  href: string,
+) {
+  if (!mentions) return null;
+  const text = (a.textContent ?? "").trim();
+  const handle = text.match(MENTION_TEXT);
+  const base = lastPathSegment(url);
+  return (
+    mentions.find((m) => {
+      if (sameRemoteUrl(m.url, href)) return true;
+      const [uname, domain] = m.acct.split("@");
+      if (handle) {
+        if (!ciEq(uname, handle[1])) return false;
+        // `@name@dom` pins the acct; bare `@name` needs the link host
+        // or a unique-username match to pick the right domain.
+        if (handle[2]) return ciEq(m.acct, `${handle[1]}@${handle[2]}`);
+        if (domain && ciEq(domain, url.hostname)) return true;
+        const sameName = mentions.filter((x) =>
+          ciEq(x.acct.split("@")[0], handle[1]),
+        );
+        return sameName.length === 1;
+      }
+      // Path basename == username on the account's own domain
+      // (`{host}/@name`, `…/users/name`) — a strong pin even when the
+      // link text is arbitrary.
+      return ciEq(uname, base) && !!domain && ciEq(domain, url.hostname);
+    }) ?? null
+  );
+}
+
+/** A status `tags[]` row the anchor points to — by entity URL, by the
+ * `#name` link text, or a tag-shaped path/query naming the tag. */
+function matchTag(
+  tags: RichLinkEntities["tags"],
+  a: Element,
+  url: URL,
+  href: string,
+) {
+  if (!tags) return null;
+  const text = (a.textContent ?? "").trim();
+  const pathMatch = url.pathname.match(/\/(?:tags|tag)\/([^/?#]+)/i);
+  const slug = pathMatch
+    ? lastPathSegment(url)
+    : (url.searchParams.get("tag") ?? "");
+  return (
+    tags.find(
+      (t) =>
+        sameRemoteUrl(t.url, href) ||
+        text === `#${t.name}` ||
+        (!!slug && ciEq(t.name, slug)),
+    ) ?? null
+  );
 }
 
 /** `#tag` name for a marker-carrying anchor: `/tags/<name>` path
@@ -84,14 +164,25 @@ function localizeAnchor(
   // mentions (`{base}/@name`), tags and status permalinks.
   if (url.origin === location.origin)
     return url.pathname + url.search + url.hash;
-  const tag = links?.tags?.find((t) => sameRemoteUrl(t.url, href));
-  if (tag) return `/tags/${encodeURIComponent(tag.name)}`;
-  const mention = links?.mentions?.find((m) => sameRemoteUrl(m.url, href));
-  if (mention) return `/@${mention.acct}`;
+  const text = (a.textContent ?? "").trim();
   const rel = (a.getAttribute("rel") ?? "").split(/\s+/);
   const cls = (a.getAttribute("class") ?? "").split(/\s+/);
-  // Tag anchors first — Mastodon's hashtag links carry BOTH classes
-  // (`class="mention hashtag"` + `rel="tag"`).
+  // Entity matches are authoritative — they carry the canonical local
+  // acct/tag name. Mentions before tags: a `/users/rust` link to user
+  // "rust" must not be hijacked by a "rust" hashtag.
+  const mention = matchMention(links?.mentions, a, url, href);
+  if (mention) return `/@${mention.acct}`;
+  const tag = matchTag(links?.tags, a, url, href);
+  if (tag) return `/tags/${encodeURIComponent(tag.name)}`;
+  // Text heuristics cover markerless markup and posts without
+  // entities: an `@handle`/`#tag` link label *is* the reference.
+  const handle = text.match(MENTION_TEXT);
+  if (handle)
+    return `/@${handle[2] ? `${handle[1]}@${handle[2]}` : `${handle[1]}@${url.hostname}`}`;
+  const hash = text.match(TAG_TEXT);
+  if (hash) return `/tags/${encodeURIComponent(hash[1])}`;
+  // Marker-carrying anchors (when attributes survive) — hashtag first,
+  // as Mastodon's tag links carry `class="mention hashtag"`.
   if (rel.includes("tag") || cls.includes("hashtag")) {
     const name = tagNameOf(a, url);
     if (name) return `/tags/${encodeURIComponent(name)}`;

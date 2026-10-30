@@ -296,32 +296,43 @@ const menuItems = computed<MenuItem[]>(() => {
     },
   ];
   if (auth.isLoggedIn) {
+    const isOwn = auth.account?.id === account.value.id;
     items.push(
       { id: "mention", label: t("status.mention"), icon: "at" },
       { id: "dm", label: t("status.dm"), icon: "envelope" },
-      {
-        id: "mute",
-        label: t("status.mute", { user: `@${account.value.acct}` }),
-        icon: "volume-xmark",
-      },
-      {
-        id: "block",
-        label: t("status.block", { user: `@${account.value.acct}` }),
-        icon: "ban",
-      },
-      {
-        id: "report",
-        label: t("status.report", { user: `@${account.value.acct}` }),
-        icon: "flag",
-      },
     );
-    if (remoteDomain.value)
-      items.push({
-        id: "block-domain",
-        label: t("status.blockDomain", { domain: remoteDomain.value }),
-        icon: "globe",
-      });
-    if (auth.account?.id === account.value.id) {
+    // Relationship actions target the author — muting, blocking or
+    // reporting yourself is nonsense (and the backend rejects it).
+    if (!isOwn) {
+      items.push(
+        {
+          id: "mute",
+          label: t("status.mute", { user: `@${account.value.acct}` }),
+          icon: "volume-xmark",
+          danger: true,
+        },
+        {
+          id: "block",
+          label: t("status.block", { user: `@${account.value.acct}` }),
+          icon: "ban",
+          danger: true,
+        },
+        {
+          id: "report",
+          label: t("status.report", { user: `@${account.value.acct}` }),
+          icon: "flag",
+          danger: true,
+        },
+      );
+      if (remoteDomain.value)
+        items.push({
+          id: "block-domain",
+          label: t("status.blockDomain", { domain: remoteDomain.value }),
+          icon: "globe",
+          danger: true,
+        });
+    }
+    if (isOwn) {
       // The backend rejects direct pins and boost pins — mirror that
       // here so the item never offers a doomed action.
       if (shown.value.visibility !== "direct" && !props.status.reblog) {
@@ -333,46 +344,61 @@ const menuItems = computed<MenuItem[]>(() => {
       }
       items.push(
         { id: "edit", label: t("status.edit"), icon: "pen" },
-        { id: "delete", label: t("status.delete"), icon: "trash-can" },
+        {
+          id: "delete",
+          label: t("status.delete"),
+          icon: "trash-can",
+          danger: true,
+        },
       );
     }
     if (auth.isStaff) {
-      items.push(
-        {
-          id: "mark-sensitive",
-          label: t("status.adminMarkSensitive"),
-          icon: "eye-slash",
-        },
-        {
+      // Status-targeted admin verbs stay on own posts (they apply to
+      // the post, not the person); account-targeted ones don't —
+      // limiting, suspending or deleting yourself must never be a
+      // misclick away. `admin-delete` is the exception: it deletes
+      // the status too, so on own posts it's redundant with `delete`.
+      items.push({
+        id: "mark-sensitive",
+        label: t("status.adminMarkSensitive"),
+        icon: "eye-slash",
+      });
+      if (!isOwn) {
+        items.push({
           id: "admin-delete",
           label: t("status.adminDeleteInstance"),
           icon: "trash-can",
-        },
-      );
-      if (!remoteDomain.value)
-        items.push({
-          id: "admin-delete-profile",
-          label: t("status.adminDeleteProfile"),
-          icon: "user-xmark",
+          danger: true,
         });
-      items.push(
-        {
-          id: "admin-limit",
-          label: t("status.adminLimit"),
-          icon: "comment-slash",
-        },
-        {
-          id: "admin-suspend",
-          label: t("status.adminSuspend"),
-          icon: "user-slash",
-        },
-      );
-      if (auth.isAdmin)
-        items.push({
-          id: "admin-delete-user",
-          label: t("status.adminDeleteUser"),
-          icon: "user-minus",
-        });
+        if (!remoteDomain.value)
+          items.push({
+            id: "admin-delete-profile",
+            label: t("status.adminDeleteProfile"),
+            icon: "user-xmark",
+            danger: true,
+          });
+        items.push(
+          {
+            id: "admin-limit",
+            label: t("status.adminLimit"),
+            icon: "comment-slash",
+            danger: true,
+          },
+          {
+            id: "admin-suspend",
+            label: t("status.adminSuspend"),
+            icon: "user-slash",
+            danger: true,
+          },
+        );
+        if (auth.isAdmin)
+          items.push({
+            id: "admin-delete-user",
+            label: t("status.adminDeleteUser"),
+            icon: "user-minus",
+            danger: true,
+          });
+      }
     }
   }
   return items;

@@ -629,6 +629,91 @@ describe("StatusCard", () => {
     expect((await texts(boost)).some((x) => x.includes("Pin"))).toBe(false);
   });
 
+  it("own posts hide self-targeting actions, keep own/admin status verbs", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = { id: "7" } as never;
+    auth.role = "admin";
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: status() },
+    });
+    await wrapper.get(".menu__trigger").trigger("click");
+    const texts = menuItems().map((i) => i.text());
+    for (const label of [
+      "Mute @alice",
+      "Block @alice",
+      "Report @alice",
+      "Limit author",
+      "Suspend author",
+      "Delete user",
+      "Delete from profile",
+      // Redundant with Delete for the author — one delete is enough.
+      "Delete from instance",
+    ]) {
+      expect(
+        texts.some((x) => x.includes(label)),
+        label,
+      ).toBe(false);
+    }
+    // Status-level actions still apply: own verbs plus the
+    // status-targeted admin flag.
+    for (const label of [
+      "Edit",
+      "Delete",
+      "Pin on profile",
+      "Mark sensitive",
+    ]) {
+      expect(
+        texts.some((x) => x.includes(label)),
+        label,
+      ).toBe(true);
+    }
+  });
+
+  it("marks destructive menu items as danger", async () => {
+    const auth = useAuthStore();
+    auth.setToken("t");
+    auth.account = { id: "42" } as never;
+    auth.role = "admin";
+    const byText = (needle: string) =>
+      menuItems().find((i) => i.text().includes(needle));
+
+    // Local author — every account-admin verb is on the menu.
+    const local = status({ account: { ...status().account, id: "9" } });
+    const { wrapper } = mountWith(StatusCard, {
+      props: { status: local },
+    });
+    await wrapper.get(".menu__trigger").trigger("click");
+    for (const label of [
+      "Mute",
+      "Block @",
+      "Report",
+      "Delete from instance",
+      "Delete from profile",
+      "Limit author",
+      "Suspend author",
+      "Delete user",
+    ]) {
+      expect(byText(label)?.classes(), label).toContain("menu__item--danger");
+    }
+    for (const label of ["Copy link", "Mention", "Mark sensitive"]) {
+      expect(byText(label)?.classes(), label).not.toContain(
+        "menu__item--danger",
+      );
+    }
+    wrapper.unmount();
+    document.querySelectorAll("[role='menuitem']").forEach((el) => el.remove());
+
+    // Remote author — block-domain joins the destructive set.
+    const remote = status({ account: { ...status().account, id: "9" } });
+    remote.account.acct = "bob@remote.test";
+    const { wrapper: w2 } = mountWith(StatusCard, {
+      props: { status: remote },
+    });
+    await w2.get(".menu__trigger").trigger("click");
+    expect(byText("Block domain")?.classes()).toContain("menu__item--danger");
+  });
+
   it("pin marker renders only in profile context on a pinned status", () => {
     const pinned = status({ pinned: true });
     const { wrapper: timeline } = mountWith(StatusCard, {

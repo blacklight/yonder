@@ -36,6 +36,27 @@ const MAX_DOC: usize = 1024 * 1024;
 /// Card image cap.
 const MAX_IMAGE: u64 = 5 * 1024 * 1024;
 
+/// Mastodon version token in the preview-fetch UA — see
+/// [`preview_user_agent`].
+const MASTODON_COMPAT_VERSION: &str = "4.3.0";
+
+/// User-Agent for page and card-image fetches. Providers like
+/// YouTube serve a stripped shell page — no `og:video`/
+/// `twitter:player` player tags, no oEmbed discovery link, generic
+/// `- YouTube` title — to agents they don't allowlist, and they
+/// gate on a plain `Mastodon` substring match. The preview fetcher
+/// therefore leads with the real configured product/version plus a
+/// Mastodon compatibility token (the `(compatible; …)` convention
+/// browsers use for `Mozilla`). Federation deliveries keep the
+/// plain `federation.user_agent`.
+fn preview_user_agent(configured: &str, base_url: &str) -> String {
+    if configured.to_lowercase().contains("mastodon") {
+        configured.to_string()
+    } else {
+        format!("{configured} (compatible; Mastodon/{MASTODON_COMPAT_VERSION}; +{base_url})")
+    }
+}
+
 /// Enqueue `FetchLinkPreview` when the status qualifies (no media,
 /// previews enabled). Best-effort — enqueue failures only log.
 pub async fn enqueue(ctx: &PostContext, status: &StatusRow, media_ids: &[i64]) {
@@ -337,8 +358,10 @@ struct CardMeta {
 /// the stored card shape or candidate rules change so the sweep can
 /// rescan rows written by older code (v1 = video-embed fields,
 /// v2 = mention/hashtag links excluded from candidates — mention
-/// cards are cleared and any later eligible link is re-fetched).
-const CARD_SCAN_VERSION: i32 = 2;
+/// cards are cleared and any later eligible link is re-fetched;
+/// v3 = Mastodon-compat fetch UA — cards stored from providers'
+/// stripped bot pages are re-fetched for real metadata/embeds).
+const CARD_SCAN_VERSION: i32 = 3;
 
 /// Per-run cap on the rescan sweep — one fan-out must not flood the
 /// queue unboundedly; a full batch re-enqueues the sweep until no
@@ -346,10 +369,11 @@ const CARD_SCAN_VERSION: i32 = 2;
 const SWEEP_BATCH_CAP: i64 = 1000;
 
 fn cache_key(url: &str) -> String {
-    // `v2` — pre-embed envelopes would otherwise serve stale meta
-    // for the whole cache TTL and keep stamping `link` cards.
+    // `v3` — envelopes cached from providers' stripped bot pages
+    // (pre Mastodon-compat UA) would otherwise serve stub titles and
+    // no embed for the whole cache TTL.
     format!(
-        "preview:v2:{}",
+        "preview:v3:{}",
         &hex::encode(Sha256::digest(url.as_bytes()))[..32]
     )
 }
@@ -402,7 +426,7 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
     headers.insert("Accept".to_string(), "text/html".to_string());
     headers.insert(
         "User-Agent".to_string(),
-        ctx.config.federation.user_agent.clone(),
+        preview_user_agent(&ctx.config.federation.user_agent, &ctx.base_url()),
     );
     let page_url = url.clone();
     let response = crate::activitypub::actors::sync_call(move || http.get(&page_url, &headers))
@@ -555,8 +579,12 @@ async fn fetch_image(
         .map(|u| u.to_string())?;
     let http = crate::activitypub::delivery::http_client(ap);
     let url = resolved.clone();
-    let response =
-        crate::activitypub::actors::sync_call(move || http.get(&url, &HashMap::new())).ok()?;
+    let mut headers = HashMap::new();
+    headers.insert(
+        "User-Agent".to_string(),
+        preview_user_agent(&ctx.config.federation.user_agent, &ctx.base_url()),
+    );
+    let response = crate::activitypub::actors::sync_call(move || http.get(&url, &headers)).ok()?;
     if !response.is_success() || response.body.len() as u64 > MAX_IMAGE {
         return None;
     }
@@ -696,6 +724,18 @@ mod tests {
         let e = excl();
         assert!(!url_excluded("https://example.com/article", &e));
         assert!(!url_excluded("https://remote.test/blog/post", &e));
+    }
+
+    #[test]
+    fn preview_ua_adds_mastodon_compat_token() {
+        let ua = preview_user_agent("Yonder/0.1.0", "https://yonder.test");
+        assert!(ua.starts_with("Yonder/0.1.0 (compatible; Mastodon/"));
+        assert!(ua.contains("+https://yonder.test"));
+        // Providers gate on a plain `Mastodon` substring.
+        assert!(ua.contains("Mastodon"));
+        // A UA already naming Mastodon is left alone.
+        let custom = "Mastodon/4.2.0 (+https://x.test)";
+        assert_eq!(preview_user_agent(custom, "https://x.test"), custom);
     }
 
     #[test]

@@ -100,7 +100,12 @@ mention or hashtag — matching Mastodon, which never cards a
 mention/tag anchor) — never when media is attached — fetches via
 pubby's SSRF-guarded client, parses Open Graph (with `twitter:` /
 `<title>` fallbacks), stores a `previews/` card image, and upserts
-`preview_cards`. Metadata caches in Redis for
+`preview_cards`. Page and image fetches send
+`{federation.user_agent} (compatible; Mastodon/{v}; +{base_url})` —
+providers like YouTube serve a stripped shell page (no OG player
+tags, no oEmbed link) to user agents they don't allowlist, and the
+`Mastodon` compatibility token is how the fetcher gets the real
+metadata page. Metadata caches in Redis for
 `content.link_preview_cache_hours`. Fetch failures ack — never a
 retry storm. The job is enqueued wherever a status is written: local
 create/edit, scheduled publish, and remote materialization — a

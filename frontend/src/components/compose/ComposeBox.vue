@@ -22,6 +22,7 @@ import { search } from "@/api/search";
 import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
+import type { EmojiSelection } from "@/utils/unicodeEmoji";
 import type {
   Account,
   MediaAttachment,
@@ -353,19 +354,22 @@ function togglePoll() {
   }
 }
 
-function insertEmoji(shortcode: string) {
+// Unicode picks insert the literal character; custom emoji insert
+// their `:shortcode:` (resolved to an image at render time).
+function insertEmoji(emoji: EmojiSelection) {
   const el = textarea.value;
-  const insert = `:${shortcode}:`;
-  if (el) {
-    const start = el.selectionStart ?? d.value.text.length;
-    const end = el.selectionEnd ?? start;
-    const text =
-      d.value.text.slice(0, start) + insert + d.value.text.slice(end);
-    compose.update({ text });
-  } else {
-    compose.update({ text: d.value.text + insert });
-  }
+  const insert = emoji.kind === "unicode" ? emoji.value : `:${emoji.value}:`;
+  const start = el?.selectionStart ?? d.value.text.length;
+  const end = el?.selectionEnd ?? start;
+  compose.update({
+    text: d.value.text.slice(0, start) + insert + d.value.text.slice(end),
+  });
   emojiOpen.value = false;
+  void nextTick(() => {
+    const pos = start + insert.length;
+    el?.focus();
+    el?.setSelectionRange(pos, pos);
+  });
 }
 
 // --- @-mention autocomplete ----------------------------------------

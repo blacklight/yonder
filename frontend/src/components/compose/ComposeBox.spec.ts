@@ -434,4 +434,23 @@ describe("ComposeBox", () => {
     await flushPromises();
     expect(useComposeStore().draft.visibility).toBe("unlisted");
   });
+
+  it("the emoji picker inserts the picked unicode at the caret", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const text = wrapper.get("[data-testid='compose-text']");
+    await text.setValue("hello world");
+    (text.element as HTMLTextAreaElement).setSelectionRange(5, 5);
+    await wrapper.get("button[aria-label='Emoji']").trigger("click");
+    const picker = wrapper.get("[data-testid='emoji-picker']");
+    // Even with no custom emoji the unicode catalogue is offered.
+    expect(picker.text()).toContain("Smileys & emotion");
+    const glyph = picker
+      .findAll(".emoji-picker__glyph")
+      .find((g) => g.text() === "😀");
+    expect(glyph).toBeTruthy();
+    await glyph!.trigger("click");
+    expect(useComposeStore().draft.text).toBe("hello😀 world");
+    expect(wrapper.find("[data-testid='emoji-picker']").exists()).toBe(false);
+  });
 });

@@ -283,7 +283,6 @@ function flashSaved() {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--bg);
-  color: var(--text);
   font-family: monospace;
   font-size: var(--font-sm, 0.8125rem);
   resize: vertical;

@@ -34,6 +34,13 @@ textarea {
   font: inherit;
   color: inherit;
 }
+textarea {
+  padding: var(--space-2) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  color: var(--text);
+}
 a {
   color: var(--accent-link);
 }

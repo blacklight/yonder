@@ -20,6 +20,7 @@ import {
 import { blockDomain, unblockDomain } from "@/api/domains";
 import { fileReport } from "@/api/reports";
 import { adminAccountAction, setRole } from "@/api/admin";
+import { reverseAdminAction } from "@/api/adminUsers";
 import {
   addListMembers,
   createList,
@@ -228,13 +229,17 @@ const menuItems = computed<MenuItem[]>(() => {
     items.push(
       {
         id: "admin-limit",
-        label: t("profile.adminLimit"),
+        label: a.limited
+          ? t("admin.users.actions.unlimit")
+          : t("profile.adminLimit"),
         icon: "comment-slash",
         danger: true,
       },
       {
         id: "admin-suspend",
-        label: t("profile.adminSuspend"),
+        label: a.suspended
+          ? t("admin.users.actions.unsuspend")
+          : t("profile.adminSuspend"),
         icon: "user-slash",
         danger: true,
       },
@@ -467,19 +472,31 @@ async function run(id: string) {
         await fileReport({ account_id: Number(a.id) });
         break;
       case "admin-limit":
-        await adminAccountAction(a.id, { type: "limit" });
+        if (a.limited) await reverseAdminAction(a.id, "unsilence");
+        else await adminAccountAction(a.id, { type: "limit" });
+        await refreshAccount();
         break;
       case "admin-suspend":
-        await adminAccountAction(a.id, { type: "suspend" });
+        if (a.suspended) await reverseAdminAction(a.id, "unsuspend");
+        else await adminAccountAction(a.id, { type: "suspend" });
+        await refreshAccount();
         break;
       case "admin-delete":
         await adminAccountAction(a.id, { type: "delete" });
         break;
       case "admin-mod":
         await setRole(a.id, "moderator");
+        await refreshAccount();
         break;
     }
   });
+}
+
+// Re-read the entity so badges and menu labels reflect the new
+// moderation state (suspend/delete revoke access server-side too).
+async function refreshAccount() {
+  if (!account.value) return;
+  account.value = await getAccount(account.value.id);
 }
 
 const listsOpen = ref(false);

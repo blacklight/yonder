@@ -11,6 +11,7 @@ vi.mock("@/api/accounts", async (orig) => {
   return {
     ...m,
     lookup: vi.fn(),
+    getAccount: vi.fn(),
     accountStatuses: vi.fn(),
     getRelationships: vi.fn(),
     getAccountLists: vi.fn(),
@@ -26,8 +27,17 @@ vi.mock("@/api/lists", async (orig) => {
     removeListMembers: vi.fn(),
   };
 });
+vi.mock("@/api/admin", async (orig) => {
+  const m = await orig<typeof import("@/api/admin")>();
+  return { ...m, adminAccountAction: vi.fn(), setRole: vi.fn() };
+});
+vi.mock("@/api/adminUsers", async (orig) => {
+  const m = await orig<typeof import("@/api/adminUsers")>();
+  return { ...m, reverseAdminAction: vi.fn() };
+});
 import {
   lookup,
+  getAccount,
   accountStatuses,
   getRelationships,
   getAccountLists,
@@ -38,6 +48,8 @@ import {
   addListMembers,
   removeListMembers,
 } from "@/api/lists";
+import { adminAccountAction } from "@/api/admin";
+import { reverseAdminAction } from "@/api/adminUsers";
 
 // The menu list teleports to <body> — query it at document level.
 const menuItems = () =>
@@ -635,5 +647,58 @@ describe("ProfilePage", () => {
     expect(badges.some((b) => b.text() === "Blocked")).toBe(true);
     expect(badges.some((b) => b.text() === "Muted")).toBe(true);
     expect(wrapper.find(".profile__avatar--grayscale").exists()).toBe(true);
+  });
+
+  it("offers 'Unlimit account' on a limited account and reverses", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    auth.role = "moderator";
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice", limited: true }),
+    );
+    vi.mocked(getAccount).mockResolvedValue(
+      account({ id: "1", acct: "alice", limited: false }),
+    );
+    vi.mocked(reverseAdminAction).mockResolvedValue({} as never);
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const items = menuItems();
+    const unlimit = items.find((i) => i.text() === "Unlimit account");
+    expect(unlimit).toBeTruthy();
+    expect(items.some((i) => i.text() === "Limit account")).toBe(false);
+    await unlimit!.trigger("click");
+    // Destructive actions confirm first.
+    const modal = document.querySelector(".modal__body .btn--danger");
+    expect(modal).toBeTruthy();
+    await (modal as HTMLElement).click();
+    await flushPromises();
+    expect(reverseAdminAction).toHaveBeenCalledWith("1", "unsilence");
+    expect(adminAccountAction).not.toHaveBeenCalled();
+    expect(getAccount).toHaveBeenCalledWith("1");
+  });
+
+  it("offers 'Unsuspend account' on a suspended account and reverses", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    auth.role = "admin";
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice", suspended: true }),
+    );
+    vi.mocked(getAccount).mockResolvedValue(
+      account({ id: "1", acct: "alice", suspended: false }),
+    );
+    vi.mocked(reverseAdminAction).mockResolvedValue({} as never);
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const unsuspend = menuItems().find((i) => i.text() === "Unsuspend account");
+    expect(unsuspend).toBeTruthy();
+    await unsuspend!.trigger("click");
+    const modal = document.querySelector(".modal__body .btn--danger");
+    expect(modal).toBeTruthy();
+    await (modal as HTMLElement).click();
+    await flushPromises();
+    expect(reverseAdminAction).toHaveBeenCalledWith("1", "unsuspend");
   });
 });

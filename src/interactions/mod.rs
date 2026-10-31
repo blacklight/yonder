@@ -28,6 +28,7 @@ pub mod boost;
 pub mod entity;
 pub mod favourite;
 pub mod inbound;
+pub mod mutes;
 pub mod pins;
 pub mod quote;
 pub mod reactions;

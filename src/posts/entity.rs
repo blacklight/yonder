@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use crate::{media, users::account as account_mapper, Result};
+use crate::{interactions, media, users::account as account_mapper, Result};
 
 use super::{wire_visibility, PostContext, StatusRow, STATUS_COLS};
 
@@ -184,6 +184,8 @@ struct StatusBatch {
     pinned: HashSet<(i64, i64)>,
     /// status id → `(favourited, bookmarked, reblogged)` for the viewer.
     flags: HashMap<i64, (bool, bool, bool)>,
+    /// status ids inside a conversation the viewer muted.
+    muted: HashSet<i64>,
 }
 
 impl StatusBatch {
@@ -680,6 +682,9 @@ impl StatusBatch {
                 _ => Ok(Vec::new()),
             }
         };
+        // Conversation mutes: one recursive root-resolution over every
+        // rendered id, intersected with the viewer's muted roots.
+        let mutes_f = interactions::mutes::muted_status_ids(db, viewer, &all_ids);
         let (
             author_rows,
             pin_rows,
@@ -690,8 +695,10 @@ impl StatusBatch {
             own_rows,
             mention_seen_ids,
             followed,
+            muted,
         ) = tokio::try_join!(
-            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, mention_f, follows_f
+            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, mention_f, follows_f,
+            mutes_f
         )?;
 
         let accounts: HashMap<i64, account_mapper::AccountRow> =
@@ -1004,6 +1011,7 @@ impl StatusBatch {
             reactions,
             pinned,
             flags,
+            muted,
         })
     }
 
@@ -1193,7 +1201,7 @@ impl StatusBatch {
             "favourited": flags["favourited"],
             "bookmarked": flags["bookmarked"],
             "pinned": flags["pinned"],
-            "muted": false,
+            "muted": self.muted.contains(&status.id),
             "pleroma": {
                 "emoji_reactions": emoji_reactions,
             },

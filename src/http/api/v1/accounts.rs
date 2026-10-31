@@ -661,3 +661,164 @@ pub async fn account_statuses(
     };
     Ok((headers, Json(json!(out))))
 }
+
+/// `GET /api/v1/accounts/search?q=` — account-only search (the
+/// mobile apps' "add to list" picker). Thin wrapper over the shared
+/// search service pinned to `type=accounts`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/search",
+    tag = "accounts",
+    params(
+        ("q" = String, Query, description = "Search query"),
+        ("limit" = Option<i64>, Query, description = "Max results (default 40)"),
+        ("offset" = Option<i64>, Query, description = "Skip the first n results"),
+        ("resolve" = Option<bool>, Query, description = "Attempt remote lookup"),
+        ("following" = Option<bool>, Query, description = "Only accounts the caller follows")
+    ),
+    responses(
+        (status = 200, description = "Array of Account entities"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 422, description = "Missing query", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn search_accounts(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:search")?;
+    let mut params = params;
+    params.insert("type".into(), "accounts".into());
+    let parsed = crate::search::params::parse(&params)?;
+    let results = crate::search::search(&state, Some(&auth), &parsed).await?;
+    let rendered = crate::search::render(&state, &results, Some(auth.account_id), true).await?;
+    Ok(Json(rendered.get("accounts").cloned().unwrap_or(json!([]))))
+}
+
+/// `GET /api/v1/accounts/familiar_followers?id[]=` — for each
+/// requested id, the accounts the viewer follows that also follow
+/// it (Mastodon 4.3 profile metadata).
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/familiar_followers",
+    tag = "accounts",
+    params(("id[]" = Option<Vec<String>>, Query, description = "Account ids")),
+    responses(
+        (status = 200, description = "Array of FamiliarFollowers entities"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn familiar_followers(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    request: Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:follows")?;
+    let query = request.uri().query().unwrap_or("");
+    let mut ids: Vec<i64> = Vec::new();
+    for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
+        if k == "id[]" || k == "id" {
+            if let Ok(id) = v.parse::<i64>() {
+                ids.push(id);
+            }
+        }
+    }
+    ids.truncate(100);
+    let rows = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT f2.target_account_id AS target, f2.account_id AS follower \
+         FROM follows f1 \
+         JOIN follows f2 ON f2.account_id = f1.target_account_id \
+         WHERE f1.account_id = $1 AND f2.target_account_id = ANY($2) \
+         ORDER BY f2.target_account_id, f2.account_id",
+    )
+    .bind(auth.account_id)
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    let mut by_target: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+    for (target, follower) in &rows {
+        by_target.entry(*target).or_default().push(*follower);
+    }
+    let ctx = crate::posts::PostContext::new(&state);
+    let base = ctx.base_url();
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let follower_ids = by_target.get(&id).cloned().unwrap_or_default();
+        let mut accounts = Vec::with_capacity(follower_ids.len());
+        for a in crate::users::account::load_many(&state.db, &follower_ids).await? {
+            accounts.push(
+                crate::users::account::account_entity(&state.db, &state.config(), &base, &a)
+                    .await?,
+            );
+        }
+        out.push(json!({
+            "id": id.to_string(),
+            "accounts": accounts,
+        }));
+    }
+    Ok(Json(json!(out)))
+}
+
+/// `GET /api/v1/accounts/{id}/featured_tags` — the account's featured
+/// hashtags (Mastodon's per-profile featured list).
+#[utoipa::path(
+    get,
+    path = "/api/v1/accounts/{id}/featured_tags",
+    tag = "accounts",
+    params(("id" = String, Path, description = "Account id")),
+    responses(
+        (status = 200, description = "Array of FeaturedTag entities"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 404, description = "No such account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn account_featured_tags(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:accounts")?;
+    load_public_account(&state, id).await?;
+    super::featured_tags::list_for(&state, id).await
+}
+
+/// `POST /api/v1/emails/confirmations` — resend the verification
+/// mail. Mastodon shape: `{email}` optional; with no email the
+/// caller's own address is used when authenticated. Always 200 `{}` —
+/// no account-existence leak.
+#[utoipa::path(
+    post,
+    path = "/api/v1/emails/confirmations",
+    tag = "accounts",
+    responses((status = 200, description = "Confirmation email enqueued if applicable"))
+)]
+pub async fn resend_confirmation(
+    State(state): State<Arc<AppState>>,
+    auth: MaybeAuth,
+    request: Request,
+) -> Result<Json<Value>> {
+    let email = {
+        let bytes = axum::body::to_bytes(request.into_body(), 64 * 1024)
+            .await
+            .map_err(|e| Error::Validation(format!("failed to read body: {e}")))?;
+        let body: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+        body.get("email")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+    let email = match (email, &auth.0) {
+        (Some(e), _) => Some(e),
+        (None, Some(a)) => {
+            sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
+                .bind(a.user_id)
+                .fetch_optional(&state.db)
+                .await?
+        }
+        (None, None) => None,
+    };
+    if let Some(email) = email {
+        crate::auth::registration::resend_confirmation_email(&state, &email).await?;
+    }
+    Ok(Json(json!({})))
+}

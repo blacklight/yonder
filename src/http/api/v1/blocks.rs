@@ -260,6 +260,47 @@ pub async fn block_domain(
     Ok(Json(json!({})))
 }
 
+/// `GET /api/v1/domain_blocks/preview?domain=` — how many of the
+/// caller's follows/followers live on a domain; powers the mobile
+/// apps' block-confirmation sheet (Moshidon).
+#[utoipa::path(
+    get,
+    path = "/api/v1/domain_blocks/preview",
+    tag = "accounts",
+    params(("domain" = String, Query, description = "Domain to preview")),
+    responses(
+        (status = 200, description = "following/follower counts for the domain"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn domain_block_preview(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:blocks")?;
+    let domain = params
+        .get("domain")
+        .map(|d| d.trim().to_lowercase())
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| Error::Validation("domain is required".into()))?;
+    let row = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT \
+            (SELECT count(*) FROM follows f JOIN accounts a ON a.id = f.target_account_id \
+             WHERE f.account_id = $1 AND lower(a.domain) = lower($2)) AS following, \
+            (SELECT count(*) FROM follows f JOIN accounts a ON a.id = f.account_id \
+             WHERE f.target_account_id = $1 AND lower(a.domain) = lower($2)) AS followers",
+    )
+    .bind(auth.account_id)
+    .bind(&domain)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(json!({
+        "followingCount": row.0,
+        "followersCount": row.1,
+    })))
+}
+
 /// `DELETE /api/v1/domain_blocks` — `domain` param (body or query).
 #[utoipa::path(
     delete,

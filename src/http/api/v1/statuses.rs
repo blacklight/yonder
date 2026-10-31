@@ -224,6 +224,243 @@ pub async fn delete_status(
     Ok(Json(entity))
 }
 
+/// `GET /api/v1/statuses/{id}/source` — raw (pre-render) text, the
+/// shape clients fetch to seed the edit composer (`text` is the
+/// stored source — markdown source for `text/markdown` posts).
+/// `can_see`-gated like `show`; requires auth.
+#[utoipa::path(
+    get,
+    path = "/api/v1/statuses/{id}/source",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "StatusSource entity"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn source(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:statuses")?;
+    let ctx = PostContext::new(&state);
+    let status = posts::load(&ctx.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !posts::can_see(&ctx.db, &status, Some(auth.account_id)).await? {
+        return Err(Error::NotFound("status".into()));
+    }
+    Ok(Json(json!({
+        "id": status.id.to_string(),
+        "text": status.content,
+        "spoiler_text": status.spoiler_text.unwrap_or_default(),
+    })))
+}
+
+/// `GET /api/v1/statuses/{id}/history` — the StatusEdit array,
+/// oldest version first. Superseded versions come from `status_edits`
+/// (snapshotted by `edit_status`); the live row is always the newest
+/// entry. `can_see`-gated.
+#[utoipa::path(
+    get,
+    path = "/api/v1/statuses/{id}/history",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "Array of StatusEdit entities"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn history(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:statuses")?;
+    let ctx = PostContext::new(&state);
+    let status = posts::load(&ctx.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !posts::can_see(&ctx.db, &status, Some(auth.account_id)).await? {
+        return Err(Error::NotFound("status".into()));
+    }
+    let edits = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            Option<String>,
+            bool,
+            Option<Value>,
+            Option<Value>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        "SELECT content, content_html, spoiler_text, sensitive, poll, media, version_at \
+         FROM status_edits WHERE status_id = $1 ORDER BY version_at, id",
+    )
+    .bind(id)
+    .fetch_all(&ctx.db)
+    .await?;
+
+    let account = entity::status_entity(&ctx, &status, Some(auth.account_id))
+        .await?
+        .get("account")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let edit_json = |content_html: &Option<String>,
+                     source: &str,
+                     spoiler: &Option<String>,
+                     sensitive: bool,
+                     poll: &Option<Value>,
+                     media: &Option<Value>,
+                     at: chrono::DateTime<chrono::Utc>| {
+        json!({
+            "content": content_html.clone().unwrap_or_else(|| pubby_sdk::content::html_escape(source)),
+            "spoiler_text": spoiler.clone().unwrap_or_default(),
+            "sensitive": sensitive,
+            "created_at": at.to_rfc3339(),
+            "poll": poll.clone(),
+            "media_attachments": media.clone().unwrap_or_else(|| json!([])),
+            "emojis": [],
+            "account": account,
+        })
+    };
+    let mut out: Vec<Value> = edits
+        .iter()
+        .map(|(content, html, spoiler, sensitive, poll, media, at)| {
+            edit_json(html, content, spoiler, *sensitive, poll, media, *at)
+        })
+        .collect();
+    // The live row is the newest entry — for pre-history rows (edited
+    // before 0039) it is the only one.
+    let current_poll = match status.poll_id {
+        Some(poll_id) => {
+            let options = sqlx::query_as::<_, (i32, String, i32)>(
+                "SELECT idx, title, votes_count FROM poll_options \
+                 WHERE poll_id = $1 ORDER BY idx",
+            )
+            .bind(poll_id)
+            .fetch_all(&ctx.db)
+            .await?;
+            Some(json!({
+                "options": options.iter().map(|(_, title, _)| json!({"title": title})).collect::<Vec<_>>(),
+            }))
+        }
+        None => None,
+    };
+    let current_media: Vec<Value> = entity::media_for_status(&ctx, id)
+        .await?
+        .iter()
+        .map(|m| entity::media_entity(&ctx.config, &ctx.base_url(), m))
+        .collect();
+    out.push(edit_json(
+        &status.content_html,
+        &status.content,
+        &status.spoiler_text,
+        status.sensitive,
+        &current_poll,
+        &Some(json!(current_media)),
+        status.edited_at.unwrap_or(status.created_at),
+    ));
+    Ok(Json(json!(out)))
+}
+
+/// `GET /api/v1/statuses?id[]=…` — batch fetch (the mobile apps use it
+/// to backfill gaps in timeline pages). Skips statuses the viewer
+/// can't see instead of erroring the whole batch.
+#[utoipa::path(
+    get,
+    path = "/api/v1/statuses",
+    tag = "statuses",
+    params(("id[]" = Option<Vec<String>>, Query, description = "Status ids")),
+    responses(
+        (status = 200, description = "Array of Status entities"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn list_by_ids(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    request: Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:statuses")?;
+    let query = request.uri().query().unwrap_or("");
+    let mut ids: Vec<i64> = Vec::new();
+    for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
+        if k == "id[]" || k == "id" {
+            if let Ok(id) = v.parse::<i64>() {
+                ids.push(id);
+            }
+        }
+    }
+    ids.truncate(100);
+    let ctx = PostContext::new(&state);
+    let mut statuses = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(status) = posts::load(&ctx.db, id).await? {
+            if posts::can_see(&ctx.db, &status, Some(auth.account_id)).await? {
+                statuses.push(status);
+            }
+        }
+    }
+    Ok(Json(json!(
+        entity::status_entities(&ctx, &statuses, Some(auth.account_id)).await?
+    )))
+}
+
+/// `POST /api/v1/statuses/{id}/mute` — mute the whole conversation
+/// (notifications from the thread stop surfacing).
+#[utoipa::path(
+    post,
+    path = "/api/v1/statuses/{id}/mute",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "The status with muted=true"),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn mute_conversation(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:mutes")?;
+    let ctx = PostContext::new(&state);
+    let status = crate::interactions::mutes::mute_conversation(&ctx, &auth, id).await?;
+    Ok(Json(
+        entity::status_entity(&ctx, &status, Some(auth.account_id)).await?,
+    ))
+}
+
+/// `POST /api/v1/statuses/{id}/unmute` — idempotent reverse.
+#[utoipa::path(
+    post,
+    path = "/api/v1/statuses/{id}/unmute",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "The status with muted=false"),
+        (status = 404, description = "Not found or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn unmute_conversation(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:mutes")?;
+    let ctx = PostContext::new(&state);
+    let status = crate::interactions::mutes::unmute_conversation(&ctx, &auth, id).await?;
+    Ok(Json(
+        entity::status_entity(&ctx, &status, Some(auth.account_id)).await?,
+    ))
+}
+
 /// `POST /api/v1/statuses/{id}/translate` — the Mastodon-compatible
 /// Translation entity. `can_see` is the only audience gate: the admin
 /// chose the backend (which may be a self-hosted LibreTranslate), so

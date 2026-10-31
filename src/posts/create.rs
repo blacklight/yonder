@@ -835,7 +835,52 @@ pub async fn edit_status(
         &ctx.config,
     );
 
+    // Snapshot the superseded version into `status_edits` *before* the
+    // update so `/statuses/{id}/history` can replay v0 → current.
+    // `version_at` is when the superseded version was authored — the
+    // post's `created_at` for the original, the previous `edited_at`
+    // for later versions.
+    let poll_snapshot: Option<serde_json::Value> = match status.poll_id {
+        Some(poll_id) => {
+            let options = sqlx::query_as::<_, (i32, String)>(
+                "SELECT idx, title FROM poll_options WHERE poll_id = $1 ORDER BY idx",
+            )
+            .bind(poll_id)
+            .fetch_all(&ctx.db)
+            .await?;
+            Some(serde_json::json!({
+                "options": options.iter().map(|(_, title)| serde_json::json!({"title": title})).collect::<Vec<_>>(),
+            }))
+        }
+        None => None,
+    };
+    let media_snapshot: Option<serde_json::Value> = {
+        let media_rows = entity::media_for_status(ctx, status_id).await?;
+        if media_rows.is_empty() {
+            None
+        } else {
+            Some(serde_json::json!(media_rows
+                .iter()
+                .map(|m| entity::media_entity(&ctx.config, &ctx.base_url(), m))
+                .collect::<Vec<_>>()))
+        }
+    };
     let mut tx = ctx.db.begin().await?;
+    sqlx::query(
+        "INSERT INTO status_edits (status_id, content, content_html, spoiler_text, \
+             sensitive, poll, media, version_at) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+    )
+    .bind(status_id)
+    .bind(&status.content)
+    .bind(&status.content_html)
+    .bind(&status.spoiler_text)
+    .bind(status.sensitive)
+    .bind(&poll_snapshot)
+    .bind(&media_snapshot)
+    .bind(status.edited_at.unwrap_or(status.created_at))
+    .execute(&mut *tx)
+    .await?;
     sqlx::query(
         "UPDATE statuses SET content = $2, content_html = $3, content_type = $4, \
              language = $5, sensitive = $6, spoiler_text = $7, visibility = $8, \

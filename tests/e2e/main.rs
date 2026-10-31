@@ -14,6 +14,7 @@ mod activitypub;
 mod admin;
 mod auth;
 mod cli;
+mod client_compat;
 mod conversations;
 mod db;
 mod feeds;

@@ -5,6 +5,7 @@ pub mod filters;
 pub mod instance;
 pub mod media;
 pub mod search;
+pub mod suggestions;
 
 use std::sync::Arc;
 
@@ -69,6 +70,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             axum::routing::delete(filters::delete_status)
                 .route_layer(ratelimit::layer(state, "relation")),
         )
+        // Epic 26 — follow suggestions (empty; no suggestion engine).
+        .route("/api/v2/suggestions", axum::routing::get(suggestions::list))
 }
 
 /// OpenAPI fragment merged into the root document.
@@ -90,6 +93,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     filters::delete_keyword,
     filters::statuses,
     filters::add_status,
-    filters::delete_status
+    filters::delete_status,
+    suggestions::list
 ))]
 pub struct ApiDoc;

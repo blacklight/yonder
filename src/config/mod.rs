@@ -308,6 +308,10 @@ pub struct InstanceConfig {
     pub name: String,
     pub description: String,
     pub short_description: String,
+    /// Long-form "about this server" text served by
+    /// `GET /api/v1/instance/extended_description`; unset → 404 like
+    /// Mastodon.
+    pub extended_description: Option<String>,
     /// BCP-47 languages the instance primarily operates in.
     #[serde(deserialize_with = "de::string_or_seq")]
     pub languages: Vec<String>,
@@ -335,6 +339,7 @@ impl Default for InstanceConfig {
             name: "Yonder".to_string(),
             description: String::new(),
             short_description: String::new(),
+            extended_description: None,
             languages: vec!["en".to_string()],
             contact_name: None,
             contact_email: None,

@@ -14,19 +14,24 @@ pub mod admin_email;
 pub mod admin_frontends;
 pub mod admin_relays;
 pub mod admin_settings;
+pub mod announcements;
 pub mod apps;
 pub mod blocks;
 pub mod conversations;
 pub mod custom_emojis;
 pub mod emoji_admin;
+pub mod featured_tags;
+pub mod filters;
 pub mod follow_requests;
 pub mod instance;
 pub mod interactions;
 pub mod invites;
 pub mod lists;
+pub mod markers;
 pub mod media;
 pub mod notifications;
 pub mod polls;
+pub mod push;
 pub mod relationships;
 pub mod reports;
 pub mod scheduled_statuses;
@@ -138,6 +143,13 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // `route_layer` wraps only routes registered *before* it.
         .route_layer(ratelimit::layer(state, "authentication"))
         .route("/api/v1/instance", get(instance::instance))
+        // Long-form about text — static segment must outrank
+        // `/instance/{anything}` fallthroughs; it doesn't conflict
+        // with `peers`/`domain_blocks` either.
+        .route(
+            "/api/v1/instance/extended_description",
+            get(instance::extended_description),
+        )
         // Known remote domains (Mastodon's peers listing).
         .route("/api/v1/instance/peers", get(instance::peers))
         // Epic 21 — public moderated-instances listing.
@@ -335,7 +347,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // writes carry their own buckets.
         .route(
             "/api/v1/statuses",
-            axum::routing::post(statuses::create).route_layer(ratelimit::layer(state, "status")),
+            axum::routing::post(statuses::create)
+                .get(statuses::list_by_ids)
+                .route_layer(ratelimit::layer(state, "status")),
         )
         .route(
             "/api/v1/statuses/{id}",
@@ -345,6 +359,20 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "status")),
         )
         .route("/api/v1/statuses/{id}/context", get(statuses::context))
+        // Epic 26 — raw source (edit composer) + edit history.
+        .route("/api/v1/statuses/{id}/source", get(statuses::source))
+        .route("/api/v1/statuses/{id}/history", get(statuses::history))
+        // Epic 26 — conversation mutes.
+        .route(
+            "/api/v1/statuses/{id}/mute",
+            axum::routing::post(statuses::mute_conversation)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
+        .route(
+            "/api/v1/statuses/{id}/unmute",
+            axum::routing::post(statuses::unmute_conversation)
+                .route_layer(ratelimit::layer(state, "relation")),
+        )
         .route(
             "/api/v1/statuses/{id}/translate",
             axum::routing::post(statuses::translate)
@@ -358,7 +386,10 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 ))
                 .route_layer(ratelimit::layer(state, "media")),
         )
-        .route("/api/v1/media/{id}", axum::routing::put(media::update))
+        .route(
+            "/api/v1/media/{id}",
+            axum::routing::put(media::update).get(media::show),
+        )
         // Interactions (epic 13) — writes carry the `status` bucket.
         .route(
             "/api/v1/statuses/{id}/favourite",
@@ -630,6 +661,20 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/trends/tags",
             get(trends::tags_trending).route_layer(ratelimit::layer(state, "timeline")),
         )
+        // Epic 26 — trending statuses/links + the deprecated
+        // `/trends` alias older apps still poll.
+        .route(
+            "/api/v1/trends/statuses",
+            get(trends::statuses_trending).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/trends/links",
+            get(trends::links_trending).route_layer(ratelimit::layer(state, "timeline")),
+        )
+        .route(
+            "/api/v1/trends",
+            get(trends::trends_legacy).route_layer(ratelimit::layer(state, "timeline")),
+        )
         // Epic 20 — custom emoji. Public catalogue on the timeline
         // bucket; admin surface on `media` (upload-shaped writes).
         .route(
@@ -677,8 +722,26 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "media")),
         )
         // Epic 16 — notifications (no rate-limit bucket; Mastodon
-        // doesn't throttle these).
+        // doesn't throttle these). Static segments (`policy`,
+        // `requests`) win over `/notifications/{id}` by routing
+        // precedence — `{id}` can no longer 400 on the word.
         .route("/api/v1/notifications", get(notifications::list))
+        .route(
+            "/api/v1/notifications/policy",
+            get(notifications::get_policy).put(notifications::put_policy),
+        )
+        .route(
+            "/api/v1/notifications/requests",
+            get(notifications::requests),
+        )
+        .route(
+            "/api/v1/notifications/requests/{id}/accept",
+            post(notifications::accept_request),
+        )
+        .route(
+            "/api/v1/notifications/requests/{id}/dismiss",
+            post(notifications::dismiss_request),
+        )
         .route("/api/v1/notifications/clear", post(notifications::clear))
         .route("/api/v1/notifications/read", post(notifications::mark_read))
         .route(
@@ -694,6 +757,72 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/search",
             get(search::search_v1).route_layer(ratelimit::layer(state, "search")),
+        )
+        // Epic 26 — client-API compat endpoints the mobile apps hit.
+        // Timeline markers (Mastodon home/notifications last-read).
+        .route(
+            "/api/v1/markers",
+            get(markers::get_markers).post(markers::save_markers),
+        )
+        // Announcements (always empty — no announcement feature yet).
+        .route("/api/v1/announcements", get(announcements::list))
+        .route(
+            "/api/v1/announcements/{id}/dismiss",
+            post(announcements::dismiss),
+        )
+        .route(
+            "/api/v1/announcements/{id}/reactions/{name}",
+            axum::routing::put(announcements::add_reaction).delete(announcements::delete_reaction),
+        )
+        // Legacy v1 filters — compat shim over the v2 storage.
+        .route("/api/v1/filters", get(filters::list).post(filters::create))
+        .route(
+            "/api/v1/filters/{id}",
+            get(filters::show)
+                .put(filters::update)
+                .delete(filters::delete_filter),
+        )
+        // WebPush subscription CRUD.
+        .route(
+            "/api/v1/push/subscription",
+            get(push::show)
+                .post(push::create)
+                .put(push::update)
+                .delete(push::delete_subscription),
+        )
+        // Featured hashtags (own list + management).
+        .route(
+            "/api/v1/featured_tags",
+            get(featured_tags::list).post(featured_tags::create),
+        )
+        .route(
+            "/api/v1/featured_tags/suggestions",
+            get(featured_tags::suggestions),
+        )
+        .route(
+            "/api/v1/featured_tags/{id}",
+            axum::routing::delete(featured_tags::unfeature),
+        )
+        // Account search + familiar followers + per-account featured
+        // tags — static segments outrank `/accounts/{id}`.
+        .route("/api/v1/accounts/search", get(accounts::search_accounts))
+        .route(
+            "/api/v1/accounts/familiar_followers",
+            get(accounts::familiar_followers),
+        )
+        .route(
+            "/api/v1/accounts/{id}/featured_tags",
+            get(accounts::account_featured_tags),
+        )
+        // Domain-block preview (block-confirmation sheet counts).
+        .route(
+            "/api/v1/domain_blocks/preview",
+            get(blocks::domain_block_preview),
+        )
+        // Resend the verification mail (onboarding activation).
+        .route(
+            "/api/v1/emails/confirmations",
+            post(accounts::resend_confirmation),
         )
 }
 
@@ -756,6 +885,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     statuses::translate,
     statuses::update,
     statuses::delete_status,
+    statuses::source,
+    statuses::history,
+    statuses::list_by_ids,
+    statuses::mute_conversation,
+    statuses::unmute_conversation,
     interactions::favourite,
     interactions::unfavourite,
     interactions::favourites_list,
@@ -816,12 +950,43 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     notifications::mark_read,
     notifications::dismiss,
     notifications::unread_count,
+    notifications::get_policy,
+    notifications::put_policy,
+    notifications::requests,
+    notifications::accept_request,
+    notifications::dismiss_request,
     scheduled_statuses::list,
     scheduled_statuses::show,
     scheduled_statuses::update,
     scheduled_statuses::cancel,
     search::search_v1,
     accounts::lookup,
+    accounts::search_accounts,
+    accounts::familiar_followers,
+    accounts::account_featured_tags,
+    accounts::resend_confirmation,
+    markers::get_markers,
+    markers::save_markers,
+    announcements::list,
+    announcements::dismiss,
+    announcements::add_reaction,
+    announcements::delete_reaction,
+    filters::list,
+    filters::show,
+    filters::create,
+    filters::update,
+    filters::delete_filter,
+    push::show,
+    push::create,
+    push::update,
+    push::delete_subscription,
+    featured_tags::list,
+    featured_tags::create,
+    featured_tags::unfeature,
+    featured_tags::suggestions,
+    blocks::domain_block_preview,
+    instance::extended_description,
+    media::show,
     conversations::list_conversations,
     conversations::conversation_statuses,
     conversations::mark_conversation_read,
@@ -831,6 +996,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     tags::unfollow,
     tags::followed_tags,
     trends::tags_trending,
+    trends::statuses_trending,
+    trends::links_trending,
+    trends::trends_legacy,
     custom_emojis::list,
     emoji_admin::create,
     emoji_admin::list,

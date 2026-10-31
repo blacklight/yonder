@@ -500,6 +500,25 @@ async fn enqueue_verification_email(state: &AppState, user_id: i64, email: &str)
     Ok(())
 }
 
+/// `POST /api/v1/emails/confirmations` — resend the verification mail
+/// for an unverified user. Silent no-ops (unknown email, already
+/// verified) keep the endpoint from leaking account existence.
+pub async fn resend_confirmation_email(state: &AppState, email: &str) -> Result<()> {
+    let row = sqlx::query_as::<_, (i64, bool)>(
+        "SELECT id, email_verified_at IS NOT NULL FROM users WHERE lower(email) = lower($1)",
+    )
+    .bind(email.trim())
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((user_id, verified)) = row else {
+        return Ok(());
+    };
+    if verified {
+        return Ok(());
+    }
+    enqueue_verification_email(state, user_id, email).await
+}
+
 /// `POST /api/v1/accounts/verify_email` — consume the Redis token and
 /// mark the user's email verified.
 pub async fn verify_email(state: &AppState, token: &str) -> Result<bool> {

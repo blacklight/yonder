@@ -66,6 +66,49 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         },
         "contact_account": Value::Null,
         "rules": config.instance.rules,
+        // Akkoma-style capability block: its presence makes clients
+        // (Moshidon et al.) treat us as an Akkoma-compatible server —
+        // `post_formats` advertises the content_type values
+        // `POST /statuses` accepts (markdown is rendered server-side),
+        // `pleroma_emoji_reactions` points them at the
+        // `/api/v1/pleroma/statuses/{id}/reactions` endpoints.
+        "pleroma": {
+            "metadata": {
+                "features": ["pleroma_emoji_reactions", "yonder"],
+                "post_formats": ["text/plain", "text/markdown"],
+                "fields_limits": {
+                    "max_fields": config.content.max_profile_fields,
+                    "max_remote_fields": config.content.max_profile_fields,
+                    "name_length": config.content.max_profile_field_name_length,
+                    "value_length": config.content.max_profile_field_value_length,
+                },
+            },
+        },
+    })))
+}
+
+/// `GET /api/v1/instance/extended_description` — the long-form "about
+/// this server" text. 404 when unset, like Mastodon.
+#[utoipa::path(
+    get,
+    path = "/api/v1/instance/extended_description",
+    tag = "instance",
+    responses(
+        (status = 200, description = "ExtendedDescription entity"),
+        (status = 404, description = "No extended description", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn extended_description(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let config = state.config();
+    let content = config
+        .instance
+        .extended_description
+        .as_deref()
+        .filter(|d| !d.trim().is_empty())
+        .ok_or_else(|| Error::NotFound("extended_description".into()))?;
+    Ok(Json(json!({
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+        "content": content,
     })))
 }
 

@@ -41,6 +41,27 @@ pub async fn upload(
     upload_inner(&state, &auth, mp).await
 }
 
+/// `GET /api/v1/media/{id}` — processing status (owner only). Same
+/// contract as `/api/v2/media/{id}` — the official Android app and
+/// Moshidon poll the v1 path after upload.
+#[utoipa::path(
+    get,
+    path = "/api/v1/media/{id}",
+    tag = "media",
+    params(("id" = String, Path, description = "Media id")),
+    responses(
+        (status = 200, description = "The media attachment"),
+        (status = 404, description = "Not found", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn show(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    crate::http::api::v2::media::show(State(state), auth, Path(id)).await
+}
+
 pub(crate) async fn upload_inner(
     state: &Arc<AppState>,
     auth: &AuthContext,

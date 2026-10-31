@@ -147,11 +147,186 @@ pub async fn list(
         crate::filters::apply::hide_clause(&rules).as_ref(),
     )
     .await?;
+    // Conversation mutes: a muted thread's notifications drop out of
+    // the page (Mastodon hides them rather than never generating).
+    let status_ids: Vec<i64> = rows.iter().filter_map(|r| r.status_id).collect();
+    let muted =
+        crate::interactions::mutes::muted_status_ids(&state.db, Some(auth.account_id), &status_ids)
+            .await?;
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|r| r.status_id.is_none_or(|id| !muted.contains(&id)))
+        .collect();
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let headers = paginate::headers(&uri, &params, &cursors, page.limit);
     let ctx = PostContext::new(&state);
     let out = notifications::entities(&ctx, &rows, &rules).await?;
     Ok((headers, Json(Value::Array(out))))
+}
+
+/// `GET /api/v1/notifications/policy` — the Mastodon 4.3+
+/// NotificationPolicy entity. Flags persist per account; until the
+/// requests inbox lands they are informational only (`summary` is
+/// always zero).
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/policy",
+    tag = "notifications",
+    responses(
+        (status = 200, description = "The NotificationPolicy entity"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn get_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:notifications")?;
+    Ok(Json(policy_entity(&state.db, auth.account_id).await?))
+}
+
+async fn policy_entity(db: &sqlx::PgPool, account_id: i64) -> Result<Value> {
+    let row = sqlx::query_as::<_, (bool, bool, bool, bool)>(
+        "SELECT filter_not_followers, filter_not_following, \
+                filter_new_accounts, filter_private_mentions \
+         FROM notification_policies WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(db)
+    .await?;
+    let (nf, ng, na, pm) = row.unwrap_or_default();
+    Ok(json!({
+        "filter_not_followers": nf,
+        "filter_not_following": ng,
+        "filter_new_accounts": na,
+        "filter_private_mentions": pm,
+        "summary": {
+            "pending_requests_count": 0,
+            "pending_notifications_count": 0,
+        },
+    }))
+}
+
+/// `PUT /api/v1/notifications/policy` — update the flags (form or
+/// JSON booleans). Missing keys keep their value.
+#[utoipa::path(
+    put,
+    path = "/api/v1/notifications/policy",
+    tag = "notifications",
+    responses(
+        (status = 200, description = "The updated NotificationPolicy"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn put_policy(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    request: axum::extract::Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:notifications")?;
+    use axum::http::header;
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = axum::body::to_bytes(request.into_body(), 64 * 1024)
+        .await
+        .map_err(|e| Error::Validation(format!("failed to read body: {e}")))?;
+    let mut updates: Vec<(String, bool)> = Vec::new();
+    const FLAGS: &[&str] = &[
+        "filter_not_followers",
+        "filter_not_following",
+        "filter_new_accounts",
+        "filter_private_mentions",
+    ];
+    if content_type.starts_with("application/x-www-form-urlencoded") {
+        for (k, v) in url::form_urlencoded::parse(&bytes) {
+            if FLAGS.contains(&k.as_ref()) {
+                updates.push((k.into_owned(), crate::users::settings::parse_bool_str(&v)?));
+            }
+        }
+    } else if !bytes.is_empty() {
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::BadRequest(format!("malformed JSON body: {e}")))?;
+        for f in FLAGS {
+            if let Some(b) = body.get(*f).and_then(|v| v.as_bool()) {
+                updates.push(((*f).to_string(), b));
+            }
+        }
+    }
+    for (flag, value) in updates {
+        // `flag` comes from a fixed allowlist, never user input.
+        sqlx::query(&format!(
+            "INSERT INTO notification_policies (account_id, {flag}) VALUES ($1,$2) \
+             ON CONFLICT (account_id) DO UPDATE SET {flag} = EXCLUDED.{flag}, \
+                 updated_at = now()"
+        ))
+        .bind(auth.account_id)
+        .bind(value)
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(Json(policy_entity(&state.db, auth.account_id).await?))
+}
+
+/// `GET /api/v1/notifications/requests` — the filtered-notification
+/// requests inbox. Nothing lands there yet (policy flags are stored
+/// but unapplied), so the page is always empty.
+#[utoipa::path(
+    get,
+    path = "/api/v1/notifications/requests",
+    tag = "notifications",
+    responses((status = 200, description = "Empty page of NotificationRequest entities"))
+)]
+pub async fn requests(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:notifications")?;
+    Ok(Json(json!([])))
+}
+
+/// `POST /api/v1/notifications/requests/{id}/accept` — 404: no
+/// requests exist while the inbox is empty.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/requests/{id}/accept",
+    tag = "notifications",
+    params(("id" = String, Path, description = "Request id")),
+    responses(
+        (status = 200, description = "Accepted"),
+        (status = 404, description = "No such request", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn accept_request(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(_id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:notifications")?;
+    Err(Error::NotFound("notification_request".into()))
+}
+
+/// `POST /api/v1/notifications/requests/{id}/dismiss` — 404.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notifications/requests/{id}/dismiss",
+    tag = "notifications",
+    params(("id" = String, Path, description = "Request id")),
+    responses(
+        (status = 200, description = "Dismissed"),
+        (status = 404, description = "No such request", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn dismiss_request(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(_id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "write:notifications")?;
+    Err(Error::NotFound("notification_request".into()))
 }
 
 /// `GET /api/v1/notifications/{id}` — one notification, owner-scoped.

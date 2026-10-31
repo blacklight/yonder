@@ -7,7 +7,14 @@ import { useSettingsStore } from "@/stores/settings";
 import ComposeBox from "./ComposeBox.vue";
 
 vi.mock("@/api/emojis", () => ({
-  customEmojis: vi.fn().mockResolvedValue([]),
+  customEmojis: vi.fn().mockResolvedValue([
+    {
+      shortcode: "blob",
+      url: "https://example.com/blob.png",
+      visible_in_picker: true,
+    },
+    { shortcode: "hidden", url: "/h.png", visible_in_picker: false },
+  ]),
 }));
 vi.mock("@/api/instance", () => ({
   getInstance: vi.fn().mockResolvedValue({
@@ -54,14 +61,14 @@ const ACCOUNTS = [
 ];
 
 /** fetch mock that answers the search endpoint and 404s the rest. */
-function mockSearch(accounts = ACCOUNTS) {
+function mockSearch(accounts = ACCOUNTS, hashtags: { name: string }[] = []) {
   return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
     const isSearch = String(input).includes("/api/v2/search");
     return Promise.resolve(
       new Response(
         JSON.stringify(
           isSearch
-            ? { accounts, statuses: [], hashtags: [] }
+            ? { accounts, statuses: [], hashtags }
             : { error: "not found" },
         ),
         { status: isSearch ? 200 : 404 },
@@ -70,7 +77,7 @@ function mockSearch(accounts = ACCOUNTS) {
   });
 }
 
-/** Debounce window in `updateMention` is 200 ms. */
+/** Debounce window in `updateAutocomplete` is 200 ms. */
 const waitSuggest = () => new Promise((r) => setTimeout(r, 300));
 
 describe("ComposeBox", () => {
@@ -308,12 +315,12 @@ describe("ComposeBox", () => {
     expect(String(spy.mock.calls.at(-1)![0])).toContain(
       "/api/v2/search?q=ali&type=accounts",
     );
-    const items = wrapper.findAll(".mention-ac__item");
+    const items = wrapper.findAll(".text-ac__item");
     expect(items).toHaveLength(2);
     expect(items[0].text()).toContain("@alice");
     await items[0].trigger("mousedown");
     expect(useComposeStore().draft.text).toBe("hi @alice ");
-    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
   });
 
   it("arrow keys + Enter select a suggestion; plain Enter does not submit", async () => {
@@ -342,15 +349,15 @@ describe("ComposeBox", () => {
     await text.setValue("@al");
     await waitSuggest();
     await flushPromises();
-    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(true);
     await text.trigger("keydown", { key: "Escape" });
     await text.trigger("keyup", { key: "Escape" });
-    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
     // Editing the token re-arms suggestions.
     await text.setValue("@alin");
     await waitSuggest();
     await flushPromises();
-    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(true);
   });
 
   it("no @-token means no suggestions", async () => {
@@ -368,7 +375,7 @@ describe("ComposeBox", () => {
     expect(
       spy.mock.calls.filter(([u]) => String(u).includes("/api/v2/search")),
     ).toHaveLength(0);
-    expect(wrapper.find("[data-testid='mention-ac']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
   });
 
   it("keeps draft media ids when rehydration fails transiently", async () => {
@@ -452,5 +459,73 @@ describe("ComposeBox", () => {
     await glyph!.trigger("click");
     expect(useComposeStore().draft.text).toBe("hello😀 world");
     expect(wrapper.find("[data-testid='emoji-picker']").exists()).toBe(false);
+  });
+
+  it("a :token offers emoji rows and a click inserts the char", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue("hi :smi");
+    await flushPromises();
+    const items = wrapper.findAll(".text-ac__item");
+    expect(items.length).toBeGreaterThan(0);
+    const row = items.find((i) => i.text() === "😄:smile:");
+    expect(row).toBeTruthy();
+    await row!.trigger("mousedown");
+    expect(useComposeStore().draft.text).toBe("hi 😄");
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
+  });
+
+  it("a :token also completes custom emoji as :shortcode:", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue(":blo");
+    await flushPromises();
+    const row = wrapper
+      .findAll(".text-ac__item")
+      .find((i) => i.text() === ":blob:");
+    expect(row).toBeTruthy();
+    await row!.trigger("mousedown");
+    expect(useComposeStore().draft.text).toBe(":blob:");
+  });
+
+  it("picker-invisible emoji are not suggested by :completion", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue(":hid");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
+  });
+
+  it("a #token queries hashtags and a click inserts #name ", async () => {
+    const spy = mockSearch(ACCOUNTS, [{ name: "devops" }]);
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue("hi #dev");
+    await waitSuggest();
+    await flushPromises();
+    expect(String(spy.mock.calls.at(-1)![0])).toContain(
+      "/api/v2/search?q=dev&type=hashtags",
+    );
+    const row = wrapper
+      .findAll(".text-ac__item")
+      .find((i) => i.text() === "#devops");
+    expect(row).toBeTruthy();
+    await row!.trigger("mousedown");
+    expect(useComposeStore().draft.text).toBe("hi #devops ");
+  });
+
+  it("mid-word : and # do not trigger the dropdown", async () => {
+    const spy = mockSearch(ACCOUNTS, [{ name: "devops" }]);
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper
+      .get("[data-testid='compose-text']")
+      .setValue("time:12:30 and C# code");
+    await waitSuggest();
+    await flushPromises();
+    expect(wrapper.find("[data-testid='text-ac']").exists()).toBe(false);
+    expect(
+      spy.mock.calls.filter(([u]) => String(u).includes("/api/v2/search")),
+    ).toHaveLength(0);
   });
 });

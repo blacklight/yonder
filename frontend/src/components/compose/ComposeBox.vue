@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
 import PollBuilder from "./PollBuilder.vue";
 import EmojiPicker from "./EmojiPicker.vue";
-import MentionAutocomplete from "./MentionAutocomplete.vue";
+import TextAutocomplete, { type AcItem } from "./TextAutocomplete.vue";
 import { FontAwesomeIcon } from "@/icons";
 import {
   createStatus,
@@ -16,15 +16,20 @@ import {
   updateMedia,
 } from "@/api/statuses";
 import { ApiError } from "@/api/errors";
+import { customEmojis } from "@/api/emojis";
 import { composeLimits } from "@/api/instance";
 import { getInstance } from "@/api/instance";
 import { search } from "@/api/search";
 import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
-import type { EmojiSelection } from "@/utils/unicodeEmoji";
+import {
+  NAMED_UNICODE_EMOJIS,
+  type EmojiSelection,
+} from "@/utils/unicodeEmoji";
 import type {
   Account,
+  CustomEmoji,
   MediaAttachment,
   ScheduledStatus,
   Status,
@@ -372,78 +377,191 @@ function insertEmoji(emoji: EmojiSelection) {
   });
 }
 
-// --- @-mention autocomplete ----------------------------------------
-// A `@word` (optionally `@word@domain`) at the caret queries the
-// indexed accounts via the search endpoint's autocomplete mode
-// (`type` + small `limit` ⇒ prefix matching server-side).
+// --- inline autocomplete (@mention, :emoji, #hashtag) ---------------
+// A trigger char at a word boundary (start of text or after a
+// separator) opens a token scan before the caret; picking a row
+// replaces trigger + token with the row's `insert` text. `@`/`#`
+// query the search endpoint (debounced); `:` filters the uploaded
+// emoji plus the named unicode set entirely locally.
 const MENTION_RE = /(?:^|[\s([{"'])@([A-Za-z0-9_.]+(?:@[A-Za-z0-9_.-]*)?)$/;
-const mentionToken = ref<{ start: number; token: string } | null>(null);
-const mentionResults = ref<Account[]>([]);
-const mentionActive = ref(0);
+const EMOJI_RE = /(?:^|[\s([{"']):([A-Za-z0-9_+-]*)$/;
+const HASHTAG_RE = /(?:^|[\s([{"'])#([\p{L}\p{N}_]*)$/u;
+
+type AcKind = "mention" | "emoji" | "hashtag";
+const acKind = ref<AcKind | null>(null);
+const acToken = ref<{ start: number; token: string } | null>(null);
+const acItems = ref<AcItem[]>([]);
+const acActive = ref(0);
 // Escape suppresses the dropdown until the token changes — otherwise
 // the next caret-scan (any keyup) would reopen it.
-const mentionDismissed = ref("");
-let mentionSeq = 0;
-let mentionTimer: ReturnType<typeof setTimeout> | undefined;
+const acDismissed = ref("");
+// The instance's custom emoji, lazily fetched on the first `:` token
+// (the picker dialog fetches its own copy).
+const emojiList = ref<CustomEmoji[] | null>(null);
+let emojiLoading = false;
+let acSeq = 0;
+let acTimer: ReturnType<typeof setTimeout> | undefined;
 
-function closeMention() {
-  mentionToken.value = null;
-  mentionResults.value = [];
-  clearTimeout(mentionTimer);
+const accountItem = (a: Account): AcItem => ({
+  id: a.id,
+  insert: `@${a.acct} `,
+  img: a.avatar,
+  label: a.display_name || a.username,
+  labelEmojis: a.emojis,
+  detail: `@${a.acct}`,
+});
+
+async function ensureEmojiList() {
+  if (emojiList.value !== null) return;
+  if (emojiLoading) return;
+  emojiLoading = true;
+  try {
+    emojiList.value = (await customEmojis()).filter((e) => e.visible_in_picker);
+  } catch {
+    emojiList.value = [];
+  } finally {
+    emojiLoading = false;
+  }
 }
 
-/** Re-scan the text before the caret for an `@`-token; debounces the
- * search request. Called on input, click and keyup so caret moves
- * without edits still update or dismiss the list. */
-function updateMention() {
+/** `:` token → custom shortcodes + named unicode emoji. Prefix
+ * matches rank above substring hits, custom before unicode; the row
+ * itself carries the text to insert (`:code:` vs the char). */
+function emojiMatches(token: string): AcItem[] {
+  const q = token.toLowerCase();
+  if (!q) return [];
+  const starts: AcItem[] = [];
+  const contains: AcItem[] = [];
+  for (const e of emojiList.value ?? []) {
+    const code = e.shortcode.toLowerCase();
+    if (!code.includes(q)) continue;
+    (code.startsWith(q) ? starts : contains).push({
+      id: `e:${e.shortcode}`,
+      insert: `:${e.shortcode}:`,
+      img: e.url,
+      label: `:${e.shortcode}:`,
+    });
+  }
+  for (const n of NAMED_UNICODE_EMOJIS) {
+    if (!n.name.includes(q)) continue;
+    (n.name.startsWith(q) ? starts : contains).push({
+      id: `u:${n.name}`,
+      insert: n.emoji,
+      glyph: n.emoji,
+      label: `:${n.name}:`,
+    });
+  }
+  return [...starts, ...contains].slice(0, 8);
+}
+
+function closeAc() {
+  acKind.value = null;
+  acToken.value = null;
+  acItems.value = [];
+  clearTimeout(acTimer);
+}
+
+/** Re-scan the text before the caret for a trigger token; dispatches
+ * to the matching fetcher. Called on input, click and keyup so caret
+ * moves without edits still update or dismiss the list. */
+function updateAutocomplete() {
   const el = textarea.value;
   if (!el) return;
   const caret = el.selectionStart ?? d.value.text.length;
-  const m = d.value.text.slice(0, caret).match(MENTION_RE);
-  if (!m || mentionDismissed.value === `${caret}:${m[1]}`) {
-    if (!m) closeMention();
+  const before = d.value.text.slice(0, caret);
+  const m = before.match(MENTION_RE);
+  const e = before.match(EMOJI_RE);
+  const h = before.match(HASHTAG_RE);
+  const hit: { kind: AcKind; token: string } | null = m
+    ? { kind: "mention", token: m[1] }
+    : e
+      ? { kind: "emoji", token: e[1] }
+      : h
+        ? { kind: "hashtag", token: h[1] }
+        : null;
+  if (!hit || acDismissed.value === `${caret}:${hit.kind}:${hit.token}`) {
+    if (!hit) closeAc();
     return;
   }
-  const token = m[1];
-  const start = caret - token.length - 1;
+  const start = caret - hit.token.length - 1;
   // An unchanged token (arrow keys, clicks inside it) keeps the
   // current list and highlight — no refetch.
-  if (mentionToken.value?.start === start && mentionToken.value.token === token)
+  if (
+    acKind.value === hit.kind &&
+    acToken.value?.start === start &&
+    acToken.value.token === hit.token
+  )
     return;
-  mentionDismissed.value = "";
-  mentionToken.value = { start, token };
-  mentionActive.value = 0;
-  const seq = ++mentionSeq;
-  clearTimeout(mentionTimer);
-  mentionTimer = setTimeout(async () => {
+  acDismissed.value = "";
+  acKind.value = hit.kind;
+  acToken.value = { start, token: hit.token };
+  acActive.value = 0;
+  const seq = ++acSeq;
+  clearTimeout(acTimer);
+  if (hit.kind === "emoji") {
+    // Local matching is instant; the lazy custom-emoji fetch repaints
+    // the list once it lands (if the token is still live).
+    void ensureEmojiList().then(() => {
+      if (seq === acSeq && acToken.value)
+        acItems.value = emojiMatches(acToken.value.token);
+    });
+    acItems.value = emojiMatches(hit.token);
+    return;
+  }
+  // Bare `#` — nothing to query yet.
+  if (hit.token === "") {
+    acItems.value = [];
+    return;
+  }
+  acTimer = setTimeout(async () => {
     try {
-      const res = await search({ q: token, type: "accounts", limit: 6 });
+      const res = await search(
+        hit.kind === "mention"
+          ? { q: hit.token, type: "accounts", limit: 6 }
+          : { q: hit.token, type: "hashtags", limit: 6 },
+      );
       // A later keystroke made this response stale — drop it.
-      if (seq === mentionSeq) mentionResults.value = res.accounts;
+      if (seq !== acSeq) return;
+      acItems.value =
+        hit.kind === "mention"
+          ? res.accounts.map(accountItem)
+          : res.hashtags.map((t) => ({
+              id: `#${t.name}`,
+              insert: `#${t.name} `,
+              label: `#${t.name}`,
+            }));
     } catch {
-      if (seq === mentionSeq) mentionResults.value = [];
+      if (seq === acSeq) acItems.value = [];
     }
   }, 200);
 }
 
-function pickMention(a: Account) {
-  const tk = mentionToken.value;
+function pickAc(item: AcItem) {
+  const tk = acToken.value;
   if (!tk) return;
-  const insert = `@${a.acct} `;
   const end = tk.start + tk.token.length + 1;
   compose.update({
-    text: d.value.text.slice(0, tk.start) + insert + d.value.text.slice(end),
+    text:
+      d.value.text.slice(0, tk.start) + item.insert + d.value.text.slice(end),
   });
-  closeMention();
+  closeAc();
   void nextTick(() => {
-    const pos = tk.start + insert.length;
+    const pos = tk.start + item.insert.length;
     textarea.value?.focus();
     textarea.value?.setSelectionRange(pos, pos);
   });
 }
 
-/** Textarea keydown: Ctrl/Cmd+Enter submits; while the mention list
- * is open, arrows/Tab/Enter/Escape are consumed for navigation.
+const acLabel = computed(() =>
+  acKind.value === "mention"
+    ? t("compose.mentionSuggestions")
+    : acKind.value === "emoji"
+      ? t("compose.emojiSuggestions")
+      : t("compose.hashtagSuggestions"),
+);
+
+/** Textarea keydown: Ctrl/Cmd+Enter submits; while the suggestion
+ * list is open, arrows/Tab/Enter/Escape are consumed for navigation.
  * Everything else (plain Enter → newline) passes through. */
 function onTextKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -451,22 +569,22 @@ function onTextKeydown(e: KeyboardEvent) {
     void submit();
     return;
   }
-  if (!mentionResults.value.length) return;
+  if (!acItems.value.length) return;
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    const n = mentionResults.value.length;
-    mentionActive.value =
-      (mentionActive.value + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    const n = acItems.value.length;
+    acActive.value =
+      (acActive.value + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
   } else if ((e.key === "Tab" && !e.shiftKey) || e.key === "Enter") {
     e.preventDefault();
-    const a = mentionResults.value[mentionActive.value];
-    if (a) pickMention(a);
+    const item = acItems.value[acActive.value];
+    if (item) pickAc(item);
   } else if (e.key === "Escape") {
     e.preventDefault();
-    const tk = mentionToken.value;
+    const tk = acToken.value;
     if (tk)
-      mentionDismissed.value = `${tk.start + tk.token.length + 1}:${tk.token}`;
-    closeMention();
+      acDismissed.value = `${tk.start + tk.token.length + 1}:${acKind.value}:${tk.token}`;
+    closeAc();
   }
 }
 
@@ -598,30 +716,29 @@ async function submit() {
           rows="5"
           data-testid="compose-text"
           role="combobox"
-          :aria-expanded="mentionResults.length > 0"
-          aria-controls="mention-ac"
+          :aria-expanded="acItems.length > 0"
+          aria-controls="text-ac"
           :aria-activedescendant="
-            mentionResults.length
-              ? `mention-opt-${mentionResults[mentionActive]?.id}`
-              : undefined
+            acItems.length ? `text-ac-opt-${acItems[acActive]?.id}` : undefined
           "
           @input="
             compose.update({
               text: ($event.target as HTMLTextAreaElement).value,
             });
-            updateMention();
+            updateAutocomplete();
           "
           @keydown="onTextKeydown"
-          @keyup="updateMention"
-          @click="updateMention"
-          @blur="closeMention"
+          @keyup="updateAutocomplete"
+          @click="updateAutocomplete"
+          @blur="closeAc"
         />
-        <MentionAutocomplete
-          v-if="mentionResults.length"
-          :accounts="mentionResults"
-          :active="mentionActive"
+        <TextAutocomplete
+          v-if="acItems.length"
+          :items="acItems"
+          :active="acActive"
           :textarea="textarea"
-          @select="pickMention"
+          :label="acLabel"
+          @select="pickAc"
         />
       </div>
 

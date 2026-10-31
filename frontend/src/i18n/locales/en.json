@@ -563,6 +563,8 @@
     "mediaLimit": "At most {n} attachments are allowed.",
     "mediaRemove": "Remove media",
     "mentionSuggestions": "Mention suggestions",
+    "emojiSuggestions": "Emoji suggestions",
+    "hashtagSuggestions": "Hashtag suggestions",
     "drafts": "Drafts",
     "draftSave": "Save to drafts",
     "draftsEmpty": "No drafts yet.",

@@ -576,6 +576,8 @@
     "mediaLimit": "Sono consentiti al massimo {n} allegati.",
     "mediaRemove": "Rimuovi media",
     "mentionSuggestions": "Suggerimenti per le menzioni",
+    "emojiSuggestions": "Suggerimenti di emoji",
+    "hashtagSuggestions": "Suggerimenti di hashtag",
     "drafts": "Bozze",
     "draftSave": "Salva nelle bozze",
     "draftsEmpty": "Ancora nessuna bozza.",

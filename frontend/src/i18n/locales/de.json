@@ -576,6 +576,8 @@
     "mediaLimit": "Maximal {n} Anhänge sind erlaubt.",
     "mediaRemove": "Medien entfernen",
     "mentionSuggestions": "Erwähnungsvorschläge",
+    "emojiSuggestions": "Emoji-Vorschläge",
+    "hashtagSuggestions": "Hashtag-Vorschläge",
     "drafts": "Entwürfe",
     "draftSave": "Als Entwurf speichern",
     "draftsEmpty": "Noch keine Entwürfe.",

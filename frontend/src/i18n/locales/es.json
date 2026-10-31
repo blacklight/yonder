@@ -576,6 +576,8 @@
     "mediaLimit": "Se permiten como máximo {n} archivos adjuntos.",
     "mediaRemove": "Quitar media",
     "mentionSuggestions": "Sugerencias de mención",
+    "emojiSuggestions": "Sugerencias de emoji",
+    "hashtagSuggestions": "Sugerencias de hashtags",
     "drafts": "Borradores",
     "draftSave": "Guardar en borradores",
     "draftsEmpty": "Aún no hay borradores.",

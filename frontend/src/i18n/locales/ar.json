@@ -576,6 +576,8 @@
     "mediaLimit": "يُسمح بـ {n} مرفقات كحد أقصى.",
     "mediaRemove": "إزالة الوسائط",
     "mentionSuggestions": "اقتراحات الإشارة",
+    "emojiSuggestions": "اقتراحات الإيموجي",
+    "hashtagSuggestions": "اقتراحات الوسوم",
     "drafts": "المسودات",
     "draftSave": "حفظ في المسودات",
     "draftsEmpty": "لا توجد مسودات بعد.",

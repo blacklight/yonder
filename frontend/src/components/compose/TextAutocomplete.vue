@@ -1,16 +1,40 @@
+<script lang="ts">
+import type { EmojiRef } from "@/utils/emoji";
+
+/** One row in the inline autocomplete — shared shape for @mention,
+ * :emoji and #hashtag suggestions. `insert` is the text that replaces
+ * the trigger + token on selection. */
+export interface AcItem {
+  /** Unique id — option ids and keys. */
+  id: string;
+  /** Replacement text written over the trigger + token on select. */
+  insert: string;
+  /** Leading image (account avatar, custom emoji). */
+  img?: string;
+  /** Leading text glyph (unicode emoji, `#`), square-boxed like `img`. */
+  glyph?: string;
+  /** Primary label. */
+  label: string;
+  /** Custom emoji the label is rendered through (mention display
+   * names). */
+  labelEmojis?: EmojiRef[];
+  /** Muted trailing text (e.g. `@acct`). */
+  detail?: string;
+}
+</script>
+
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, onUpdated, ref, watch } from "vue";
-import { useI18n } from "vue-i18n";
-import type { Account } from "@/api/entities";
 import EmojiText from "@/components/ui/EmojiText.vue";
 
 const props = defineProps<{
-  accounts: Account[];
+  items: AcItem[];
   active: number;
   textarea: HTMLTextAreaElement | null;
+  /** Localized listbox label (`compose.*Suggestions`). */
+  label: string;
 }>();
-const emit = defineEmits<{ select: [account: Account] }>();
-const { t } = useI18n();
+const emit = defineEmits<{ select: [item: AcItem] }>();
 const list = ref<HTMLElement | null>(null);
 
 // Properties that decide where text wraps — the mirror div must wrap
@@ -156,34 +180,43 @@ watch(
 
 <template>
   <ul
-    id="mention-ac"
+    id="text-ac"
     ref="list"
-    class="mention-ac"
+    class="text-ac"
     role="listbox"
-    :aria-label="t('compose.mentionSuggestions')"
-    data-testid="mention-ac"
+    :aria-label="label"
+    data-testid="text-ac"
   >
     <li
-      v-for="(a, i) in accounts"
-      :id="`mention-opt-${a.id}`"
-      :key="a.id"
+      v-for="(item, i) in items"
+      :id="`text-ac-opt-${item.id}`"
+      :key="item.id"
       role="option"
       :aria-selected="i === active"
-      class="mention-ac__item"
-      :class="{ 'mention-ac__item--active': i === active }"
-      @mousedown.prevent="emit('select', a)"
+      class="text-ac__item"
+      :class="{ 'text-ac__item--active': i === active }"
+      @mousedown.prevent="emit('select', item)"
     >
-      <img :src="a.avatar" alt="" class="mention-ac__avatar" />
-      <span class="mention-ac__name"
-        ><EmojiText :text="a.display_name || a.username" :emojis="a.emojis"
-      /></span>
-      <span class="mention-ac__acct" dir="ltr">@{{ a.acct }}</span>
+      <img v-if="item.img" :src="item.img" alt="" class="text-ac__img" />
+      <span v-else-if="item.glyph" class="text-ac__glyph">{{
+        item.glyph
+      }}</span>
+      <span class="text-ac__name"
+        ><EmojiText
+          v-if="item.labelEmojis"
+          :text="item.label"
+          :emojis="item.labelEmojis"
+        /><template v-else>{{ item.label }}</template></span
+      >
+      <span v-if="item.detail" class="text-ac__detail" dir="ltr">{{
+        item.detail
+      }}</span>
     </li>
   </ul>
 </template>
 
 <style scoped>
-.mention-ac {
+.text-ac {
   /* Absolutely positioned at the caret inside the relatively-
      positioned .compose__text-wrap; inline top/left/transform come
      from reposition(). */
@@ -200,7 +233,7 @@ watch(
   overflow-y: auto;
   z-index: 20;
 }
-.mention-ac__item {
+.text-ac__item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -208,23 +241,35 @@ watch(
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.mention-ac__item--active {
+.text-ac__item--active {
   background: var(--accent-soft);
 }
-.mention-ac__avatar {
+.text-ac__img {
   width: 2rem;
   height: 2rem;
   border-radius: var(--radius-sm);
   object-fit: cover;
   flex: 0 0 auto;
 }
-.mention-ac__name {
+/* Same 2rem square the image gets — text glyphs (unicode emoji,
+ * `#`) box identically instead of shifting the label column. */
+.text-ac__glyph {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+.text-ac__name {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mention-ac__acct {
+.text-ac__detail {
   color: var(--text-muted);
   font-size: var(--text-sm);
   overflow: hidden;

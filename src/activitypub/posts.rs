@@ -229,19 +229,7 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         if let Some(tags) = doc["tag"].as_array_mut() {
             let base = ctx.base_url();
             for meta in emoji_map.used_in(&haystack) {
-                let mime = match meta.url.rsplit('.').next() {
-                    Some("jpg" | "jpeg") => "image/jpeg",
-                    Some("gif") => "image/gif",
-                    Some("webp") => "image/webp",
-                    Some("avif") => "image/avif",
-                    _ => "image/png",
-                };
-                tags.push(json!({
-                    "type": "Emoji",
-                    "id": format!("{}/emoji/{}", base.trim_end_matches('/'), meta.id),
-                    "name": format!(":{}:", meta.shortcode),
-                    "icon": { "type": "Image", "mediaType": mime, "url": meta.url },
-                }));
+                tags.push(meta.ap_tag(&base));
             }
         }
     }

@@ -340,7 +340,9 @@ pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::
     // Local bios are stored raw and rendered on read; remote rows keep
     // their stored HTML `summary`.
     let note = match (&account.domain, &account.bio) {
-        (None, Some(raw)) => pubby_sdk::render_bio_html(raw),
+        (None, Some(raw)) => {
+            pubby_sdk::render_bio_html(raw, crate::posts::render::hashtag_url(base_url)).html
+        }
         (_, bio) => bio.clone().unwrap_or_default(),
     };
     json!({

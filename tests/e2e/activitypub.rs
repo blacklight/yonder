@@ -375,6 +375,7 @@ async fn actor_doc_advertises_per_actor_endpoints() {
         &alice,
         &actors::actor_path("alice"),
         pubby_sdk::handlers::HandlerOptions::default(),
+        &pool,
     )
     .unwrap()
     .expect("handler for provisioned actor");
@@ -395,6 +396,63 @@ async fn actor_doc_advertises_per_actor_endpoints() {
         .as_str()
         .unwrap()
         .ends_with("/headers/test.png"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actor_doc_links_bio_hashtags_and_emits_tag() {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO custom_emojis (shortcode, image_path) VALUES ('arch', 'emoji/arch.png')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let mut alice = seed_actor(&pool, "alice").await;
+    alice.display_name = Some("Alice :arch:".into());
+    alice.bio = Some("I post about #Yonder and #FOSS :arch:".into());
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
+    let handler = actors::handler_for(
+        storage,
+        &Config::default(),
+        BASE,
+        &alice,
+        &actors::actor_path("alice"),
+        pubby_sdk::handlers::HandlerOptions::default(),
+        &pool,
+    )
+    .unwrap()
+    .expect("handler for provisioned actor");
+    let doc: Value = handler.get_actor_document();
+    // Bio hashtags must link to absolute /tags/ URLs — remote instances
+    // strip relative hrefs.
+    let summary = doc["summary"].as_str().unwrap();
+    assert!(
+        summary.contains(&format!(
+            r#"<a href="{BASE}/tags/yonder" rel="tag">#Yonder</a>"#
+        )),
+        "{summary}"
+    );
+    // `tag` carries a Hashtag entry per bio hashtag (deduplicated) and
+    // an Emoji entry per `:code:` used in name/bio — remote instances
+    // render profile emojis from it.
+    let tags = doc["tag"].as_array().expect("actor tag array");
+    let hashtag_names: Vec<&str> = tags
+        .iter()
+        .filter(|t| t["type"] == "Hashtag")
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    assert_eq!(hashtag_names, ["#yonder", "#foss"], "{tags:?}");
+    let emoji: Vec<&Value> = tags.iter().filter(|t| t["type"] == "Emoji").collect();
+    assert_eq!(emoji.len(), 1, "{tags:?}");
+    assert_eq!(emoji[0]["name"], ":arch:");
+    assert_eq!(emoji[0]["icon"]["type"], "Image");
+    assert!(emoji[0]["icon"]["url"]
+        .as_str()
+        .unwrap()
+        .contains("arch.png"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

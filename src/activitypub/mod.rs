@@ -177,6 +177,7 @@ pub async fn build(
         &instance_actor,
         "/ap/actor",
         instance_options,
+        pool,
     )?
     .ok_or_else(|| crate::Error::Internal("instance actor provisioning failed".to_string()))?;
 

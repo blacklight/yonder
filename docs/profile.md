@@ -122,16 +122,23 @@ equals the signer.
 A profile change publishes `Update{actor}` via
 `activitypub::delivery::publish_actor_update`: the per-username handler
 LRU is invalidated first (it caches `ActorConfig`), the handler is
-re-resolved, `image` (the banner) is injected into the document — pubby
-has no `ActorConfig` banner field, and the *served* actor document
-still lacks `image` until an upstream change (known divergence), then
-pubby stores the activity and fans out through the durable `deliveries`
-ledger. A publish failure is logged but doesn't fail the PATCH.
+re-resolved, then pubby stores the activity and fans out through the
+durable `deliveries` ledger. A publish failure is logged but doesn't
+fail the PATCH.
 
-Two upstream pubby follow-ups: `ActorConfig.header_url`/`Actor.image`
-(so the served document carries the banner), and
-`HttpResponse.headers` (so `Link: <…>; rel="me"` response headers can
-count as verification, as Mastodon allows).
+The actor document's `summary` renders the raw stored bio through
+`render_bio_html` — URLs, `#hashtags` (absolute `rel="tag"` anchors;
+relative hrefs are stripped by remote sanitizers) and `@user@domain`
+handles. The actor `tag` array (pubby `ActorConfig.tag`) carries a
+`Hashtag` entry per bio hashtag plus an `Emoji` entry per local
+`:code:` used in the display name, bio or field values — remote
+instances render profile emojis and index bio hashtags from it; the
+raw `:code:` text stays verbatim in `summary`/`name`/`attachment` for
+the remote's own substitution. `docs/emoji.md` covers emoji storage.
+
+One remaining upstream pubby follow-up: `HttpResponse.headers` (so
+`Link: <…>; rel="me"` response headers can count as verification, as
+Mastodon allows).
 
 ## Profile reads (epic 18)
 

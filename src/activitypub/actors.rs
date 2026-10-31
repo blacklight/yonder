@@ -275,21 +275,68 @@ fn actor_config(
     base_url: &str,
     actor: &LocalActor,
     actor_path: &str,
+    db: &PgPool,
 ) -> ActorConfig {
     let username = &actor.username;
     let mut cfg = ActorConfig::new(base_url);
+    let hashtag_url = crate::posts::render::hashtag_url(base_url);
     cfg.username = username.clone();
     cfg.name = actor
         .display_name
         .clone()
         .or_else(|| Some(username.clone()));
     // Local bios are stored raw — render (escape + linkify) here so a
-    // `<` in the bio can't leak into the AP `summary`.
-    cfg.summary = actor
+    // `<` in the bio can't leak into the AP `summary`. Hashtag anchors
+    // must be absolute: remote servers strip relative hrefs.
+    let bio_rendered = actor
         .bio
         .as_deref()
-        .map(pubby_sdk::render_bio_html)
+        .map(|b| pubby_sdk::render_bio_html(b, &hashtag_url));
+    cfg.summary = bio_rendered
+        .as_ref()
+        .map(|r| r.html.clone())
         .unwrap_or_default();
+    // The actor `tag` array carries `Hashtag` entries for bio hashtags
+    // and `Emoji` entries for local `:code:`s used in the name, bio and
+    // field values — Mastodon renders remote-profile emojis and indexes
+    // bio hashtags from it. `for_author_texts` skips the emoji query
+    // entirely when no `:code:` candidate exists.
+    cfg.tag = pubby_sdk::build_hashtag_tags(
+        bio_rendered.map(|r| r.hashtags).unwrap_or_default(),
+        &hashtag_url,
+    );
+    let mut texts: Vec<&str> = Vec::new();
+    if let Some(b) = actor.bio.as_deref() {
+        texts.push(b);
+    }
+    if let Some(n) = actor.display_name.as_deref() {
+        texts.push(n);
+    }
+    for f in actor
+        .profile_fields
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.get("value").and_then(Value::as_str))
+    {
+        texts.push(f);
+    }
+    let emoji_map = sync_block(crate::emoji::render::EmojiMap::for_author_texts(
+        db, config, base_url, None, &texts,
+    ))
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "emoji map load failed; no Emoji actor tags emitted");
+        crate::emoji::render::EmojiMap::empty()
+    });
+    if !emoji_map.is_empty() {
+        let haystack = texts.join(" ");
+        cfg.tag.extend(
+            emoji_map
+                .used_in(&haystack)
+                .into_iter()
+                .map(|m| m.ap_tag(base_url)),
+        );
+    }
     cfg.icon_url = actor
         .avatar_remote_url
         .clone()
@@ -386,6 +433,7 @@ pub fn handler_for(
     actor: &LocalActor,
     actor_path: &str,
     options: HandlerOptions,
+    db: &PgPool,
 ) -> Result<Option<ActivityPubHandler>> {
     let Some(pem) = &actor.private_key_pem else {
         tracing::warn!(username = %actor.username, "local actor has no key material");
@@ -395,7 +443,7 @@ pub fn handler_for(
         .map_err(|e| crate::Error::Validation(format!("invalid actor key: {e}")))?;
     let handler = ActivityPubHandler::new(
         storage,
-        actor_config(config, base_url, actor, actor_path),
+        actor_config(config, base_url, actor, actor_path, db),
         private_key,
         options,
     )
@@ -431,6 +479,7 @@ pub fn make_resolver(core: Arc<super::ApCore>, cache: HandlerCache) -> ActorReso
             &actor,
             &actor_path(&username),
             options,
+            &core.db,
         )
         .map_err(|e| ActivityPubError::General(e.to_string()))?;
         let Some(handler) = handler else {

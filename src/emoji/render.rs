@@ -30,6 +30,27 @@ pub(crate) struct EmojiMeta {
     pub category: Option<String>,
 }
 
+impl EmojiMeta {
+    /// The AP `Emoji` tag entry for this emoji — emitted on objects
+    /// (`tag`) so remote instances can render and record `:code:`.
+    /// `base_url` mints the tag `id` (`{base}/emoji/{id}`).
+    pub(crate) fn ap_tag(&self, base_url: &str) -> serde_json::Value {
+        let mime = match self.url.rsplit('.').next() {
+            Some("jpg" | "jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("avif") => "image/avif",
+            _ => "image/png",
+        };
+        serde_json::json!({
+            "type": "Emoji",
+            "id": format!("{}/emoji/{}", base_url.trim_end_matches('/'), self.id),
+            "name": format!(":{}:", self.shortcode),
+            "icon": { "type": "Image", "mediaType": mime, "url": self.url },
+        })
+    }
+}
+
 /// Shortcode (lowercased) → emoji metadata for one domain
 /// (`None` = local).
 pub struct EmojiMap {

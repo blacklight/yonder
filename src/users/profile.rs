@@ -623,6 +623,13 @@ fn validate_fields(config: &Config, inputs: &[FieldInput]) -> Result<()> {
     Ok(())
 }
 
+/// The `#tag` target URL for profile-field linkification —
+/// `{federation_base}/tags/{name}`.
+fn hashtag_url(config: &Config) -> impl Fn(&str) -> String {
+    let base = crate::activitypub::federation_base_url(config);
+    move |name: &str| format!("{base}/tags/{name}")
+}
+
 /// Render and stamp the submitted fields into the stored shape,
 /// preserving `verified_at` for entries whose `name`+`value_raw` pair
 /// survives anywhere in the previous list — a reorder shouldn't cost a
@@ -662,7 +669,7 @@ fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> 
         } else if let Some(url) = handle_link(raw) {
             render_link_anchor(&url, None, Some(raw))
         } else {
-            render_bio_html(raw)
+            render_bio_html(raw, hashtag_url(config)).html
         };
         let mut entry = json!({
             "name": name,

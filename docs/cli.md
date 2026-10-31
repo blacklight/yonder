@@ -34,10 +34,14 @@ yonder instance set-domain <DOMAIN>
 yonder instance set-name <NAME>
 yonder instance show
 
-yonder run-job <kind> [--payload JSON] [--inline] [--delay SECS]
-                                   # remote_actor_fetch re-syncs a remote
-                                   # profile: --payload '{"actor_url": "…"}';
-                                   # '{}' sweeps every stale remote actor
+yonder run-job <job> [--payload JSON] [--inline] [--delay SECS]
+                                   # every job kind is a subcommand:
+                                   # `run-job --help` lists them and
+                                   # `run-job <job> --help` documents
+                                   # its payload — e.g. remote_actor_fetch
+                                   # takes '{"actor_url": "…"}' to
+                                   # re-sync one remote profile, '{}'
+                                   # to sweep every stale remote actor
 
 yonder user create --username U --email E
       (--password-stdin | --password-file PATH | --generate-password)

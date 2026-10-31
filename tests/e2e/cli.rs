@@ -634,6 +634,14 @@ async fn run_job_enqueue_inline_and_errors() {
 
     let out = yonder(&sb, &["run-job", "nope"]);
     assert_eq!(code(&out), 3);
+    // Right name, wrong case: clap subcommands are case-sensitive, so
+    // the catch-all points at the canonical spelling (validation, 4).
+    let out = yonder(&sb, &["run-job", "Audit_Log_Cleanup"]);
+    assert_eq!(code(&out), 4);
+    assert!(stderr(&out).contains("audit_log_cleanup"));
+    // No job at all stays a clap usage error (2).
+    let out = yonder(&sb, &["run-job"]);
+    assert_eq!(code(&out), 2);
     let out = yonder(
         &sb,
         &["run-job", "audit_log_cleanup", "--payload", "not json"],
@@ -672,6 +680,28 @@ async fn run_job_enqueue_inline_and_errors() {
         before_ms + 60_000.0,
         after_ms + 60_000.0
     );
+
+    // `run-job --help` names every job kind; `run-job <job> --help`
+    // documents that job's payload plus the shared options.
+    let out = yonder(&sb, &["run-job", "--help"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let help = stdout(&out);
+    for kind in yonder::jobs::JobKind::ALL {
+        assert!(
+            help.contains(kind.as_str()),
+            "run-job --help must list {}",
+            kind.as_str()
+        );
+    }
+    let out = yonder(&sb, &["run-job", "remote_actor_fetch", "--help"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let help = stdout(&out);
+    assert!(help.contains("actor_url"), "{help}");
+    assert!(help.contains("--payload"), "{help}");
+    assert!(help.contains("--inline"), "{help}");
+    assert!(help.contains("--delay"), "{help}");
+    let out = yonder(&sb, &["run-job", "audit_log_cleanup", "--help"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
 }
 
 #[tokio::test]
@@ -813,6 +843,7 @@ async fn instance_sugar_and_help() {
         vec!["user", "create", "--help"],
         vec!["domain-block", "--help"],
         vec!["run-job", "--help"],
+        vec!["run-job", "audit_log_cleanup", "--help"],
         vec!["migrate", "status", "--help"],
         vec!["webpush", "generate-keys", "--help"],
     ] {

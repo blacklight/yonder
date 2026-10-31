@@ -78,22 +78,12 @@ pub enum Command {
         #[command(subcommand)]
         command: config::ConfigCommand,
     },
-    /// Enqueue a background job, or run one in-process.
+    /// Enqueue a background job, or run one in-process. Each job kind
+    /// is a subcommand — `yonder run-job <job> --help` documents its
+    /// payload shape.
     RunJob {
-        /// Job kind — one of the names `yonder run-job` reports for an
-        /// unknown kind (e.g. `audit_log_cleanup`, `email_send`).
-        kind: String,
-        /// Job payload as a JSON object (default: {}).
-        #[arg(long, value_name = "JSON")]
-        payload: Option<String>,
-        /// Execute the handler in this process instead of enqueuing.
-        /// Bypasses worker retry and dead-letter accounting.
-        #[arg(long)]
-        inline: bool,
-        /// Enqueue the job to fire no earlier than this many seconds
-        /// from now (enqueue mode only).
-        #[arg(long, value_name = "SECS")]
-        delay: Option<u64>,
+        #[command(subcommand)]
+        job: jobs::JobCommand,
     },
     /// Administer local user accounts.
     User {
@@ -166,12 +156,7 @@ async fn run(cli: Cli) -> Result<u8> {
         Command::Migrate { command, revert } => migrate::run(path, command, revert, &out).await,
         Command::Config { command } => config::run(path, command, &out, actor).await,
         Command::Instance { command } => config::run_instance(path, command, &out, actor).await,
-        Command::RunJob {
-            kind,
-            payload,
-            inline,
-            delay,
-        } => jobs::run_job(path, &kind, payload.as_deref(), inline, delay, &out).await,
+        Command::RunJob { job } => jobs::dispatch(path, job, &out).await,
         Command::User { command } => user::run(path, command, &out, actor).await,
         Command::DomainBlock { command } => domain_block::run(path, command, &out, actor).await,
         Command::Relay { command } => relay::run(path, command, &out, actor).await,

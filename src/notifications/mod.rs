@@ -209,18 +209,18 @@ pub async fn get(db: &PgPool, account_id: i64, id: i64) -> Result<Option<Notific
     .map_err(Into::into)
 }
 
-/// Newest-first page owned by `account_id`. Empty `types` means no
-/// inclusion filter; `exclude_types` removes listed kinds.
+/// Newest-first page owned by `account_id`. `types`/`exclude_types`
+/// are wire type names (already alias-expanded by the caller); an
+/// empty `types` means no inclusion filter. Unknown names simply
+/// match no rows — Mastodon's semantics for type filters.
 pub async fn list(
     db: &PgPool,
     account_id: i64,
-    types: &[NotificationType],
-    exclude_types: &[NotificationType],
+    types: &[String],
+    exclude_types: &[String],
     page: &Page,
     hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Vec<NotificationRow>> {
-    let include: Vec<&str> = types.iter().map(NotificationType::as_str).collect();
-    let exclude: Vec<&str> = exclude_types.iter().map(NotificationType::as_str).collect();
     // Epic-20 hide rules apply to the *embedded* status. Notifications
     // without one (follows, admin, reports) always survive.
     let mut hide_sql = String::new();
@@ -250,8 +250,8 @@ pub async fn list(
         .bind(account_id)
         .bind(page.max_id)
         .bind(page.since_id)
-        .bind(&include)
-        .bind(&exclude)
+        .bind(types)
+        .bind(exclude_types)
         .bind(page.limit);
     for b in &hide_binds {
         q = match b {

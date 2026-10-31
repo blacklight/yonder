@@ -936,16 +936,31 @@ async fn endpoints_list_filters_paginate_clear_dismiss() {
             "alias {alias} should match {len}"
         );
     }
-    // Unknown filter value → 422.
-    let (status, _, _) = request(
-        &env.app,
-        "GET",
-        "/api/v1/notifications?types[]=bogus",
-        Some(&alice),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // Unknown filter values are accepted, Mastodon-style — newer
+    // clients enumerate types the server never emits
+    // (`severed_relationships`, `reaction`, …): `types[]` selects no
+    // rows, `exclude_types[]` excludes nothing.
+    for (query, len) in [
+        ("types[]=bogus", 0),
+        ("types[]=severed_relationships", 0),
+        ("exclude_types[]=severed_relationships", 3),
+        ("exclude_types[]=reaction", 3),
+    ] {
+        let (status, _, body) = request(
+            &env.app,
+            "GET",
+            &format!("/api/v1/notifications?{query}"),
+            Some(&alice),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "query {query} should not 422");
+        assert_eq!(
+            body.as_array().unwrap().len(),
+            len,
+            "query {query} should match {len}"
+        );
+    }
 
     // Pagination: limit=1 pages via max_id + Link header.
     let (status, headers, body) = request(

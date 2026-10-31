@@ -19,55 +19,55 @@ use serde_json::{json, Value};
 use crate::{
     auth::scopes::require_scope,
     http::{middleware::auth::AuthContext, paginate, AppState},
-    notifications::{self, NotificationType},
+    notifications,
     posts::PostContext,
     Error, Result,
 };
 
-/// Type-filter values that aren't Mastodon types but the Yonder API
-/// accepts: `all` (no filter), and the group aliases from the epic
-/// spec.
-fn expand_filter(value: &str, out: &mut Vec<NotificationType>) -> Result<()> {
+/// Expands one `types[]`/`exclude_types[]` value into wire type
+/// names. Yonder group aliases (`likes`, `boosts`, …) expand to
+/// several; `all` expands to nothing (no filter). Values that are no
+/// type Yonder emits — newer Mastodon types clients still enumerate
+/// (`severed_relationships`), or other implementations' names — pass
+/// through verbatim, matching Mastodon: `types[]` then selects no
+/// rows, `exclude_types[]` excludes nothing. Synonyms for types
+/// Yonder does emit under a different name fold onto it (Misskey's
+/// `reaction`, Akkoma's `pleroma:emoji_reaction` → `emoji_reaction`)
+/// so those filters actually apply.
+fn expand_filter(value: &str, out: &mut Vec<String>) {
     const ALIASES: &[(&str, &[&str])] = &[
         ("likes", &["favourite"]),
         ("boosts", &["reblog"]),
         ("quotes", &["quote"]),
         ("mentions", &["mention"]),
         ("reports", &["admin.report"]),
+        ("reaction", &["emoji_reaction"]),
+        ("reactions", &["emoji_reaction"]),
+        ("pleroma:emoji_reaction", &["emoji_reaction"]),
     ];
     if value == "all" {
-        return Ok(());
+        return;
     }
     if let Some((_, names)) = ALIASES.iter().find(|(alias, _)| *alias == value) {
-        for name in *names {
-            out.push(NotificationType::from_wire(name).expect("alias maps to a known type"));
-        }
-        return Ok(());
+        out.extend(names.iter().map(|s| s.to_string()));
+        return;
     }
-    match NotificationType::from_wire(value) {
-        Some(kind) => {
-            out.push(kind);
-            Ok(())
-        }
-        None => Err(Error::Validation(format!(
-            "unknown notification type: {value}"
-        ))),
-    }
+    out.push(value.to_string());
 }
 
 /// Repeated `types[]` / `exclude_types[]` params from the raw query —
 /// `Query<HashMap>` keeps only the last value.
-fn type_filters(uri: &Uri) -> Result<(Vec<NotificationType>, Vec<NotificationType>)> {
+fn type_filters(uri: &Uri) -> (Vec<String>, Vec<String>) {
     let mut types = Vec::new();
     let mut exclude = Vec::new();
     for (k, v) in url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes()) {
         match k.as_ref() {
-            "types" | "types[]" => expand_filter(&v, &mut types)?,
-            "exclude_types" | "exclude_types[]" => expand_filter(&v, &mut exclude)?,
+            "types" | "types[]" => expand_filter(&v, &mut types),
+            "exclude_types" | "exclude_types[]" => expand_filter(&v, &mut exclude),
             _ => {}
         }
     }
-    Ok((types, exclude))
+    (types, exclude)
 }
 
 /// Publish the recipient's current unread count to the live
@@ -100,8 +100,11 @@ async fn publish_count(state: &AppState, user_id: i64, account_id: i64) {
 
 /// `GET /api/v1/notifications` — the caller's notifications,
 /// newest-first, `Link`-header paginated. `types[]` /
-/// `exclude_types[]` filter by Mastodon type or Yonder alias
-/// (`all`, `likes`, `boosts`, `quotes`, `mentions`, `reports`).
+/// `exclude_types[]` filter by notification type or Yonder alias
+/// (`all`, `likes`, `boosts`, `quotes`, `mentions`, `reports`,
+/// `reaction`). Unrecognized names are accepted and match/exclude
+/// nothing — Mastodon's semantics — so clients enumerating newer
+/// types (`severed_relationships`, …) don't get 422'd.
 #[utoipa::path(
     get,
     path = "/api/v1/notifications",
@@ -118,7 +121,6 @@ async fn publish_count(state: &AppState, user_id: i64, account_id: i64) {
         (status = 200, description = "Page of notifications, newest first (Link header carries cursors)"),
         (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
         (status = 403, description = "Scope gate", body = crate::error::ErrorBody),
-        (status = 422, description = "Unknown type filter", body = crate::error::ErrorBody),
     )
 )]
 pub async fn list(
@@ -128,7 +130,7 @@ pub async fn list(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<(HeaderMap, Json<Value>)> {
     require_scope(&state.config(), &auth, "read:notifications")?;
-    let (types, exclude) = type_filters(&uri)?;
+    let (types, exclude) = type_filters(&uri);
     let page = paginate::parse(&params);
     let rules = crate::filters::rules::load_active(
         &state.db,

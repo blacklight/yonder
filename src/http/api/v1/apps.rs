@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Request, State},
     http::{HeaderMap, Uri},
     Json,
 };
@@ -49,7 +49,9 @@ pub struct CreateAppParams {
 }
 
 /// `POST /api/v1/apps` — register an OAuth application; the client
-/// secret is returned exactly once.
+/// secret is returned exactly once. Mastodon accepts both JSON and
+/// form bodies — server-side clients (Bridgy Fed among them) post
+/// `x-www-form-urlencoded`.
 #[utoipa::path(
     post,
     path = "/api/v1/apps",
@@ -65,8 +67,15 @@ pub async fn create_app(
     headers: HeaderMap,
     uri: Uri,
     auth: crate::http::middleware::auth::MaybeAuth,
-    Json(params): Json<CreateAppParams>,
+    req: Request,
 ) -> Result<Json<Value>> {
+    let params: CreateAppParams =
+        crate::http::oauth::body_params(req, &state)
+            .await
+            .map_err(|e| match e {
+                Error::BadRequest(msg) => Error::Validation(msg),
+                other => other,
+            })?;
     let (app, secret) = oauth::create_app(
         &state,
         &params.client_name,

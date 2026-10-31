@@ -87,10 +87,7 @@ async fn current(db: &sqlx::PgPool, account_id: i64) -> Result<Option<sqlx::post
         (status = 404, description = "No subscription", body = crate::error::ErrorBody),
     )
 )]
-pub async fn show(
-    State(state): State<Arc<AppState>>,
-    auth: AuthContext,
-) -> Result<Json<Value>> {
+pub async fn show(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Json<Value>> {
     crate::auth::scopes::require_scope(&state.config(), &auth, "push")?;
     let row = current(&state.db, auth.account_id)
         .await?

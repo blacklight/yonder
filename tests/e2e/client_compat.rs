@@ -472,7 +472,10 @@ async fn trends_endpoints() {
     let (code, _, _) = request(
         &env.app,
         "POST",
-        &format!("/api/v1/statuses/{}/favourite", status["id"].as_str().unwrap()),
+        &format!(
+            "/api/v1/statuses/{}/favourite",
+            status["id"].as_str().unwrap()
+        ),
         Some(&token),
         None,
     )
@@ -487,7 +490,14 @@ async fn trends_endpoints() {
         let (code, _, _) = request(&env.app, "GET", path, Some(&token), None).await;
         assert_eq!(code, StatusCode::OK, "{path}");
     }
-    let (_, _, body) = request(&env.app, "GET", "/api/v1/trends/statuses", Some(&token), None).await;
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/trends/statuses",
+        Some(&token),
+        None,
+    )
+    .await;
     let ids: Vec<&str> = body
         .as_array()
         .unwrap()
@@ -789,14 +799,7 @@ async fn domain_preview_suggestions_extended_desc() {
     assert_eq!(code, StatusCode::OK);
     assert_eq!(body["followingCount"], 0);
 
-    let (code, _, body) = request(
-        &env.app,
-        "GET",
-        "/api/v2/suggestions",
-        Some(&token),
-        None,
-    )
-    .await;
+    let (code, _, body) = request(&env.app, "GET", "/api/v2/suggestions", Some(&token), None).await;
     assert_eq!(code, StatusCode::OK);
     assert_eq!(body, json!([]));
 
@@ -819,13 +822,6 @@ async fn media_get_v1() {
     };
     let token = register(&env.app, "med", "md@x.test").await;
     // Unknown id → 404 under v1 too (route exists).
-    let (code, _, _) = request(
-        &env.app,
-        "GET",
-        "/api/v1/media/999999",
-        Some(&token),
-        None,
-    )
-    .await;
+    let (code, _, _) = request(&env.app, "GET", "/api/v1/media/999999", Some(&token), None).await;
     assert_eq!(code, StatusCode::NOT_FOUND);
 }

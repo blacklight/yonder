@@ -57,7 +57,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
 /// apps (Moshidon among them) post `application/json`. Doorkeeper
 /// accepts both; deserialize whichever the `Content-Type` declares,
 /// defaulting to form.
-async fn body_params<T: serde::de::DeserializeOwned>(
+pub(crate) async fn body_params<T: serde::de::DeserializeOwned>(
     req: Request,
     state: &Arc<AppState>,
 ) -> std::result::Result<T, crate::Error> {

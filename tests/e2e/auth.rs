@@ -468,6 +468,41 @@ async fn create_app_accepts_mastodon_client_shapes() {
 }
 
 #[tokio::test]
+async fn create_app_accepts_form_body() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    // Server-side OAuth clients (Bridgy Fed's granary, requests-based
+    // tools) post `x-www-form-urlencoded`, which Mastodon accepts —
+    // previously a 415 from the JSON-only extractor.
+    let (status, body) = request(
+        &env.app,
+        form_req(
+            "/api/v1/apps",
+            &[
+                ("client_name", "Bridgy Fed"),
+                (
+                    "redirect_uris",
+                    "https://fed.brid.gy/routers/mastodon/callback",
+                ),
+                ("scopes", "read write"),
+                ("website", "https://fed.brid.gy/"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "Bridgy Fed");
+    assert_eq!(
+        body["redirect_uri"],
+        "https://fed.brid.gy/routers/mastodon/callback"
+    );
+    assert!(body["client_id"].is_string());
+    assert!(body["client_secret"].is_string());
+}
+
+#[tokio::test]
 async fn oauth_apps_authorization_code_and_revocation() {
     let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {

@@ -1029,6 +1029,8 @@
     "listsTitle": "إضافة إلى القوائم",
     "listsEmpty": "ليس لديك أي قوائم بعد.",
     "listsManage": "إدارة القوائم",
+    "limitedNotice": "تم تقييد هذا المستخدم على هذا الخادم. منشوراته مرئية فقط لمتابعيه.",
+    "showPostsAnyway": "عرض المنشورات على أي حال",
     "listsNewPlaceholder": "اسم القائمة الجديدة"
   },
   "register": {

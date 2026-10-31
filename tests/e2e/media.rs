@@ -675,6 +675,23 @@ async fn account_entity_and_statuses_tab() {
     assert_eq!(anon.len(), 4);
     assert!(anon.iter().all(|s| s["visibility"] != "private"));
 
+    // A limited (silenced) author's profile timeline is still
+    // served — the owner and followers always see it, and
+    // non-followers get a client-side notice + "Show posts anyway".
+    sqlx::query("UPDATE accounts SET limited_at = now() WHERE id = $1")
+        .bind(alice)
+        .execute(db)
+        .await
+        .unwrap();
+    let (code, body) = get_json(&env.app, &format!("/api/v1/accounts/{alice}/statuses")).await;
+    assert_eq!(code, 200);
+    assert_eq!(body.as_array().unwrap().len(), 4);
+    sqlx::query("UPDATE accounts SET limited_at = NULL WHERE id = $1")
+        .bind(alice)
+        .execute(db)
+        .await
+        .unwrap();
+
     // Missing accounts 404; suspended accounts render with the
     // `suspended` tombstone flag (the profile shows a badge + grayed
     // avatar instead of a bare 404).

@@ -168,6 +168,24 @@ const staffRole = computed(() =>
 const avatarGrayscale = computed(
   () => Boolean(rel.value?.blocking) || Boolean(account.value?.suspended),
 );
+const limitedReveal = ref(false);
+/**
+ * A limited profile still serves its posts to everyone (the API is
+ * honest — the hide is a client-side gate, Mastodon-style): the
+ * owner and followers see the timeline straight away, everyone else
+ * gets a notice with a "Show posts anyway" opt-in.
+ */
+const limitedHidden = computed(
+  () =>
+    Boolean(account.value?.limited) &&
+    !isOwn.value &&
+    !rel.value?.following &&
+    !limitedReveal.value,
+);
+async function revealLimited() {
+  limitedReveal.value = true;
+  await Promise.all([loadStatuses(), loadPinned()]);
+}
 const handle = computed(() => {
   const a = account.value;
   return a ? `@${a.acct}` : "";
@@ -349,7 +367,8 @@ async function resolve(): Promise<void> {
     statuses.value = [];
     pinnedStatuses.value = [];
     nextCursor.value = undefined;
-    await Promise.all([loadStatuses(), loadPinned()]);
+    limitedReveal.value = false;
+    if (!limitedHidden.value) await Promise.all([loadStatuses(), loadPinned()]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) state.value = "sign-in";
     else if (e instanceof ApiError && (e.status === 404 || e.status === 422))
@@ -836,48 +855,63 @@ watch([tab, showReplies, showBoosts], () => {
           <p class="profile__note-text">{{ rel.note }}</p>
         </div>
       </header>
-      <Tabs v-model="tab" :items="tabs" :label="t('profile.tabs')" />
-      <div v-if="tab === 'posts'" class="profile__toggles">
-        <label
-          ><input v-model="showReplies" type="checkbox" />
-          {{ t("profile.showReplies") }}</label
+      <div v-if="limitedHidden" class="profile__limited">
+        <p>
+          <FontAwesomeIcon icon="comment-slash" />
+          {{ t("profile.limitedNotice") }}
+        </p>
+        <Button
+          variant="secondary"
+          :loading="statusesLoading"
+          @click="revealLimited"
         >
-        <label
-          ><input v-model="showBoosts" type="checkbox" />
-          {{ t("profile.showBoostsTab") }}</label
-        >
+          {{ t("profile.showPostsAnyway") }}
+        </Button>
       </div>
-      <div class="timeline" :aria-busy="statusesLoading || undefined">
-        <template v-if="tab === 'posts'">
+      <template v-else>
+        <Tabs v-model="tab" :items="tabs" :label="t('profile.tabs')" />
+        <div v-if="tab === 'posts'" class="profile__toggles">
+          <label
+            ><input v-model="showReplies" type="checkbox" />
+            {{ t("profile.showReplies") }}</label
+          >
+          <label
+            ><input v-model="showBoosts" type="checkbox" />
+            {{ t("profile.showBoostsTab") }}</label
+          >
+        </div>
+        <div class="timeline" :aria-busy="statusesLoading || undefined">
+          <template v-if="tab === 'posts'">
+            <StatusCard
+              v-for="s in pinnedStatuses"
+              :key="`pinned-${s.id}`"
+              :status="s"
+              pinned-context
+              @removed="dropRemoved"
+              @pinned="loadPinned"
+            />
+          </template>
           <StatusCard
-            v-for="s in pinnedStatuses"
-            :key="`pinned-${s.id}`"
+            v-for="s in statuses"
+            :key="s.id"
             :status="s"
-            pinned-context
             @removed="dropRemoved"
             @pinned="loadPinned"
           />
-        </template>
-        <StatusCard
-          v-for="s in statuses"
-          :key="s.id"
-          :status="s"
-          @removed="dropRemoved"
-          @pinned="loadPinned"
-        />
-        <template v-if="statusesLoading">
-          <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
-        </template>
-        <div v-if="nextCursor" class="profile__more">
-          <Button
-            variant="secondary"
-            :loading="statusesLoading"
-            @click="loadStatuses(true)"
-          >
-            {{ t("common.loadMore") }}
-          </Button>
+          <template v-if="statusesLoading">
+            <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
+          </template>
+          <div v-if="nextCursor" class="profile__more">
+            <Button
+              variant="secondary"
+              :loading="statusesLoading"
+              @click="loadStatuses(true)"
+            >
+              {{ t("common.loadMore") }}
+            </Button>
+          </div>
         </div>
-      </div>
+      </template>
     </template>
     <Modal
       v-if="confirmAction"
@@ -1052,6 +1086,20 @@ watch([tab, showReplies, showBoosts], () => {
 }
 .profile__badge--danger {
   color: var(--danger);
+}
+.profile__limited {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.profile__limited p {
+  margin: 0;
 }
 .profile__counters {
   display: flex;

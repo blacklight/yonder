@@ -37,7 +37,7 @@ Mastodon's vocabulary plus Yonder's `delete`:
 | `none` | Warning only — records the action. |
 | `sensitive` | Sets `accounts.force_sensitive`; new posts/media are marked sensitive regardless of author preference. Reversed by `unsensitive`. |
 | `disable` | Sets `accounts.disabled_at` and revokes tokens/sessions — frozen: login and token use rejected, content intact, reversible by `enable`. |
-| `silence` (alias `limit`) | Sets `accounts.limited_at`; hidden from public/federated/tag timelines and trends, visible to followers in home, still findable via search. Follows it sends become follow requests. Reversed by `unsilence`. |
+| `silence` (alias `limit`) | Sets `accounts.limited_at`; hidden from public/federated/tag timelines and trends, visible to followers in home, still findable via search. The profile timeline stays served — the owner and followers see it directly, and the SPA shows non-followers a "limited" notice with a "Show posts anyway" reveal (posts are hidden, not stripped — Mastodon's client-side contract). Follows it sends become follow requests. Reversed by `unsilence`. |
 | `suspend` | Sets `accounts.suspended_at` and revokes tokens/sessions — hidden everywhere, login rejected. Reversed by `unsuspend` (access is *not* restored). |
 | `delete` | Admin only — immediate account-deletion purge. |
 
@@ -98,7 +98,7 @@ blocks hide their domain from the listing. Gated by
 | Inbound activities | `activitypub/inbox.rs` rejects suspended domains at the edge (live DB check). |
 | Outbound fan-out | `ApCore.blocked` → pubby `blocked_instances`; refreshed on every block write (`blocks::refresh_blocked`). |
 | Delivery | `FederationDelivery` job marks rows `failed` for suspended domains at send time. |
-| Timelines | `timelines/filter.rs`: `suspend` excluded everywhere, `silence` + `limited_at` from public scopes only. |
+| Timelines | `timelines/filter.rs`: `suspend` excluded everywhere, `silence` + `limited_at` from public scopes only (the `Account` profile scope is exempt). |
 | Search | `search/statuses.rs`: `suspend` + `silence`; `search/accounts.rs`: `suspend` only (Mastodon: limited accounts stay findable). `search/resolve.rs` refuses suspended lookups. |
 | Trends | `tags/trends.rs`: `suspend` + `silence` + `limited_at`. |
 | Remote media | `posts/remote.rs` enqueue + `media/jobs.rs` fetch both check `reject_media`/`suspend`. |

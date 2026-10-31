@@ -1016,6 +1016,8 @@
     "listsTitle": "Add to lists",
     "listsEmpty": "You don't have any lists yet.",
     "listsManage": "Manage lists",
+    "limitedNotice": "This user has been limited on this instance. Their posts are only visible to their followers.",
+    "showPostsAnyway": "Show posts anyway",
     "listsNewPlaceholder": "New list name"
   },
   "register": {

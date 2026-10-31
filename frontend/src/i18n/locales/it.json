@@ -1029,6 +1029,8 @@
     "listsTitle": "Aggiungi a liste",
     "listsEmpty": "Non hai ancora nessuna lista.",
     "listsManage": "Gestisci liste",
+    "limitedNotice": "Questo utente è stato limitato su questa istanza. I suoi post sono visibili solo ai follower.",
+    "showPostsAnyway": "Mostra comunque i post",
     "listsNewPlaceholder": "Nome della lista"
   },
   "register": {

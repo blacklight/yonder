@@ -141,6 +141,9 @@ describe("ProfilePage", () => {
     vi.mocked(addListMembers).mockReset();
     vi.mocked(removeListMembers).mockReset();
     vi.mocked(createList).mockReset();
+    vi.mocked(getAccount).mockReset();
+    vi.mocked(adminAccountAction).mockReset();
+    vi.mocked(reverseAdminAction).mockReset();
     document.title = "";
   });
 
@@ -676,6 +679,70 @@ describe("ProfilePage", () => {
     expect(reverseAdminAction).toHaveBeenCalledWith("1", "unsilence");
     expect(adminAccountAction).not.toHaveBeenCalled();
     expect(getAccount).toHaveBeenCalledWith("1");
+  });
+
+  it("hides a limited profile's timeline behind a notice for strangers", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice", limited: true }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: false,
+        followed_by: false,
+        blocking: false,
+        muting: false,
+        note: "",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice");
+    const notice = wrapper.find(".profile__limited");
+    expect(notice.exists()).toBe(true);
+    expect(notice.text()).toContain("limited on this instance");
+    // Posts are not fetched until the viewer opts in.
+    expect(accountStatuses).not.toHaveBeenCalled();
+    await notice.get("button").trigger("click");
+    await flushPromises();
+    expect(accountStatuses).toHaveBeenCalled();
+    expect(wrapper.find(".profile__limited").exists()).toBe(false);
+    expect(wrapper.find(".timeline").exists()).toBe(true);
+  });
+
+  it("shows a limited profile's timeline to its followers directly", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice", limited: true }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: true,
+        followed_by: false,
+        blocking: false,
+        muting: false,
+        note: "",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.find(".profile__limited").exists()).toBe(false);
+    expect(accountStatuses).toHaveBeenCalled();
+  });
+
+  it("shows a limited profile's timeline to the owner directly", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "1" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice", limited: true }),
+    );
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.find(".profile__limited").exists()).toBe(false);
+    expect(accountStatuses).toHaveBeenCalled();
   });
 
   it("offers 'Unsuspend account' on a suspended account and reverses", async () => {

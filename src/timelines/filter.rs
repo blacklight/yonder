@@ -150,16 +150,17 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     // silenced domains only vanish from the public scopes — followers
     // keep seeing them in home. Limited *accounts* (account-level
     // silence, `a.limited_at`) follow the same public-scope rule.
+    // The `Account` (profile) scope is deliberately excluded: the
+    // owner and their followers must always see the profile
+    // timeline, and non-followers get a "limited" notice with an
+    // opt-in reveal — the hiding is client-side, like Mastodon's.
     b.clause(
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
          WHERE idb.domain = a.domain AND idb.severity = 'suspend')",
     );
     if matches!(
         scope,
-        TimelineScope::Local
-            | TimelineScope::Federated { .. }
-            | TimelineScope::Tag { .. }
-            | TimelineScope::Account { .. }
+        TimelineScope::Local | TimelineScope::Federated { .. } | TimelineScope::Tag { .. }
     ) {
         b.clause(
             "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
@@ -409,6 +410,18 @@ mod tests {
         let w = where_for(&TimelineScope::Federated { remote_only: true }, Some(3));
         assert!(w.sql.contains("a.domain IS NOT NULL"));
         assert_eq!(w.binds.len(), 1);
+    }
+
+    #[test]
+    fn account_scope_keeps_limited_and_silenced_authors() {
+        // Profile timelines are not a public scope: owners and
+        // followers always see limited accounts, and non-followers
+        // get a client-side notice + opt-in reveal.
+        for viewer in [None, Some(2)] {
+            let w = where_for(&TimelineScope::Account { account_id: 3 }, viewer);
+            assert!(!w.sql.contains("a.limited_at"), "{}", w.sql);
+            assert!(!w.sql.contains("idb.severity = 'silence'"), "{}", w.sql);
+        }
     }
 
     #[test]

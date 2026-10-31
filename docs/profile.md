@@ -87,7 +87,11 @@ fetch errors keep it, so transient outages never wipe verification.
 Writes go through `SELECT … FOR UPDATE` and only touch entries still
 carrying the fetched `(name, value_raw)` pair. The same job sweeps
 every local account on `federation.profile_link_verification_schedule`
-(default `0 4 * * *`, `""` disables). Verification flips never emit
+(default `0 4 * * *`, `""` disables). A profile read also re-enqueues
+the job while any link-valued field is unverified — covers fields
+added before their target page gained the `rel="me"` backlink —
+throttled to one attempt per account per 15 minutes via a Redis flag.
+Verification flips never emit
 an `Update` — `verified_at` doesn't reach the AP document.
 
 For **remote** accounts the same column is populated at ingest: the
@@ -106,10 +110,9 @@ the same profile). Refreshes carry a field's stamp over when its
 `value_raw` stored for anchor-valued entries, or the first `<a>`
 href), not the literal `value` markup, so a remote re-render with
 different attributes or spans can't drop verification; a changed
-target resets it. Rows that predate verification (or never
-went through a fetch — the 0028 backfill, partial docs) get a
-read-triggered enqueue on the profile endpoint, throttled to one
-attempt per account per 15 minutes via a Redis flag. A document with
+target resets it. Remote rows that predate verification (or never
+went through a fetch — the 0028 backfill, partial docs) are caught
+by the same read-triggered enqueue local rows get. A document with
 no `attachment` key leaves stored fields alone (partial docs must not
 clobber); a present-but-empty array clears them. The extraction is
 bounded to 32 entries with 255/4096-char name/value caps.

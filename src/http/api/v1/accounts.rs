@@ -321,22 +321,21 @@ async fn counters_refresh_due(db: &sqlx::PgPool, account_id: i64) -> bool {
     .unwrap_or(true)
 }
 
-/// One `VerifyProfileLinks` attempt per remote account per window —
-/// a permanently unreachable field URL must not re-fetch on every
-/// profile read. Actor refreshes re-verify independently of this
-/// flag (their fields may have changed).
+/// One `VerifyProfileLinks` attempt per account per window — a
+/// permanently unreachable field URL must not re-fetch on every
+/// profile read. Edits and actor refreshes re-verify independently
+/// of this flag (their fields may have changed).
 const VERIFY_FIELDS_READ_THROTTLE_SECONDS: usize = 900;
 
-/// For remote accounts, enqueue `VerifyProfileLinks` when a
-/// link-valued field carries no `verified_at` stamp. Covers remote
-/// rows that never passed through a verification enqueue — actor
-/// upserts predate the job, `attachment`-less partial docs, and the
-/// 0028 backfill. Fresh ingest/refresh paths enqueue it themselves;
+/// Enqueue `VerifyProfileLinks` when a link-valued field carries no
+/// `verified_at` stamp. Remote rows that never passed through a
+/// verification enqueue are covered (actor upserts predate the job,
+/// `attachment`-less partial docs, and the 0028 backfill); local rows
+/// benefit the same way — a field added before its target page gained
+/// the `rel="me"` backlink would otherwise wait for the daily sweep.
+/// Fresh ingest/refresh and field-edit paths enqueue it themselves;
 /// this catches the rest. Never fails the read.
-async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::AccountRow) {
-    if account.domain.is_none() {
-        return;
-    }
+async fn maybe_verify_fields(state: &AppState, account: &account_mapper::AccountRow) {
     let Some(fields) = account.profile_fields.as_array() else {
         return;
     };
@@ -347,9 +346,7 @@ async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::
     if !unverified {
         return;
     }
-    let flag = state
-        .redis
-        .key(&format!("verify-remote-fields:{}", account.id));
+    let flag = state.redis.key(&format!("verify-fields:{}", account.id));
     let claimed = match state.redis.conn().await {
         Ok(mut conn) => redis::cmd("SET")
             .arg(&flag)
@@ -361,11 +358,11 @@ async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::
             .await
             .map(|c| c.is_some())
             .unwrap_or_else(|e| {
-                tracing::warn!(account_id = account.id, error = %e, "remote field-verify throttle check failed");
+                tracing::warn!(account_id = account.id, error = %e, "field-verify throttle check failed");
                 false
             }),
         Err(e) => {
-            tracing::warn!(account_id = account.id, error = %e, "redis unavailable — skipping remote field verify");
+            tracing::warn!(account_id = account.id, error = %e, "redis unavailable — skipping field verify");
             false
         }
     };
@@ -382,7 +379,7 @@ async fn maybe_verify_remote_fields(state: &AppState, account: &account_mapper::
     )
     .await
     {
-        tracing::warn!(account_id = account.id, error = %e, "remote field verify enqueue failed");
+        tracing::warn!(account_id = account.id, error = %e, "field verify enqueue failed");
         let Ok(mut conn) = state.redis.conn().await else {
             return;
         };
@@ -462,7 +459,7 @@ pub async fn get_account(
 async fn public_account_entity(state: &AppState, id: i64) -> Result<Value> {
     let account = load_public_account(state, id).await?;
     maybe_refresh_remote(state, &account).await;
-    maybe_verify_remote_fields(state, &account).await;
+    maybe_verify_fields(state, &account).await;
     let base_url = crate::activitypub::federation_base_url(&state.config());
     let mut entity =
         account_mapper::account_entity(&state.db, &state.config(), &base_url, &account).await?;

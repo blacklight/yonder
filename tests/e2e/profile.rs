@@ -1214,6 +1214,67 @@ async fn remote_profile_read_enqueues_field_verification() {
     assert!(enqueued, "no verify_profile_links job queued: {raw:?}");
 }
 
+/// Reading a local profile with an unverified link field enqueues a
+/// `verify_profile_links` job — a field added before its target page
+/// gained the `rel="me"` backlink self-heals on the next profile view
+/// instead of waiting for the daily sweep.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_profile_read_enqueues_field_verification() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let _token = token_for(&env.app, "lisa").await;
+    let account_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'lisa'")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    // Seed the field directly — a PATCH would enqueue verification
+    // itself and make the read-path enqueue indistinguishable.
+    sqlx::query("UPDATE accounts SET profile_fields = $2::jsonb WHERE id = $1")
+        .bind(account_id)
+        .bind(json!([{
+            "name": "Site",
+            "value": "<a href=\"https://lisa.example\">lisa.example</a>",
+            "value_raw": "https://lisa.example",
+            "verified_at": Value::Null,
+        }]))
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let (status, body) = request(
+        &env.app,
+        Request::builder()
+            .uri(format!("/api/v1/accounts/{account_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let key = env.state.redis.key("queue:bulk");
+    let mut conn = env
+        .state
+        .redis
+        .client()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
+    let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
+        .arg(&key)
+        .arg("-")
+        .arg("+")
+        .query_async(&mut conn)
+        .await
+        .unwrap();
+    let enqueued = raw.iter().any(|(_, fields)| {
+        fields.iter().any(|f| {
+            f.contains("\"verify_profile_links\"")
+                && f.contains(&format!("\"account_id\":{account_id}"))
+        })
+    });
+    assert!(enqueued, "no verify_profile_links job queued: {raw:?}");
+}
+
 /// A field value submitted as an `<a>` anchor is kept as an anchor
 /// (Mastodon accepts anchor markup in field values) and is
 /// verifiable; a `javascript:` href degrades to its text.

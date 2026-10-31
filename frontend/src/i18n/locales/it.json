@@ -1001,6 +1001,14 @@
     "actions": "Azioni",
     "followsYou": "Ti segue",
     "blockedYou": "Sei bloccato",
+    "badge": {
+      "admin": "Admin",
+      "moderator": "Mod",
+      "blocked": "Bloccato",
+      "muted": "Silenziato",
+      "limited": "Limitato",
+      "suspended": "Sospeso"
+    },
     "followers": "{count} follower",
     "following": "{count} seguiti",
     "statuses": "{count} post",

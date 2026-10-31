@@ -1001,6 +1001,14 @@
     "actions": "إجراءات",
     "followsYou": "يتابعك",
     "blockedYou": "أنت محظور",
+    "badge": {
+      "admin": "مدير",
+      "moderator": "مشرف",
+      "blocked": "محظور",
+      "muted": "مكتوم",
+      "limited": "محدود",
+      "suspended": "موقوف"
+    },
     "followers": "لا متابعين | متابع واحد | متابعان | {count} متابعين | {count} متابعًا | {count} متابع",
     "following": "لا يتابع أحد | يتابع واحد | يتابع اثنان | يتابع {count} | يتابع {count} | يتابع {count}",
     "statuses": "لا منشورات | منشور واحد | منشوران | {count} منشورات | {count} منشورًا | {count} منشور",

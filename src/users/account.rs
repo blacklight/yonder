@@ -33,7 +33,13 @@ pub struct AccountRow {
     /// `users.indexable` for local accounts (`None` for remote rows,
     /// which have no `users` row).
     pub indexable: Option<bool>,
-    /// Instance suspension — suspended accounts 404 on public reads.
+    /// Staff role (`user`/`moderator`/`admin`) — surfaced on local
+    /// accounts only so the profile badge cannot mark remote rows.
+    pub role: String,
+    /// Instance silence — Mastodon's public `limited` flag.
+    pub limited_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Instance suspension — public reads render the account with a
+    /// `suspended` flag (the profile shows a tombstone-style badge).
     pub suspended_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Move target — the `moved` entity renders it nested.
     pub moved_to_account_id: Option<i64>,
@@ -46,7 +52,8 @@ const ACCOUNT_COLS: &str = "a.id, a.username, a.domain, a.actor_id, a.url, a.dis
         a.banner_path, a.avatar_remote_url, a.banner_remote_url, \
         a.avatar_blurhash, a.header_blurhash, \
         a.profile_fields, a.followers_count, a.following_count, \
-        a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id, a.suspended_at";
+        a.statuses_count, a.created_at, u.indexable, a.moved_to_account_id, a.suspended_at, \
+        a.role, a.limited_at";
 
 /// Load an `accounts` row by primary key. The `users` LEFT JOIN is how
 /// `noindex` gets its value for local accounts; remote rows have no
@@ -223,6 +230,8 @@ fn account_row(r: &sqlx::postgres::PgRow) -> AccountRow {
         indexable: r.get("indexable"),
         moved_to_account_id: r.get("moved_to_account_id"),
         suspended_at: r.get("suspended_at"),
+        role: r.get("role"),
+        limited_at: r.get("limited_at"),
         created_at: r.get("created_at"),
     }
 }
@@ -345,6 +354,15 @@ pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::
         }
         (_, bio) => bio.clone().unwrap_or_default(),
     };
+    let mut yonder = json!({
+        "avatar_blurhash": account.avatar_blurhash,
+        "header_blurhash": account.header_blurhash,
+    });
+    // The staff badge is a local-instance concept — remote rows share
+    // the `role` column but the instance cannot certify their staff.
+    if account.domain.is_none() && account.role != "user" {
+        yonder["role"] = json!(account.role);
+    }
     json!({
         "id": account.id.to_string(),
         "username": account.username,
@@ -378,10 +396,13 @@ pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::
         // renders `"moved": null` and clients won't redirect.
         "moved": Value::Null,
         "emojis": [],
-        "yonder": {
-            "avatar_blurhash": account.avatar_blurhash,
-            "header_blurhash": account.header_blurhash,
-        },
+        // Instance moderation flags surface on the public entity so
+        // profiles can badge them: `limited` is Mastodon's silenced
+        // flag; `suspended` is emitted on suspended accounts, which
+        // still render (badge + grayed avatar) rather than 404.
+        "limited": account.limited_at.is_some(),
+        "suspended": account.suspended_at.is_some(),
+        "yonder": yonder,
     })
 }
 

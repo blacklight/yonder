@@ -579,4 +579,61 @@ describe("ProfilePage", () => {
     expect(box.checked).toBe(true);
     expect(panel.textContent).toContain("Close friends");
   });
+
+  it("badges a local staff account as Admin/Mod", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({ yonder: { role: "admin" } } as Partial<Account>),
+    );
+    const wrapper = await openProfile("/@alice");
+    const badges = wrapper.findAll(".profile__badge");
+    expect(badges.some((b) => b.text() === "Admin")).toBe(true);
+
+    vi.mocked(lookup).mockResolvedValue(
+      account({ yonder: { role: "moderator" } } as Partial<Account>),
+    );
+    const wrapper2 = await openProfile("/@alice");
+    expect(
+      wrapper2.findAll(".profile__badge").some((b) => b.text() === "Mod"),
+    ).toBe(true);
+  });
+
+  it("badges limited and suspended accounts, grayscale on suspended", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({ limited: true }));
+    const wrapper = await openProfile("/@alice");
+    expect(
+      wrapper.findAll(".profile__badge").some((b) => b.text() === "Limited"),
+    ).toBe(true);
+    expect(wrapper.find(".profile__avatar--grayscale").exists()).toBe(false);
+
+    vi.mocked(lookup).mockResolvedValue(account({ suspended: true }));
+    const wrapper2 = await openProfile("/@alice");
+    expect(
+      wrapper2.findAll(".profile__badge").some((b) => b.text() === "Suspended"),
+    ).toBe(true);
+    expect(wrapper2.find(".profile__avatar--grayscale").exists()).toBe(true);
+  });
+
+  it("badges blocked and muted accounts, grayscale on blocked", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "1", acct: "alice@example.org" }),
+    );
+    vi.mocked(getRelationships).mockResolvedValue([
+      {
+        id: "1",
+        following: false,
+        followed_by: false,
+        blocking: true,
+        muting: true,
+        note: "",
+      } as never,
+    ]);
+    const wrapper = await openProfile("/@alice@example.org");
+    const badges = wrapper.findAll(".profile__badge");
+    expect(badges.some((b) => b.text() === "Blocked")).toBe(true);
+    expect(badges.some((b) => b.text() === "Muted")).toBe(true);
+    expect(wrapper.find(".profile__avatar--grayscale").exists()).toBe(true);
+  });
 });

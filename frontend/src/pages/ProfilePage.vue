@@ -156,6 +156,17 @@ const avatarUrl = computed(
   () => safeHttpUrl(account.value?.avatar) ?? undefined,
 );
 const isOwn = computed(() => auth.account?.id === account.value?.id);
+/** Staff role on the local instance — drives the Admin/Mod badge. */
+const staffRole = computed(() =>
+  account.value?.yonder?.role === "admin" ||
+  account.value?.yonder?.role === "moderator"
+    ? account.value.yonder.role
+    : null,
+);
+/** Blocked and suspended accounts render their avatar in grayscale. */
+const avatarGrayscale = computed(
+  () => Boolean(rel.value?.blocking) || Boolean(account.value?.suspended),
+);
 const handle = computed(() => {
   const a = account.value;
   return a ? `@${a.acct}` : "";
@@ -650,6 +661,7 @@ watch([tab, showReplies, showBoosts], () => {
             :name="account.display_name || account.acct"
             size="lg"
             class="profile__avatar"
+            :class="{ 'profile__avatar--grayscale': avatarGrayscale }"
           />
           <div v-if="!rel?.blocked_by" class="profile__actions">
             <router-link
@@ -699,12 +711,35 @@ watch([tab, showReplies, showBoosts], () => {
           />
         </h1>
         <p class="profile__handle">{{ handle }}</p>
-        <p v-if="rel?.followed_by" class="profile__badge">
-          {{ t("profile.followsYou") }}
-        </p>
-        <p v-if="rel?.blocked_by" class="profile__badge profile__badge--danger">
-          {{ t("profile.blockedYou") }}
-        </p>
+        <div class="profile__badges">
+          <p v-if="staffRole" class="profile__badge profile__badge--staff">
+            {{ t(`profile.badge.${staffRole}`) }}
+          </p>
+          <p v-if="rel?.followed_by" class="profile__badge">
+            {{ t("profile.followsYou") }}
+          </p>
+          <p v-if="rel?.blocking" class="profile__badge">
+            {{ t("profile.badge.blocked") }}
+          </p>
+          <p v-if="rel?.muting" class="profile__badge">
+            {{ t("profile.badge.muted") }}
+          </p>
+          <p v-if="account.limited" class="profile__badge profile__badge--warn">
+            {{ t("profile.badge.limited") }}
+          </p>
+          <p
+            v-if="account.suspended"
+            class="profile__badge profile__badge--warn"
+          >
+            {{ t("profile.badge.suspended") }}
+          </p>
+          <p
+            v-if="rel?.blocked_by"
+            class="profile__badge profile__badge--danger"
+          >
+            {{ t("profile.blockedYou") }}
+          </p>
+        </div>
         <div class="profile__counters">
           <router-link
             :to="`/@${account.acct}/followers`"
@@ -944,6 +979,9 @@ watch([tab, showReplies, showBoosts], () => {
   margin-left: var(--space-2);
   border: 4px solid var(--bg);
 }
+.profile__avatar--grayscale {
+  filter: grayscale(1);
+}
 .profile__actions {
   display: flex;
   flex-wrap: wrap;
@@ -973,6 +1011,11 @@ watch([tab, showReplies, showBoosts], () => {
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
 }
+.profile__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
 .profile__badge {
   display: inline-block;
   margin: var(--space-2) 0 0;
@@ -983,6 +1026,12 @@ watch([tab, showReplies, showBoosts], () => {
   font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
+}
+.profile__badge--staff {
+  color: var(--accent);
+}
+.profile__badge--warn {
+  color: var(--warning);
 }
 .profile__badge--danger {
   color: var(--danger);

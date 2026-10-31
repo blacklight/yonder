@@ -675,7 +675,9 @@ async fn account_entity_and_statuses_tab() {
     assert_eq!(anon.len(), 4);
     assert!(anon.iter().all(|s| s["visibility"] != "private"));
 
-    // Missing and suspended accounts 404.
+    // Missing accounts 404; suspended accounts render with the
+    // `suspended` tombstone flag (the profile shows a badge + grayed
+    // avatar instead of a bare 404).
     let (code, _) = get_json(&env.app, "/api/v1/accounts/999999").await;
     assert_eq!(code, 404);
     sqlx::query("UPDATE accounts SET suspended_at = now() WHERE id = $1")
@@ -683,8 +685,9 @@ async fn account_entity_and_statuses_tab() {
         .execute(db)
         .await
         .unwrap();
-    let (code, _) = get_json(&env.app, &format!("/api/v1/accounts/{alice}")).await;
-    assert_eq!(code, 404);
+    let (code, body) = get_json(&env.app, &format!("/api/v1/accounts/{alice}")).await;
+    assert_eq!(code, 200);
+    assert_eq!(body["suspended"], true);
 }
 
 /// `max_upload_size` is enforced in the `store_status_media` seam, so

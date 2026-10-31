@@ -26,6 +26,16 @@ export interface Account {
   emojis: CustomEmoji[];
   moved?: Account | null;
   last_status_at?: string | null;
+  /** Instance-silenced (`limited_at`) — Mastodon's silenced flag. */
+  limited?: boolean;
+  /** Instance-suspended — the profile renders with a tombstone badge. */
+  suspended?: boolean;
+  yonder?: {
+    avatar_blurhash?: string | null;
+    header_blurhash?: string | null;
+    /** Staff role — only emitted on local non-`user` accounts. */
+    role?: string;
+  };
 }
 
 /** `verify_credentials` extension — CredentialAccount additions. */

@@ -298,13 +298,36 @@ async fn deleted_suspended_and_muted_accounts() {
     let (status, _) = lookup(&env.app, Some("carol"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Suspended account → 404 through `load_public_account`.
+    // Suspended accounts still resolve — the entity carries the
+    // `suspended` tombstone flag so profiles can show the badge and
+    // the grayed avatar instead of a bare 404.
     sqlx::query("UPDATE accounts SET suspended_at = now() WHERE username = 'dave'")
         .execute(&env.state.db)
         .await
         .unwrap();
-    let (status, _) = lookup(&env.app, Some("dave"), None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = lookup(&env.app, Some("dave"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["suspended"], true);
+    assert_eq!(body["limited"], false);
+    assert_eq!(body["yonder"]["role"], Value::Null);
+
+    // A silenced account carries Mastodon's `limited` flag; a staff
+    // role surfaces under `yonder.role` for local accounts only.
+    sqlx::query("UPDATE accounts SET limited_at = now() WHERE username = 'bob'")
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE accounts SET role = 'moderator' WHERE username = 'alice'")
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let (status, body) = lookup(&env.app, Some("bob"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["limited"], true);
+    assert_eq!(body["suspended"], false);
+    let (status, body) = lookup(&env.app, Some("alice"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["yonder"]["role"], "moderator");
 
     // A muted account still resolves — the viewer needs the profile
     // to unmute it (no search-visibility filtering).

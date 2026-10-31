@@ -349,6 +349,8 @@ mod tests {
             statuses_count: 0,
             indexable: None,
             suspended_at: None,
+            role: "user".to_string(),
+            limited_at: None,
             moved_to_account_id: None,
             created_at: Utc::now(),
         }

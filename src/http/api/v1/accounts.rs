@@ -224,15 +224,14 @@ const REMOTE_REFRESH_AFTER_SECONDS: i64 = REMOTE_ACTOR_STALE_SECONDS;
 const REFRESH_ENQUEUE_THROTTLE_SECONDS: usize = 300;
 
 /// Load the profile's account row and apply the public-read rules:
-/// missing, deleted and suspended accounts all read as 404.
+/// missing and deleted accounts read as 404; suspended accounts
+/// still load — the entity carries `suspended: true` and the SPA
+/// shows a tombstone-style badge (like Mastodon's `{suspended}`
+/// tombstone, but keeping the profile fields readable).
 async fn load_public_account(state: &AppState, id: i64) -> Result<account_mapper::AccountRow> {
-    let account = account_mapper::load(&state.db, id)
+    account_mapper::load(&state.db, id)
         .await?
-        .ok_or_else(|| Error::NotFound("account".into()))?;
-    if account.suspended_at.is_some() {
-        return Err(Error::NotFound("account".into()));
-    }
-    Ok(account)
+        .ok_or_else(|| Error::NotFound("account".into()))
 }
 
 /// For remote accounts, enqueue a `RemoteActorFetch` when the
@@ -441,7 +440,7 @@ async fn clear_refresh_slot(state: &AppState, actor_id: &str) {
     params(("id" = String, Path, description = "Account id")),
     responses(
         (status = 200, description = "The account"),
-        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+        (status = 404, description = "Missing or deleted account", body = crate::error::ErrorBody),
     )
 )]
 pub async fn get_account(
@@ -501,7 +500,7 @@ async fn public_account_entity(state: &AppState, id: i64) -> Result<Value> {
     responses(
         (status = 200, description = "The account"),
         (status = 401, description = "Sign-in would allow a remote lookup", body = crate::error::ErrorBody),
-        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+        (status = 404, description = "Missing or deleted account", body = crate::error::ErrorBody),
         (status = 422, description = "Missing or malformed acct", body = crate::error::ErrorBody),
         (status = 429, description = "Rate limited", body = crate::error::ErrorBody),
     )
@@ -600,7 +599,7 @@ pub async fn lookup(
     ),
     responses(
         (status = 200, description = "Page of statuses, newest first (Link header carries cursors)"),
-        (status = 404, description = "Missing, deleted or suspended account", body = crate::error::ErrorBody),
+        (status = 404, description = "Missing or deleted account", body = crate::error::ErrorBody),
     )
 )]
 pub async fn account_statuses(

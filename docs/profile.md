@@ -150,7 +150,12 @@ Mastodon allows).
 | GET | `/api/v1/accounts/{id}` | optional | Full Account entity: `avatar`/`header`, `acct`, counters, verified `fields`, `created_at`, `last_status_at` (latest non-tombstone status date), `locked`/`bot`, `moved` |
 | GET | `/api/v1/accounts/{id}/statuses` | optional | Profile tabs: `pinned`, `only_media`, `exclude_replies` (self-replies stay), `exclude_reblogs`; `max_id`/`min_id`/`since_id`/`limit` pagination with `Link` headers (`pinned` returns the whole pin set, unpaginated) |
 
-Missing, deleted and suspended accounts all return 404; moved accounts
+Missing and deleted accounts return 404; suspended accounts return
+200 with `suspended: true` (and `limited: true` for silenced rows) —
+the profile stays readable and the SPA shows a tombstone-style badge
+plus a grayscaled avatar. Staff roles surface as `yonder.role`
+(`admin`/`moderator`) on local accounts only — the Admin/Mod badge
+drives off that. Moved accounts
 return 200 with `moved` — including remote accounts whose document
 carries `movedTo`: a refresh honors it only when the target's
 `alsoKnownAs` names the origin (the same contract inbound `Move`

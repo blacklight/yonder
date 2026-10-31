@@ -988,6 +988,14 @@
     "actions": "Actions",
     "followsYou": "Follows you",
     "blockedYou": "You are blocked",
+    "badge": {
+      "admin": "Admin",
+      "moderator": "Mod",
+      "blocked": "Blocked",
+      "muted": "Muted",
+      "limited": "Limited",
+      "suspended": "Suspended"
+    },
     "followers": "{count} followers",
     "following": "{count} following",
     "statuses": "{count} posts",

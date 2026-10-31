@@ -279,9 +279,6 @@ function flashSaved() {
   flex: 1;
   min-width: 0;
   max-width: 24rem;
-  padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   background: var(--bg);
   font-family: monospace;
   font-size: var(--font-sm, 0.8125rem);

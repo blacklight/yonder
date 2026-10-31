@@ -15,6 +15,7 @@ import {
   patchStatus,
   statusMatchesId,
 } from "@/utils/statusStream";
+import { compareIds } from "@/utils/ids";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
@@ -63,11 +64,7 @@ const threads = computed<Status[][]>(() => {
     // The head opens the thread; the rest unfold chronologically.
     const head = g[0];
     g.sort((a, b) =>
-      a.id === head.id
-        ? -1
-        : b.id === head.id
-          ? 1
-          : Number(a.id) - Number(b.id),
+      a.id === head.id ? -1 : b.id === head.id ? 1 : compareIds(a.id, b.id),
     );
   }
   return [...groups.values()];
@@ -126,8 +123,8 @@ function onStreamEvent(ev: { event: string; payload: unknown }) {
     ...descendants.value.map((x) => x.id),
   ]);
   if (s.in_reply_to_id && known.has(s.in_reply_to_id)) {
-    descendants.value = [...descendants.value, s].sort(
-      (a, b) => Number(a.id) - Number(b.id),
+    descendants.value = [...descendants.value, s].sort((a, b) =>
+      compareIds(a.id, b.id),
     );
   }
 }

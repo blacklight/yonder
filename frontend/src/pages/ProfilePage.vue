@@ -488,7 +488,7 @@ async function run(id: string) {
         break;
       }
       case "report":
-        await fileReport({ account_id: Number(a.id) });
+        await fileReport({ account_id: a.id });
         break;
       case "admin-limit":
         if (a.limited) await reverseAdminAction(a.id, "unsilence");

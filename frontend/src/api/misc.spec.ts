@@ -22,11 +22,13 @@ function mockFetch(status: number, body: unknown) {
 describe("reports api", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("fileReport POSTs the report body", async () => {
+  it("fileReport POSTs the report body with string ids", async () => {
     const spy = mockFetch(200, { id: "1" });
     await fileReport({
-      account_id: 7,
-      status_ids: [11],
+      // Snowflake ids travel as strings — `Number()` corrupts them
+      // past Number.MAX_SAFE_INTEGER.
+      account_id: "117519765199651274",
+      status_ids: ["117537791789827970"],
       comment: "spam",
       category: "spam",
       forward: true,
@@ -35,8 +37,8 @@ describe("reports api", () => {
     expect(url).toBe("/api/v1/reports");
     expect(init!.method).toBe("POST");
     expect(JSON.parse(init!.body as string)).toEqual({
-      account_id: 7,
-      status_ids: [11],
+      account_id: "117519765199651274",
+      status_ids: ["117537791789827970"],
       comment: "spam",
       category: "spam",
       forward: true,

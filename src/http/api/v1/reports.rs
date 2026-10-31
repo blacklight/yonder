@@ -19,6 +19,8 @@ use crate::{
     Error, Result,
 };
 
+use super::EntityId;
+
 /// `POST /api/v1/reports` — file a report against an account, with
 /// optional status targets (each must belong to it), a comment capped
 /// at `content.max_report_comment`, a category, and `forward` (send a
@@ -55,15 +57,21 @@ pub async fn file(
             "comment exceeds {max} characters"
         )));
     }
+    let account_id = body.account_id.to_i64()?;
     let target: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM accounts WHERE id = $1 AND deleted_at IS NULL AND suspended_at IS NULL",
     )
-    .bind(body.account_id)
+    .bind(account_id)
     .fetch_optional(&state.db)
     .await?;
     let target = target.ok_or_else(|| Error::NotFound("account".into()))?;
 
-    let status_ids = body.status_ids.unwrap_or_default();
+    let status_ids: Vec<i64> = body
+        .status_ids
+        .unwrap_or_default()
+        .iter()
+        .map(EntityId::to_i64)
+        .collect::<Result<_>>()?;
     let category = body.category.as_deref().unwrap_or("other");
     let forward = body.forward.unwrap_or(false);
     let mut tx = state.db.begin().await?;
@@ -92,9 +100,11 @@ pub async fn file(
 
 #[derive(Deserialize)]
 pub struct FileReport {
-    pub account_id: i64,
+    /// Target account — string or number; entity ids are strings on
+    /// the wire and JS clients can't widen them to `Number` safely.
+    pub account_id: EntityId,
     #[serde(default)]
-    pub status_ids: Option<Vec<i64>>,
+    pub status_ids: Option<Vec<EntityId>>,
     #[serde(default)]
     pub comment: Option<String>,
     #[serde(default)]

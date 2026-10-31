@@ -50,7 +50,35 @@ use std::sync::Arc;
 
 use axum::{routing::get, routing::post, Router};
 
-use crate::http::{middleware::ratelimit, AppState};
+use crate::{
+    http::{middleware::ratelimit, AppState},
+    Error, Result,
+};
+
+/// An entity id in either wire form. Entities serialize ids as
+/// strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
+/// so round-tripping through a JS number silently corrupts them —
+/// but bare JSON numbers are accepted for convenience.
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum EntityId {
+    /// String form (`"1234"`), matching entity serialization.
+    Str(String),
+    /// Bare JSON number (`1234`).
+    Num(i64),
+}
+
+impl EntityId {
+    /// Resolve either wire form to the numeric id.
+    pub fn to_i64(&self) -> Result<i64> {
+        match self {
+            EntityId::Num(v) => Ok(*v),
+            EntityId::Str(s) => s
+                .parse()
+                .map_err(|_| Error::Validation("invalid entity id".into())),
+        }
+    }
+}
 
 /// The v1 router. Merge feature subrouters here.
 ///

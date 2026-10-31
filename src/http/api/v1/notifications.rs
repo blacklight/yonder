@@ -24,6 +24,8 @@ use crate::{
     Error, Result,
 };
 
+use super::EntityId;
+
 /// Expands one `types[]`/`exclude_types[]` value into wire type
 /// names. Yonder group aliases (`likes`, `boosts`, …) expand to
 /// several; `all` expands to nothing (no filter). Values that are no
@@ -388,24 +390,11 @@ pub async fn clear(State(state): State<Arc<AppState>>, auth: AuthContext) -> Res
     Ok(Json(json!({})))
 }
 
-/// A notification id in either wire form. Entities serialize ids as
-/// strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
-/// so round-tripping through a JS number silently corrupts them —
-/// but bare JSON numbers are accepted for convenience.
-#[derive(serde::Deserialize, utoipa::ToSchema)]
-#[serde(untagged)]
-pub enum NotificationId {
-    /// String form (`"1234"`), matching entity serialization.
-    Str(String),
-    /// Bare JSON number (`1234`).
-    Num(i64),
-}
-
 /// Body for `POST /notifications/read` — ids the client rendered.
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct MarkReadBody {
     /// Notification ids to mark read (max [`MAX_MARK_READ_IDS`]).
-    pub ids: Vec<NotificationId>,
+    pub ids: Vec<EntityId>,
 }
 
 /// Upper bound on ids per `mark_read` call — the SPA batches viewport
@@ -437,12 +426,7 @@ pub async fn mark_read(
     }
     let mut ids = Vec::with_capacity(body.ids.len());
     for id in &body.ids {
-        ids.push(match id {
-            NotificationId::Num(v) => *v,
-            NotificationId::Str(s) => s
-                .parse()
-                .map_err(|_| Error::Validation("invalid notification id".into()))?,
-        });
+        ids.push(id.to_i64()?);
     }
     notifications::mark_read(&state.db, auth.account_id, &ids).await?;
     publish_count(&state, auth.user_id, auth.account_id).await;

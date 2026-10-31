@@ -224,7 +224,7 @@ async fn audit_count(env: &Env, action: &str) -> i64 {
 // Reports
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn report_filing_notifies_and_lists() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -272,6 +272,22 @@ async fn report_filing_notifies_and_lists() {
         .iter()
         .any(|n| n["type"] == "admin.report"));
 
+    // String ids are accepted — entity ids serialize as strings and
+    // JS clients can't widen snowflakes to `Number` safely.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/reports",
+        Some(&alice),
+        Some(json!({
+            "account_id": bob_id.to_string(),
+            "comment": "string id filing",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["target_account"]["id"], bob_id.to_string());
+
     // Comment-length rejection against the config cap (2000).
     let too_long = "x".repeat(2100);
     let (status, _, _) = request(
@@ -290,7 +306,7 @@ async fn report_filing_notifies_and_lists() {
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn report_resolve_reopen_assign_and_audit() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -380,7 +396,7 @@ async fn report_resolve_reopen_assign_and_audit() {
 // User actions
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn silence_and_suspend_effects() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -449,7 +465,7 @@ async fn silence_and_suspend_effects() {
     assert_eq!(body["suspended"], false);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_is_admin_only_and_role_guard() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -512,7 +528,7 @@ async fn delete_is_admin_only_and_role_guard() {
 // Domain blocks
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn domain_block_crud_and_public_listing() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -634,7 +650,7 @@ async fn domain_block_crud_and_public_listing() {
     assert_eq!(audit_count(&env, "domain_block.delete").await, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_listing_gated_by_config() {
     let mut config = Config::default();
     config.instance.expose_moderated_instances = false;
@@ -657,7 +673,7 @@ async fn public_listing_gated_by_config() {
 /// domains, delivery-target hosts and relay hosts, minus
 /// silence/suspend-blocked domains (Mastodon's `Instance.searchable`
 /// semantics). The local domain never appears.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn peers_lists_known_domains_minus_blocked() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -735,7 +751,7 @@ async fn peers_lists_known_domains_minus_blocked() {
 
 /// `instance.peers_api_enabled = false` → the endpoint 404s, like
 /// Mastodon's namesake setting.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn peers_gated_by_config() {
     let mut config = Config::default();
     config.instance.peers_api_enabled = false;
@@ -747,7 +763,7 @@ async fn peers_gated_by_config() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn action_guards_staff_and_self() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -803,7 +819,7 @@ async fn action_guards_staff_and_self() {
     let _ = admin2;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn disable_freezes_and_enable_restores() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -861,7 +877,7 @@ async fn disable_freezes_and_enable_restores() {
 // Inbound reports / audit job
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inbound_flag_respects_reject_reports() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -920,7 +936,7 @@ async fn inbound_flag_respects_reject_reports() {
     assert_eq!(reports, 1);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn audit_cleanup_prunes_old_rows() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
@@ -947,7 +963,7 @@ async fn audit_cleanup_prunes_old_rows() {
     assert_eq!(remaining, vec!["fresh".to_string()]);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reversals_follow_the_staff_guard() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

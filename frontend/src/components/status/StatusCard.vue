@@ -537,8 +537,8 @@ async function runAction(item: MenuItem) {
 async function submitReport() {
   try {
     await fileReport({
-      account_id: Number(shown.value.account.id),
-      status_ids: [Number(shown.value.id)],
+      account_id: shown.value.account.id,
+      status_ids: [shown.value.id],
       comment: reportComment.value || undefined,
     });
     reportOpen.value = false;

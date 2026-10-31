@@ -20,11 +20,13 @@
 //! `content` — remote HTML is never trusted raw.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use pubby_sdk::{
     content::{html_escape, RenderedContent},
     is_linkable_url, render_link_anchor, render_post_html,
 };
+use regex::Regex;
 
 use crate::config::Config;
 
@@ -53,9 +55,12 @@ pub struct MentionLink {
     pub acct: String,
 }
 
-/// The `#tag` target URL: `{base}/tags/{name}` — Mastodon's shape.
+/// The `#tag` target URL: `{base}/tags/{name}` — Mastodon's shape,
+/// with the name percent-encoded as one path segment (`#Scheinkünstler`
+/// → `/tags/scheink%C3%BCnstler`).
 pub fn hashtag_url(base_url: &str) -> impl Fn(&str) -> String + '_ {
-    move |name: &str| format!("{}/tags/{}", base_url.trim_end_matches('/'), name)
+    let base = base_url.trim_end_matches('/');
+    move |name: &str| crate::feeds::data::tag_url(base, name)
 }
 
 /// Render `source` per `content_type`. `mentions` are the resolved
@@ -252,13 +257,29 @@ fn update_skip(tag: &str, depth: &mut usize) {
 
 /// Whether the character before a `#`/`@` candidate disqualifies it
 /// (same rule as pubby's `hashtag_start_ok`): word chars, `_`, `&`
-/// (entity), `#` (nested).
+/// (entity), `#`/`＃` (nested).
 fn boundary_ok(text: &str, start: usize) -> bool {
     match text[..start].chars().last() {
         None => true,
-        Some(c) => !(c.is_alphanumeric() || c == '_' || c == '&' || c == '#'),
+        Some(c) => !(c.is_alphanumeric() || c == '_' || c == '&' || c == '#' || c == '＃'),
     }
 }
+
+/// A `#hashtag` token at the start of a text segment — Mastodon's
+/// grammar (`Tag::HASHTAG_NAME_PAT` in `tag.rb`, the same pattern
+/// pubby's `HASHTAG_RE` uses): Unicode word chars — letters, combining
+/// marks, numbers, connector punctuation — with `·`, `・`, ZWNJ/ZWJ as
+/// mid-tag separators and the fullwidth `＃` accepted as the marker.
+/// Names start and end on a word char, so separators can't lead or
+/// trail. Anchored: candidates further into the segment are found by
+/// the scanner's own advance.
+static HASHTAG_TOKEN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"^[#＃][\p{L}\p{M}\p{N}\p{Pc}]",
+        r"(?:[\p{L}\p{M}\p{N}\p{Pc}·・\u{200C}\u{200D}]*[\p{L}\p{M}\p{N}\p{Pc}])?"
+    ))
+    .unwrap()
+});
 
 /// Split trailing punctuation/entities off a URL token — the same
 /// rule pubby applies (sentence-final `.` `,` `)` … and HTML entities
@@ -359,32 +380,34 @@ fn enhance_segment(
             pos = end;
             continue;
         }
-        if c == b'#' {
-            let name_end = rest[1..]
-                .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .map(|e| pos + 1 + e)
-                .unwrap_or(segment.len());
-            let name = &segment[pos + 1..name_end];
-            if !name.is_empty()
-                && name.chars().any(|ch| ch.is_alphabetic())
-                && boundary_ok(segment, pos)
-            {
-                let normalized = name.to_lowercase();
-                // Mastodon's `class="mention hashtag" rel="tag"` markup
-                // — remote card scanners skip tagged anchors on both
-                // signals (pubby's anchor helper can't emit `class`).
-                out.push_str(&format!(
-                    "<a href=\"{}\" class=\"mention hashtag\" rel=\"tag\">{}</a>",
-                    html_escape(&hashtag_url(&normalized)),
-                    html_escape(&segment[pos..name_end]),
-                ));
-                if !hashtags.contains(&normalized) {
-                    hashtags.push(normalized);
+        if c == b'#' || rest.starts_with('＃') {
+            let marker_len = rest.chars().next().unwrap().len_utf8();
+            if let Some(m) = HASHTAG_TOKEN_RE.find(rest) {
+                let name_end = pos + m.end();
+                let name = &rest[marker_len..m.end()];
+                if name.chars().any(|ch| ch.is_alphabetic()) && boundary_ok(segment, pos) {
+                    let normalized = name.to_lowercase();
+                    // Mastodon's `class="mention hashtag" rel="tag"` markup
+                    // — remote card scanners skip tagged anchors on both
+                    // signals (pubby's anchor helper can't emit `class`).
+                    out.push_str(&format!(
+                        "<a href=\"{}\" class=\"mention hashtag\" rel=\"tag\">{}</a>",
+                        html_escape(&hashtag_url(&normalized)),
+                        html_escape(&segment[pos..name_end]),
+                    ));
+                    if !hashtags.contains(&normalized) {
+                        hashtags.push(normalized);
+                    }
+                } else {
+                    out.push_str(&segment[pos..name_end]);
                 }
+                pos = name_end;
             } else {
-                out.push_str(&segment[pos..name_end]);
+                // A `#`/`＃` not followed by a name char — emit the
+                // marker alone and keep scanning.
+                out.push_str(&rest[..marker_len]);
+                pos += marker_len;
             }
-            pos = name_end;
             continue;
         }
         if c == b'@' {
@@ -570,6 +593,34 @@ mod tests {
         assert!(r.html.contains("href=\"https://example.com\""));
         assert!(r.html.contains("rel=\"tag\""));
         assert_eq!(r.hashtags, vec!["tag"]);
+    }
+
+    #[test]
+    fn unicode_hashtags_linkify_and_encode() {
+        // Mastodon's `Tag::HASHTAG_NAME_PAT` — letters/marks/digits in
+        // any script, `·`/ZWNJ mid-tag, `＃` marker, names end on a
+        // word char. Markdown path (enhance_segment) and plain path
+        // (pubby render_post_html) agree.
+        for content_type in ["text/markdown", "text/plain"] {
+            let r = render(
+                "Ich #Scheinkünstler und #हिंदी, #a·b, #tag· rest #123",
+                content_type,
+                &[],
+                "https://y.test",
+                &cfg(),
+            );
+            for tag in ["scheinkünstler", "हिंदी", "a·b", "tag"] {
+                assert!(
+                    r.hashtags.contains(&tag.to_string()),
+                    "{content_type}: {tag}"
+                );
+            }
+            assert!(
+                r.html.contains("/tags/scheink%C3%BCnstler"),
+                "{content_type}"
+            );
+            assert!(r.html.contains("#tag</a>· rest #123"), "{content_type}");
+        }
     }
 
     #[test]

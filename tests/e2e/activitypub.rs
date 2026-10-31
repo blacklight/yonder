@@ -412,7 +412,7 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
     .unwrap();
     let mut alice = seed_actor(&pool, "alice").await;
     alice.display_name = Some("Alice :arch:".into());
-    alice.bio = Some("I post about #Yonder and #FOSS :arch:".into());
+    alice.bio = Some("I post about #Yonder, #FOSS and #Scheinkünstler :arch:".into());
     let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
     let handler = actors::handler_for(
         storage,
@@ -435,6 +435,14 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
         )),
         "{summary}"
     );
+    // Non-ASCII names linkify too (Mastodon's `HASHTAG_NAME_PAT`), and
+    // their href is percent-encoded as one path segment.
+    assert!(
+        summary.contains(&format!(
+            r#"<a href="{BASE}/tags/scheink%C3%BCnstler" rel="tag">#Scheinkünstler</a>"#
+        )),
+        "{summary}"
+    );
     // `tag` carries a Hashtag entry per bio hashtag (deduplicated) and
     // an Emoji entry per `:code:` used in name/bio — remote instances
     // render profile emojis from it.
@@ -444,7 +452,11 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
         .filter(|t| t["type"] == "Hashtag")
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert_eq!(hashtag_names, ["#yonder", "#foss"], "{tags:?}");
+    assert_eq!(
+        hashtag_names,
+        ["#yonder", "#foss", "#scheinkünstler"],
+        "{tags:?}"
+    );
     let emoji: Vec<&Value> = tags.iter().filter(|t| t["type"] == "Emoji").collect();
     assert_eq!(emoji.len(), 1, "{tags:?}");
     assert_eq!(emoji[0]["name"], ":arch:");

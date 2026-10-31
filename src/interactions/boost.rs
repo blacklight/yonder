@@ -68,7 +68,7 @@ pub async fn reblog(
         "INSERT INTO statuses (account_id, content, content_html, content_type, visibility, \
              local, reblog_of_id, uri, url) \
          VALUES ($1,'','','text/plain',$2,true,$3,$4,'') \
-         ON CONFLICT (account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL \
+         ON CONFLICT (account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL AND NOT tombstone \
          DO NOTHING RETURNING id",
     )
     .bind(auth.account_id)

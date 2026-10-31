@@ -8,6 +8,10 @@ ActivityPub activities.
 
 Boosts are `statuses` rows with `reblog_of_id` set (Mastodon
 semantics); the boost row's `uri` *is* the Announce activity id.
+`uix_statuses_reblog` enforces at most one *live* boost per
+(booster, target) — tombstones are excluded, so an unreblog
+followed by a re-boost mints a fresh row (fresh id and Announce
+uri) instead of resurrecting a dead one.
 Quotes use `quote_of_id` (+ `quotes_count`) with a `quote_uri`
 fallback for remote targets not materialized yet. Pending targets
 are resolved *actively*: ingest (and reads of a still-pending status)

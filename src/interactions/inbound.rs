@@ -158,7 +158,7 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
          VALUES (timestamp_id('statuses', LEAST(COALESCE($5, now()), now())), \
                  $1,'','','text/plain','public',false,$2,$3,$4, \
                  LEAST(COALESCE($5, now()), now())) \
-         ON CONFLICT (account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL \
+         ON CONFLICT (account_id, reblog_of_id) WHERE reblog_of_id IS NOT NULL AND NOT tombstone \
          DO NOTHING RETURNING id",
     )
     .bind(actor)

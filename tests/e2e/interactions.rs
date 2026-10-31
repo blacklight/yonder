@@ -337,6 +337,23 @@ async fn boost_roundtrip_visibility_and_undo() {
     )
     .await;
     assert_eq!(code, StatusCode::OK);
+
+    // Re-boost after unboost — the tombstoned row must not deadlock
+    // the insert (uix_statuses_reblog ignores tombstones). The new
+    // boost is a fresh row: new id, new Announce uri, counter back
+    // to 1.
+    let (code, body3) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{id}/reblog"),
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body3}");
+    assert_ne!(body3["id"], body2["id"]);
+    assert_eq!(body3["reblog"]["reblogs_count"], 1);
+    assert_eq!(body3["reblogged"], false);
 }
 
 /// A stale `unreblog_row` — a duplicate call or racing `Undo` landing

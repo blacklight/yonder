@@ -305,6 +305,7 @@ pub async fn serve(
     );
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
+    crate::banner::print(state.config().as_ref(), &addr);
     axum::serve(
         listener,
         build_router(state).into_make_service_with_connect_info::<SocketAddr>(),

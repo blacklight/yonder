@@ -86,6 +86,12 @@ yonder webpush generate-keys [--store]
                                    # path as the admin "generate keys")
 ```
 
+`yonder serve` prints a startup banner on stderr once the HTTP
+listener is bound — version, bind address, instance base URL, and
+whether federation and the in-process worker are on. It bypasses
+`tracing` on purpose so the art renders under every
+`server.log_format`; `yonder worker` prints no banner.
+
 ## Exit codes
 
 | Code | Meaning |

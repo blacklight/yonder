@@ -859,10 +859,12 @@ async function onReact(emoji: string) {
   border-bottom: 1px solid var(--border-dim);
   cursor: pointer;
 }
-.status-card a,
 .status-card button,
 .status-card .status-card__reply {
   cursor: auto;
+}
+.status-card a {
+  cursor: pointer;
 }
 .status-card__boost {
   color: var(--text-muted);

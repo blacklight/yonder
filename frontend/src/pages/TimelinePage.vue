@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
@@ -8,6 +8,7 @@ import Spinner from "@/components/ui/Spinner.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTimelineStore, type TimelineKey } from "@/stores/timeline";
 import { useStreamingStore } from "@/stores/streaming";
+import { useInfiniteScroll } from "@/composables/useInfiniteScroll";
 import type { Status } from "@/api/entities";
 
 /**
@@ -26,8 +27,12 @@ const timelines = useTimelineStore();
 const streaming = useStreamingStore();
 
 const tl = computed(() => timelines.get(props.timeline));
-const sentinel = ref<HTMLElement | null>(null);
-let observer: IntersectionObserver | null = null;
+// Infinite scroll — the bottom sentinel pages the next batch in as it
+// enters the viewport; `hasMore` also guards in-flight fetches.
+const { vInfinite, ioSupported } = useInfiniteScroll(
+  () => timelines.hasMore(props.timeline) && !tl.value.loading,
+  () => timelines.loadMore(props.timeline),
+);
 let offStream: (() => void) | null = null;
 
 function streamKey(): string {
@@ -46,10 +51,6 @@ function onStreamEvent(ev: { event: string; payload: unknown }) {
 onMounted(() => {
   void timelines.load(props.timeline);
   offStream = streaming.subscribe(streamKey(), onStreamEvent);
-  observer = new IntersectionObserver((entries) => {
-    if (entries[0]?.isIntersecting) void timelines.loadMore(props.timeline);
-  });
-  if (sentinel.value) observer.observe(sentinel.value);
 });
 
 watch(
@@ -64,7 +65,6 @@ watch(
 
 onBeforeUnmount(() => {
   offStream?.();
-  observer?.disconnect();
 });
 </script>
 
@@ -111,7 +111,7 @@ onBeforeUnmount(() => {
       @removed="(id) => timelines.remove(id)"
     />
 
-    <div ref="sentinel" class="timeline__sentinel" aria-hidden="true" />
+    <div v-infinite class="timeline__sentinel" aria-hidden="true" />
     <div v-if="tl.loading && tl.loaded" class="timeline__state">
       <Spinner />
     </div>
@@ -121,6 +121,13 @@ onBeforeUnmount(() => {
     >
       ·
     </p>
+    <!-- Manual fallback for engines without IntersectionObserver. -->
+    <Button
+      v-if="!ioSupported && timelines.hasMore(timeline)"
+      :loading="tl.loading"
+      @click="timelines.loadMore(timeline)"
+      >{{ t("common.loadMore") }}</Button
+    >
   </div>
 </template>
 

@@ -53,6 +53,25 @@ import {
 import { adminAccountAction } from "@/api/admin";
 import { reverseAdminAction } from "@/api/adminUsers";
 
+class FakeObserver {
+  static last: FakeObserver;
+  cb: IntersectionObserverCallback;
+  constructor(cb: IntersectionObserverCallback) {
+    this.cb = cb;
+    FakeObserver.last = this;
+  }
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  intersect() {
+    this.cb(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      this as never,
+    );
+  }
+}
+vi.stubGlobal("IntersectionObserver", FakeObserver);
+
 // The menu list teleports to <body> — query it at document level.
 // Open menus from earlier tests linger, so assertions on the current
 // page's menu should use the *last* [role='menu'] in the document.
@@ -810,6 +829,27 @@ describe("ProfilePage", () => {
     expect(vi.mocked(accountStatuses).mock.calls.length).toBeGreaterThan(
       statusCalls,
     );
+  });
+
+  it("loads the next timeline page when the sentinel enters view", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({}));
+    vi.mocked(accountStatuses).mockImplementation((_id, q) => {
+      if (q?.pinned) return Promise.resolve({ items: [] });
+      if (q?.max_id === "10")
+        return Promise.resolve({ items: [status({ id: "11" })] });
+      return Promise.resolve({
+        items: [status({ id: "10" })],
+        next: "https://i.example/api/v1/accounts/1/statuses?max_id=10",
+      });
+    });
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.findAll(".status-card")).toHaveLength(1);
+    FakeObserver.last.intersect();
+    await flushPromises();
+    expect(
+      vi.mocked(accountStatuses).mock.calls.some(([, q]) => q?.max_id === "10"),
+    ).toBe(true);
+    expect(wrapper.findAll(".status-card")).toHaveLength(2);
   });
 
   it("hides 'Sync posts' for local accounts", async () => {

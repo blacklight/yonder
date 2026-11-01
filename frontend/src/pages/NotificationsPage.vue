@@ -18,6 +18,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
 import Button from "@/components/ui/Button.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import Modal from "@/components/ui/Modal.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
@@ -26,6 +27,7 @@ import { FontAwesomeIcon } from "@/icons";
 import { ApiError } from "@/api/errors";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { useStatusEvents } from "@/composables/useStatusEvents";
+import { useInfiniteScroll } from "@/composables/useInfiniteScroll";
 import { patchStatus, statusMatchesId } from "@/utils/statusStream";
 
 const { t } = useI18n();
@@ -97,6 +99,14 @@ async function clearAll() {
   confirming.value = false;
   await store.clear();
 }
+
+// Infinite scroll — same sentinel semantics as the timelines. Older
+// pages load as the bottom edge scrolls into view; the button below
+// stays only as the no-IntersectionObserver fallback.
+const { vInfinite, ioSupported } = useInfiniteScroll(
+  () => Boolean(store.nextCursor) && !store.loading,
+  () => store.fetchPage(),
+);
 
 const listEl = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver | null = null;
@@ -270,11 +280,22 @@ onUnmounted(() => {
         <AccountRowSkeleton />
       </li>
     </ul>
+    <div v-infinite class="notif-sentinel" aria-hidden="true" />
+    <div v-if="store.loading && store.items.length" class="notif-loading-more">
+      <Spinner />
+    </div>
+    <p
+      v-else-if="!store.loading && !store.nextCursor && store.items.length"
+      class="notif-end"
+    >
+      ·
+    </p>
     <p v-if="actionError" role="alert">{{ actionError }}</p>
     <p v-if="!store.loading && !store.items.length">{{ t("lists.empty") }}</p>
     <p v-if="store.error" role="alert">{{ store.error }}</p>
+    <!-- Manual fallback for engines without IntersectionObserver. -->
     <Button
-      v-if="store.nextCursor"
+      v-if="store.nextCursor && !ioSupported"
       :loading="store.loading"
       @click="store.fetchPage()"
     >
@@ -298,6 +319,20 @@ onUnmounted(() => {
   list-style: none;
   margin: 0;
   padding: 0;
+}
+.notif-sentinel {
+  height: 1px;
+}
+.notif-loading-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) 0;
+}
+.notif-end {
+  margin: 0;
+  padding: var(--space-3) 0;
+  text-align: center;
+  color: var(--text-muted);
 }
 .notif {
   background: var(--bg-raised);

@@ -26,6 +26,31 @@ const BOB: Account = {
   emojis: [],
 };
 
+class FakeObserver {
+  static instances: FakeObserver[] = [];
+  cb: IntersectionObserverCallback;
+  observed = new Set<Element>();
+  constructor(cb: IntersectionObserverCallback) {
+    this.cb = cb;
+    FakeObserver.instances.push(this);
+  }
+  observe(el: Element) {
+    this.observed.add(el);
+  }
+  unobserve(el: Element) {
+    this.observed.delete(el);
+  }
+  disconnect() {
+    this.observed.clear();
+  }
+  intersect() {
+    this.cb(
+      [{ isIntersecting: true } as IntersectionObserverEntry],
+      this as never,
+    );
+  }
+}
+
 function setup(items: unknown[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(() =>
     Promise.resolve(new Response(JSON.stringify(items), { status: 200 })),
@@ -45,7 +70,11 @@ function notif(extra: Record<string, unknown> = {}): Notification {
 }
 
 describe("NotificationsPage", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    FakeObserver.instances = [];
+  });
 
   it("renders the linked display name, avatar and acct line", async () => {
     setup([notif()]);
@@ -111,6 +140,47 @@ describe("NotificationsPage", () => {
     expect(post).toBeTruthy();
     // String ids — snowflake values corrupt as JS numbers.
     expect(JSON.parse(post![1]!.body as string)).toEqual({ ids: ["1"] });
+  });
+
+  it("fetches the next page when the bottom sentinel enters view", async () => {
+    // Stubbed per-test: the mark-read path above relies on the
+    // no-IntersectionObserver fallback.
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    useAuthStore().setToken("tk");
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() =>
+        Promise.resolve(
+          new Response(JSON.stringify([notif()]), {
+            status: 200,
+            headers: {
+              Link: '<https://i.example/api/v1/notifications?max_id=99>; rel="next"',
+            },
+          }),
+        ),
+      )
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response(JSON.stringify([notif({ id: "2" })]), {
+            status: 200,
+          }),
+        ),
+      );
+    const { wrapper } = mountWith(NotificationsPage);
+    await flushPromises();
+    expect(wrapper.findAll(".notif")).toHaveLength(1);
+    const sentinelObs = FakeObserver.instances.find((o) =>
+      [...o.observed].some((el) =>
+        (el as HTMLElement).classList?.contains("notif-sentinel"),
+      ),
+    );
+    expect(sentinelObs).toBeTruthy();
+    sentinelObs!.intersect();
+    await flushPromises();
+    expect(wrapper.findAll(".notif")).toHaveLength(2);
+    const urls = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("max_id=99"))).toBe(true);
   });
 
   it("live events prepend a row while the page is open", async () => {

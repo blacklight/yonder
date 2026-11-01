@@ -177,6 +177,10 @@ export const useNotificationsStore = defineStore("notifications", () => {
   async function fetchPage(fresh = false) {
     const auth = useAuthStore();
     if (!auth.isLoggedIn) return;
+    // The sentinel can re-fire while a page is in flight — a second
+    // concurrent fetch would read the same cursor and append
+    // duplicates. Fresh fetches (filter switch) always proceed.
+    if (!fresh && loading.value) return;
     if (fresh) {
       items.value = [];
       nextCursor.value = undefined;

@@ -47,6 +47,7 @@ import Modal from "@/components/ui/Modal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
+import { useInfiniteScroll } from "@/composables/useInfiniteScroll";
 import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
 const { t } = useI18n();
@@ -294,6 +295,9 @@ const menuItems = computed<MenuItem[]>(() => {
 
 async function loadStatuses(more = false) {
   if (!account.value) return;
+  // Sentinel-driven pagination can fire while a fetch is already
+  // running — don't stack a second `max_id` page on top of it.
+  if (more && (statusesLoading.value || !nextCursor.value)) return;
   const max_id =
     more && nextCursor.value
       ? (new URL(nextCursor.value, location.origin).searchParams.get(
@@ -330,6 +334,14 @@ async function loadPinned() {
     pinnedStatuses.value = [];
   }
 }
+
+// Infinite scroll — same sentinel semantics as the timelines. The
+// sentinel mounts late (the list waits on `resolve()`); the
+// directive starts observing the moment the element renders.
+const { vInfinite, ioSupported } = useInfiniteScroll(
+  () => Boolean(nextCursor.value) && !statusesLoading.value,
+  () => loadStatuses(true),
+);
 
 async function resolve(): Promise<void> {
   state.value = "loading";
@@ -921,7 +933,15 @@ watch([tab, showReplies, showBoosts], () => {
           <template v-if="statusesLoading">
             <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
           </template>
-          <div v-if="nextCursor" class="profile__more">
+          <div v-infinite class="timeline__sentinel" aria-hidden="true" />
+          <p
+            v-if="!statusesLoading && !nextCursor && statuses.length"
+            class="timeline__state"
+          >
+            ·
+          </p>
+          <!-- Manual fallback for engines without IntersectionObserver. -->
+          <div v-if="nextCursor && !ioSupported" class="profile__more">
             <Button
               variant="secondary"
               :loading="statusesLoading"
@@ -1187,6 +1207,15 @@ watch([tab, showReplies, showBoosts], () => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+.timeline__sentinel {
+  height: 1px;
+}
+.timeline__state {
+  margin: 0;
+  padding: var(--space-3) 0;
+  text-align: center;
+  color: var(--text-muted);
 }
 /* The loading stand-in mirrors the real header: banner strip, the
    avatar overlapping it, then the name/handle lines. */

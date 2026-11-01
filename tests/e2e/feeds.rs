@@ -265,7 +265,7 @@ async fn profile_feed_lookup_and_404s() {
 
     for path in [
         "/users/nobody.atom",         // unknown username
-        "/users/alice",               // no extension
+        "/users/nobody",              // extension-less, unknown user
         "/users/alice.json",          // unknown extension
         "/users/alice.atom.xml",      // double extension
         "/users/alice/statuses.atom", // multi-segment remainder
@@ -273,6 +273,12 @@ async fn profile_feed_lookup_and_404s() {
         let (code, _, body) = get(&env.app, path, None).await;
         assert_eq!(code, StatusCode::NOT_FOUND, "{path} → {body}");
     }
+
+    // Extension-less `/users/{u}` for a real user redirects to the
+    // `/@{u}` web profile — Mastodon's permalink shape.
+    let (code, headers, _) = get(&env.app, "/users/alice", None).await;
+    assert_eq!(code, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(headers.get("location").unwrap(), "/@alice");
 
     // Suspended accounts 404.
     sqlx::query("UPDATE accounts SET suspended_at = now() WHERE username = 'alice'")

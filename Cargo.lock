@@ -6798,6 +6798,7 @@ dependencies = [
  "image",
  "lettre",
  "p256",
+ "percent-encoding",
  "pubby-sdk",
  "pulldown-cmark",
  "quick-xml",

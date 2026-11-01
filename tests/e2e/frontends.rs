@@ -341,6 +341,77 @@ async fn zip_install_serve_and_remove() {
     assert!(String::from_utf8_lossy(&body).contains("Yonder"));
 }
 
+/// Feed-backed SPA routes get `<link rel="alternate">` discovery tags
+/// spliced into the entry's `<head>` so scrapers find the RSS/Atom
+/// endpoints in the raw HTML.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spa_entry_carries_feed_discovery_links() {
+    let _permit = harness::acquire().await;
+    let (config, dir) = base_config();
+    std::fs::create_dir_all(dir.join("builtin")).unwrap();
+    std::fs::write(
+        dir.join("builtin/index.html"),
+        "<html><head><title>t</title></head><body>SHELL</body></html>",
+    )
+    .unwrap();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    register(&env.app, "alice", "alice@x.test").await;
+
+    // Profile route → the local user's feed (both formats).
+    let (status, _, body) = request(&env.app, "GET", "/@alice", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("SHELL"));
+    assert!(
+        html.contains("type=\"application/atom+xml\" title=\"@alice\" href=\"/users/alice.atom\""),
+        "{html}"
+    );
+    assert!(html.contains("href=\"/users/alice.rss\""));
+
+    // Hashtag route → the tag feed; percent-encoded tags keep their
+    // raw segment in the href. The extension-less path is the SPA
+    // page itself — the feed catch-all defers to it.
+    let (status, _, body) = request(&env.app, "GET", "/tags/rust", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8_lossy(&body);
+    assert!(
+        html.contains("type=\"application/rss+xml\" title=\"#rust\" href=\"/tags/rust.rss\""),
+        "{html}"
+    );
+    let (_, _, body) = request(&env.app, "GET", "/tags/caf%C3%A9", None, None).await;
+    assert!(String::from_utf8_lossy(&body).contains("href=\"/tags/caf%C3%A9.atom\""));
+
+    // Extension-less `/users/{u}` is a permanent redirect to the
+    // `/@{u}` profile permalink — existing users only; unknown or
+    // extension-shaped names keep the JSON 404.
+    let (status, headers, _) = request(&env.app, "GET", "/users/alice", None, None).await;
+    assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(headers.get("location").unwrap(), "/@alice");
+    for path in ["/users/nobody", "/users/alice.json"] {
+        let (status, _, _) = request(&env.app, "GET", path, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+    // `/lists/{id}` is the SPA list page — reachable anonymously
+    // (list feeds are never advertised).
+    let (status, _, body) = request(&env.app, "GET", "/lists/1", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8_lossy(&body);
+    assert!(html.contains("SHELL"));
+    assert!(!html.contains("rel=\"alternate\""));
+
+    // A handle qualified with the local domain still maps to the
+    // local feed; a remote domain advertises nothing.
+    let (_, _, body) = request(&env.app, "GET", "/@alice@localhost", None, None).await;
+    assert!(String::from_utf8_lossy(&body).contains("href=\"/users/alice.atom\""));
+    for path in ["/", "/about", "/@alice@remote.tld", "/@alice/statuses"] {
+        let (_, _, body) = request(&env.app, "GET", path, None, None).await;
+        let html = String::from_utf8_lossy(&body);
+        assert!(!html.contains("rel=\"alternate\""), "{path}: {html}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn malicious_zips_are_rejected() {
     let _permit = harness::acquire().await;

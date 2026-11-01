@@ -241,6 +241,16 @@ const handle = computed(() => {
     : `@${a.acct}@${localDomain.value}`;
 });
 
+/**
+ * Public posts feed URL for local profiles (`/users/{u}.rss`). Remote
+ * accounts are fed by their origin instance, so no icon is shown.
+ */
+const feedHref = computed(() => {
+  const a = account.value;
+  if (!a || a.acct.includes("@")) return null;
+  return `/users/${encodeURIComponent(a.username)}.rss`;
+});
+
 const copied = ref(false);
 let copiedTimer: ReturnType<typeof setTimeout> | undefined;
 async function copyHandle() {
@@ -871,6 +881,15 @@ watch([tab, showReplies, showBoosts], () => {
           >
             <FontAwesomeIcon :icon="copied ? 'check' : 'copy'" />
           </button>
+          <a
+            v-if="feedHref"
+            class="profile__handle-feed"
+            :href="feedHref"
+            :title="t('common.feed')"
+            :aria-label="t('common.feed')"
+          >
+            <FontAwesomeIcon icon="rss" />
+          </a>
         </p>
         <div class="profile__badges">
           <p v-if="staffRole" class="profile__badge profile__badge--staff">
@@ -1221,7 +1240,8 @@ watch([tab, showReplies, showBoosts], () => {
 .profile__handle-text {
   overflow-wrap: anywhere;
 }
-.profile__handle-copy {
+.profile__handle-copy,
+.profile__handle-feed {
   flex-shrink: 0;
   padding: var(--space-1);
   border: 0;
@@ -1229,10 +1249,13 @@ watch([tab, showReplies, showBoosts], () => {
   background: none;
   color: var(--text-muted);
   font-size: var(--text-xs);
+  text-decoration: none;
   cursor: pointer;
 }
 .profile__handle-copy:hover,
-.profile__handle-copy:focus-visible {
+.profile__handle-copy:focus-visible,
+.profile__handle-feed:hover,
+.profile__handle-feed:focus-visible {
   background: var(--bg-sunken);
   color: var(--text);
 }

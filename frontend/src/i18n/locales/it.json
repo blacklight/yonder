@@ -920,7 +920,8 @@
     "save": "Salva",
     "delete": "Elimina",
     "clear": "Cancella",
-    "error": "Si è verificato un errore."
+    "error": "Si è verificato un errore.",
+    "feed": "Feed RSS"
   },
   "search": {
     "users": "Utenti",

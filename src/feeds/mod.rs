@@ -16,7 +16,7 @@ use std::sync::Arc;
 use axum::{
     extract::{Path, State},
     http::header,
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
     Router,
 };
@@ -26,7 +26,11 @@ use quick_xml::escape::escape;
 use crate::{
     auth::scopes::require_scope,
     error::Error,
-    http::{middleware::ratelimit, AppState},
+    http::{
+        frontend::spa_entry,
+        middleware::{auth::MaybeAuth, ratelimit},
+        AppState,
+    },
     posts::PostContext,
     social,
     users::account as account_mapper,
@@ -78,12 +82,29 @@ fn split_feed_path(rest: &str) -> Option<(String, Format)> {
 }
 
 /// `GET /users/{username}.atom|.rss` — the local account's latest public
-/// posts. Suspended/deleted accounts and remote names 404.
+/// posts. Suspended/deleted accounts and remote names 404. A bare
+/// `/users/{u}` redirects to the `/@{u}` web profile — Mastodon's
+/// permalink shape.
 async fn profile_feed(
     State(state): State<Arc<AppState>>,
     Path(rest): Path<String>,
 ) -> Result<Response> {
     let Some((username, format)) = split_feed_path(&rest) else {
+        // `/@{u}` is the web profile: `/users/{u}` without a feed
+        // extension is the same page — redirect (Mastodon's shape).
+        // Only existing local users redirect; every other shape —
+        // unknown users, bad or missing extensions — stays a JSON 404.
+        // `rest` is percent-decoded — re-encode it for the Location.
+        if bare_name(&rest)
+            && account_mapper::load_local_by_username(&state.db, &rest)
+                .await?
+                .is_some()
+        {
+            let encoded: String = url::form_urlencoded::byte_serialize(rest.as_bytes()).collect();
+            return Ok(
+                Redirect::permanent(&format!("/@{}", encoded.replace('+', "%20"))).into_response(),
+            );
+        }
         return Err(Error::NotFound("feed".into()));
     };
     let account = account_mapper::load_local_by_username(&state.db, &username)
@@ -103,13 +124,16 @@ async fn profile_feed(
 }
 
 /// `GET /tags/{tag}.atom|.rss` — latest public posts carrying the tag
-/// (case-insensitive). Unknown tags serve a valid empty feed.
+/// (case-insensitive). Unknown tags serve a valid empty feed. A bare
+/// `/tags/{tag}` is the SPA hashtag page (browser accepts only — AP
+/// fetchers keep the JSON 404: tag documents aren't served).
 async fn tag_feed(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(rest): Path<String>,
 ) -> Result<Response> {
     let Some((tag, format)) = split_feed_path(&rest) else {
-        return Err(Error::NotFound("feed".into()));
+        return page_or_404(&state, &headers, &rest, "/tags");
     };
     let tag = tag.to_lowercase();
     let base = PostContext::new(&state).base_url();
@@ -128,16 +152,19 @@ async fn tag_feed(
 /// `GET /lists/{id}.atom|.rss` — the owner's list, including
 /// `followers_only`/`private` member posts (never `direct`). Feed
 /// readers authenticate with `Bearer` or `?access_token=`; `read:lists`
-/// scope is required. Foreign lists 404.
+/// scope is required. Foreign lists 404. A bare `/lists/{id}` is the
+/// SPA list page — checked before auth so browsers aren't 401'd.
 async fn list_feed(
     State(state): State<Arc<AppState>>,
-    auth: crate::http::middleware::auth::AuthContext,
+    auth: MaybeAuth,
+    headers: axum::http::HeaderMap,
     Path(rest): Path<String>,
 ) -> Result<Response> {
-    require_scope(&state.config(), &auth, "read:lists")?;
     let Some((id_str, format)) = split_feed_path(&rest) else {
-        return Err(Error::NotFound("feed".into()));
+        return page_or_404(&state, &headers, &rest, "/lists");
     };
+    let auth = auth.0.ok_or(Error::Unauthorized)?;
+    require_scope(&state.config(), &auth, "read:lists")?;
     let Ok(list_id) = id_str.parse::<i64>() else {
         return Err(Error::NotFound("feed".into()));
     };
@@ -153,6 +180,40 @@ async fn list_feed(
     .await?;
     feed.self_url = format!("{base}/lists/{}.{}", list.id, format.ext());
     Ok(xml_response(format, &feed))
+}
+
+/// A single non-empty path segment with no `/` — plausibly a web page
+/// name rather than a malformed feed path (which always carries an
+/// extension or extra segments).
+fn bare_name(rest: &str) -> bool {
+    !rest.is_empty() && !rest.contains('/')
+}
+
+/// Extension-less feed paths are also web pages — `/tags/{tag}` and
+/// `/lists/{id}` are SPA routes, so a bare name from a browser falls
+/// through to the app shell (which also gets the feed-discovery
+/// `<link>`s injected for tags). AP accepts and malformed feed shapes
+/// — dotted names read as extension attempts, extra segments — stay
+/// JSON 404s.
+fn page_or_404(
+    state: &Arc<AppState>,
+    headers: &axum::http::HeaderMap,
+    rest: &str,
+    prefix: &str,
+) -> Result<Response> {
+    if bare_name(rest)
+        && !rest.contains('.')
+        && !crate::activitypub::permalinks::wants_document(headers)
+    {
+        // `rest` arrives percent-decoded — re-encode it as a single
+        // path segment so non-ASCII names produce valid URLs.
+        let encoded: String = url::form_urlencoded::byte_serialize(rest.as_bytes()).collect();
+        return Ok(spa_entry(
+            state,
+            &format!("{prefix}/{}", encoded.replace('+', "%20")),
+        ));
+    }
+    Err(Error::NotFound("feed".into()))
 }
 
 fn xml_response(format: Format, feed: &render::Feed) -> Response {

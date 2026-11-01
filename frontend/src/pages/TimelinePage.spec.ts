@@ -7,9 +7,9 @@ import type { Status } from "@/api/entities";
 
 vi.mock("@/api/statuses", async (orig) => {
   const m = await orig<typeof import("@/api/statuses")>();
-  return { ...m, publicTimeline: vi.fn() };
+  return { ...m, publicTimeline: vi.fn(), tagTimeline: vi.fn() };
 });
-import { publicTimeline } from "@/api/statuses";
+import { publicTimeline, tagTimeline } from "@/api/statuses";
 
 function status(id: string): Status {
   return {
@@ -46,6 +46,7 @@ describe("TimelinePage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.mocked(publicTimeline).mockReset();
+    vi.mocked(tagTimeline).mockReset();
   });
 
   it("loads and renders cards", async () => {
@@ -116,6 +117,38 @@ describe("TimelinePage", () => {
     expect(vi.mocked(publicTimeline).mock.calls[2][0]).toEqual(
       expect.objectContaining({ max_id: "1" }),
     );
+  });
+
+  it("hashtag timelines show the tag header and feed link", async () => {
+    vi.mocked(tagTimeline).mockResolvedValue({ items: [] });
+    const { wrapper } = mountWith(TimelinePage, {
+      props: { timeline: "hashtag:rust", stream: "hashtag:rust" },
+    });
+    await flushPromises();
+    expect(wrapper.get(".timeline__title").text()).toBe("#rust");
+    expect(wrapper.get(".timeline__feed").attributes("href")).toBe(
+      "/tags/rust.rss",
+    );
+  });
+
+  it("percent-encodes unicode tags in the feed link", async () => {
+    vi.mocked(tagTimeline).mockResolvedValue({ items: [] });
+    const { wrapper } = mountWith(TimelinePage, {
+      props: { timeline: "hashtag:café", stream: "hashtag:café" },
+    });
+    await flushPromises();
+    expect(wrapper.get(".timeline__feed").attributes("href")).toBe(
+      "/tags/caf%C3%A9.rss",
+    );
+  });
+
+  it("non-hashtag timelines have no feed header", async () => {
+    vi.mocked(publicTimeline).mockResolvedValue({ items: [] });
+    const { wrapper } = mountWith(TimelinePage, {
+      props: { timeline: "public", stream: "public" },
+    });
+    await flushPromises();
+    expect(wrapper.find(".timeline__header").exists()).toBe(false);
   });
 
   it("sentinel triggers loadMore", async () => {

@@ -920,7 +920,8 @@
     "save": "Guardar",
     "delete": "Eliminar",
     "clear": "Borrar",
-    "error": "Se ha producido un error."
+    "error": "Se ha producido un error.",
+    "feed": "Canal RSS"
   },
   "search": {
     "users": "Usuarios",

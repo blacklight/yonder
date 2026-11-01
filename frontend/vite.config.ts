@@ -18,6 +18,14 @@ export default defineConfig(({ mode }) => {
   // when the backend binds a non-loopback host or a different port.
   const backend = env.VITE_BACKEND_URL || "http://localhost:3000";
   const to = { target: backend, changeOrigin: true };
+  // Proxies only `*.{atom,rss}` documents to the backend — bare page
+  // paths under the same prefix bypass so vite serves the SPA.
+  const feedOnly = {
+    ...to,
+    bypass(req: { url?: string }) {
+      if (!/\.(atom|rss)(\?|$)/.test(req.url ?? "")) return req.url;
+    },
+  };
 
   return {
     plugins: [
@@ -62,7 +70,7 @@ export default defineConfig(({ mode }) => {
           navigateFallbackDenylist: [
             /^\/api/,
             /^\/\.well-known/,
-            /^\/users\/.*\.(atom|rss)$/,
+            /^\/(users|tags|lists)\/.*\.(atom|rss)$/,
             /^\/media\//,
             /^\/oauth/,
             /^\/swagger-ui/,
@@ -104,8 +112,15 @@ export default defineConfig(({ mode }) => {
         "/media": to,
         // `/oauth/*` lives outside /api (token + 2FA exchange endpoints).
         "/oauth": to,
+        // Feed documents (`{name}.{atom,rss}`) live on the backend
+        // under the same prefixes as SPA pages — only the
+        // extension-bearing paths are proxied; bare paths bypass so
+        // the history fallback still serves the app.
+        "/users": feedOnly,
+        "/tags": feedOnly,
+        "/lists": feedOnly,
         // Instance-discovery documents the backend owns; the SPA router
-        // claims everything else, so /users, /tags, /lists and /ap are
+        // claims everything else, so /ap and other page prefixes are
         // intentionally NOT proxied (they would shadow SPA routes).
         "/.well-known": to,
         "/nodeinfo": to,

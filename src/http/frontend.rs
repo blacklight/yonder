@@ -95,11 +95,15 @@ pub async fn fallback(
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
 
-    // `/` and every unmatched path fall through to the SPA entry.
+    // `/` and every unmatched path fall through to the SPA entry —
+    // feed-backed pages get their `<link rel="alternate">` discovery
+    // tags injected into `<head>` so scrapers and feed readers can
+    // find the RSS/Atom endpoints on the raw HTML too.
+    let head_extra = feed_discovery(&config.instance.domain, uri.path());
     let response = if rel.as_os_str().is_empty() {
-        serve_entry(&frontend)
+        serve_entry(&frontend, head_extra.as_deref())
     } else {
-        serve_file(&frontend, &rel).unwrap_or_else(|| serve_entry(&frontend))
+        serve_file(&frontend, &rel).unwrap_or_else(|| serve_entry(&frontend, head_extra.as_deref()))
     };
     tag(&frontend.name, response)
 }
@@ -190,12 +194,90 @@ fn serve_file(frontend: &Frontend, rel: &Path) -> Option<Response> {
 /// SPA's consent page mounts, while API clients get the route's JSON.
 pub fn spa_index(state: &AppState) -> Response {
     let frontend = frontends::resolve_active(&state.config(), None);
-    tag(&frontend.name, serve_entry(&frontend))
+    tag(&frontend.name, serve_entry(&frontend, None))
+}
+
+/// SPA entry for a request path — resolves the active frontend and
+/// injects feed-discovery `<link>` tags when the path is feed-backed.
+/// Shared with the feed handlers, whose `/tags/{t}`-style catch-alls
+/// claim paths that are also web pages.
+pub fn spa_entry(state: &AppState, path: &str) -> Response {
+    let config = state.config();
+    let frontend = frontends::resolve_active(&config, None);
+    let head_extra = feed_discovery(&config.instance.domain, path);
+    tag(
+        &frontend.name,
+        serve_entry(&frontend, head_extra.as_deref()),
+    )
+}
+
+/// `<link rel="alternate">` feed discovery markup for SPA routes that
+/// back a feed: profile pages (`/@user`, also `/@user@this-domain`)
+/// map to `/users/{u}` and hashtag pages (`/tags/{t}`) to
+/// `/tags/{t}`. Remote accounts, list pages (owner-token feeds are
+/// never advertised) and every other path get nothing. `path` is the
+/// raw request path — still percent-encoded, which is exactly what the
+/// feed `href`s want.
+fn feed_discovery(local_domain: &str, path: &str) -> Option<String> {
+    if let Some(rest) = path.strip_prefix("/@") {
+        if rest.is_empty() || rest.contains('/') {
+            return None;
+        }
+        // `user@domain` handles only have a feed when the domain is
+        // this instance — remote profiles are served by their origin.
+        // The raw path is percent-encoded; decode for the acct parse
+        // and re-encode the username for the href.
+        let decoded = percent_encoding::percent_decode_str(rest)
+            .decode_utf8()
+            .ok()?;
+        let username = match decoded.split_once('@') {
+            Some((user, domain)) if domain.eq_ignore_ascii_case(local_domain) => user,
+            Some(_) => return None,
+            None => decoded.as_ref(),
+        };
+        if username.is_empty() {
+            return None;
+        }
+        let encoded: String = url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
+        return Some(crate::feeds::discovery_links(
+            &format!("/users/{}", encoded.replace('+', "%20")),
+            &format!("@{username}"),
+        ));
+    }
+    if let Some(rest) = path.strip_prefix("/tags/") {
+        if rest.is_empty() || rest.contains('/') {
+            return None;
+        }
+        let decoded = percent_encoding::percent_decode_str(rest)
+            .decode_utf8()
+            .unwrap_or_else(|_| rest.into());
+        return Some(crate::feeds::discovery_links(
+            &format!("/tags/{rest}"),
+            &format!("#{decoded}"),
+        ));
+    }
+    None
+}
+
+/// Splice `extra` markup just before `</head>`. `None` for non-UTF-8
+/// documents or markup without a head — the entry is then served
+/// untouched rather than guessed at.
+fn inject_head(bytes: &[u8], extra: &str) -> Option<Vec<u8>> {
+    let html = std::str::from_utf8(bytes).ok()?;
+    let idx = html.to_ascii_lowercase().find("</head")?;
+    let mut out = String::with_capacity(html.len() + extra.len() + 1);
+    out.push_str(&html[..idx]);
+    out.push_str(extra);
+    out.push('\n');
+    out.push_str(&html[idx..]);
+    Some(out.into_bytes())
 }
 
 /// SPA entry: the frontend's `index.html` for any unmatched path, or
 /// the embedded placeholder when the builtin hasn't been built.
-fn serve_entry(frontend: &Frontend) -> Response {
+/// `head_extra` is extra `<head>` markup (feed discovery links)
+/// spliced in for feed-backed routes.
+fn serve_entry(frontend: &Frontend, head_extra: Option<&str>) -> Response {
     let entry = frontend
         .manifest
         .entry
@@ -208,7 +290,11 @@ fn serve_entry(frontend: &Frontend) -> Response {
     };
     let bytes = std::fs::read(&path).ok();
     let body = match bytes {
-        Some(bytes) => Body::from(bytes),
+        Some(bytes) => Body::from(
+            head_extra
+                .and_then(|extra| inject_head(&bytes, extra))
+                .unwrap_or(bytes),
+        ),
         None if frontend.name == frontends::BUILTIN => Body::from(PLACEHOLDER),
         None => return (StatusCode::NOT_FOUND, "frontend entry not found").into_response(),
     };
@@ -303,6 +389,51 @@ mod tests {
         ] {
             assert!(safe_path(raw).is_none(), "{raw}");
         }
+    }
+
+    #[test]
+    fn feed_discovery_maps_profile_and_tag_paths() {
+        let profile = feed_discovery("example.com", "/@alice").unwrap();
+        assert!(profile.contains("href=\"/users/alice.atom\""));
+        assert!(profile.contains("href=\"/users/alice.rss\""));
+        // A fully-qualified local handle unwraps to the same feed.
+        let fqn = feed_discovery("example.com", "/@alice@example.com").unwrap();
+        assert!(fqn.contains("href=\"/users/alice.atom\""));
+
+        let tag = feed_discovery("example.com", "/tags/rust").unwrap();
+        assert!(tag.contains("href=\"/tags/rust.atom\""));
+        // Percent-encoded tag: the href keeps the raw segment, the
+        // title shows the decoded tag.
+        let uni = feed_discovery("example.com", "/tags/caf%C3%A9").unwrap();
+        assert!(uni.contains("href=\"/tags/caf%C3%A9.atom\""));
+        assert!(uni.contains("title=\"#café\""));
+    }
+
+    #[test]
+    fn feed_discovery_skips_unserved_paths() {
+        for path in [
+            "/",                  // no feed for the landing page
+            "/@alice@remote.tld", // remote profile — origin serves it
+            "/@alice/extra",      // sub-paths carry no feed
+            "/@/followers",
+            "/tags/rust/related",
+            "/tags/",
+            "/lists/1", // owner-token feed — never advertised
+            "/about",
+        ] {
+            assert!(feed_discovery("example.com", path).is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn inject_head_splices_before_closing_tag() {
+        let doc = b"<html><head><title>x</title></HEAD><body/></html>";
+        let out = inject_head(doc, "<link />").unwrap();
+        let html = String::from_utf8(out).unwrap();
+        assert!(html.contains("<title>x</title><link />\n</HEAD>"));
+        // No head → untouched (None), never guessed.
+        assert!(inject_head(b"<html><body/></html>", "x").is_none());
+        assert!(inject_head(&[0xff, 0xfe], "x").is_none());
     }
 
     #[test]

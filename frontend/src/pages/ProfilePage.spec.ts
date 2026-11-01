@@ -310,6 +310,23 @@ describe("ProfilePage", () => {
     expect(btn.attributes("aria-label")).toBe("Copied");
   });
 
+  it("links local profiles to their public feed", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({ acct: "alice", username: "alice" }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const feed = wrapper.get(".profile__handle-feed");
+    expect(feed.attributes("href")).toBe("/users/alice.rss");
+  });
+
+  it("hides the feed link on remote profiles", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({ acct: "alice@example.org", username: "alice" }),
+    );
+    const wrapper = await openProfile("/@alice@example.org");
+    expect(wrapper.find(".profile__handle-feed").exists()).toBe(false);
+  });
+
   it("renders an email field value as a mailto link", async () => {
     vi.mocked(lookup).mockResolvedValue(
       account({

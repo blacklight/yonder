@@ -920,7 +920,8 @@
     "save": "Speichern",
     "delete": "Löschen",
     "clear": "Löschen",
-    "error": "Etwas ist schiefgelaufen."
+    "error": "Etwas ist schiefgelaufen.",
+    "feed": "RSS-Feed"
   },
   "search": {
     "users": "Nutzer",

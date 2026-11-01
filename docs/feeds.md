@@ -18,9 +18,16 @@ bucket (default 30 requests / 60 s).
 Content types are `application/atom+xml; charset=utf-8` and
 `application/rss+xml; charset=utf-8`. Usernames and tags are matched
 case-insensitively; a tag feed uses the lowercase tag in its title and
-links. Suspended/deleted accounts, unknown usernames, unknown or missing
-extensions (`.json`, none, `foo.atom.xml`), and
-multi-segment paths all return 404. Boosts are excluded from profile and
+links. Suspended/deleted accounts, unknown usernames, unknown
+extensions (`.json`, `foo.atom.xml`), and multi-segment paths all
+return 404.
+
+Extension-less paths are web pages, not feeds: `/users/{u}` for an
+existing local user is a permanent redirect to the `/@{u}` profile
+(unknown users still 404), and `/tags/{tag}` / `/lists/{id}` serve the
+SPA page for browser accepts (AP accepts keep the JSON 404).
+
+Boosts are excluded from profile and
 list feeds (a boost row has no content of its own); hashtag feeds never
 match them because boost rows carry no tags. Replies are included —
 a feed is "latest public posts", not the web UI's "posts" tab.
@@ -55,9 +62,15 @@ foreign or nonexistent lists get 404 (indistinguishable by design).
 `feeds::discovery_links(base_path, title)` emits the
 `<link rel="alternate" type="application/atom+xml" …>` and
 `application/rss+xml` tags for a feed base path (e.g. `/users/alice`),
-with attribute values XML-escaped. The frontend embeds them into `<head>` when
-profile/hashtag pages exist — no HTML pages are served yet, so the helper is
-the contract. List feeds are never advertised.
+with attribute values XML-escaped. The SPA fallback
+(`http::frontend::feed_discovery`) splices them into the served
+`index.html`'s `<head>` for feed-backed routes — profile pages
+(`/@user`, including `/@user@this-domain`) and hashtag pages
+(`/tags/{tag}`) — so scrapers and feed readers find the feeds in the
+raw HTML without running the app. Remote profiles (their origin
+serves the feed) and list feeds (owner-token, never advertised) get
+no tags. The web UI also shows an RSS icon on profile headers and
+hashtag timelines linking the `.rss` variant.
 
 ## Implementation notes
 

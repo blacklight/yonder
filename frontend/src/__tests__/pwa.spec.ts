@@ -27,4 +27,9 @@ describe("PWA manifest configuration", () => {
     expect(config).toContain("navigateFallbackDenylist");
     expect(config).toContain("/^\\/api/");
   });
+  it("excludes feed documents from the SPA fallback", () => {
+    // `*.atom`/`*.rss` navigations must reach the backend — serving
+    // index.html for them would show the SPA's not-found page.
+    expect(config).toContain("/^\\/(users|tags|lists)\\/.*\\.(atom|rss)$/");
+  });
 });

@@ -87,7 +87,9 @@ export const router = createRouter({
       props: { timeline: "public", stream: "public", emptyKey: "explore" },
     },
     {
-      path: "/tags/:name",
+      // Tag names carry no dots — a dotted segment is a feed
+      // document (`/tags/{t}.rss|atom`) handled by the feed route.
+      path: "/tags/:name([^.]+)",
       name: "tag",
       component: () => import("@/pages/TimelinePage.vue"),
       props: (r) => ({
@@ -97,7 +99,9 @@ export const router = createRouter({
       }),
     },
     {
-      path: "/lists/:id",
+      // List ids are numeric — `/lists/{id}.rss|atom` is a feed
+      // document handled by the feed route.
+      path: "/lists/:id(\\d+)",
       name: "list",
       component: () => import("@/pages/TimelinePage.vue"),
       props: (r) => ({
@@ -443,6 +447,19 @@ export const router = createRouter({
       path: "/verify-email/:token",
       name: "verify-email",
       component: () => import("@/pages/VerifyEmailPage.vue"),
+    },
+    {
+      // `*.atom`/`*.rss` documents are served by the backend — if the
+      // SPA shell was loaded for one (dev server, or a service worker
+      // that predates the fallback denylist), bounce to the real URL
+      // instead of rendering the not-found page.
+      path: "/:feedPath(.*\\.atom|.*\\.rss)",
+      name: "feed",
+      component: { render: () => null },
+      beforeEnter: (to) => {
+        window.location.assign(to.fullPath);
+        return false;
+      },
     },
     {
       path: "/:pathMatch(.*)*",

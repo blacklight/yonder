@@ -65,3 +65,27 @@ describe("router role guards", () => {
     expect(router.currentRoute.value.name).toBe("settings");
   });
 });
+
+describe("feed document route", () => {
+  // `*.atom`/`*.rss` URLs resolve to the `feed` route, whose guard
+  // bounces to the backend document (`location.assign` is not
+  // exercised here — jsdom cannot navigate).
+  it("resolves feed paths to the feed route", () => {
+    for (const path of [
+      "/users/alice.atom",
+      "/users/alice.rss",
+      "/tags/rust.atom",
+      "/lists/1.rss",
+    ]) {
+      expect(router.resolve(path).name).toBe("feed");
+      expect(router.resolve(path).name).not.toBe("not-found");
+    }
+  });
+
+  it("does not shadow page routes", () => {
+    expect(router.resolve("/tags/rust").name).toBe("tag");
+    expect(router.resolve("/lists/1").name).toBe("list");
+    expect(router.resolve("/@alice").name).toBe("profile-acct");
+    expect(router.resolve("/about").name).toBe("about");
+  });
+});

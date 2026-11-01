@@ -27,6 +27,18 @@ const timelines = useTimelineStore();
 const streaming = useStreamingStore();
 
 const tl = computed(() => timelines.get(props.timeline));
+/**
+ * Hashtag timelines back a public feed (`/tags/{t}.rss`); list feeds
+ * need an owner token, so only hashtags get the header/icon.
+ */
+const feedTag = computed(() =>
+  props.timeline.startsWith("hashtag:")
+    ? props.timeline.slice("hashtag:".length)
+    : null,
+);
+const feedHref = computed(() =>
+  feedTag.value ? `/tags/${encodeURIComponent(feedTag.value)}.rss` : null,
+);
 // Infinite scroll — the bottom sentinel pages the next batch in as it
 // enters the viewport; `hasMore` also guards in-flight fetches.
 const { vInfinite, ioSupported } = useInfiniteScroll(
@@ -70,6 +82,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="timeline">
+    <header v-if="feedTag" class="timeline__header">
+      <h1 class="timeline__title">#{{ feedTag }}</h1>
+      <a
+        v-if="feedHref"
+        class="timeline__feed"
+        :href="feedHref"
+        :title="t('common.feed')"
+        :aria-label="t('common.feed')"
+      >
+        <FontAwesomeIcon icon="rss" />
+      </a>
+    </header>
     <button
       v-if="timelines.pendingCount(timeline) > 0"
       type="button"
@@ -137,6 +161,33 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   overflow: hidden;
+}
+.timeline__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.timeline__title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.timeline__feed {
+  flex-shrink: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+.timeline__feed:hover,
+.timeline__feed:focus-visible {
+  background: var(--bg-sunken);
+  color: var(--text);
 }
 .timeline__pending {
   width: 100%;

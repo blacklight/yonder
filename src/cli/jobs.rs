@@ -184,6 +184,17 @@ pub enum JobCommand {
     /// Payload: `{}`.
     #[command(name = "audit_log_cleanup")]
     AuditLogCleanup(JobArgs),
+    /// Verify an inbound Webmention and materialize it as a reply.
+    ///
+    /// Internal kind — the receiver route enqueues `{"source",
+    /// "target"}`.
+    #[command(name = "webmention_incoming")]
+    WebmentionIncoming(JobArgs),
+    /// Deliver (or retract) a local status's outbound Webmentions.
+    ///
+    /// Internal kind — `{"status_id"}` enqueued on create/edit/delete.
+    #[command(name = "webmention_outgoing")]
+    WebmentionOutgoing(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -219,6 +230,8 @@ impl JobCommand {
             Self::TimelineFanOut(a) => (JobKind::TimelineFanOut, a),
             Self::DeleteMediaObject(a) => (JobKind::DeleteMediaObject, a),
             Self::AuditLogCleanup(a) => (JobKind::AuditLogCleanup, a),
+            Self::WebmentionIncoming(a) => (JobKind::WebmentionIncoming, a),
+            Self::WebmentionOutgoing(a) => (JobKind::WebmentionOutgoing, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

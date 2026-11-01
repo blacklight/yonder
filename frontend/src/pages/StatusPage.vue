@@ -7,6 +7,7 @@ import { fetchRemoteContext, getStatusContext } from "@/api/statuses";
 import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
+import Spinner from "@/components/ui/Spinner.vue";
 import { ApiError } from "@/api/errors";
 import { useAuthStore } from "@/stores/auth";
 import { useStreamingStore } from "@/stores/streaming";
@@ -188,9 +189,12 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
           expanded
           @removed="() => router.push({ name: 'home' })"
         />
-        <p v-if="fetchingRemote" class="remote-loading" role="status">
-          {{ t("status.loadingRemoteContext") }}
-        </p>
+        <div v-if="fetchingRemote" class="remote-loading" role="status">
+          <Spinner size="sm" aria-hidden="true" />
+          <span class="remote-loading__text">
+            {{ t("status.loadingRemoteContext") }}
+          </span>
+        </div>
         <div v-for="(thread, i) in threads" :key="i" class="thread">
           <StatusCard
             v-for="s in thread"
@@ -220,10 +224,41 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
   border-radius: var(--radius-md);
   overflow: hidden;
 }
+/* Remote-context backfill — an in-list row matching the status-card
+   chrome (raised background, dim bottom border). The remote walk can
+   take several seconds, so the bottom edge carries an indeterminate
+   sweep on top of the wheel. */
 .remote-loading {
-  margin: var(--space-sm) var(--space-md);
-  font-size: var(--font-size-sm);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border-dim);
   color: var(--text-muted);
+  font-size: var(--text-sm);
+  overflow: hidden;
+}
+/* Indeterminate progress: a gradient segment sweeping the bottom
+   edge. Global `prefers-reduced-motion` collapses the animation. */
+.remote-loading::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: remote-loading-sweep 1.4s ease-in-out infinite;
+}
+@keyframes remote-loading-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
 }
 /* Mastodon-style thread connector: a vertical line runs from the
    thread head's avatar column down to the last member's; every member

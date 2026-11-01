@@ -992,6 +992,7 @@ async function onReact(emoji: string) {
   margin: var(--space-2) 0;
   text-decoration: none;
   color: var(--text);
+  cursor: pointer;
 }
 .status-card__preview-img {
   width: 4rem;

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { nextTick } from "vue";
 import { flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
@@ -157,6 +158,39 @@ describe("StatusPage remote context", () => {
     await open();
 
     expect(fetchRemoteContext).not.toHaveBeenCalled();
+  });
+
+  it("shows the remote-loading indicator while the fetch runs", async () => {
+    const s = remoteStatus();
+    vi.mocked(request).mockResolvedValue(s as never);
+    vi.mocked(getStatusContext).mockResolvedValue({
+      ancestors: [],
+      descendants: [],
+    });
+    let resolveFetch!: (v: {
+      imported: number;
+      scanned: number;
+      pages: number;
+      complete: boolean;
+    }) => void;
+    vi.mocked(fetchRemoteContext).mockReturnValue(
+      new Promise((r) => {
+        resolveFetch = r;
+      }),
+    );
+
+    const wrapper = await open();
+    await nextTick();
+
+    const row = wrapper.find(".remote-loading");
+    expect(row.exists()).toBe(true);
+    expect(row.attributes("role")).toBe("status");
+    expect(row.text()).toContain("Fetching replies from the remote instance");
+    expect(row.find(".spinner__wheel").exists()).toBe(true);
+
+    resolveFetch({ imported: 0, scanned: 0, pages: 0, complete: true });
+    await flushPromises();
+    expect(wrapper.find(".remote-loading").exists()).toBe(false);
   });
 
   it("keeps the local thread when the remote fetch fails", async () => {

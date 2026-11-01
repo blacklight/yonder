@@ -59,6 +59,89 @@ describe("StatusPoll", () => {
     expect(wrapper.text()).toContain("3 votes");
   });
 
+  it("scales result bars against the leading option and marks it winner", () => {
+    const { wrapper } = mountWith(StatusPoll, {
+      props: { status: statusWithPoll(poll({ voted: true })) },
+    });
+    const results = wrapper.findAll(".poll__result");
+    expect(results).toHaveLength(2);
+    // "no" leads 2:1 — its bar spans the row, "yes" takes half.
+    const bars = wrapper.findAll(".poll__result-bar");
+    expect(bars[0].attributes("style")).toContain("width: 50%");
+    expect(bars[1].attributes("style")).toContain("width: 100%");
+    expect(results[1].classes()).toContain("poll__result--winner");
+    expect(results[0].classes()).not.toContain("poll__result--winner");
+    // Percentage share of the poll total sits next to the raw count.
+    expect(results[0].find(".poll__result-percent").text()).toBe("33%");
+    expect(results[1].find(".poll__result-percent").text()).toBe("67%");
+    expect(results[1].find(".poll__result-votes").text()).toBe("2");
+    // The poll is still open — no winner check yet.
+    expect(wrapper.find(".poll__result-check").exists()).toBe(false);
+  });
+
+  it("marks tied leaders as winners without a check while open", () => {
+    const { wrapper } = mountWith(StatusPoll, {
+      props: {
+        status: statusWithPoll(
+          poll({
+            votes_count: 4,
+            voters_count: 4,
+            voted: true,
+            options: [
+              { title: "yes", votes_count: 2 },
+              { title: "no", votes_count: 2 },
+            ],
+          }),
+        ),
+      },
+    });
+    for (const result of wrapper.findAll(".poll__result")) {
+      expect(result.classes()).toContain("poll__result--winner");
+    }
+    for (const bar of wrapper.findAll(".poll__result-bar")) {
+      expect(bar.attributes("style")).toContain("width: 100%");
+    }
+    expect(wrapper.find(".poll__result-check").exists()).toBe(false);
+  });
+
+  it("marks the winning option with a check once the poll closed", () => {
+    const { wrapper } = mountWith(StatusPoll, {
+      props: {
+        status: statusWithPoll(
+          poll({ expired: true, expires_at: "2026-11-01T23:34:00Z" }),
+        ),
+      },
+    });
+    const checks = wrapper.findAll(".poll__result-check");
+    expect(checks).toHaveLength(1);
+    const winner = wrapper.findAll(".poll__result--winner");
+    expect(winner).toHaveLength(1);
+    expect(winner[0].find(".poll__result-check").exists()).toBe(true);
+  });
+
+  it("renders zero-width bars and no winner on an empty poll", () => {
+    const { wrapper } = mountWith(StatusPoll, {
+      props: {
+        status: statusWithPoll(
+          poll({
+            expired: true,
+            votes_count: 0,
+            voters_count: 0,
+            options: [
+              { title: "yes", votes_count: 0 },
+              { title: "no", votes_count: null },
+            ],
+          }),
+        ),
+      },
+    });
+    for (const bar of wrapper.findAll(".poll__result-bar")) {
+      expect(bar.attributes("style")).toContain("width: 0%");
+    }
+    expect(wrapper.find(".poll__result--winner").exists()).toBe(false);
+    expect(wrapper.find(".poll__result-check").exists()).toBe(false);
+  });
+
   it("votes and applies the returned counts", async () => {
     const updated = poll({
       votes_count: 4,

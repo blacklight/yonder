@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { FontAwesomeIcon } from "@/icons";
 import { votePoll } from "@/api/statuses";
 import { ApiError } from "@/api/errors";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
@@ -18,6 +19,33 @@ const voted = ref(false);
 const showResults = computed(
   () => !!poll.value && (poll.value.expired || poll.value.voted || voted.value),
 );
+
+// Bars are scaled against the option with the most votes so the leader
+// always spans the full row; ties share the full width.
+const maxVotes = computed(() =>
+  (poll.value?.options ?? []).reduce(
+    (max, o) => Math.max(max, o.votes_count ?? 0),
+    0,
+  ),
+);
+
+function isWinner(idx: number): boolean {
+  const votes = poll.value?.options[idx]?.votes_count;
+  return votes != null && maxVotes.value > 0 && votes === maxVotes.value;
+}
+
+function barWidth(votes: number | null): string {
+  if (votes == null || maxVotes.value === 0) return "0%";
+  return `${(votes / maxVotes.value) * 100}%`;
+}
+
+// Option votes as a share of the poll total — for single-choice polls
+// they sum to 100%, for multiple-choice they reflect total ballots.
+function percent(votes: number | null): number {
+  const total = poll.value?.votes_count ?? 0;
+  if (votes == null || total === 0) return 0;
+  return Math.round((votes / total) * 100);
+}
 
 function toggle(idx: number) {
   if (!poll.value) return;
@@ -53,7 +81,12 @@ async function vote() {
 <template>
   <div v-if="poll" class="poll" data-testid="poll">
     <template v-if="!showResults">
-      <label v-for="(opt, idx) in poll.options" :key="idx" class="poll__option">
+      <label
+        v-for="(opt, idx) in poll.options"
+        :key="idx"
+        class="poll__option"
+        :class="{ 'poll__option--selected': chosen.includes(idx) }"
+      >
         <input
           :type="poll.multiple ? 'checkbox' : 'radio'"
           :name="`poll-${poll.id}`"
@@ -74,9 +107,31 @@ async function vote() {
       </button>
     </template>
     <template v-else>
-      <div v-for="(opt, idx) in poll.options" :key="idx" class="poll__result">
-        <span class="poll__result-title">{{ opt.title }}</span>
-        <span class="poll__result-count">{{ opt.votes_count ?? "—" }}</span>
+      <div
+        v-for="(opt, idx) in poll.options"
+        :key="idx"
+        class="poll__result"
+        :class="{ 'poll__result--winner': isWinner(idx) }"
+      >
+        <div
+          class="poll__result-bar"
+          :style="{ width: barWidth(opt.votes_count) }"
+          aria-hidden="true"
+        />
+        <span class="poll__result-title">
+          <FontAwesomeIcon
+            v-if="poll.expired && isWinner(idx)"
+            icon="circle-check"
+            class="poll__result-check"
+          />
+          <span class="poll__result-name">{{ opt.title }}</span>
+        </span>
+        <span class="poll__result-count">
+          <span class="poll__result-percent"
+            >{{ percent(opt.votes_count) }}%</span
+          >
+          <span class="poll__result-votes">{{ opt.votes_count ?? "—" }}</span>
+        </span>
       </div>
       <p class="poll__meta">
         {{ t("status.pollVotes", { count: poll.votes_count }) }}
@@ -106,14 +161,33 @@ async function vote() {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.poll__option:hover {
+  border-color: var(--accent);
+}
+.poll__option--selected,
+.poll__option--selected:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.poll__option input {
+  accent-color: var(--accent);
+  margin: 0;
 }
 .poll__vote {
   align-self: flex-start;
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
+  border: 0;
+  background: var(--accent);
   border-radius: var(--radius-md);
   padding: var(--space-1) var(--space-3);
-  color: var(--text);
+  color: var(--accent-fg);
   cursor: pointer;
   font: inherit;
 }
@@ -122,9 +196,54 @@ async function vote() {
   cursor: default;
 }
 .poll__result {
+  position: relative;
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.poll__result--winner {
+  font-weight: 600;
+}
+.poll__result-bar {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  background: var(--accent-soft);
+  transition: width 0.3s ease;
+}
+.poll__result--winner .poll__result-bar {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.poll__result-title {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.poll__result-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.poll__result-check {
+  color: var(--accent-link);
+  flex-shrink: 0;
+}
+.poll__result-count {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+.poll__result-votes {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 400;
 }
 .poll__meta,
 .poll__error {

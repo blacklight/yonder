@@ -51,6 +51,19 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Swagger-UI is served by the backend at /swagger-ui/ — bounce
+      // out of the SPA so the trailing-slash path loads its assets.
+      path: "/swagger-ui",
+      name: "swagger-ui",
+      // Never renders: the guard below reloads the page. Required
+      // because a route record needs a view or a redirect.
+      component: { render: () => null },
+      beforeEnter: () => {
+        window.location.assign("/swagger-ui/");
+        return false;
+      },
+    },
+    {
       path: "/home",
       name: "home-timeline",
       component: () => import("@/pages/TimelinePage.vue"),

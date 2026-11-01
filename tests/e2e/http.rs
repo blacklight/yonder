@@ -101,6 +101,20 @@ async fn healthz_and_openapi_served() {
     );
     assert!(spec["paths"]["/healthz"].is_object());
     assert!(spec["paths"]["/api/v1/streaming"].is_object());
+
+    // Swagger-UI's Authorize dialog needs a declared scheme, and a
+    // document-level requirement is what makes Try-it-out attach the
+    // token to every operation.
+    assert_eq!(
+        spec["components"]["securitySchemes"]["bearer"]["scheme"],
+        "bearer"
+    );
+    assert_eq!(
+        spec["components"]["securitySchemes"]["bearer"]["type"],
+        "http"
+    );
+    assert_eq!(spec["security"], json!([{"bearer": []}]));
+    assert_eq!(spec["servers"][0]["url"], "/");
 }
 
 #[tokio::test]

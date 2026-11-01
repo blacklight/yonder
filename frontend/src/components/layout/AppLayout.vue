@@ -162,6 +162,14 @@ const menuSource = computed<MenuEntry[]>(() => [
     visible: true,
   },
   {
+    // Backend-served Swagger UI — an anchor, not a router push.
+    id: "api",
+    label: t("nav.api"),
+    href: "/swagger-ui/",
+    icon: "code",
+    visible: true,
+  },
+  {
     id: "settings",
     label: t("nav.settings"),
     to: "/settings",
@@ -223,6 +231,7 @@ const menuItems = computed<NavItem[]>(() =>
       id: i.id,
       label: i.label,
       to: i.to,
+      href: i.href,
       icon: i.icon,
       badge: i.badge,
     })),

@@ -20,4 +20,20 @@ describe("NavMenu", () => {
     expect(icon.attributes("aria-hidden")).toBe("true");
     expect(links[1].find("svg").exists()).toBe(false);
   });
+
+  it("renders `href` items as plain anchors for non-SPA pages", () => {
+    const { wrapper } = mountWith(NavMenu, {
+      props: {
+        items: [
+          { id: "home", label: "Home", to: "/home" },
+          { id: "api", label: "API", href: "/swagger-ui/", icon: "code" },
+        ],
+      },
+    });
+    const links = wrapper.findAll(".navmenu__link");
+    expect(links[1].element.tagName).toBe("A");
+    // A full navigation, not a router push: the href is untouched.
+    expect(links[1].attributes("href")).toBe("/swagger-ui/");
+    expect(links[1].find("svg").classes()).toContain("fa-code");
+  });
 });

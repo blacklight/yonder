@@ -60,6 +60,15 @@ describe("AppLayout", () => {
     expect(names).not.toContain("Admin");
   });
 
+  it("menu links the backend-served Swagger UI", () => {
+    const w = layout();
+    const api = w
+      .findAll(".layout__sidebar .navmenu__link")
+      .find((n) => n.text().trim() === "API");
+    expect(api?.element.tagName).toBe("A");
+    expect(api?.attributes("href")).toBe("/swagger-ui/");
+  });
+
   it("logged-in user sees personal items", () => {
     const auth = useAuthStore();
     auth.setToken("t");

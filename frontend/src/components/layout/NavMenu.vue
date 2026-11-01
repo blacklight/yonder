@@ -5,8 +5,10 @@ import { FontAwesomeIcon } from "@/icons";
 export interface NavItem {
   id: string;
   label: string;
-  /** Route target; absent → `action` semantics (emits `select`). */
+  /** In-app route target. */
   to?: string;
+  /** Non-SPA URL (backend-served page) — renders a plain anchor. */
+  href?: string;
   icon?: IconProp;
   badge?: number;
 }
@@ -39,6 +41,26 @@ const emit = defineEmits<{ select: [item: NavItem] }>();
             >{{ item.badge }}</span
           >
         </router-link>
+        <a
+          v-else-if="item.href"
+          :href="item.href"
+          class="navmenu__link"
+          @click="emit('select', item)"
+        >
+          <FontAwesomeIcon
+            v-if="item.icon"
+            :icon="item.icon"
+            class="navmenu__icon"
+            fixed-width
+          />
+          <span class="navmenu__label">{{ item.label }}</span>
+          <span
+            v-if="item.badge"
+            class="navmenu__badge"
+            :data-badge-for="item.id"
+            >{{ item.badge }}</span
+          >
+        </a>
         <button
           v-else
           type="button"

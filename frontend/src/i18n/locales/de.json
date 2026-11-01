@@ -980,6 +980,8 @@
     "note": "Notiz",
     "lists": "Zur Liste hinzufügen",
     "openOnInstance": "Auf {domain} öffnen",
+    "syncRemote": "Beiträge von {domain} synchronisieren",
+    "syncRemoteDone": "{count} neue Beiträge synchronisiert",
     "hideBoosts": "Geteilte ausblenden",
     "showBoosts": "Geteilte zeigen",
     "mute": "Stummschalten",

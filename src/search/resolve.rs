@@ -282,8 +282,9 @@ async fn materialize_status(
 }
 
 /// `attributedTo` → actor URL (string, `{id}`, or first array item) —
-/// mirrors `posts::remote`'s rule.
-fn attributed_to(object: &Value) -> Option<String> {
+/// mirrors `posts::remote`'s rule. `pub(crate)` — the outbox sync
+/// applies the same ownership check to bare outbox objects.
+pub(crate) fn attributed_to(object: &Value) -> Option<String> {
     match object.get("attributedTo") {
         Some(Value::String(s)) => Some(s.clone()),
         Some(Value::Object(o)) => o.get("id").and_then(|v| v.as_str()).map(str::to_string),

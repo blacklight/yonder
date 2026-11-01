@@ -578,7 +578,7 @@ impl JobHandler for RemoteActorFetchJob {
                 stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor", "actor_gone"]).await;
                 Ok(())
             }
-            super::lookup::RemoteFetch::Failed => {
+            super::lookup::RemoteFetch::RateLimited | super::lookup::RemoteFetch::Failed => {
                 // Stamp the attempt so reads can't pile fresh jobs on
                 // top of this one's retry cycle.
                 stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor"]).await;

@@ -224,3 +224,26 @@ export async function accountStatuses(
   });
   return paginated(response, data);
 }
+
+/** `POST /api/v1/accounts/{id}/sync_remote` — Yonder extension:
+ * backfill the remote actor's outbox (default 25, max 100 imported
+ * activities). Optional `min_id`/`max_id` bound the window to posts
+ * older/newer than a known local status of that account. */
+export interface SyncRemoteResult {
+  imported: number;
+  scanned: number;
+  pages: number;
+  /** `false` when a cap/deadline stopped the scan early. */
+  complete: boolean;
+}
+
+export function syncRemoteAccount(
+  id: string,
+  params?: { limit?: number; min_id?: string; max_id?: string },
+): Promise<SyncRemoteResult> {
+  return request<SyncRemoteResult>({
+    path: `/accounts/${encodeURIComponent(id)}/sync_remote`,
+    method: "POST",
+    body: params ?? {},
+  });
+}

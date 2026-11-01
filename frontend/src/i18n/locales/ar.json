@@ -980,6 +980,8 @@
     "note": "ملاحظة",
     "lists": "إضافة إلى قائمة",
     "openOnInstance": "فتح على {domain}",
+    "syncRemote": "مزامنة المنشورات من {domain}",
+    "syncRemoteDone": "تمت مزامنة {count} منشورات جديدة",
     "hideBoosts": "إخفاء التعزيزات",
     "showBoosts": "إظهار التعزيزات",
     "mute": "كتم",

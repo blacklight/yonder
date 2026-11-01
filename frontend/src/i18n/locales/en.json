@@ -967,6 +967,8 @@
     "note": "Note",
     "lists": "Add to list",
     "openOnInstance": "Open on {domain}",
+    "syncRemote": "Sync posts from {domain}",
+    "syncRemoteDone": "Synced {count} new posts",
     "hideBoosts": "Hide boosts",
     "showBoosts": "Show boosts",
     "mute": "Mute",

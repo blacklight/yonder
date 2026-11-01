@@ -1331,11 +1331,11 @@ impl JobHandler for RemoteStatusFetchJob {
                     .await;
                 Ok(())
             }
-            // Transport-level failure — retry through the queue's
-            // backoff budget.
-            lookup::RemoteFetch::Failed => Err(crate::Error::Internal(format!(
-                "remote status fetch failed: {uri}"
-            ))),
+            // Transport-level failure or remote throttling — retry
+            // through the queue's backoff budget.
+            lookup::RemoteFetch::RateLimited | lookup::RemoteFetch::Failed => Err(
+                crate::Error::Internal(format!("remote status fetch failed: {uri}")),
+            ),
             lookup::RemoteFetch::Doc(fetched) => {
                 match crate::search::resolve::materialize_remote(
                     &ctx.db,

@@ -16,6 +16,7 @@ import {
   unmuteAccount,
   unsubscribe,
   accountStatuses,
+  syncRemoteAccount,
 } from "@/api/accounts";
 import { blockDomain, unblockDomain } from "@/api/domains";
 import { fileReport } from "@/api/reports";
@@ -32,6 +33,7 @@ import type { Account, ListEntity, Relationship, Status } from "@/api/entities";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
+import { useToastsStore } from "@/stores/toasts";
 import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
 import Button from "@/components/ui/Button.vue";
@@ -52,6 +54,7 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const compose = useComposeStore();
+const toasts = useToastsStore();
 
 const account = ref<Account | null>(null);
 const rel = ref<Relationship | null>(null);
@@ -206,6 +209,13 @@ const menuItems = computed<MenuItem[]>(() => {
       id: "open-remote",
       label: t("profile.openOnInstance", { domain }),
       icon: "arrow-up-right-from-square",
+    });
+  // Backfill the remote actor's outbox — remote accounts only.
+  if (domain && auth.isLoggedIn)
+    items.push({
+      id: "sync-remote",
+      label: t("profile.syncRemote", { domain }),
+      icon: "server",
     });
   if (r?.following)
     items.push({
@@ -485,6 +495,16 @@ async function run(id: string) {
         if (rel.value?.domain_blocking) await unblockDomain(domain);
         else await blockDomain(domain);
         await refreshRel();
+        break;
+      }
+      case "sync-remote": {
+        const res = await syncRemoteAccount(a.id);
+        toasts.push({
+          text: t("profile.syncRemoteDone", { count: res.imported }),
+          kind: "success",
+          icon: "server",
+        });
+        await Promise.all([loadStatuses(), loadPinned()]);
         break;
       }
       case "report":

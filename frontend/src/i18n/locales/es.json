@@ -980,6 +980,8 @@
     "note": "Nota",
     "lists": "Añadir a lista",
     "openOnInstance": "Abrir en {domain}",
+    "syncRemote": "Sincronizar publicaciones de {domain}",
+    "syncRemoteDone": "{count} publicaciones nuevas sincronizadas",
     "hideBoosts": "Ocultar impulsos",
     "showBoosts": "Mostrar impulsos",
     "mute": "Silenciar",

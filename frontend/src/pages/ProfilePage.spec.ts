@@ -15,6 +15,7 @@ vi.mock("@/api/accounts", async (orig) => {
     accountStatuses: vi.fn(),
     getRelationships: vi.fn(),
     getAccountLists: vi.fn(),
+    syncRemoteAccount: vi.fn(),
   };
 });
 vi.mock("@/api/lists", async (orig) => {
@@ -41,6 +42,7 @@ import {
   accountStatuses,
   getRelationships,
   getAccountLists,
+  syncRemoteAccount,
 } from "@/api/accounts";
 import {
   listLists,
@@ -52,6 +54,17 @@ import { adminAccountAction } from "@/api/admin";
 import { reverseAdminAction } from "@/api/adminUsers";
 
 // The menu list teleports to <body> — query it at document level.
+// Open menus from earlier tests linger, so assertions on the current
+// page's menu should use the *last* [role='menu'] in the document.
+const lastMenuItems = () => {
+  const menus = document.querySelectorAll<HTMLElement>("[role='menu']");
+  const last = menus[menus.length - 1];
+  return last
+    ? [...last.querySelectorAll<HTMLElement>("[role='menuitem']")].map(
+        (el) => new DOMWrapper(el),
+      )
+    : [];
+};
 const menuItems = () =>
   [...document.querySelectorAll<HTMLElement>("[role='menuitem']")].map(
     (el) => new DOMWrapper(el),
@@ -144,6 +157,13 @@ describe("ProfilePage", () => {
     vi.mocked(getAccount).mockReset();
     vi.mocked(adminAccountAction).mockReset();
     vi.mocked(reverseAdminAction).mockReset();
+    vi.mocked(syncRemoteAccount).mockReset();
+    vi.mocked(syncRemoteAccount).mockResolvedValue({
+      imported: 3,
+      scanned: 5,
+      pages: 1,
+      complete: true,
+    });
     document.title = "";
   });
 
@@ -767,5 +787,40 @@ describe("ProfilePage", () => {
     await (modal as HTMLElement).click();
     await flushPromises();
     expect(reverseAdminAction).toHaveBeenCalledWith("1", "unsuspend");
+  });
+
+  it("offers 'Sync posts' for remote accounts and reloads the timeline", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(
+      account({ id: "7", acct: "alice@example.org" }),
+    );
+    const wrapper = await openProfile("/@alice@example.org");
+    await wrapper.get(".menu__trigger").trigger("click");
+    const item = lastMenuItems().find((i) =>
+      i.text().includes("Sync posts from example.org"),
+    );
+    expect(item).toBeDefined();
+    const statusCalls = vi.mocked(accountStatuses).mock.calls.length;
+    await item!.trigger("click");
+    await flushPromises();
+    expect(syncRemoteAccount).toHaveBeenCalledWith("7");
+    // Imported posts surface without a manual reload.
+    expect(vi.mocked(accountStatuses).mock.calls.length).toBeGreaterThan(
+      statusCalls,
+    );
+  });
+
+  it("hides 'Sync posts' for local accounts", async () => {
+    const auth = useAuthStore();
+    auth.setToken("tk");
+    auth.account = { id: "42" } as never;
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".menu__trigger").trigger("click");
+    expect(lastMenuItems().some((i) => i.text().includes("Sync posts"))).toBe(
+      false,
+    );
   });
 });

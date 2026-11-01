@@ -184,3 +184,36 @@ only pinned statuses that carry media), and `last_status_at` counts
 every non-tombstone status including `direct` — Mastodon's
 account-level semantics. Remote-media caching and cleanup rules are in
 `docs/media.md`.
+
+## Remote outbox sync ("Sync posts from <domain>")
+
+`POST /api/v1/accounts/{id}/sync_remote` (auth: `read` scope; remote
+accounts only; suspended remote domains get 403) walks the account's
+remote outbox newest→oldest and imports activities through the normal
+ingest path — `Create`/`Update`/`Delete` via `posts::remote::handle`,
+`Announce` as a boost insert, bare status objects via a synthetic
+`Create`. The profile action menu exposes it as **Sync posts from
+<domain>** for remote accounts.
+
+Body (JSON or form): `limit` (newly imported activities; default 25,
+clamped to 100), `min_id`/`max_id` (local status ids of this account —
+their `created_at`, which stores the remote `published`, becomes the
+window edge) and `min_date`/`max_date` (explicit RFC-3339 edges; id and
+date edges combine to the tighter bound). With no bounds the sync
+resumes from the previous unbounded scan's frontier — a Redis floor
+marker records the deepest `published` examined, so repeat calls only
+walk items newer than that. Bounded calls are targeted gap repair and
+don't move the marker. Items already materialized are skipped at a
+`load_by_uri` pre-check, so gaps anywhere in the remote history get
+filled without reimporting known posts; items authored by other actors
+are ignored (an outbox may only speak for its owner), and tombstoned
+rows are never resurrected.
+
+The response is a sync report `{imported, scanned, pages, complete}` —
+`complete` when the window's end was reached rather than a cap or the
+walk's 90s deadline. Politeness: every GET is a signed fetch with
+bounded exponential backoff on 429/transient failure (`Retry-After`
+isn't readable through the pubby client yet), a 20-page / `limit × 4`
+scan cap, and a per-account Redis lock that 429s a concurrent sync.
+Rate limiting has a dedicated `rate_limit.remote_sync` bucket (default
+6 per 5 minutes) since one call fans out to several remote requests.

@@ -29,6 +29,7 @@ mod notifications;
 mod posting;
 mod profile;
 mod redis;
+mod remote_sync;
 mod search;
 mod settings;
 mod social_graph;

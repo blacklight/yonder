@@ -980,6 +980,8 @@
     "note": "Nota",
     "lists": "Aggiungi a lista",
     "openOnInstance": "Apri su {domain}",
+    "syncRemote": "Sincronizza i post da {domain}",
+    "syncRemoteDone": "{count} nuovi post sincronizzati",
     "hideBoosts": "Nascondi condivisioni",
     "showBoosts": "Mostra condivisioni",
     "mute": "Silenzia",

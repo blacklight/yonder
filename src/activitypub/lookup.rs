@@ -136,6 +136,10 @@ pub(crate) enum RemoteFetch {
     /// 404/410, or the URL can never be fetched (SSRF guard) —
     /// retrying won't help.
     Gone,
+    /// 429 — the remote is throttling us. Callers that retry inline
+    /// (outbox sync) back off first; everything else can treat it like
+    /// [`RemoteFetch::Failed`].
+    RateLimited,
     /// Transport error, a non-2xx other than 404/410, or an
     /// unparseable body — worth a retry.
     Failed,
@@ -218,6 +222,10 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
             Ok(resp) if resp.status == 404 || resp.status == 410 => {
                 tracing::debug!(status = resp.status, url = %url, "remote object gone");
                 RemoteFetch::Gone
+            }
+            Ok(resp) if resp.status == 429 => {
+                tracing::debug!(url = %url, "remote object fetch rate-limited");
+                RemoteFetch::RateLimited
             }
             Ok(resp) => {
                 tracing::debug!(status = resp.status, url = %url, "remote object fetch failed");

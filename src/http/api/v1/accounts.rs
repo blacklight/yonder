@@ -822,3 +822,125 @@ pub async fn resend_confirmation(
     }
     Ok(Json(json!({})))
 }
+
+// ---------------------------------------------------------------------------
+// Remote outbox sync ("sync posts from remote")
+// ---------------------------------------------------------------------------
+
+/// One window edge for [`sync_remote`]: `id_key` names a local status
+/// id belonging to this account (its `created_at` is the remote
+/// `published` it was ingested with), `date_key` an explicit RFC-3339
+/// stamp. Both may be present — they combine to the tighter edge
+/// (`max` for the window floor, `min` for the ceiling).
+async fn sync_bound(
+    state: &AppState,
+    account_id: i64,
+    params: &HashMap<String, Vec<String>>,
+    id_key: &str,
+    date_key: &str,
+    lower: bool,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    let mut edge = None;
+    if let Some(raw) = super::relationships::param(params, id_key) {
+        let status_id = raw
+            .parse::<i64>()
+            .map_err(|_| Error::Validation(format!("invalid {id_key} value: {raw}")))?;
+        let created_at: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT created_at FROM statuses WHERE id = $1 AND account_id = $2")
+                .bind(status_id)
+                .bind(account_id)
+                .fetch_optional(&state.db)
+                .await?;
+        edge = Some(created_at.ok_or_else(|| Error::NotFound("status".into()))?);
+    }
+    if let Some(raw) = super::relationships::param(params, date_key) {
+        let parsed = chrono::DateTime::parse_from_rfc3339(raw)
+            .map_err(|_| Error::Validation(format!("invalid {date_key} value: {raw}")))?
+            .with_timezone(&chrono::Utc);
+        edge = Some(match edge {
+            Some(e) if lower => e.max(parsed),
+            Some(e) => e.min(parsed),
+            None => parsed,
+        });
+    }
+    Ok(edge)
+}
+
+/// `POST /api/v1/accounts/{id}/sync_remote` — Yonder extension: pull
+/// the remote actor's outbox onto this instance, backfilling posts
+/// without fetching statuses one by one.
+///
+/// Body (JSON or form): `limit` (default 25, max 100 — *newly
+/// imported* activities), `min_id`/`max_id` (local status ids of this
+/// account — resolve to publication-time window edges) and
+/// `min_date`/`max_date` (explicit RFC-3339 edges). Unbounded syncs
+/// resume from the previous scan's frontier; bounded ones repair the
+/// exact window asked for. Returns
+/// `{imported, scanned, pages, complete}` — `complete` when the
+/// window's end was reached rather than a cap or the deadline.
+#[utoipa::path(
+    post,
+    path = "/api/v1/accounts/{id}/sync_remote",
+    tag = "accounts",
+    params(("id" = String, Path, description = "Account id")),
+    responses(
+        (status = 200, description = "Sync report"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "The remote instance is suspended", body = crate::error::ErrorBody),
+        (status = 404, description = "Account (or bound status) not found", body = crate::error::ErrorBody),
+        (status = 422, description = "Local account or invalid parameters", body = crate::error::ErrorBody),
+        (status = 429, description = "A sync is already running for this account", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn sync_remote(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+    request: Request,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read")?;
+    let account = load_public_account(&state, id).await?;
+    let Some(domain) = &account.domain else {
+        return Err(Error::Validation(
+            "only remote accounts can be synced".into(),
+        ));
+    };
+    if crate::search::resolve::domain_suspended(&state.db, domain).await? {
+        return Err(Error::Forbidden("the account's instance is suspended"));
+    }
+    let Some(ap) = &state.ap else {
+        return Err(Error::Validation("federation is not enabled".into()));
+    };
+    let params = super::relationships::body_params(request).await?;
+    let limit = super::relationships::param(&params, "limit")
+        .map(|s| {
+            s.parse::<u32>()
+                .map_err(|_| Error::Validation(format!("invalid limit value: {s}")))
+        })
+        .transpose()?
+        .unwrap_or(crate::activitypub::outbox::DEFAULT_LIMIT)
+        .clamp(1, crate::activitypub::outbox::MAX_LIMIT);
+    let since = sync_bound(&state, account.id, &params, "min_id", "min_date", true).await?;
+    let until = sync_bound(&state, account.id, &params, "max_id", "max_date", false).await?;
+    if let (Some(s), Some(u)) = (since, until) {
+        if s >= u {
+            return Err(Error::Validation(
+                "the min bound must be before the max bound".into(),
+            ));
+        }
+    }
+    let report = crate::activitypub::outbox::sync_account_outbox(
+        ap,
+        account.id,
+        &account.actor_id,
+        limit,
+        &crate::activitypub::outbox::SyncBounds { since, until },
+    )
+    .await?;
+    Ok(Json(json!({
+        "imported": report.imported,
+        "scanned": report.scanned,
+        "pages": report.pages,
+        "complete": report.complete,
+    })))
+}

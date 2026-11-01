@@ -524,6 +524,13 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             post(relationships::unsubscribe_account)
                 .route_layer(ratelimit::layer(state, "relation")),
         )
+        // Remote outbox backfill — the "sync posts from remote"
+        // profile action. Dedicated `remote_sync` bucket: one call can
+        // fan out to several remote requests.
+        .route(
+            "/api/v1/accounts/{id}/sync_remote",
+            post(accounts::sync_remote).route_layer(ratelimit::layer(state, "remote_sync")),
+        )
         .route("/api/v1/follow_requests", get(follow_requests::list))
         .route(
             "/api/v1/follow_requests/{id}/authorize",
@@ -992,6 +999,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     accounts::search_accounts,
     accounts::familiar_followers,
     accounts::account_featured_tags,
+    accounts::sync_remote,
     accounts::resend_confirmation,
     markers::get_markers,
     markers::save_markers,

@@ -168,6 +168,7 @@ function saveCurrent() {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-dim);
   border-radius: var(--radius-md);
   color: var(--text-muted);
   font-size: var(--text-sm);
@@ -175,6 +176,7 @@ function saveCurrent() {
 }
 .compose-page__drafts-toggle:hover {
   color: var(--text);
+  border: 1px solid var(--border);
 }
 .compose-page__count {
   background: var(--bg-raised);

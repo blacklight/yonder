@@ -62,6 +62,12 @@ async function setPostingLanguage(code: string) {
   notifySaved();
 }
 
+async function setContentType(value: string) {
+  if (!auth.isLoggedIn) return;
+  await settings.patch({ default_content_type: value || null });
+  notifySaved();
+}
+
 async function setEmailNotif(key: string, checked: boolean) {
   if (!auth.isLoggedIn) return;
   await settings.patch({ email_notifications: { [key]: checked } });
@@ -325,6 +331,25 @@ onMounted(async () => {
                   :value="l.code"
                 >
                   {{ l.label }}
+                </option>
+              </select>
+            </label>
+            <label class="settings__row">
+              <span>{{ t("settings.contentType") }}</span>
+              <select
+                :value="settings.settings.default_content_type ?? ''"
+                @change="
+                  setContentType(($event.target as HTMLSelectElement).value)
+                "
+              >
+                <option value="">
+                  {{ t("settings.contentType_default") }}
+                </option>
+                <option value="text/plain">
+                  {{ t("settings.contentType_plain") }}
+                </option>
+                <option value="text/markdown">
+                  {{ t("settings.contentType_markdown") }}
                 </option>
               </select>
             </label>

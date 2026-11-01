@@ -43,6 +43,11 @@ pub const VISIBILITIES: &[&str] = &["public", "unlisted", "followers_only", "pri
 /// Stored `users.theme` values; NULL resolves to `system`.
 pub const THEMES: &[&str] = &["light", "dark", "system"];
 
+/// `accounts.default_content_type` values — the `content_type`s the
+/// post pipeline renders. NULL resolves to the instance default
+/// (`content.default_post_content_type`).
+pub const CONTENT_TYPES: &[&str] = &["text/plain", "text/markdown"];
+
 // ---------------------------------------------------------------------------
 // Patch tri-state
 // ---------------------------------------------------------------------------
@@ -206,6 +211,16 @@ pub fn validate_visibility(visibility: &str) -> Result<()> {
     )))
 }
 
+pub fn validate_content_type(content_type: &str) -> Result<()> {
+    if CONTENT_TYPES.contains(&content_type) {
+        return Ok(());
+    }
+    Err(Error::Validation(format!(
+        "content_type must be one of: {}",
+        CONTENT_TYPES.join(", ")
+    )))
+}
+
 pub fn validate_deletion_days(days: i64) -> Result<i32> {
     if !(0..=MAX_SCHEDULED_DELETION_DAYS as i64).contains(&days) {
         return Err(Error::Validation(format!(
@@ -353,6 +368,8 @@ pub struct UserSettings {
     pub default_visibility: String,
     pub default_language: Option<String>,
     pub default_sensitive: bool,
+    /// NULL resolves to the instance `content.default_post_content_type`.
+    pub default_content_type: Option<String>,
     // users
     pub indexable: bool,
     pub include_public_posts_in_search: bool,
@@ -380,7 +397,7 @@ pub struct UserSettings {
 pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
     let row = sqlx::query(
         "SELECT a.hide_network, a.directory_opt_in, a.default_visibility, \
-                a.default_language, a.default_sensitive, \
+                a.default_language, a.default_sensitive, a.default_content_type, \
                 u.indexable, u.include_public_posts_in_search, \
                 u.show_app_display, u.cw_always_expand, \
                 u.block_stranger_notifications, u.scheduled_deletion_days, \
@@ -401,6 +418,7 @@ pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
         default_visibility: row.get("default_visibility"),
         default_language: row.get("default_language"),
         default_sensitive: row.get("default_sensitive"),
+        default_content_type: row.get("default_content_type"),
         indexable: row.get("indexable"),
         include_public_posts_in_search: row.get("include_public_posts_in_search"),
         show_app_display: row.get("show_app_display"),
@@ -447,6 +465,8 @@ impl UserSettings {
             "default_posting_language": self.default_language,
             "default_visibility": public_visibility(&self.default_visibility),
             "default_sensitive": self.default_sensitive,
+            "default_content_type": self.default_content_type,
+            "effective_content_type": self.effective_content_type(config),
             "theme": self.theme.as_deref().unwrap_or("system"),
             "accent": self.accent,
             "frontend": self.frontend,
@@ -466,6 +486,15 @@ impl UserSettings {
                 config,
             ),
         })
+    }
+
+    /// Resolved default post content type: the stored choice, else the
+    /// instance default (`content.default_post_content_type`).
+    pub fn effective_content_type<'a>(&'a self, config: &Config) -> &'a str {
+        self.default_content_type
+            .as_deref()
+            .filter(|ct| CONTENT_TYPES.contains(ct))
+            .unwrap_or_else(|| config.content.default_post_content_type.as_str())
     }
 
     /// Mastodon `Preferences` entity — native keys at top level,
@@ -510,6 +539,7 @@ pub struct SettingsPatch {
     pub default_posting_language: Patch<String>,
     pub default_visibility: Patch<String>,
     pub default_sensitive: Patch<bool>,
+    pub default_content_type: Patch<String>,
     pub theme: Patch<String>,
     pub accent: Patch<String>,
     pub frontend: Patch<String>,
@@ -621,6 +651,7 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
             | "default_posting_language"
             | "default_visibility"
             | "default_sensitive"
+            | "default_content_type"
             | "theme"
             | "accent"
             | "frontend"
@@ -660,6 +691,14 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
         }
         other => other,
     };
+    let default_content_type = match json_string_patch(body, "default_content_type")? {
+        Patch::Set(v) => {
+            let v = v.to_ascii_lowercase();
+            validate_content_type(&v)?;
+            Patch::Set(v)
+        }
+        other => other,
+    };
     let theme = match json_string_patch(body, "theme")? {
         Patch::Set(t) => {
             let t = t.to_ascii_lowercase();
@@ -691,6 +730,7 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
         default_posting_language,
         default_visibility,
         default_sensitive: patch_bool(body, "default_sensitive")?,
+        default_content_type,
         theme,
         accent,
         frontend,
@@ -712,7 +752,7 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
 
     let acct = sqlx::query(
         "SELECT directory_opt_in, default_visibility, default_language, \
-                default_sensitive \
+                default_sensitive, default_content_type \
          FROM accounts WHERE id = $1 AND domain IS NULL FOR UPDATE",
     )
     .bind(auth.account_id)
@@ -738,11 +778,13 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
     let accounts_touched = !patch.directory_opt_in.is_unset()
         || !patch.default_visibility.is_unset()
         || !patch.default_posting_language.is_unset()
-        || !patch.default_sensitive.is_unset();
+        || !patch.default_sensitive.is_unset()
+        || !patch.default_content_type.is_unset();
     if accounts_touched {
         sqlx::query(
             "UPDATE accounts SET directory_opt_in = $2, default_visibility = $3, \
                     default_language = $4, default_sensitive = $5, \
+                    default_content_type = $6, \
                     updated_at = now() WHERE id = $1",
         )
         .bind(auth.account_id)
@@ -769,6 +811,12 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
                 .default_sensitive
                 .clone()
                 .resolve(acct.get("default_sensitive"), false),
+        )
+        .bind(
+            patch
+                .default_content_type
+                .clone()
+                .resolve_nullable(acct.get("default_content_type")),
         )
         .execute(&mut *tx)
         .await?;
@@ -957,6 +1005,7 @@ mod tests {
         assert!(parse_patch(&config, &json!({"bogus": 1})).is_err());
         assert!(parse_patch(&config, &json!({"theme": "sepia"})).is_err());
         assert!(parse_patch(&config, &json!({"default_visibility": "direct"})).is_err());
+        assert!(parse_patch(&config, &json!({"default_content_type": "text/html"})).is_err());
         assert!(parse_patch(&config, &json!({"scheduled_deletion_days": 99999})).is_err());
         assert!(parse_patch(&config, &json!({"interface_language": "fr"})).is_err());
         assert!(parse_patch(&config, &json!({"email_notifications": {"zzz": true}})).is_err());
@@ -966,6 +1015,7 @@ mod tests {
             &json!({
                 "theme": "dark",
                 "interface_language": null,
+                "default_content_type": "text/markdown",
                 "frontend": "yonder",
                 "scheduled_deletion_days": 30,
                 "email_notifications": {"follow": true},
@@ -975,6 +1025,10 @@ mod tests {
         .unwrap();
         assert_eq!(patch.theme, Patch::Set("dark".to_string()));
         assert_eq!(patch.interface_language, Patch::Reset);
+        assert_eq!(
+            patch.default_content_type,
+            Patch::Set("text/markdown".to_string())
+        );
         assert_eq!(patch.frontend, Patch::Set("yonder".to_string()));
         assert_eq!(patch.scheduled_deletion_days, Patch::Set(30));
         assert_eq!(

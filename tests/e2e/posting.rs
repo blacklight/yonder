@@ -233,6 +233,78 @@ async fn markdown_renders_and_sanitizes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn account_default_content_type_applies_when_unspecified() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "md", "md@example.com").await;
+
+    // Fresh account: the instance default (text/plain) applies.
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "**not bold**"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content_type"], "text/plain");
+
+    // The account preference wins over the instance default.
+    let (status, body) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/yonder/settings",
+        Some(&token),
+        Some(json!({"default_content_type": "text/markdown"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["default_content_type"], "text/markdown");
+    assert_eq!(body["effective_content_type"], "text/markdown");
+
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "**bold**"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content_type"], "text/markdown");
+    assert!(
+        body["content"]
+            .as_str()
+            .unwrap()
+            .contains("<strong>bold</strong>"),
+        "{body}"
+    );
+
+    // An explicit per-post content_type still wins over the preference.
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "**not bold**", "content_type": "text/plain"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["content_type"], "text/plain");
+    assert!(
+        !body["content"].as_str().unwrap().contains("<strong>"),
+        "{body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn visibility_gates_reads() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

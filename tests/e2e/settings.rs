@@ -219,6 +219,7 @@ async fn fresh_account_reports_bootstrap_defaults() {
     assert_eq!(body["source"]["privacy"], "public");
     assert_eq!(body["source"]["sensitive"], false);
     assert_eq!(body["source"]["language"], "en");
+    assert_eq!(body["source"]["content_type"], "text/plain");
     assert_eq!(body["hide_collections"], false);
     assert_eq!(body["indexable"], true);
     assert_eq!(body["noindex"], false);
@@ -231,6 +232,8 @@ async fn fresh_account_reports_bootstrap_defaults() {
     assert_eq!(s["default_posting_language"], Value::Null);
     assert_eq!(s["default_visibility"], "public");
     assert_eq!(s["default_sensitive"], false);
+    assert_eq!(s["default_content_type"], Value::Null);
+    assert_eq!(s["effective_content_type"], "text/plain");
     assert_eq!(s["theme"], "system");
     assert_eq!(s["accent"], Value::Null);
     assert_eq!(s["block_stranger_notifications"], false);
@@ -288,6 +291,7 @@ async fn update_credentials_native_settings_all_transports() {
                     ("source[privacy]", "unlisted"),
                     ("source[language]", "IT"),
                     ("source[sensitive]", "true"),
+                    ("source[content_type]", "text/markdown"),
                 ],
             ),
             &token,
@@ -301,6 +305,7 @@ async fn update_credentials_native_settings_all_transports() {
     assert_eq!(body["source"]["privacy"], "unlisted");
     assert_eq!(body["source"]["language"], "it");
     assert_eq!(body["source"]["sensitive"], true);
+    assert_eq!(body["source"]["content_type"], "text/markdown");
     assert_eq!(body["noindex"], true);
 
     // JSON transport (nested source object) — `hide_collections: null`
@@ -312,7 +317,7 @@ async fn update_credentials_native_settings_all_transports() {
         json!({
             "hide_collections": null,
             "indexable": null,
-            "source": {"privacy": "private", "language": "de", "sensitive": false},
+            "source": {"privacy": "private", "language": "de", "sensitive": false, "content_type": "text/plain"},
         }),
     )
     .await;
@@ -322,6 +327,7 @@ async fn update_credentials_native_settings_all_transports() {
     assert_eq!(body["source"]["privacy"], "private");
     assert_eq!(body["source"]["language"], "de");
     assert_eq!(body["source"]["sensitive"], false);
+    assert_eq!(body["source"]["content_type"], "text/plain");
     assert_eq!(body["noindex"], false);
 
     // Multipart transport — empty scalars reset.
@@ -334,6 +340,7 @@ async fn update_credentials_native_settings_all_transports() {
                     ("hide_collections", "1"),
                     ("source[privacy]", ""),
                     ("source[language]", ""),
+                    ("source[content_type]", ""),
                     ("locked", ""),
                 ],
             ),
@@ -346,6 +353,13 @@ async fn update_credentials_native_settings_all_transports() {
     assert_eq!(body["hide_collections"], true);
     assert_eq!(body["source"]["privacy"], "public");
     assert_eq!(body["source"]["language"], "en");
+    // `""` resets to NULL — the effective value falls back to the
+    // instance default again.
+    assert_eq!(body["source"]["content_type"], "text/plain");
+    assert_eq!(
+        body["yonder"]["settings"]["default_content_type"],
+        Value::Null
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -365,6 +379,7 @@ async fn yonder_settings_set_read_unset() {
             "default_posting_language": "ar",
             "default_visibility": "followers_only",
             "default_sensitive": true,
+            "default_content_type": "text/markdown",
             "theme": "dark",
             "accent": "#A1B2C3",
             "block_stranger_notifications": true,
@@ -384,6 +399,8 @@ async fn yonder_settings_set_read_unset() {
     // Stored `followers_only` renders as Mastodon's `private` on the wire.
     assert_eq!(body["default_visibility"], "private");
     assert_eq!(body["default_sensitive"], true);
+    assert_eq!(body["default_content_type"], "text/markdown");
+    assert_eq!(body["effective_content_type"], "text/markdown");
     assert_eq!(body["theme"], "dark");
     assert_eq!(body["accent"], "#a1b2c3");
     assert_eq!(body["block_stranger_notifications"], true);
@@ -423,6 +440,7 @@ async fn yonder_settings_set_read_unset() {
             "default_posting_language": null,
             "default_visibility": null,
             "default_sensitive": null,
+            "default_content_type": null,
             "theme": null,
             "accent": null,
             "block_stranger_notifications": null,
@@ -441,6 +459,8 @@ async fn yonder_settings_set_read_unset() {
     assert_eq!(body["default_posting_language"], Value::Null);
     assert_eq!(body["default_visibility"], "public");
     assert_eq!(body["default_sensitive"], false);
+    assert_eq!(body["default_content_type"], Value::Null);
+    assert_eq!(body["effective_content_type"], "text/plain");
     assert_eq!(body["theme"], "system");
     assert_eq!(body["accent"], Value::Null);
     assert_eq!(body["block_stranger_notifications"], false);
@@ -476,6 +496,7 @@ async fn settings_validation_errors() {
         json!({"default_visibility": "everyone"}),
         json!({"interface_language": "fr"}),
         json!({"default_posting_language": "english"}),
+        json!({"default_content_type": "text/html"}),
         json!({"scheduled_deletion_days": -1}),
         json!({"scheduled_deletion_days": 3651}),
         json!({"scheduled_deletion_days": "soon"}),
@@ -507,6 +528,7 @@ async fn settings_validation_errors() {
     for body in [
         json!({"source": {"privacy": "direct"}}),
         json!({"source": {"language": "fr"}}),
+        json!({"source": {"content_type": "text/html"}}),
         json!({"source": {"privacy": "public"}, "source_privacy": "private"}),
         json!({"source": {"unexpected": true}}),
         json!({"hide_collections": "maybe"}),

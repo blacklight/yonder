@@ -44,6 +44,8 @@ export interface CredentialAccount extends Account {
     privacy: string;
     sensitive: boolean;
     language: string | null;
+    /** Resolved default `content_type` for new posts. */
+    content_type?: string;
     note: string;
     fields: { name: string; value: string }[];
   };
@@ -64,6 +66,10 @@ export interface YonderSettings {
   default_posting_language: string | null;
   default_visibility: string | null;
   default_sensitive: boolean;
+  /** `text/plain`/`text/markdown` — `null` = instance default. */
+  default_content_type: string | null;
+  /** Resolved default (`default_content_type` ?? instance default). */
+  effective_content_type?: string;
   theme: string;
   accent: string | null;
   frontend: string | null;

@@ -50,6 +50,36 @@ describe("SettingsPage preference groups", () => {
     });
   });
 
+  it("renders and patches the default post format select", async () => {
+    useAuthStore().setToken("tok");
+    const spy = mockApi({
+      theme: "system",
+      accent: null,
+      default_content_type: null,
+      email_notifications: {},
+    });
+    const { wrapper } = mountWith(SettingsPage);
+    await flushPromises();
+
+    const row = wrapper
+      .findAll(".settings__row")
+      .find((r) => r.text().includes("Default post format"))!;
+    expect(row).toBeDefined();
+    const select = row.get<HTMLSelectElement>("select");
+    // Stored `null` → the "instance default" option is selected.
+    expect(select.element.value).toBe("");
+    await select.setValue("text/markdown");
+    await flushPromises();
+
+    const patchCall = spy.mock.calls.find(
+      (c) => (c[1]?.method ?? "") === "PATCH",
+    )!;
+    expect(patchCall[0]).toBe("/api/v1/yonder/settings");
+    expect(JSON.parse(patchCall[1]!.body as string)).toEqual({
+      default_content_type: "text/markdown",
+    });
+  });
+
   it("splits the language filter input into a tag array", async () => {
     useAuthStore().setToken("tok");
     const spy = mockApi({

@@ -93,6 +93,9 @@ pub struct SourceSchema {
     pub sensitive: Option<bool>,
     /// Default posting language (`en`/`es`/`it`/`de`/`ar`).
     pub language: Option<String>,
+    /// Default post content type (`text/plain`/`text/markdown`;
+    /// `null` = instance default).
+    pub content_type: Option<String>,
 }
 
 /// OpenAPI shape of one profile field.
@@ -134,6 +137,8 @@ pub struct UpdateCredentials {
     pub privacy: Patch<String>,
     /// `source[language]` → `accounts.default_language`.
     pub language: Patch<String>,
+    /// `source[content_type]` → `accounts.default_content_type`.
+    pub content_type: Patch<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +335,7 @@ fn params_from_pairs(
         sensitive: settings::form_flag_patch(pairs, "source[sensitive]")?,
         privacy: settings::pair_string_patch(pairs, "source[privacy]"),
         language: settings::pair_string_patch(pairs, "source[language]"),
+        content_type: settings::pair_string_patch(pairs, "source[content_type]"),
     })
 }
 
@@ -410,21 +416,22 @@ fn params_from_json(body: &Value) -> Result<UpdateCredentials> {
         }
     }
 
-    // `source: {privacy, sensitive, language}` plus flat `source_*`
-    // aliases; a nested/flat disagreement is a 422, never a coin flip.
+    // `source: {privacy, sensitive, language, content_type}` plus flat
+    // `source_*` aliases; a nested/flat disagreement is a 422, never a
+    // coin flip.
     let source = match body.get("source") {
         None | Some(Value::Null) => None,
         Some(map @ Value::Object(_)) => Some(map.clone()),
         Some(_) => {
             return Err(Error::Validation(
-                "source must be an object of {privacy, sensitive, language}".into(),
+                "source must be an object of {privacy, sensitive, language, content_type}".into(),
             ))
         }
     };
     if let Some(map) = source.as_ref().and_then(Value::as_object) {
         for key in map.keys() {
             match key.as_str() {
-                "privacy" | "sensitive" | "language" => {}
+                "privacy" | "sensitive" | "language" | "content_type" => {}
                 _ => {
                     return Err(Error::Validation(format!("unknown source key {key:?}")));
                 }
@@ -447,6 +454,11 @@ fn params_from_json(body: &Value) -> Result<UpdateCredentials> {
         settings::json_flag_patch(body, "source_sensitive")?,
         "source[sensitive]",
     )?;
+    let content_type = settings::merge_alias_patch(
+        settings::json_string_patch(&source_value, "content_type")?,
+        settings::json_string_patch(body, "source_content_type")?,
+        "source[content_type]",
+    )?;
 
     Ok(UpdateCredentials {
         display_name: json_string(body, "display_name")?,
@@ -462,6 +474,7 @@ fn params_from_json(body: &Value) -> Result<UpdateCredentials> {
         sensitive,
         privacy,
         language,
+        content_type,
     })
 }
 
@@ -746,6 +759,10 @@ pub async fn update_profile(
         *l = settings::normalize_locale(l);
         settings::validate_supported_locale("source[language]", l)?;
     }
+    if let Patch::Set(ct) = &mut params.content_type {
+        *ct = ct.to_ascii_lowercase();
+        settings::validate_content_type(ct)?;
+    }
 
     // Upload processing is CPU + filesystem — run it before the row
     // lock is taken. A failed DB write can orphan the stored file;
@@ -787,7 +804,8 @@ pub async fn update_profile(
         "SELECT username, display_name, bio, avatar_path, banner_path, \
                 avatar_blurhash, header_blurhash, profile_fields, \
                 locked, bot, discoverable, hide_network, \
-                default_visibility, default_language, default_sensitive \
+                default_visibility, default_language, default_sensitive, \
+                default_content_type \
          FROM accounts WHERE id = $1 AND domain IS NULL FOR UPDATE",
     )
     .bind(auth.account_id)
@@ -843,6 +861,9 @@ pub async fn update_profile(
     let default_sensitive = params
         .sensitive
         .resolve(row.get("default_sensitive"), false);
+    let default_content_type = params
+        .content_type
+        .resolve_nullable(row.get("default_content_type"));
     // `indexable` lives on `users` — lock it after `accounts` (the same
     // order `settings::save` uses) only when the flag is patched.
     let indexable = if params.indexable.is_unset() {
@@ -926,7 +947,8 @@ pub async fn update_profile(
                 header_blurhash = $8, locked = $9, bot = $10, \
                 discoverable = $11, hide_network = $12, \
                 default_visibility = $13, default_language = $14, \
-                default_sensitive = $15, updated_at = now() \
+                default_sensitive = $15, default_content_type = $16, \
+                updated_at = now() \
          WHERE id = $1",
     )
     .bind(auth.account_id)
@@ -944,6 +966,7 @@ pub async fn update_profile(
     .bind(&default_visibility)
     .bind(&default_language)
     .bind(default_sensitive)
+    .bind(&default_content_type)
     .execute(&mut *tx)
     .await?;
     if let Some(indexable) = indexable {

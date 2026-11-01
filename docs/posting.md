@@ -32,6 +32,11 @@ scheduling, link previews and ActivityPub federation.
 - CW/`spoiler_text` is always escaped plain text.
 - Rendered HTML is stored in `statuses.content_html`; inbound remote
   HTML is re-sanitized through the same allowlist.
+- An omitted `content_type` resolves per account: the stored
+  `accounts.default_content_type` preference (set via
+  `PATCH /api/v1/yonder/settings` `default_content_type` or
+  `update_credentials` `source[content_type]`), else the instance
+  default `content.default_post_content_type`.
 
 ## Visibility
 

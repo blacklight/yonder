@@ -230,6 +230,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/accounts/familiar_followers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/accounts/familiar_followers?id[]=` — for each
+     *     requested id, the accounts the viewer follows that also follow
+     *     it (Mastodon 4.3 profile metadata).
+     */
+    get: operations["familiar_followers"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/accounts/lookup": {
     parameters: {
       query?: never;
@@ -276,6 +297,27 @@ export interface paths {
      *     entities for the caller.
      */
     get: operations["relationships"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/accounts/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/accounts/search?q=` — account-only search (the
+     *     mobile apps' "add to list" picker). Thin wrapper over the shared
+     *     search service pinned to `type=accounts`.
+     */
+    get: operations["search_accounts"];
     put?: never;
     post?: never;
     delete?: never;
@@ -373,6 +415,26 @@ export interface paths {
     put?: never;
     /** `POST /api/v1/accounts/{id}/block`. */
     post: operations["block"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/accounts/{id}/featured_tags": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/accounts/{id}/featured_tags` — the account's featured
+     *     hashtags (Mastodon's per-profile featured list).
+     */
+    get: operations["account_featured_tags"];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -536,6 +598,35 @@ export interface paths {
     post: operations["subscribe_account"];
     /** `DELETE /api/v1/accounts/{id}/subscribe` (and `POST …/unsubscribe`). */
     delete: operations["unsubscribe_account"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/accounts/{id}/sync_remote": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/accounts/{id}/sync_remote` — Yonder extension: pull
+     *     the remote actor's outbox onto this instance, backfilling posts
+     *     without fetching statuses one by one.
+     * @description Body (JSON or form): `limit` (default 25, max 100 — *newly
+     *     imported* activities), `min_id`/`max_id` (local status ids of this
+     *     account — resolve to publication-time window edges) and
+     *     `min_date`/`max_date` (explicit RFC-3339 edges). Unbounded syncs
+     *     resume from the previous scan's frontier; bounded ones repair the
+     *     exact window asked for. Returns
+     *     `{imported, scanned, pages, complete}` — `complete` when the
+     *     window's end was reached rather than a cap or the deadline.
+     */
+    post: operations["sync_remote"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -1144,6 +1235,64 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/announcements": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/announcements?with_dismissed=` — empty list; there
+     *     are no announcements to deliver.
+     */
+    get: operations["list_6"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/announcements/{id}/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/announcements/{id}/dismiss` — 404: the id cannot
+     *     exist while the list is empty.
+     */
+    post: operations["dismiss"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/announcements/{id}/reactions/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** `PUT /api/v1/announcements/{id}/reactions/{name}` — 404. */
+    put: operations["add_reaction"];
+    post?: never;
+    /** `DELETE /api/v1/announcements/{id}/reactions/{name}` — 404. */
+    delete: operations["delete_reaction"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/apps": {
     parameters: {
       query?: never;
@@ -1155,7 +1304,9 @@ export interface paths {
     put?: never;
     /**
      * `POST /api/v1/apps` — register an OAuth application; the client
-     *     secret is returned exactly once.
+     *     secret is returned exactly once. Mastodon accepts both JSON and
+     *     form bodies — server-side clients (Bridgy Fed among them) post
+     *     `x-www-form-urlencoded`.
      */
     post: operations["create_app"];
     delete?: never;
@@ -1306,7 +1457,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/custom_emojis` — enabled, picker-visible local emoji. */
-    get: operations["list_6"];
+    get: operations["list_7"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1334,6 +1485,49 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/domain_blocks/preview": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/domain_blocks/preview?domain=` — how many of the
+     *     caller's follows/followers live on a domain; powers the mobile
+     *     apps' block-confirmation sheet (Moshidon).
+     */
+    get: operations["domain_block_preview"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/emails/confirmations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/emails/confirmations` — resend the verification
+     *     mail. Mastodon shape: `{email}` optional; with no email the
+     *     caller's own address is used when authenticated. Always 200 `{}` —
+     *     no account-existence leak.
+     */
+    post: operations["resend_confirmation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/favourites": {
     parameters: {
       query?: never;
@@ -1351,6 +1545,110 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/featured_tags": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v1/featured_tags` — the caller's featured list. */
+    get: operations["list_8"];
+    put?: never;
+    /**
+     * `POST /api/v1/featured_tags` — feature `name` (form or JSON).
+     *     Idempotent: featuring an already-featured tag is a no-op 200.
+     */
+    post: operations["create_5"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/featured_tags/suggestions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/featured_tags/suggestions` — the caller's most-used
+     *     tags not already featured (Mastodon's suggestion heuristic).
+     */
+    get: operations["suggestions"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/featured_tags/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** `DELETE /api/v1/featured_tags/{id}` — unfeature; owner-scoped 404. */
+    delete: operations["unfeature"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/filters": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v1/filters` — one v1 entity per stored keyword. */
+    get: operations["list_9"];
+    put?: never;
+    /**
+     * `POST /api/v1/filters` — mint a v2 filter titled after the phrase
+     *     with a single keyword, then answer in v1 shape.
+     */
+    post: operations["create_6"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/filters/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v1/filters/{id}` — id is a `filter_keywords.id`. */
+    get: operations["show_4"];
+    /**
+     * `PUT /api/v1/filters/{id}` — update the keyword's phrase/word flag
+     *     and/or the parent filter's context/expiry/action.
+     */
+    put: operations["update_3"];
+    post?: never;
+    /**
+     * `DELETE /api/v1/filters/{id}` — drop the keyword; when it was the
+     *     filter's last one the parent goes too.
+     */
+    delete: operations["delete_filter"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/follow_requests": {
     parameters: {
       query?: never;
@@ -1362,7 +1660,7 @@ export interface paths {
      * `GET /api/v1/follow_requests` — accounts with a pending request on
      *     the caller, newest first.
      */
-    get: operations["list_7"];
+    get: operations["list_10"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1468,6 +1766,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/instance/banner": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/instance/banner` — the `instance.banner_path` image,
+     *     advertised as `thumbnail` in both entities. 404 when unset.
+     */
+    get: operations["banner"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/instance/domain_blocks": {
     parameters: {
       query?: never;
@@ -1490,6 +1808,70 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/instance/extended_description": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/instance/extended_description` — the long-form "about
+     *     this server" text. 404 when unset, like Mastodon.
+     */
+    get: operations["extended_description"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/instance/logo": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/instance/logo` — the `instance.logo_path` image,
+     *     advertised as `icon` in the v2 entity. 404 when unset.
+     */
+    get: operations["logo"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/instance/peers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/instance/peers` — the domains this server is aware
+     *     of (Mastodon-compatible): remote account domains ∪ delivery
+     *     targets ∪ configured relays, minus silence/suspend-blocked
+     *     domains — Mastodon's `Instance.searchable` semantics keep
+     *     moderated names from leaking through the listing. Gated by
+     *     `instance.peers_api_enabled` — off means 404.
+     */
+    get: operations["peers"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/lists": {
     parameters: {
       query?: never;
@@ -1498,10 +1880,10 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/lists` — the caller's lists. */
-    get: operations["list_8"];
+    get: operations["list_11"];
     put?: never;
     /** `POST /api/v1/lists` — `{title, replies_policy?, exclusive?}`. */
-    post: operations["create_5"];
+    post: operations["create_7"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1516,9 +1898,9 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/lists/{id}`. */
-    get: operations["show_4"];
+    get: operations["show_5"];
     /** `PUT /api/v1/lists/{id}` — `{title?, replies_policy?, exclusive?}`. */
-    put: operations["update_3"];
+    put: operations["update_4"];
     post?: never;
     /** `DELETE /api/v1/lists/{id}`. */
     delete: operations["delete_list"];
@@ -1541,6 +1923,32 @@ export interface paths {
     post: operations["add_accounts"];
     /** `DELETE /api/v1/lists/{id}/accounts` — `{account_ids[]}`. */
     delete: operations["remove_accounts"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/markers": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/markers?timeline[]=home&timeline[]=notifications` —
+     *     last-read ids per requested timeline; unknown timelines are absent
+     *     from the response (Mastodon semantics).
+     */
+    get: operations["get_markers"];
+    put?: never;
+    /**
+     * `POST /api/v1/markers` — upsert last-read positions. Body is form
+     *     (`home[last_read_id]=…`, `notifications[last_read_id]=…`) or JSON
+     *     (`{"home": {"last_read_id": "…"}}`); Mastodon clients send both.
+     */
+    post: operations["save_markers"];
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -1573,12 +1981,17 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /**
+     * `GET /api/v1/media/{id}` — processing status (owner only). Same
+     *     contract as `/api/v2/media/{id}` — the official Android app and
+     *     Moshidon poll the v1 path after upload.
+     */
+    get: operations["show_6"];
     /**
      * `PUT /api/v1/media/{id}` — update `description`/`focus` (owner
      *     only); re-federates the owning status's `Update` when attached.
      */
-    put: operations["update_4"];
+    put: operations["update_5"];
     post?: never;
     delete?: never;
     options?: never;
@@ -1613,10 +2026,13 @@ export interface paths {
     /**
      * `GET /api/v1/notifications` — the caller's notifications,
      *     newest-first, `Link`-header paginated. `types[]` /
-     *     `exclude_types[]` filter by Mastodon type or Yonder alias
-     *     (`all`, `likes`, `boosts`, `quotes`, `mentions`, `reports`).
+     *     `exclude_types[]` filter by notification type or Yonder alias
+     *     (`all`, `likes`, `boosts`, `quotes`, `mentions`, `reports`,
+     *     `reaction`). Unrecognized names are accepted and match/exclude
+     *     nothing — Mastodon's semantics — so clients enumerating newer
+     *     types (`severed_relationships`, …) don't get 422'd.
      */
-    get: operations["list_9"];
+    get: operations["list_12"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1645,6 +2061,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/notifications/policy": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/notifications/policy` — the Mastodon 4.3+
+     *     NotificationPolicy entity. Flags persist per account; until the
+     *     requests inbox lands they are informational only (`summary` is
+     *     always zero).
+     */
+    get: operations["get_policy"];
+    /**
+     * `PUT /api/v1/notifications/policy` — update the flags (form or
+     *     JSON booleans). Missing keys keep their value.
+     */
+    put: operations["put_policy"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/notifications/read": {
     parameters: {
       query?: never;
@@ -1657,8 +2099,68 @@ export interface paths {
     /**
      * `POST /api/v1/notifications/read` — mark the caller's rows read
      *     (Yonder extension; the SPA drives it from the rendered viewport).
+     *     `{"all": true}` marks every unread row — the bulk action can't
+     *     enumerate ids across pages.
      */
     post: operations["mark_read"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/notifications/requests": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/notifications/requests` — the filtered-notification
+     *     requests inbox. Nothing lands there yet (policy flags are stored
+     *     but unapplied), so the page is always empty.
+     */
+    get: operations["requests"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/notifications/requests/{id}/accept": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/notifications/requests/{id}/accept` — 404: no
+     *     requests exist while the inbox is empty.
+     */
+    post: operations["accept_request"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/notifications/requests/{id}/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/notifications/requests/{id}/dismiss` — 404. */
+    post: operations["dismiss_request"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1693,7 +2195,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/notifications/{id}` — one notification, owner-scoped. */
-    get: operations["show_5"];
+    get: operations["show_7"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1712,7 +2214,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** `POST /api/v1/notifications/{id}/dismiss` — delete one notification. */
-    post: operations["dismiss"];
+    post: operations["dismiss_2"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1805,7 +2307,7 @@ export interface paths {
      * `GET /api/v1/polls/{id}` — results; `voted`/`own_votes` only when
      *     authenticated.
      */
-    get: operations["show_6"];
+    get: operations["show_8"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1855,6 +2357,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/push/subscription": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/push/subscription` — the caller's current
+     *     subscription; 404 when none was registered (Mastodon semantics).
+     */
+    get: operations["show_9"];
+    /**
+     * `PUT /api/v1/push/subscription` — update alerts/policy of the
+     *     caller's current subscription (Mastodon also accepts `id` to name
+     *     it; we honor it when it matches).
+     */
+    put: operations["update_6"];
+    /**
+     * `POST /api/v1/push/subscription` — register (or re-register, keyed
+     *     on the globally-unique endpoint) a WebPush endpoint. A second
+     *     registration for the same endpoint updates keys/alerts —
+     *     Mastodon's upsert semantics; an endpoint owned by another account
+     *     is re-keyed to this one.
+     */
+    post: operations["create_8"];
+    /**
+     * `DELETE /api/v1/push/subscription` — drop the caller's
+     *     subscription(s); idempotent 200 like Mastodon.
+     */
+    delete: operations["delete_subscription"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/reports": {
     parameters: {
       query?: never;
@@ -1885,7 +2423,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/scheduled_statuses` — the caller's scheduled posts. */
-    get: operations["list_10"];
+    get: operations["list_13"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1902,12 +2440,12 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v1/scheduled_statuses/{id}` — one scheduled post. */
-    get: operations["show_7"];
+    get: operations["show_10"];
     /**
      * `PUT /api/v1/scheduled_statuses/{id}` — reschedule; a stale earlier
      *     job is neutralized by the publish handler's due-time check.
      */
-    put: operations["update_5"];
+    put: operations["update_7"];
     post?: never;
     /**
      * `DELETE /api/v1/scheduled_statuses/{id}` — cancel; media
@@ -1986,13 +2524,18 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    get?: never;
+    /**
+     * `GET /api/v1/statuses?id[]=…` — batch fetch (the mobile apps use it
+     *     to backfill gaps in timeline pages). Skips statuses the viewer
+     *     can't see instead of erroring the whole batch.
+     */
+    get: operations["list_by_ids"];
     put?: never;
     /**
      * `POST /api/v1/statuses` — create. `Idempotency-Key` replays the
      *     stored result. Returns the Status (or ScheduledStatus) entity.
      */
-    post: operations["create_6"];
+    post: operations["create_9"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2010,9 +2553,9 @@ export interface paths {
      * `GET /api/v1/statuses/{id}` — the Status entity, subject to
      *     `can_see` (anonymous sees public/unlisted only).
      */
-    get: operations["show_8"];
+    get: operations["show_11"];
     /** `PUT /api/v1/statuses/{id}` — owner edit; republishes `Update`. */
-    put: operations["update_6"];
+    put: operations["update_8"];
     post?: never;
     /**
      * `DELETE /api/v1/statuses/{id}` — owner delete; tombstones and
@@ -2097,6 +2640,74 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/statuses/{id}/fetch_remote_context": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/statuses/{id}/fetch_remote_context` — Yonder
+     *     extension: lazily pull the remote thread (ancestors + replies)
+     *     for a remote status, so the context view renders the conversation
+     *     without sending the user to the origin instance. The walk is
+     *     bounded (wall-clock deadline, page/fetch caps) and per-status
+     *     locked; it returns `{imported, scanned, pages, complete}` —
+     *     `complete` when the whole remote context was exhausted rather
+     *     than stopped early.
+     */
+    post: operations["fetch_remote_context"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/statuses/{id}/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/statuses/{id}/history` — the StatusEdit array,
+     *     oldest version first. Superseded versions come from `status_edits`
+     *     (snapshotted by `edit_status`); the live row is always the newest
+     *     entry. `can_see`-gated.
+     */
+    get: operations["history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/statuses/{id}/mute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/statuses/{id}/mute` — mute the whole conversation
+     *     (notifications from the thread stop surfacing).
+     */
+    post: operations["mute_conversation"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/statuses/{id}/pin": {
     parameters: {
       query?: never;
@@ -2172,6 +2783,28 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/statuses/{id}/source": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/statuses/{id}/source` — raw (pre-render) text, the
+     *     shape clients fetch to seed the edit composer (`text` is the
+     *     stored source — markdown source for `text/markdown` posts).
+     *     `can_see`-gated like `show`; requires auth.
+     */
+    get: operations["source"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/statuses/{id}/translate": {
     parameters: {
       query?: never;
@@ -2224,6 +2857,23 @@ export interface paths {
     put?: never;
     /** `POST /api/v1/statuses/{id}/unfavourite`. */
     post: operations["unfavourite"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/statuses/{id}/unmute": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/statuses/{id}/unmute` — idempotent reverse. */
+    post: operations["unmute_conversation"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2297,7 +2947,7 @@ export interface paths {
      * `GET /api/v1/tags/{name}` — public or authenticated. `following`
      *     is viewer-specific; `history` carries the last 7 days.
      */
-    get: operations["show_9"];
+    get: operations["show_12"];
     put?: never;
     post?: never;
     delete?: never;
@@ -2459,6 +3109,70 @@ export interface paths {
     post?: never;
     /** `DELETE /api/v1/tokens/{id}` — revoke a token. */
     delete: operations["revoke_token"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/trends": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/trends` — the deprecated pre-3.0 alias of
+     *     `trends/tags` (Moshidon and older apps still call it).
+     */
+    get: operations["trends_legacy"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/trends/links": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/trends/links` — preview cards ranked by the number of
+     *     public statuses sharing them in the window. `history` is the
+     *     trailing 7 days of uses/accounts (Mastodon's `Trends::Link`
+     *     shape).
+     */
+    get: operations["links_trending"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/trends/statuses": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/trends/statuses` — public statuses ranked by
+     *     favourites + boosts over the window (`period`, same day/week/
+     *     month extension as `trends/tags`). Public reads only; the viewer
+     *     gets fully rendered entities.
+     */
+    get: operations["statuses_trending"];
+    put?: never;
+    post?: never;
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -2936,13 +3650,13 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v2/filters` — the caller's filters, newest-first. */
-    get: operations["list_11"];
+    get: operations["list_14"];
     put?: never;
     /**
      * `POST /api/v2/filters` — create a filter with optional nested
      *     `keywords_attributes`.
      */
-    post: operations["create_7"];
+    post: operations["create_10"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2993,12 +3707,12 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v2/filters/{id}` — a single owned filter. */
-    get: operations["show_10"];
+    get: operations["show_13"];
     /** `PUT /api/v2/filters/{id}` — partial update. */
-    put: operations["update_7"];
+    put: operations["update_9"];
     post?: never;
     /** `DELETE /api/v2/filters/{id}` — empty response body. */
-    delete: operations["delete_filter"];
+    delete: operations["delete_filter_2"];
     options?: never;
     head?: never;
     patch?: never;
@@ -3082,7 +3796,7 @@ export interface paths {
       cookie?: never;
     };
     /** `GET /api/v2/media/{id}` — processing status (owner only). */
-    get: operations["show_11"];
+    get: operations["show_14"];
     put?: never;
     post?: never;
     delete?: never;
@@ -3103,6 +3817,23 @@ export interface paths {
      *     resolving remote actors and statuses by URL or `@user@domain`.
      */
     get: operations["search_v2"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v2/suggestions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v2/suggestions` — empty page. */
+    get: operations["list_15"];
     put?: never;
     post?: never;
     delete?: never;
@@ -3194,6 +3925,13 @@ export interface components {
       quote?: boolean | null;
       reblog?: boolean | null;
     };
+    /**
+     * @description An entity id in either wire form. Entities serialize ids as
+     *     strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
+     *     so round-tripping through a JS number silently corrupts them —
+     *     but bare JSON numbers are accepted for convenience.
+     */
+    EntityId: string | number;
     /** @description Mastodon-compatible JSON error body: `{"error": "<message>"}`. */
     ErrorBody: {
       /** @description Human-readable error description. */
@@ -3220,10 +3958,19 @@ export interface components {
       /** Format: float */
       y: number;
     };
-    /** @description Body for `POST /notifications/read` — ids the client rendered. */
+    /**
+     * @description Body for `POST /notifications/read` — ids the client rendered, or
+     *     `all` for the bulk mark-read action.
+     */
     MarkReadBody: {
+      /**
+       * @description `true` marks every unread notification read; `ids` is ignored.
+       *     The list is paginated, so a client can't enumerate all ids —
+       *     the bulk action needs the server-side form.
+       */
+      all?: boolean;
       /** @description Notification ids to mark read (max [`MAX_MARK_READ_IDS`]). */
-      ids: components["schemas"]["NotificationId"][];
+      ids?: components["schemas"]["EntityId"][];
     };
     /** @description OpenAPI shape of the media update body. */
     MediaUpdateSchema: {
@@ -3237,13 +3984,6 @@ export interface components {
       /** @description Current password (confirmation for the irreversible redirect). */
       password: string;
     };
-    /**
-     * @description A notification id in either wire form. Entities serialize ids as
-     *     strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
-     *     so round-tripping through a JS number silently corrupts them —
-     *     but bare JSON numbers are accepted for convenience.
-     */
-    NotificationId: string | number;
     PasswordParams: {
       /** @description Current password. */
       password: string;
@@ -3293,6 +4033,11 @@ export interface components {
       block_stranger_notifications?: boolean | null;
       /** @description Always expand CW'd content (`false` = show warning). */
       cw_always_expand?: boolean | null;
+      /**
+       * @description Default post content type (`text/plain`/`text/markdown`;
+       *     `null` = instance default).
+       */
+      default_content_type?: string | null;
       /** @description Default posting language (same set; `null` = app language). */
       default_posting_language?: string | null;
       /** @description Mark new statuses sensitive by default. */
@@ -3323,6 +4068,11 @@ export interface components {
     };
     /** @description OpenAPI shape of the `source` posting-defaults block. */
     SourceSchema: {
+      /**
+       * @description Default post content type (`text/plain`/`text/markdown`;
+       *     `null` = instance default).
+       */
+      content_type?: string | null;
       /** @description Default posting language (`en`/`es`/`it`/`de`/`ar`). */
       language?: string | null;
       /**
@@ -3963,6 +4713,36 @@ export interface operations {
       };
     };
   };
+  familiar_followers: {
+    parameters: {
+      query?: {
+        /** @description Account ids */
+        "id[]"?: string[];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of FamiliarFollowers entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   lookup: {
     parameters: {
       query: {
@@ -3991,7 +4771,7 @@ export interface operations {
           "application/json": components["schemas"]["ErrorBody"];
         };
       };
-      /** @description Missing, deleted or suspended account */
+      /** @description Missing or deleted account */
       404: {
         headers: {
           [name: string]: unknown;
@@ -4038,6 +4818,53 @@ export interface operations {
       };
       /** @description Missing or invalid token */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  search_accounts: {
+    parameters: {
+      query: {
+        /** @description Search query */
+        q: string;
+        /** @description Max results (default 40) */
+        limit?: number;
+        /** @description Skip the first n results */
+        offset?: number;
+        /** @description Attempt remote lookup */
+        resolve?: boolean;
+        /** @description Only accounts the caller follows */
+        following?: boolean;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Account entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Missing query */
+      422: {
         headers: {
           [name: string]: unknown;
         };
@@ -4182,7 +5009,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description Missing, deleted or suspended account */
+      /** @description Missing or deleted account */
       404: {
         headers: {
           [name: string]: unknown;
@@ -4222,6 +5049,45 @@ export interface operations {
         };
       };
       /** @description Account not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  account_featured_tags: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Account id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of FeaturedTag entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description No such account */
       404: {
         headers: {
           [name: string]: unknown;
@@ -4493,7 +5359,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description Missing, deleted or suspended account */
+      /** @description Missing or deleted account */
       404: {
         headers: {
           [name: string]: unknown;
@@ -4564,6 +5430,72 @@ export interface operations {
       };
       /** @description Missing or invalid token */
       401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  sync_remote: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Account id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Sync report */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description The remote instance is suspended */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Account (or bound status) not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Local account or invalid parameters */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description A sync is already running for this account */
+      429: {
         headers: {
           [name: string]: unknown;
         };
@@ -6142,6 +7074,121 @@ export interface operations {
       };
     };
   };
+  list_6: {
+    parameters: {
+      query?: {
+        /** @description Include dismissed announcements */
+        with_dismissed?: boolean;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Announcement entities (empty — no announcements exist) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  dismiss: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Announcement id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Dismissed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such announcement */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  add_reaction: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Announcement id */
+        id: string;
+        /** @description Emoji code */
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Reaction added */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such announcement */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  delete_reaction: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Announcement id */
+        id: string;
+        /** @description Emoji code */
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Reaction removed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such announcement */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   create_app: {
     parameters: {
       query?: never;
@@ -6488,7 +7535,7 @@ export interface operations {
       };
     };
   };
-  list_6: {
+  list_7: {
     parameters: {
       query?: never;
       header?: never;
@@ -6605,6 +7652,54 @@ export interface operations {
       };
     };
   };
+  domain_block_preview: {
+    parameters: {
+      query: {
+        /** @description Domain to preview */
+        domain: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description following/follower counts for the domain */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  resend_confirmation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Confirmation email enqueued if applicable */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   favourites_list: {
     parameters: {
       query?: never;
@@ -6632,7 +7727,271 @@ export interface operations {
       };
     };
   };
-  list_7: {
+  list_8: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of FeaturedTag entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  create_5: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The FeaturedTag entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing/unknown tag */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  suggestions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Tag entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  unfeature: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description FeaturedTag id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Unfeatured */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  list_9: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of legacy v1 Filter entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  create_6: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The created v1 Filter entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Validation failure */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  show_4: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Filter (keyword) id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The legacy v1 Filter entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  update_3: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Filter (keyword) id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The updated v1 Filter entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Validation failure */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  delete_filter: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Filter (keyword) id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  list_10: {
     parameters: {
       query?: never;
       header?: never;
@@ -6823,6 +8182,33 @@ export interface operations {
       };
     };
   };
+  banner: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Instance banner image */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No banner configured */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   domain_blocks_2: {
     parameters: {
       query?: never;
@@ -6850,7 +8236,88 @@ export interface operations {
       };
     };
   };
-  list_8: {
+  extended_description: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ExtendedDescription entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No extended description */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  logo: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Instance logo image */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No logo configured */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  peers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of known remote domains */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Listing disabled */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  list_11: {
     parameters: {
       query?: never;
       header?: never;
@@ -6877,7 +8344,7 @@ export interface operations {
       };
     };
   };
-  create_5: {
+  create_7: {
     parameters: {
       query?: never;
       header?: never;
@@ -6913,7 +8380,7 @@ export interface operations {
       };
     };
   };
-  show_4: {
+  show_5: {
     parameters: {
       query?: never;
       header?: never;
@@ -6952,7 +8419,7 @@ export interface operations {
       };
     };
   };
-  update_3: {
+  update_4: {
     parameters: {
       query?: never;
       header?: never;
@@ -7165,6 +8632,72 @@ export interface operations {
       };
     };
   };
+  get_markers: {
+    parameters: {
+      query?: {
+        /** @description home|notifications (default: both) */
+        "timeline[]"?: string[];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Last-read positions keyed by timeline */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  save_markers: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The stored markers */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Bad timeline name or id */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   upload: {
     parameters: {
       query?: never;
@@ -7214,7 +8747,37 @@ export interface operations {
       };
     };
   };
-  update_4: {
+  show_6: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Media id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The media attachment */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  update_5: {
     parameters: {
       query?: never;
       header?: never;
@@ -7293,7 +8856,7 @@ export interface operations {
       };
     };
   };
-  list_9: {
+  list_12: {
     parameters: {
       query?: {
         /** @description Repeatable type/alias filter */
@@ -7340,15 +8903,6 @@ export interface operations {
           "application/json": components["schemas"]["ErrorBody"];
         };
       };
-      /** @description Unknown type filter */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["ErrorBody"];
-        };
-      };
     };
   };
   clear: {
@@ -7378,6 +8932,60 @@ export interface operations {
       };
       /** @description Scope gate */
       403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  get_policy: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The NotificationPolicy entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  put_policy: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The updated NotificationPolicy */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
         headers: {
           [name: string]: unknown;
         };
@@ -7436,6 +9044,84 @@ export interface operations {
       };
     };
   };
+  requests: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Empty page of NotificationRequest entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  accept_request: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Request id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Accepted */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such request */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  dismiss_request: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Request id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Dismissed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such request */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   unread_count: {
     parameters: {
       query?: never;
@@ -7463,7 +9149,7 @@ export interface operations {
       };
     };
   };
-  show_5: {
+  show_7: {
     parameters: {
       query?: never;
       header?: never;
@@ -7502,7 +9188,7 @@ export interface operations {
       };
     };
   };
-  dismiss: {
+  dismiss_2: {
     parameters: {
       query?: never;
       header?: never;
@@ -7710,7 +9396,7 @@ export interface operations {
       };
     };
   };
-  show_6: {
+  show_8: {
     parameters: {
       query?: never;
       header?: never;
@@ -7828,6 +9514,114 @@ export interface operations {
       };
     };
   };
+  show_9: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The WebPushSubscription entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description No subscription */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  update_6: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The updated WebPushSubscription */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No subscription */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  create_8: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The stored WebPushSubscription */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing endpoint/keys or bad policy */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  delete_subscription: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   file: {
     parameters: {
       query?: never;
@@ -7886,7 +9680,7 @@ export interface operations {
       };
     };
   };
-  list_10: {
+  list_13: {
     parameters: {
       query?: never;
       header?: never;
@@ -7913,7 +9707,7 @@ export interface operations {
       };
     };
   };
-  show_7: {
+  show_10: {
     parameters: {
       query?: never;
       header?: never;
@@ -7943,7 +9737,7 @@ export interface operations {
       };
     };
   };
-  update_5: {
+  update_7: {
     parameters: {
       query?: never;
       header?: never;
@@ -8142,7 +9936,37 @@ export interface operations {
       };
     };
   };
-  create_6: {
+  list_by_ids: {
+    parameters: {
+      query?: {
+        /** @description Status ids */
+        "id[]"?: string[];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Status entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  create_9: {
     parameters: {
       query?: never;
       header?: never;
@@ -8200,7 +10024,7 @@ export interface operations {
       };
     };
   };
-  show_8: {
+  show_11: {
     parameters: {
       query?: never;
       header?: never;
@@ -8230,7 +10054,7 @@ export interface operations {
       };
     };
   };
-  update_6: {
+  update_8: {
     parameters: {
       query?: never;
       header?: never;
@@ -8468,6 +10292,141 @@ export interface operations {
       };
     };
   };
+  fetch_remote_context: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Fetch report */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description The author's instance is suspended */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found, not visible, or the remote object is gone */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Local status or federation disabled */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description A fetch is already running for this status */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  history: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of StatusEdit entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  mute_conversation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The status with muted=true */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   pin: {
     parameters: {
       query?: never;
@@ -8642,6 +10601,45 @@ export interface operations {
       };
     };
   };
+  source: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description StatusSource entity */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   translate: {
     parameters: {
       query?: never;
@@ -8763,6 +10761,36 @@ export interface operations {
       };
     };
   };
+  unmute_conversation: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The status with muted=false */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   unpin: {
     parameters: {
       query?: never;
@@ -8853,7 +10881,7 @@ export interface operations {
       };
     };
   };
-  show_9: {
+  show_12: {
     parameters: {
       query?: never;
       header?: never;
@@ -9267,6 +11295,95 @@ export interface operations {
       };
       /** @description Token not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  trends_legacy: {
+    parameters: {
+      query?: {
+        /** @description Max results (default 10) */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of trending Tag entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  links_trending: {
+    parameters: {
+      query?: {
+        /** @description day|week|month (default week) — yonder extension */
+        period?: string;
+        /** @description Max results (default 10) */
+        limit?: number;
+        /** @description Skip the first n results */
+        offset?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of trending PreviewCard entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Invalid period */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  statuses_trending: {
+    parameters: {
+      query?: {
+        /** @description day|week|month (default week) — yonder extension */
+        period?: string;
+        /** @description Max results (default 10) */
+        limit?: number;
+        /** @description Skip the first n results */
+        offset?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of trending Status entities */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Invalid period */
+      422: {
         headers: {
           [name: string]: unknown;
         };
@@ -10597,7 +12714,7 @@ export interface operations {
       };
     };
   };
-  list_11: {
+  list_14: {
     parameters: {
       query?: never;
       header?: never;
@@ -10624,7 +12741,7 @@ export interface operations {
       };
     };
   };
-  create_7: {
+  create_10: {
     parameters: {
       query?: never;
       header?: never;
@@ -10788,7 +12905,7 @@ export interface operations {
       };
     };
   };
-  show_10: {
+  show_13: {
     parameters: {
       query?: never;
       header?: never;
@@ -10827,7 +12944,7 @@ export interface operations {
       };
     };
   };
-  update_7: {
+  update_9: {
     parameters: {
       query?: never;
       header?: never;
@@ -10861,7 +12978,7 @@ export interface operations {
       };
     };
   };
-  delete_filter: {
+  delete_filter_2: {
     parameters: {
       query?: never;
       header?: never;
@@ -11095,7 +13212,7 @@ export interface operations {
       };
     };
   };
-  show_11: {
+  show_14: {
     parameters: {
       query?: never;
       header?: never;
@@ -11187,6 +13304,33 @@ export interface operations {
       };
       /** @description Rate limited */
       429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  list_15: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Array of Suggestion entities (empty — no suggestion engine) */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
         headers: {
           [name: string]: unknown;
         };

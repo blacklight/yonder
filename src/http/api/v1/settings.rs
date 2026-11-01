@@ -78,6 +78,9 @@ pub struct SettingsPatchSchema {
     pub default_visibility: Option<String>,
     /// Mark new statuses sensitive by default.
     pub default_sensitive: Option<bool>,
+    /// Default post content type (`text/plain`/`text/markdown`;
+    /// `null` = instance default).
+    pub default_content_type: Option<String>,
     /// `light`/`dark`/`system` (`null` = system).
     pub theme: Option<String>,
     /// `#rrggbb` accent color (`null` = instance default).

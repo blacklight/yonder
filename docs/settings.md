@@ -13,6 +13,7 @@ lives under the `yonder` extension object.
 | Default visibility (`source.privacy`) | `accounts.default_visibility` | `update_credentials` (`source[privacy]`) |
 | Default posting language (`source.language`) | `accounts.default_language` | `update_credentials` (`source[language]`) |
 | Default sensitive (`source.sensitive`) | `accounts.default_sensitive` | `update_credentials` (`source[sensitive]`) |
+| Default post content type (`source.content_type`) | `accounts.default_content_type` | `update_credentials` (`source[content_type]`), yonder settings (`default_content_type`) |
 | Search-engine indexing (`indexable`) | `users.indexable` | `update_credentials` |
 | Interface language | `users.locale` | `PATCH /api/v1/yonder/settings` (`interface_language`) |
 | Theme | `users.theme` | yonder settings (`theme`) |
@@ -27,16 +28,20 @@ lives under the `yonder` extension object.
 | Email notifications (6 flags) | `users.email_notif_*` | yonder settings (`email_notifications`) |
 
 `PATCH /api/v1/yonder/settings` also accepts `default_visibility`,
-`default_posting_language` and `default_sensitive` so the endpoint is a
-complete writable settings surface for the SPA — same columns and
-validation as the Mastodon-native `source.*` params.
+`default_posting_language`, `default_sensitive` and
+`default_content_type` so the endpoint is a complete writable settings
+surface for the SPA — same columns and validation as the
+Mastodon-native `source.*` params.
 
 ## Reads
 
 - `GET /api/v1/accounts/verify_credentials` (and the PATCH response):
   Mastodon flags at their canonical positions — `source`
-  (`privacy`, `sensitive`, `language`, `note`, `fields`), top-level
-  `hide_collections`/`indexable` — plus `yonder.settings`.
+  (`privacy`, `sensitive`, `language`, `content_type`, `note`,
+  `fields`), top-level `hide_collections`/`indexable` — plus
+  `yonder.settings`. `source.content_type` is the resolved value
+  (stored preference else the instance default), like
+  `source.language`.
 - `GET /api/v1/preferences` (`read:accounts`): Mastodon Preferences
   entity — `posting:default:visibility`, `posting:default:sensitive`,
   `posting:default:language`, `reading:expand:media` (`"default"`),
@@ -66,6 +71,9 @@ numbers are 422. Highlights:
 - `filter_languages`: up to 100 BCP-47-ish tags, lowercased and
   deduplicated — *not* limited to the UI set.
 - `scheduled_deletion_days`: integer 0–3650 (0/NULL = never).
+- `default_content_type` / `source.content_type`: `text/plain` or
+  `text/markdown` (lowercased; NULL resolves to the instance
+  `content.default_post_content_type`).
 - `theme`: `light`/`dark`/`system` (NULL resolves to `system`).
 - `accent`: `#rrggbb` or `null`.
 - `email_notifications`: `follow` (default false), `follow_request`
@@ -81,7 +89,8 @@ numbers are 422. Highlights:
   `es-MX` → `es`) → `i18n.fallback_locale` (default `en`, must be a
   supported locale).
 - `yonder.settings` always exposes the *stored* choices (including
-  `null`) plus `effective_posting_language`.
+  `null`) plus `effective_posting_language` and
+  `effective_content_type`.
 
 ## Consumers (later epics)
 

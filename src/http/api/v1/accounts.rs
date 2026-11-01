@@ -123,6 +123,7 @@ async fn credential_account(
             accept_language,
             &state.config(),
         ),
+        "content_type": user_settings.effective_content_type(&state.config()),
         "note": account.bio.clone().unwrap_or_default(),
         "fields": account_mapper::source_fields(&account.profile_fields),
     });

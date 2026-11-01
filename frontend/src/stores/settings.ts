@@ -12,6 +12,10 @@ interface YonderSettings {
   default_visibility?: string | null;
   default_posting_language?: string | null;
   default_sensitive?: boolean;
+  /** Stored pick — `null` follows the instance default. */
+  default_content_type?: string | null;
+  /** Resolved default (`default_content_type` ?? instance default). */
+  effective_content_type?: string;
   cw_always_expand?: boolean;
   show_app_display?: boolean;
   filter_languages?: string[];

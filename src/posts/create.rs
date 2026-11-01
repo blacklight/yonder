@@ -28,7 +28,8 @@ use super::{entity, mentions, polls, render, scheduled, PostContext, StatusRow};
 pub struct StatusParams {
     /// Raw source text.
     pub status: String,
-    /// `text/plain` / `text/markdown`; `None` = instance default.
+    /// `text/plain` / `text/markdown`; `None` = the account's default
+    /// (`accounts.default_content_type`, else the instance default).
     pub content_type: Option<String>,
     /// `public|unlisted|private|followers_only|direct`; `None` =
     /// account default.
@@ -104,12 +105,10 @@ pub async fn validate(
     let config = &ctx.config;
     let user_settings = settings::load(&ctx.db, auth.user_id).await?;
 
-    let content_type = params.content_type.clone().unwrap_or_else(|| {
-        match config.content.default_post_content_type {
-            crate::config::PostContentType::TextPlain => "text/plain".to_string(),
-            crate::config::PostContentType::TextMarkdown => "text/markdown".to_string(),
-        }
-    });
+    let content_type = params
+        .content_type
+        .clone()
+        .unwrap_or_else(|| user_settings.effective_content_type(config).to_string());
     if !matches!(content_type.as_str(), "text/plain" | "text/markdown") {
         return Err(Error::Validation(format!(
             "content_type must be text/plain or text/markdown (got {content_type:?})"

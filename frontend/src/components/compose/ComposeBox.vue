@@ -256,6 +256,10 @@ onMounted(async () => {
         d.value.visibility === "public"
           ? ((s.default_visibility as StatusVisibility) ?? "public")
           : d.value.visibility,
+      contentType:
+        d.value.contentType === "text/plain"
+          ? ((s.effective_content_type as string) ?? "text/plain")
+          : d.value.contentType,
       language:
         (s.effective_posting_language as string | null) ??
         (s.default_posting_language as string | null) ??

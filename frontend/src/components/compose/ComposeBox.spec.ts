@@ -442,6 +442,25 @@ describe("ComposeBox", () => {
     expect(useComposeStore().draft.visibility).toBe("unlisted");
   });
 
+  it("an untouched draft takes the account default content type", async () => {
+    useSettingsStore().settings = {
+      effective_content_type: "text/markdown",
+    } as never;
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(useComposeStore().draft.contentType).toBe("text/markdown");
+  });
+
+  it("a deliberately picked content type is not clobbered", async () => {
+    useSettingsStore().settings = {
+      effective_content_type: "text/plain",
+    } as never;
+    useComposeStore().update({ contentType: "text/markdown" });
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(useComposeStore().draft.contentType).toBe("text/markdown");
+  });
+
   it("the emoji picker inserts the picked unicode at the caret", async () => {
     const { wrapper } = mountWith(ComposeBox);
     await flushPromises();

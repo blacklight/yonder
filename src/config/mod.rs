@@ -948,6 +948,16 @@ pub enum PostContentType {
     TextMarkdown,
 }
 
+impl PostContentType {
+    /// The wire/`content_type` string for this variant.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TextPlain => "text/plain",
+            Self::TextMarkdown => "text/markdown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ContentConfig {

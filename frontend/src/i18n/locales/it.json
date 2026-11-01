@@ -1053,7 +1053,9 @@
     "showPostsAnyway": "Mostra comunque i post",
     "listsNewPlaceholder": "Nome della lista",
     "copyHandle": "Copia identificativo",
-    "handleCopied": "Copiato"
+    "handleCopied": "Copiato",
+    "viewAvatar": "Mostra avatar",
+    "viewBanner": "Mostra intestazione"
   },
   "register": {
     "title": "Crea un account",

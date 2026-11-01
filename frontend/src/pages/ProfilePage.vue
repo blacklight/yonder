@@ -29,7 +29,13 @@ import {
   removeListMembers,
 } from "@/api/lists";
 import { ApiError } from "@/api/errors";
-import type { Account, ListEntity, Relationship, Status } from "@/api/entities";
+import type {
+  Account,
+  ListEntity,
+  MediaAttachment,
+  Relationship,
+  Status,
+} from "@/api/entities";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
@@ -45,6 +51,7 @@ import Tabs from "@/components/ui/Tabs.vue";
 import { FontAwesomeIcon } from "@/icons";
 import Menu, { type MenuItem } from "@/components/ui/Menu.vue";
 import Modal from "@/components/ui/Modal.vue";
+import MediaModal from "@/components/status/MediaModal.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
@@ -162,6 +169,32 @@ const fieldsView = computed(() =>
 const avatarUrl = computed(
   () => safeHttpUrl(account.value?.avatar) ?? undefined,
 );
+/**
+ * Banner and avatar as viewer attachments, in the header's visual
+ * order — the click target picks `initialIndex`, the arrows move
+ * between the two.
+ */
+const profileMedia = computed<MediaAttachment[]>(() => {
+  const a = account.value;
+  const mk = (id: string, url: string): MediaAttachment => ({
+    id,
+    type: "image",
+    url,
+    preview_url: url,
+    remote_url: null,
+    description: a?.display_name || a?.acct || null,
+    blurhash: null,
+  });
+  return [
+    ...(headerUrl.value ? [mk("header", headerUrl.value)] : []),
+    ...(avatarUrl.value ? [mk("avatar", avatarUrl.value)] : []),
+  ];
+});
+const viewerIndex = ref<number | null>(null);
+function openViewer(id: string) {
+  const i = profileMedia.value.findIndex((m) => m.id === id);
+  if (i >= 0) viewerIndex.value = i;
+}
 const isOwn = computed(() => auth.account?.id === account.value?.id);
 /** Staff role on the local instance — drives the Admin/Mod badge. */
 const staffRole = computed(() =>
@@ -745,10 +778,32 @@ watch([tab, showReplies, showBoosts], () => {
     </div>
     <template v-else-if="account">
       <header class="profile__header">
-        <img v-if="headerUrl" :src="headerUrl" class="profile__banner" alt="" />
+        <button
+          v-if="headerUrl"
+          type="button"
+          class="profile__banner-btn"
+          :aria-label="t('profile.viewBanner')"
+          @click="openViewer('header')"
+        >
+          <img :src="headerUrl" class="profile__banner" alt="" />
+        </button>
         <div class="profile__top">
+          <button
+            v-if="avatarUrl"
+            type="button"
+            class="profile__avatar profile__avatar-btn"
+            :aria-label="t('profile.viewAvatar')"
+            @click="openViewer('avatar')"
+          >
+            <Avatar
+              :src="avatarUrl"
+              :name="account.display_name || account.acct"
+              size="lg"
+              :class="{ 'profile__avatar--grayscale': avatarGrayscale }"
+            />
+          </button>
           <Avatar
-            :src="avatarUrl"
+            v-else
             :name="account.display_name || account.acct"
             size="lg"
             class="profile__avatar"
@@ -991,6 +1046,12 @@ watch([tab, showReplies, showBoosts], () => {
         </div>
       </template>
     </template>
+    <MediaModal
+      v-if="viewerIndex !== null"
+      :media="profileMedia"
+      :initial-index="viewerIndex"
+      @close="viewerIndex = null"
+    />
     <Modal
       v-if="confirmAction"
       :title="t('profile.confirmTitle')"
@@ -1083,6 +1144,14 @@ watch([tab, showReplies, showBoosts], () => {
 </template>
 
 <style scoped>
+.profile__banner-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
 .profile__banner {
   display: block;
   width: 100%;
@@ -1100,13 +1169,20 @@ watch([tab, showReplies, showBoosts], () => {
   gap: var(--space-3);
   margin-top: var(--space-4);
 }
-.profile__banner + .profile__top {
+.profile__banner-btn + .profile__top {
   margin-top: calc(-1 * var(--space-7));
 }
 .profile__avatar {
   flex: none;
   margin-left: var(--space-2);
   border: 4px solid var(--bg);
+}
+.profile__avatar-btn {
+  display: inline-flex;
+  padding: 0;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
 }
 .profile__avatar--grayscale {
   filter: grayscale(1);

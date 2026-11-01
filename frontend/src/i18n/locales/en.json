@@ -1027,7 +1027,9 @@
     "showPostsAnyway": "Show posts anyway",
     "listsNewPlaceholder": "New list name",
     "copyHandle": "Copy handle",
-    "handleCopied": "Copied"
+    "handleCopied": "Copied",
+    "viewAvatar": "View avatar",
+    "viewBanner": "View banner"
   },
   "register": {
     "title": "Create an account",

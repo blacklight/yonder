@@ -1053,7 +1053,9 @@
     "showPostsAnyway": "Beiträge trotzdem anzeigen",
     "listsNewPlaceholder": "Neuer Listenname",
     "copyHandle": "Handle kopieren",
-    "handleCopied": "Kopiert"
+    "handleCopied": "Kopiert",
+    "viewAvatar": "Avatar ansehen",
+    "viewBanner": "Header ansehen"
   },
   "register": {
     "title": "Konto erstellen",

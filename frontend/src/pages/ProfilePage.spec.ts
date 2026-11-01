@@ -896,4 +896,69 @@ describe("ProfilePage", () => {
       false,
     );
   });
+
+  it("opens the banner in the media viewer on click", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        header: "https://example.org/banner.png",
+        avatar: "https://example.org/avatar.png",
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".profile__banner-btn").trigger("click");
+    await flushPromises();
+    const img = document.querySelector<HTMLImageElement>(
+      "[data-testid='media-modal'] .media-modal__img",
+    );
+    expect(img?.src).toBe("https://example.org/banner.png");
+    wrapper.unmount();
+    expect(document.querySelector("[data-testid='media-modal']")).toBeNull();
+  });
+
+  it("opens the avatar in the media viewer on click", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        header: "https://example.org/banner.png",
+        avatar: "https://example.org/avatar.png",
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".profile__avatar-btn").trigger("click");
+    await flushPromises();
+    const img = document.querySelector<HTMLImageElement>(
+      "[data-testid='media-modal'] .media-modal__img",
+    );
+    expect(img?.src).toBe("https://example.org/avatar.png");
+    wrapper.unmount();
+    expect(document.querySelector("[data-testid='media-modal']")).toBeNull();
+  });
+
+  it("navigates between banner and avatar inside the viewer", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        header: "https://example.org/banner.png",
+        avatar: "https://example.org/avatar.png",
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    await wrapper.get(".profile__banner-btn").trigger("click");
+    await flushPromises();
+    const img = () =>
+      document.querySelector<HTMLImageElement>(
+        "[data-testid='media-modal'] .media-modal__img",
+      );
+    expect(img()?.src).toBe("https://example.org/banner.png");
+    document.querySelector<HTMLElement>("[data-testid='media-next']")!.click();
+    await flushPromises();
+    expect(img()?.src).toBe("https://example.org/avatar.png");
+    wrapper.unmount();
+  });
+
+  it("renders no image buttons when the account has no media", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({}));
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.find(".profile__banner-btn").exists()).toBe(false);
+    expect(wrapper.find(".profile__avatar-btn").exists()).toBe(false);
+    expect(wrapper.find(".profile__avatar").exists()).toBe(true);
+  });
 });

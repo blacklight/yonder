@@ -1053,7 +1053,9 @@
     "showPostsAnyway": "عرض المنشورات على أي حال",
     "listsNewPlaceholder": "اسم القائمة الجديدة",
     "copyHandle": "نسخ المعرّف",
-    "handleCopied": "تم النسخ"
+    "handleCopied": "تم النسخ",
+    "viewAvatar": "عرض الصورة الرمزية",
+    "viewBanner": "عرض صورة الغلاف"
   },
   "register": {
     "title": "إنشاء حساب",

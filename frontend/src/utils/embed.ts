@@ -46,13 +46,16 @@ export function iframeEmbed(statusId: string, title: string): string {
  * follows the post's content via postMessage, so nothing gets clipped.
  * The inner link is the no-JS fallback — embed.js clears it when it
  * takes over, and it doubles as the source-page backlink Webmention
- * receivers verify.
+ * receivers verify. The `<noscript>` iframe covers hardened browsers
+ * that block third-party scripts outright (Tor/Librewolf): scripting
+ * enabled never renders it, so it can't duplicate the live frame.
  */
 export function scriptEmbed(statusId: string, title: string): string {
   const url = embedPageUrl(statusId);
   return (
     `<div class="yonder-embed" data-status="${escapeHtml(statusId)}">` +
     `<a href="${escapeHtml(url)}">${escapeHtml(title)}</a></div>\n` +
-    `<script async src="${escapeHtml(embedScriptUrl())}" charset="utf-8"></script>`
+    `<script async src="${escapeHtml(embedScriptUrl())}" charset="utf-8"></script>\n` +
+    `<noscript>${iframeEmbed(statusId, title)}</noscript>`
   );
 }

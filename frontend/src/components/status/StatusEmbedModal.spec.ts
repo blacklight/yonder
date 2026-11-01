@@ -28,6 +28,9 @@ describe("StatusEmbedModal", () => {
       `<a href="${origin}/statuses/42/embed">Post by @alice</a>`,
     );
     expect(script?.value).toContain(`${origin}/embed.js`);
+    expect(script?.value).toContain(
+      `<noscript><iframe src="${origin}/statuses/42/embed"`,
+    );
     expect(iframe?.value).toContain(`src="${origin}/statuses/42/embed"`);
     expect(iframe?.value).toContain('title="Post by @alice"');
   });

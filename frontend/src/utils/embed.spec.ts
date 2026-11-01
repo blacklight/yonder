@@ -37,5 +37,9 @@ describe("embed snippets", () => {
       `<a href="${origin}/statuses/42/embed">Post by @alice</a>`,
     );
     expect(html).toContain(`<script async src="${origin}/embed.js"`);
+    // Hardened browsers that block the script still get the iframe.
+    expect(html).toContain(
+      `<noscript><iframe src="${origin}/statuses/42/embed"`,
+    );
   });
 });

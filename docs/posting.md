@@ -199,7 +199,9 @@ forms. Source verification works for both snippets — the `<iframe>`
 carries the target in its `src`, and the `<script>` placeholder wraps
 a fallback `<a href>` that doubles as the no-JS link and the backlink
 Webmention receivers look for (`embed.js` clears it once the live
-frame mounts).
+frame mounts). The `<script>` snippet also ends with a
+`<noscript><iframe>` fallback so browsers that block third-party
+scripts entirely still render the fixed-height frame.
 
 Outbound `Create`/`Update`/`Delete` are built through pubby's
 `OutboxProcessor`; `source` (markdown round-trip), poll fields

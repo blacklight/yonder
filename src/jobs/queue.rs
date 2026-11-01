@@ -94,11 +94,31 @@ pub async fn ensure_group(redis: &Redis, queue: Queue) -> Result<()> {
     }
 }
 
+/// The stream (or just the consumer group on it) vanished — a Redis
+/// restart without persistence, a `maxmemory` eviction or a flush.
+/// `XREADGROUP`/`XAUTOCLAIM` answer `NOGROUP`, and without healing
+/// every consumer warns-and-retries forever while jobs pile up.
+fn is_nogroup(e: &redis::RedisError) -> bool {
+    e.code() == Some("NOGROUP")
+}
+
+/// Recreate stream + consumer group after a `NOGROUP` loss and log it
+/// once — entries `XADD`ed while the group was missing replay as new
+/// (the recreated group starts at `0`).
+async fn heal_group(redis: &Redis, queue: Queue) -> Result<()> {
+    tracing::warn!(
+        queue = queue.as_str(),
+        "queue stream lost — recreating consumer group"
+    );
+    ensure_group(redis, queue).await
+}
+
 /// Claim up to `count` new entries from `queue` for `consumer`,
 /// blocking up to `block_ms` when nothing is available.
 ///
 /// Returns `(stream_id, envelope)` pairs; malformed entries are
-/// acked-and-skipped by the caller.
+/// acked-and-skipped by the caller. A `NOGROUP` (lost stream/group)
+/// self-heals through [`ensure_group`] and retries once.
 pub async fn read_batch(
     redis: &Redis,
     queue: Queue,
@@ -111,9 +131,16 @@ pub async fn read_batch(
         .group(GROUP, consumer)
         .block(block_ms)
         .count(count);
-    let reply: StreamReadReply = conn
-        .xread_options(&[stream_key(redis, queue)], &[">"], &opts)
-        .await?;
+    let key = stream_key(redis, queue);
+    let reply: StreamReadReply = match conn.xread_options(&[key.as_str()], &[">"], &opts).await {
+        Ok(reply) => reply,
+        Err(e) if is_nogroup(&e) => {
+            heal_group(redis, queue).await?;
+            let mut conn = redis.conn().await?;
+            conn.xread_options(&[key.as_str()], &[">"], &opts).await?
+        }
+        Err(e) => return Err(e.into()),
+    };
     let mut entries = Vec::new();
     for key in reply.keys {
         for entry in key.ids {
@@ -203,16 +230,27 @@ pub async fn reclaim(
 ) -> Result<Vec<(String, String)>> {
     let mut conn = redis.conn().await?;
     let opts = StreamAutoClaimOptions::default().count(count);
-    let reply: StreamAutoClaimReply = conn
-        .xautoclaim_options(
-            stream_key(redis, queue),
-            GROUP,
-            consumer,
-            min_idle_ms,
-            "0",
-            opts,
-        )
-        .await?;
+    let key = stream_key(redis, queue);
+    let reply: StreamAutoClaimReply = match conn
+        .xautoclaim_options(key.as_str(), GROUP, consumer, min_idle_ms, "0", opts)
+        .await
+    {
+        Ok(reply) => reply,
+        Err(e) if is_nogroup(&e) => {
+            heal_group(redis, queue).await?;
+            let mut conn = redis.conn().await?;
+            conn.xautoclaim_options(
+                key.as_str(),
+                GROUP,
+                consumer,
+                min_idle_ms,
+                "0",
+                StreamAutoClaimOptions::default().count(count),
+            )
+            .await?
+        }
+        Err(e) => return Err(e.into()),
+    };
     let mut entries = Vec::new();
     for entry in reply.claimed {
         let body = match entry.map.get("job") {

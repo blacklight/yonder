@@ -234,6 +234,73 @@ async fn enqueue_execute_ack() {
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
 }
 
+/// Deleting a queue's stream destroys its consumer group — the state
+/// a Redis restart without persistence, a `maxmemory` eviction or a
+/// flush leaves behind. The worker must recreate it on its own;
+/// before the `NOGROUP` self-heal every consumer loop warned-and-
+/// retried forever and jobs piled up until restart.
+#[tokio::test]
+async fn stream_loss_self_heals() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut registry = Registry::default();
+    registry.register(JobKind::EmailSend, CountHandler(counter.clone()));
+
+    let jobs_config = test_jobs();
+    let dispatcher = Dispatcher::new(&redis, &jobs_config);
+    dispatcher
+        .enqueue(JobKind::EmailSend, json!({}))
+        .await
+        .unwrap();
+
+    let worker = worker_for(&test_ctx(&redis), registry, jobs_config);
+    let cancel = worker.cancel_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let counter_ref = counter.clone();
+    assert!(
+        wait_for(Duration::from_secs(10), move || {
+            let counter_ref = counter_ref.clone();
+            async move { counter_ref.load(Ordering::SeqCst) >= 1 }
+        })
+        .await,
+        "first job was not executed"
+    );
+
+    // Wipe the stream — consumer group gone with it.
+    {
+        let mut conn = redis.conn().await.unwrap();
+        let dropped: usize = redis::AsyncCommands::del(
+            &mut *conn,
+            redis.key(&format!("queue:{}", Queue::Default.as_str())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dropped, 1, "stream was expected to exist");
+    }
+
+    // Jobs enqueued after the loss must still flow: the reader heals
+    // the group and the recreated stream replays them.
+    dispatcher
+        .enqueue(JobKind::EmailSend, json!({}))
+        .await
+        .unwrap();
+    let counter_ref = counter.clone();
+    assert!(
+        wait_for(Duration::from_secs(10), move || {
+            let counter_ref = counter_ref.clone();
+            async move { counter_ref.load(Ordering::SeqCst) >= 2 }
+        })
+        .await,
+        "job enqueued after stream loss was not executed"
+    );
+    cancel.cancel();
+    handle.await.unwrap().unwrap();
+}
+
 #[tokio::test]
 async fn failing_job_retries_then_dead_letters() {
     let _permit = harness::acquire().await;

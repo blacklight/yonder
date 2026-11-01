@@ -1051,7 +1051,9 @@
     "listsManage": "إدارة القوائم",
     "limitedNotice": "تم تقييد هذا المستخدم على هذا الخادم. منشوراته مرئية فقط لمتابعيه.",
     "showPostsAnyway": "عرض المنشورات على أي حال",
-    "listsNewPlaceholder": "اسم القائمة الجديدة"
+    "listsNewPlaceholder": "اسم القائمة الجديدة",
+    "copyHandle": "نسخ المعرّف",
+    "handleCopied": "تم النسخ"
   },
   "register": {
     "title": "إنشاء حساب",

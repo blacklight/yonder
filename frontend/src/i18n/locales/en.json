@@ -1025,7 +1025,9 @@
     "listsManage": "Manage lists",
     "limitedNotice": "This user has been limited on this instance. Their posts are only visible to their followers.",
     "showPostsAnyway": "Show posts anyway",
-    "listsNewPlaceholder": "New list name"
+    "listsNewPlaceholder": "New list name",
+    "copyHandle": "Copy handle",
+    "handleCopied": "Copied"
   },
   "register": {
     "title": "Create an account",

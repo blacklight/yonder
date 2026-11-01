@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { DOMWrapper, flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
+import { useInstanceStore } from "@/stores/instance";
 import ProfilePage from "./ProfilePage.vue";
 import { ApiError } from "@/api/errors";
 import type { Account, Status } from "@/api/entities";
@@ -275,6 +276,38 @@ describe("ProfilePage", () => {
     expect(link.attributes("href")).toBe("https://manganiello.eu/@fabio");
     expect(link.text()).toBe("@fabio@manganiello.eu");
     expect(link.attributes("target")).toBe("_blank");
+  });
+
+  it("shows the fully-qualified handle on remote profiles", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice@example.org" }));
+    const wrapper = await openProfile("/@alice@example.org");
+    expect(wrapper.get(".profile__handle-text").text()).toBe(
+      "@alice@example.org",
+    );
+  });
+
+  it("qualifies local handles with the instance domain", async () => {
+    const instance = useInstanceStore();
+    instance.entity = { domain: "test.example" } as never;
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.get(".profile__handle-text").text()).toBe(
+      "@alice@test.example",
+    );
+  });
+
+  it("copies the fully-qualified handle to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const instance = useInstanceStore();
+    instance.entity = { domain: "test.example" } as never;
+    vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+    const wrapper = await openProfile("/@alice");
+    const btn = wrapper.get(".profile__handle-copy");
+    await btn.trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("@alice@test.example");
+    expect(btn.attributes("aria-label")).toBe("Copied");
   });
 
   it("renders an email field value as a mailto link", async () => {

@@ -33,6 +33,7 @@ import type { Account, ListEntity, Relationship, Status } from "@/api/entities";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
+import { useInstanceStore } from "@/stores/instance";
 import { useToastsStore } from "@/stores/toasts";
 import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
@@ -55,6 +56,7 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const compose = useComposeStore();
+const instance = useInstanceStore();
 const toasts = useToastsStore();
 
 const account = ref<Account | null>(null);
@@ -190,10 +192,31 @@ async function revealLimited() {
   limitedReveal.value = true;
   await Promise.all([loadStatuses(), loadPinned()]);
 }
+/**
+ * Local accts carry no domain — qualify them with the instance's own
+ * (from the entity when loaded, the serving hostname otherwise) so the
+ * header always shows the full `@user@domain`.
+ */
+const localDomain = computed(
+  () => instance.entity?.domain ?? window.location.hostname,
+);
 const handle = computed(() => {
   const a = account.value;
-  return a ? `@${a.acct}` : "";
+  if (!a) return "";
+  return a.acct.includes("@")
+    ? `@${a.acct}`
+    : `@${a.acct}@${localDomain.value}`;
 });
+
+const copied = ref(false);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+async function copyHandle() {
+  if (!handle.value) return;
+  await navigator.clipboard.writeText(handle.value);
+  copied.value = true;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (copied.value = false), 2000);
+}
 const menuItems = computed<MenuItem[]>(() => {
   const r = rel.value;
   const a = account.value;
@@ -778,7 +801,22 @@ watch([tab, showReplies, showBoosts], () => {
             :emojis="account.emojis"
           />
         </h1>
-        <p class="profile__handle">{{ handle }}</p>
+        <p class="profile__handle">
+          <span class="profile__handle-text">{{ handle }}</span>
+          <button
+            type="button"
+            class="profile__handle-copy"
+            :title="
+              copied ? t('profile.handleCopied') : t('profile.copyHandle')
+            "
+            :aria-label="
+              copied ? t('profile.handleCopied') : t('profile.copyHandle')
+            "
+            @click="copyHandle"
+          >
+            <FontAwesomeIcon :icon="copied ? 'check' : 'copy'" />
+          </button>
+        </p>
         <div class="profile__badges">
           <p v-if="staffRole" class="profile__badge profile__badge--staff">
             {{ t(`profile.badge.${staffRole}`) }}
@@ -1097,10 +1135,30 @@ watch([tab, showReplies, showBoosts], () => {
   overflow-wrap: anywhere;
 }
 .profile__handle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin: var(--space-1) 0 0;
   color: var(--text-muted);
   font-size: var(--text-sm);
+}
+.profile__handle-text {
   overflow-wrap: anywhere;
+}
+.profile__handle-copy {
+  flex-shrink: 0;
+  padding: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.profile__handle-copy:hover,
+.profile__handle-copy:focus-visible {
+  background: var(--bg-sunken);
+  color: var(--text);
 }
 .profile__badges {
   display: flex;

@@ -1051,7 +1051,9 @@
     "listsManage": "Listen verwalten",
     "limitedNotice": "Dieser Nutzer wurde auf dieser Instanz eingeschränkt. Seine Beiträge sind nur für Follower sichtbar.",
     "showPostsAnyway": "Beiträge trotzdem anzeigen",
-    "listsNewPlaceholder": "Neuer Listenname"
+    "listsNewPlaceholder": "Neuer Listenname",
+    "copyHandle": "Handle kopieren",
+    "handleCopied": "Kopiert"
   },
   "register": {
     "title": "Konto erstellen",

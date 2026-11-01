@@ -433,6 +433,9 @@
     },
     "status-favourites": {
       "title": "الإعجابات"
+    },
+    "tags": {
+      "title": "الوسوم"
     }
   },
   "not_found": {
@@ -1160,5 +1163,27 @@
       "suspend": "موقوف"
     },
     "languages": "اللغات"
+  },
+  "tags": {
+    "trending": "الوسوم الرائجة",
+    "followed": "الوسوم المتابَعة",
+    "scope": "النطاق",
+    "scopeGlobal": "عالمي",
+    "scopeLocal": "هذا الخادم فقط",
+    "range": "الفترة",
+    "range24h": "آخر ٢٤ ساعة",
+    "range7d": "الأسبوع الماضي",
+    "range30d": "الشهر الماضي",
+    "rangeCustom": "مخصص",
+    "from": "من",
+    "to": "إلى",
+    "apply": "تطبيق",
+    "perPage": "لكل صفحة",
+    "page": "صفحة {n}",
+    "prev": "السابق",
+    "next": "التالي",
+    "usage": "{uses} منشورات من {accounts} أشخاص",
+    "empty": "لم تُستخدم وسوم في هذه الفترة.",
+    "emptyFollowed": "لا تتابع أي وسوم بعد."
   }
 }

@@ -15,13 +15,6 @@ declare module "vue-router" {
   }
 }
 
-function stub(titleKey: string) {
-  return {
-    component: () => import("@/pages/ComingSoonPage.vue"),
-    props: { titleKey },
-  };
-}
-
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -85,6 +78,16 @@ export const router = createRouter({
       name: "explore",
       component: () => import("@/pages/TimelinePage.vue"),
       props: { timeline: "public", stream: "public", emptyKey: "explore" },
+    },
+    {
+      path: "/tags",
+      name: "tags",
+      component: () => import("@/pages/TagsPage.vue"),
+    },
+    {
+      // Old stub path — the page moved to `/tags`.
+      path: "/hashtags",
+      redirect: { name: "tags" },
     },
     {
       // Tag names carry no dots — a dotted segment is a feed
@@ -202,7 +205,6 @@ export const router = createRouter({
       component: () => import("@/pages/ListsPage.vue"),
       meta: { requiresAuth: true },
     },
-    { path: "/hashtags", name: "hashtags", ...stub("nav.hashtags") },
     {
       path: "/moderation",
       name: "moderation",
@@ -411,6 +413,12 @@ export const router = createRouter({
       path: "/settings/profile",
       name: "settings-profile",
       component: () => import("@/pages/settings/ProfileSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/settings/notifications",
+      name: "settings-notifications",
+      component: () => import("@/pages/settings/NotificationsSettingsPage.vue"),
       meta: { requiresAuth: true },
     },
     {

@@ -49,7 +49,7 @@ export const stubRoutes: RouteRecordRaw[] = [
   { path: "/favourites", name: "favourites", component: stub },
   { path: "/bookmarks", name: "bookmarks", component: stub },
   { path: "/lists", name: "lists", component: stub },
-  { path: "/hashtags", name: "hashtags", component: stub },
+  { path: "/tags", name: "tags", component: stub },
   { path: "/moderation", name: "moderation", component: stub },
   {
     path: "/moderation/reports/:id",

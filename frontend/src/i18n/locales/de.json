@@ -433,6 +433,9 @@
     },
     "status-favourites": {
       "title": "Gefällt mir"
+    },
+    "tags": {
+      "title": "Hashtags"
     }
   },
   "not_found": {
@@ -1160,5 +1163,27 @@
       "suspend": "suspendiert"
     },
     "languages": "Sprachen"
+  },
+  "tags": {
+    "trending": "Im Trend",
+    "followed": "Gefolgte Hashtags",
+    "scope": "Bereich",
+    "scopeGlobal": "Global",
+    "scopeLocal": "Nur diese Instanz",
+    "range": "Zeitraum",
+    "range24h": "Letzte 24 Stunden",
+    "range7d": "Letzte Woche",
+    "range30d": "Letzter Monat",
+    "rangeCustom": "Benutzerdefiniert",
+    "from": "Von",
+    "to": "Bis",
+    "apply": "Anwenden",
+    "perPage": "Pro Seite",
+    "page": "Seite {n}",
+    "prev": "Zurück",
+    "next": "Weiter",
+    "usage": "{uses} Beiträge von {accounts} Personen",
+    "empty": "Keine Hashtags in diesem Zeitraum.",
+    "emptyFollowed": "Du folgst noch keinen Hashtags."
   }
 }

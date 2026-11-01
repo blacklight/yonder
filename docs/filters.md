@@ -68,17 +68,35 @@ that batch still see the post via the SQL top-up.
 
 ## Trending hashtags
 
-`GET /api/v1/trends/tags[?period=day|week|month][&limit][&offset]` —
-the `period` selector is a Yonder extension (Mastodon's route has
-none; default `week`). Ranking counts status uses over the window
-with `COUNT(DISTINCT account_id)` ordering uses-desc/accounts-desc,
-floored at `timelines.trends_min_accounts` (default 2) so a single
-account can't own the list. Results are Redis-cached
-(`timelines.trends_cache_seconds`, default 300; `0` disables) under
-`trends:tags:{period}:{all|local}`; `timelines.trends_include_remote`
-(default true) toggles remote-author inclusion. The cached ranking is
-capped at 1000 rows — `offset` pages inside it, so offsets past the
-ceiling return an empty page. Counts only consider anonymous-visible
-statuses: `public`, non-tombstone, non-boost, excluding suspended and
+`GET /api/v1/trends/tags` ranks tags by uses, descending
+(`uses desc, accounts desc, name`), floored at
+`timelines.trends_min_accounts` (default 2) so a single account can't
+own the list. Counts only consider anonymous-visible statuses:
+`public`, non-tombstone, non-boost, excluding suspended and
 limited/removed domains. `history[]` is the trailing 7 days,
-zero-filled.
+zero-filled; each entity also carries the window's `uses`/`accounts`
+totals plus the viewer's `following` flag (all Yonder extensions).
+
+Window parameters (all Yonder extensions; `period` predates the
+others — Mastodon's route has none):
+
+- `period=day|week|month` — relative window length (default `week`).
+- `anchor=now|latest` — window end: now (default) or the most recent
+  hashtag occurrence, so quiet instances still rank their last
+  active tags.
+- `from`/`to` — explicit bounds (RFC 3339 or `YYYY-MM-DD`; the end is
+  inclusive, so a date `to` covers the whole day). Overrides
+  `period`/`anchor`. Either bound alone is allowed (`from` ⇒ until
+  now; `to` ⇒ everything up to it). `from >= to` and unparsable
+  values return 422.
+- `local` (`true`/`1`) — restricts the ranking to local authors; it
+  can only narrow `timelines.trends_include_remote` (default true),
+  never widen it.
+- `limit`/`offset` — pages inside the cached top-1000 ranking; past
+  the ceiling pages come back empty.
+
+The ranking is Redis-cached (`timelines.trends_cache_seconds`,
+default 300; `0` disables) under
+`trends:tags:v2:{start}:{end}:{all|local}:{min_accounts}` — the
+resolved bounds keep explicit windows and `anchor=latest` honest.
+`/api/v1/trends` is the pre-3.0 alias.

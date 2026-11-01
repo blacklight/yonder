@@ -136,7 +136,7 @@ const menuSource = computed<MenuEntry[]>(() => [
   {
     id: "hashtags",
     label: t("nav.hashtags"),
-    to: "/hashtags",
+    to: "/tags",
     icon: "hashtag",
     visible: true,
   },

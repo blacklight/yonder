@@ -142,6 +142,26 @@ export interface StatusTag {
   url: string;
 }
 
+/** One `history[]` bucket on a `Tag` entity (stringified counts). */
+export interface TagHistoryDay {
+  day: string;
+  uses: string;
+  accounts: string;
+}
+
+/** Mastodon `Tag` entity plus Yonder's `uses`/`accounts` window
+ *  totals, which only trend responses carry. */
+export interface Tag {
+  id: string;
+  name: string;
+  url: string;
+  history: TagHistoryDay[];
+  following: boolean;
+  featured: boolean;
+  uses?: string;
+  accounts?: string;
+}
+
 export interface CustomEmoji {
   shortcode: string;
   url: string;

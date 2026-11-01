@@ -433,6 +433,9 @@
     },
     "status-favourites": {
       "title": "Likes"
+    },
+    "tags": {
+      "title": "Hashtags"
     }
   },
   "not_found": {
@@ -1160,5 +1163,27 @@
       "suspend": "suspended"
     },
     "languages": "Languages"
+  },
+  "tags": {
+    "trending": "Trending",
+    "followed": "Followed hashtags",
+    "scope": "Scope",
+    "scopeGlobal": "Global",
+    "scopeLocal": "This instance only",
+    "range": "Period",
+    "range24h": "Past 24 hours",
+    "range7d": "Past week",
+    "range30d": "Past month",
+    "rangeCustom": "Custom",
+    "from": "From",
+    "to": "To",
+    "apply": "Apply",
+    "perPage": "Per page",
+    "page": "Page {n}",
+    "prev": "Previous",
+    "next": "Next",
+    "usage": "{uses} posts by {accounts} people",
+    "empty": "No hashtags used in this window.",
+    "emptyFollowed": "You are not following any hashtags yet."
   }
 }

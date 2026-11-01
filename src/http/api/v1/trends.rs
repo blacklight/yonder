@@ -1,7 +1,8 @@
-//! `/api/v1/trends/tags` — trending hashtags with a Yonder `period`
-//! extension (day/week/month) on the Mastodon-shaped route (epic 20).
+//! `/api/v1/trends/tags` — trending hashtags with Yonder `period`,
+//! `anchor`, `local` and `from`/`to` window extensions on the
+//! Mastodon-shaped route (epic 20).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::{
@@ -14,29 +15,53 @@ use sqlx::Row;
 use crate::{
     http::{middleware::auth::MaybeAuth, AppState},
     tags::{self, entity::tag_json, trends::Period},
-    Result,
+    Error, Result,
 };
 
+/// `from`/`to` bound — RFC 3339 datetime or bare `YYYY-MM-DD` date.
+/// The window end is inclusive, so a date-valued `to` resolves to
+/// the day's final instant, matching what `<input type="date">`
+/// sends.
+fn parse_bound(raw: &str, inclusive_day: bool) -> Result<chrono::DateTime<chrono::Utc>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Ok(dt.with_timezone(&chrono::Utc));
+    }
+    let date = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        .map_err(|_| Error::Validation(format!("invalid date '{raw}'")))?;
+    let time = if inclusive_day {
+        date.and_hms_micro_opt(23, 59, 59, 999_999)
+    } else {
+        date.and_hms_opt(0, 0, 0)
+    };
+    Ok(time.unwrap_or_default().and_utc())
+}
+
 /// `GET /api/v1/trends/tags` — ranked by uses over the window;
-/// `history` is always the trailing 7 days.
+/// `history` is always the trailing 7 days. Each entity also carries
+/// the window's `uses`/`accounts` totals (stringified, Yonder
+/// extension) and the viewer's `following` flag.
 #[utoipa::path(
     get,
     path = "/api/v1/trends/tags",
     tag = "trends",
     params(
         ("period" = Option<String>, Query, description = "day|week|month (default week) — yonder extension"),
+        ("anchor" = Option<String>, Query, description = "now|latest (default now) — `latest` ends the window at the most recent hashtag occurrence — yonder extension"),
+        ("local" = Option<bool>, Query, description = "Restrict to local authors — yonder extension"),
+        ("from" = Option<String>, Query, description = "Window start: RFC 3339 or YYYY-MM-DD (overrides period/anchor) — yonder extension"),
+        ("to" = Option<String>, Query, description = "Window end, inclusive: RFC 3339 or YYYY-MM-DD covering the whole day — yonder extension"),
         ("limit" = Option<i64>, Query, description = "Max results (default 10)"),
         ("offset" = Option<i64>, Query, description = "Skip the first n results (ranking capped at 1000)")
     ),
     responses(
         (status = 200, description = "Array of trending Tag entities"),
-        (status = 422, description = "Invalid period", body = crate::error::ErrorBody),
+        (status = 422, description = "Invalid period, anchor or window", body = crate::error::ErrorBody),
         (status = 429, description = "Rate limited", body = crate::error::ErrorBody),
     )
 )]
 pub async fn tags_trending(
     State(state): State<Arc<AppState>>,
-    _auth: MaybeAuth,
+    auth: MaybeAuth,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
     let period = match params.get("period") {
@@ -53,22 +78,69 @@ pub async fn tags_trending(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0)
         .max(0);
+    let local_only = super::timelines::truthy(&params, "local");
+    let include_remote = state.config().timelines.trends_include_remote && !local_only;
 
-    let rows =
-        tags::trends::trending(&state.db, &state.cache, &state.config().timelines, period).await?;
+    // Window: an explicit `from`/`to` range wins; otherwise `period`
+    // days ending at `anchor` (now, or the most recent visible tag
+    // occurrence so quiet instances still rank something).
+    let (start, end) = if params.contains_key("from") || params.contains_key("to") {
+        let start = match params.get("from") {
+            Some(raw) => parse_bound(raw, false)?,
+            None => chrono::DateTime::UNIX_EPOCH,
+        };
+        let end = match params.get("to") {
+            Some(raw) => parse_bound(raw, true)?,
+            None => chrono::Utc::now(),
+        };
+        if start >= end {
+            return Err(Error::Validation("`from` must precede `to`".into()));
+        }
+        (start, end)
+    } else {
+        let anchor = params.get("anchor").map(String::as_str).unwrap_or("now");
+        let end = match anchor {
+            "now" => chrono::Utc::now(),
+            "latest" => tags::trends::latest_occurrence(&state.db, include_remote)
+                .await?
+                .unwrap_or_else(chrono::Utc::now),
+            other => {
+                return Err(Error::Validation(format!(
+                    "unknown trends anchor '{other}'"
+                )))
+            }
+        };
+        (end - chrono::Duration::days(period.days() as i64), end)
+    };
+
+    let rows = tags::trends::trending(
+        &state.db,
+        &state.cache,
+        &state.config().timelines,
+        start,
+        end,
+        local_only,
+    )
+    .await?;
     let page: Vec<&tags::trends::TrendRow> = rows
         .iter()
         .skip(offset as usize)
         .take(limit as usize)
         .collect();
     let ids: Vec<i64> = page.iter().map(|r| r.tag_id).collect();
-    let histories = tags::trends::history_for_many(
-        &state.db,
-        &ids,
-        7,
-        state.config().timelines.trends_include_remote,
-    )
-    .await?;
+    let histories = tags::trends::history_for_many(&state.db, &ids, 7, include_remote).await?;
+    let following: HashSet<i64> = match auth.0.as_ref() {
+        Some(a) if !ids.is_empty() => sqlx::query_scalar(
+            "SELECT tag_id FROM tag_follows WHERE account_id = $1 AND tag_id = ANY($2)",
+        )
+        .bind(a.account_id)
+        .bind(&ids)
+        .fetch_all(&state.db)
+        .await?
+        .into_iter()
+        .collect(),
+        _ => HashSet::new(),
+    };
 
     let ctx = crate::posts::PostContext::new(&state);
     let base = ctx.base_url();
@@ -76,15 +148,20 @@ pub async fn tags_trending(
         .iter()
         .zip(histories)
         .map(|(row, history)| {
-            tag_json(
+            let mut tag = tag_json(
                 &base,
                 &tags::TagInfo {
                     id: row.tag_id,
                     name: row.name.clone(),
-                    following: false,
+                    following: following.contains(&row.tag_id),
                     history,
                 },
-            )
+            );
+            // Window totals for the card counter — the trailing
+            // `history` can't express an arbitrary range.
+            tag["uses"] = json!(row.uses.to_string());
+            tag["accounts"] = json!(row.accounts.to_string());
+            tag
         })
         .collect();
     Ok(Json(json!(out)))

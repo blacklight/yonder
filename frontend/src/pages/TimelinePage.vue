@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
@@ -8,8 +8,10 @@ import Spinner from "@/components/ui/Spinner.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTimelineStore, type TimelineKey } from "@/stores/timeline";
 import { useStreamingStore } from "@/stores/streaming";
+import { useAuthStore } from "@/stores/auth";
 import { useInfiniteScroll } from "@/composables/useInfiniteScroll";
-import type { Status } from "@/api/entities";
+import { followTag, getTag, unfollowTag } from "@/api/tags";
+import type { Status, Tag } from "@/api/entities";
 
 /**
  * One component for every timeline — `key` is the folded stream name
@@ -25,6 +27,7 @@ const props = defineProps<{
 const { t } = useI18n();
 const timelines = useTimelineStore();
 const streaming = useStreamingStore();
+const auth = useAuthStore();
 
 const tl = computed(() => timelines.get(props.timeline));
 /**
@@ -39,6 +42,33 @@ const feedTag = computed(() =>
 const feedHref = computed(() =>
   feedTag.value ? `/tags/${encodeURIComponent(feedTag.value)}.rss` : null,
 );
+
+// Follow/unfollow state for the hashtag header — only fetched for
+// signed-in viewers; anonymous sessions get no button.
+const tagInfo = ref<Tag | null>(null);
+const tagBusy = ref(false);
+
+async function loadTag(name: string) {
+  tagInfo.value = null;
+  if (!auth.isLoggedIn) return;
+  try {
+    tagInfo.value = await getTag(name);
+  } catch {
+    tagInfo.value = null;
+  }
+}
+
+async function toggleTag() {
+  if (!tagInfo.value || tagBusy.value) return;
+  tagBusy.value = true;
+  try {
+    tagInfo.value = tagInfo.value.following
+      ? await unfollowTag(tagInfo.value.name)
+      : await followTag(tagInfo.value.name);
+  } finally {
+    tagBusy.value = false;
+  }
+}
 // Infinite scroll — the bottom sentinel pages the next batch in as it
 // enters the viewport; `hasMore` also guards in-flight fetches.
 const { vInfinite, ioSupported } = useInfiniteScroll(
@@ -62,6 +92,7 @@ function onStreamEvent(ev: { event: string; payload: unknown }) {
 
 onMounted(() => {
   void timelines.load(props.timeline);
+  if (feedTag.value) void loadTag(feedTag.value);
   offStream = streaming.subscribe(streamKey(), onStreamEvent);
 });
 
@@ -71,6 +102,7 @@ watch(
     offStream?.();
     offStream = streaming.subscribe(streamKey(), onStreamEvent);
     void timelines.load(key);
+    if (feedTag.value) void loadTag(feedTag.value);
     void old;
   },
 );
@@ -84,6 +116,17 @@ onBeforeUnmount(() => {
   <div class="timeline">
     <header v-if="feedTag" class="timeline__header">
       <h1 class="timeline__title">#{{ feedTag }}</h1>
+      <Button
+        v-if="tagInfo"
+        size="sm"
+        :variant="tagInfo.following ? 'secondary' : 'primary'"
+        :disabled="tagBusy"
+        class="timeline__follow"
+        data-testid="tag-follow"
+        @click="toggleTag"
+      >
+        {{ tagInfo.following ? t("profile.unfollow") : t("profile.follow") }}
+      </Button>
       <a
         v-if="feedHref"
         class="timeline__feed"

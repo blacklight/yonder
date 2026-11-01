@@ -11,6 +11,31 @@ vi.mock("@/api/statuses", async (orig) => {
 });
 import { publicTimeline, tagTimeline } from "@/api/statuses";
 
+vi.mock("@/api/tags", async (orig) => {
+  const m = await orig<typeof import("@/api/tags")>();
+  return {
+    ...m,
+    getTag: vi.fn(),
+    followTag: vi.fn(),
+    unfollowTag: vi.fn(),
+  };
+});
+import { followTag, getTag, unfollowTag } from "@/api/tags";
+import { useAuthStore } from "@/stores/auth";
+import type { Tag } from "@/api/entities";
+
+function tag(over: Partial<Tag> = {}): Tag {
+  return {
+    id: "1",
+    name: "rust",
+    url: "https://x.test/tags/rust",
+    history: [],
+    following: false,
+    featured: false,
+    ...over,
+  };
+}
+
 function status(id: string): Status {
   return {
     id,
@@ -47,6 +72,10 @@ describe("TimelinePage", () => {
     vi.restoreAllMocks();
     vi.mocked(publicTimeline).mockReset();
     vi.mocked(tagTimeline).mockReset();
+    vi.mocked(getTag).mockReset();
+    vi.mocked(followTag).mockReset();
+    vi.mocked(unfollowTag).mockReset();
+    useAuthStore().setToken(null);
   });
 
   it("loads and renders cards", async () => {
@@ -140,6 +169,42 @@ describe("TimelinePage", () => {
     expect(wrapper.get(".timeline__feed").attributes("href")).toBe(
       "/tags/caf%C3%A9.rss",
     );
+  });
+
+  it("offers tag follow/unfollow in the header when signed in", async () => {
+    useAuthStore().setToken("tk");
+    vi.mocked(tagTimeline).mockResolvedValue({ items: [] });
+    vi.mocked(getTag).mockResolvedValue(tag({ following: false }));
+    vi.mocked(followTag).mockResolvedValue(tag({ following: true }));
+    const { wrapper } = mountWith(TimelinePage, {
+      props: { timeline: "hashtag:rust", stream: "hashtag:rust" },
+    });
+    await flushPromises();
+    const btn = wrapper.get("[data-testid='tag-follow']");
+    expect(getTag).toHaveBeenCalledWith("rust");
+    expect(btn.text()).toContain("Follow");
+
+    await btn.trigger("click");
+    await flushPromises();
+    expect(followTag).toHaveBeenCalledWith("rust");
+    expect(wrapper.get("[data-testid='tag-follow']").text()).toContain(
+      "Unfollow",
+    );
+
+    vi.mocked(unfollowTag).mockResolvedValue(tag({ following: false }));
+    await wrapper.get("[data-testid='tag-follow']").trigger("click");
+    await flushPromises();
+    expect(unfollowTag).toHaveBeenCalledWith("rust");
+  });
+
+  it("hides the tag follow button when logged out", async () => {
+    vi.mocked(tagTimeline).mockResolvedValue({ items: [] });
+    const { wrapper } = mountWith(TimelinePage, {
+      props: { timeline: "hashtag:rust", stream: "hashtag:rust" },
+    });
+    await flushPromises();
+    expect(wrapper.find("[data-testid='tag-follow']").exists()).toBe(false);
+    expect(getTag).not.toHaveBeenCalled();
   });
 
   it("non-hashtag timelines have no feed header", async () => {

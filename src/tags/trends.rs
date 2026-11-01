@@ -39,14 +39,6 @@ impl Period {
             _ => Err(Error::Validation(format!("unknown trends period '{raw}'"))),
         }
     }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Period::Day => "day",
-            Period::Week => "week",
-            Period::Month => "month",
-        }
-    }
 }
 
 /// One trending tag row.
@@ -87,28 +79,32 @@ fn base_from(include_remote: bool) -> String {
 /// rather than an ever-growing Redis value.
 pub const TRENDS_RANKING_CEILING: i64 = 1000;
 
-/// Ranked tags over `window_days`, truncated to
+/// Ranked tags over the `[start, end]` window (end-inclusive: the
+/// `anchor=latest` window ends exactly at the latest occurrence),
+/// truncated to
 /// [`TRENDS_RANKING_CEILING`] — the caller offset-pages the result.
 /// `min_accounts` is the distinct-authors floor; ordering is uses
 /// desc, accounts desc, name.
 async fn query(
     db: &PgPool,
-    window_days: u32,
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
     include_remote: bool,
     min_accounts: i64,
 ) -> Result<Vec<TrendRow>> {
     let sql = format!(
         "SELECT t.id AS tag_id, t.name, COUNT(*)::bigint AS uses, \
                 COUNT(DISTINCT s.account_id)::bigint AS accounts {} \
-         AND s.created_at > now() - ($1::text || ' days')::interval \
+         AND s.created_at >= $1 AND s.created_at <= $2 \
          GROUP BY t.id, t.name \
-         HAVING COUNT(DISTINCT s.account_id) >= $2 \
+         HAVING COUNT(DISTINCT s.account_id) >= $3 \
          ORDER BY uses DESC, accounts DESC, t.name \
-         LIMIT $3",
+         LIMIT $4",
         base_from(include_remote)
     );
     let rows = sqlx::query(&sql)
-        .bind(window_days.to_string())
+        .bind(start)
+        .bind(end)
         .bind(min_accounts)
         .bind(TRENDS_RANKING_CEILING)
         .fetch_all(db)
@@ -124,27 +120,46 @@ async fn query(
         .collect())
 }
 
-/// Cached entry point — key includes period and the local/remote
-/// mode. `trends_cache_seconds` = 0 bypasses the cache. The cached
-/// ranking is capped at [`TRENDS_RANKING_CEILING`] rows.
+/// The most recent occurrence of any tag in the anonymous-visible
+/// window — the anchor the SPA's "past N" presets hang off so a
+/// quiet instance still shows its last active tags. `include_remote`
+/// must match the ranking query or the window can end inside a gap.
+pub async fn latest_occurrence(
+    db: &PgPool,
+    include_remote: bool,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    let sql = format!("SELECT MAX(s.created_at) {}", base_from(include_remote));
+    Ok(sqlx::query_scalar(&sql).fetch_one(db).await?)
+}
+
+/// Cached entry point over the resolved `[start, end]` window — the
+/// cache key carries both bounds plus the local/remote and
+/// min-accounts modes. `local_only` narrows an instance that counts
+/// remote statuses (`trends_include_remote`) to local authors; it
+/// can never widen one configured local-only. `trends_cache_seconds`
+/// = 0 bypasses the cache. The cached ranking is capped at
+/// [`TRENDS_RANKING_CEILING`] rows.
 pub async fn trending(
     db: &PgPool,
     cache: &RedisCache,
     config: &TimelinesConfig,
-    period: Period,
+    start: chrono::DateTime<chrono::Utc>,
+    end: chrono::DateTime<chrono::Utc>,
+    local_only: bool,
 ) -> Result<Vec<TrendRow>> {
-    let window = period.days();
-    let include_remote = config.trends_include_remote;
+    let include_remote = config.trends_include_remote && !local_only;
     let min_accounts = config.trends_min_accounts as i64;
     let db2 = db.clone();
-    let load = move || async move { query(&db2, window, include_remote, min_accounts).await };
+    let load = move || async move { query(&db2, start, end, include_remote, min_accounts).await };
     if config.trends_cache_seconds == 0 {
         return load().await;
     }
     let key = format!(
-        "trends:tags:{}:{}",
-        period.as_str(),
-        if include_remote { "all" } else { "local" }
+        "trends:tags:v2:{}:{}:{}:{}",
+        start.timestamp(),
+        end.timestamp(),
+        if include_remote { "all" } else { "local" },
+        min_accounts,
     );
     cache
         .get_or_load(&key, Duration::from_secs(config.trends_cache_seconds), load)

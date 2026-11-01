@@ -1290,3 +1290,221 @@ async fn trends_offset_pages_within_ceiling() {
     .await;
     assert!(page3.as_array().unwrap().is_empty(), "{page3}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn trends_tags_window_local_and_following() {
+    let _permit = harness::acquire().await;
+    // Window assertions must see the post-backdate state — same-second
+    // requests share the ranking cache key (second-precision bounds),
+    // so this test bypasses the cache.
+    let mut config = Config::default();
+    config.timelines.trends_cache_seconds = 0;
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice_w", "aw@x.test").await;
+    let bob = register(&env.app, "bob_w", "bw@x.test").await;
+
+    // #win_tag: two local authors. #mix_tag: one local author + one
+    // remote author — trends globally but drops under the
+    // two-account floor when `local` narrows the window.
+    post_status(&env.app, &alice, "#win_tag first").await;
+    post_status(&env.app, &bob, "#win_tag second").await;
+    post_status(&env.app, &alice, "#mix_tag local half").await;
+    let remote_acct = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO accounts (domain, username, actor_id) \
+         VALUES ('remote.test', 'ru', 'https://remote.test/users/ru') RETURNING id",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let remote_status = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO statuses (account_id, content, uri, visibility, local) \
+         VALUES ($1, '#mix_tag remote half', \
+                 'https://remote.test/statuses/1', 'public', false) RETURNING id",
+    )
+    .bind(remote_acct)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let mix_tag = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO tags (name) VALUES ('mix_tag') \
+         ON CONFLICT (lower(name)) DO UPDATE SET name = EXCLUDED.name \
+         RETURNING id",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO status_tags (status_id, tag_id) VALUES ($1,$2)")
+        .bind(remote_status)
+        .bind(mix_tag)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    // Global ranking counts the remote author; `local` doesn't.
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day",
+        None,
+        None,
+    )
+    .await;
+    let mix = trends
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "mix_tag")
+        .expect("mix_tag should trend globally");
+    assert_eq!(mix["uses"], "2");
+    assert_eq!(mix["accounts"], "2");
+    assert_eq!(mix["following"], false);
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day&local=1",
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        trends
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["name"] != "mix_tag"),
+        "local window must drop the remote author's account: {trends}"
+    );
+    assert!(
+        trends
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "win_tag"),
+        "all-local tag still trends under local=1: {trends}"
+    );
+
+    // `following` is viewer-specific.
+    req(
+        &env.app,
+        "POST",
+        "/api/v1/tags/win_tag/follow",
+        Some(&alice),
+        None,
+    )
+    .await;
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day",
+        Some(&alice),
+        None,
+    )
+    .await;
+    let win = trends
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "win_tag")
+        .unwrap();
+    assert_eq!(win["following"], true);
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day",
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(
+        trends
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "win_tag")
+            .unwrap()["following"],
+        false
+    );
+
+    // Backdate every status: a `now`-anchored day window goes empty
+    // while `latest` still ranks the most recent occurrence.
+    sqlx::query("UPDATE statuses SET created_at = now() - interval '3 days'")
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day&anchor=now",
+        None,
+        None,
+    )
+    .await;
+    assert!(trends.as_array().unwrap().is_empty(), "{trends}");
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        "/api/v1/trends/tags?period=day&anchor=latest",
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        trends
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "win_tag"),
+        "latest anchor should reopen the window around the last occurrence: {trends}"
+    );
+
+    // Explicit from/to (dates cover whole days; `to` is exclusive).
+    let from = (chrono::Utc::now() - chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+    let to = (chrono::Utc::now() - chrono::Duration::days(2))
+        .format("%Y-%m-%d")
+        .to_string();
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        &format!("/api/v1/trends/tags?from={from}&to={to}"),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        trends
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["name"] == "win_tag"),
+        "custom window covering the backdate should rank: {trends}"
+    );
+    let near_from = (chrono::Utc::now() - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let (_, trends) = req(
+        &env.app,
+        "GET",
+        &format!("/api/v1/trends/tags?from={near_from}"),
+        None,
+        None,
+    )
+    .await;
+    assert!(
+        trends.as_array().unwrap().is_empty(),
+        "window after the backdate should be empty: {trends}"
+    );
+
+    // Validation: bad anchor, bad date, inverted range → 422.
+    for path in [
+        "/api/v1/trends/tags?anchor=bogus",
+        "/api/v1/trends/tags?from=not-a-date",
+        &format!("/api/v1/trends/tags?from={to}&to={from}"),
+    ] {
+        let (status, _) = req(&env.app, "GET", path, None, None).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}");
+    }
+}

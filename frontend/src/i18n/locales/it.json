@@ -433,6 +433,9 @@
     },
     "status-favourites": {
       "title": "Mi piace"
+    },
+    "tags": {
+      "title": "Hashtag"
     }
   },
   "not_found": {
@@ -1160,5 +1163,27 @@
       "suspend": "sospeso"
     },
     "languages": "Lingue"
+  },
+  "tags": {
+    "trending": "Di tendenza",
+    "followed": "Hashtag seguiti",
+    "scope": "Ambito",
+    "scopeGlobal": "Globale",
+    "scopeLocal": "Solo questa istanza",
+    "range": "Periodo",
+    "range24h": "Ultime 24 ore",
+    "range7d": "Ultima settimana",
+    "range30d": "Ultimo mese",
+    "rangeCustom": "Personalizzato",
+    "from": "Da",
+    "to": "A",
+    "apply": "Applica",
+    "perPage": "Per pagina",
+    "page": "Pagina {n}",
+    "prev": "Precedente",
+    "next": "Successivo",
+    "usage": "{uses} post di {accounts} persone",
+    "empty": "Nessun hashtag usato in questo periodo.",
+    "emptyFollowed": "Non segui ancora nessun hashtag."
   }
 }

@@ -179,9 +179,11 @@ impl JobHandler for IncomingJob {
 ///
 /// Recognized shapes: the AP object URI
 /// (`/ap/users/{u}/statuses/{id}`), the web permalink
-/// (`/@{u}/{id}` — equal to `statuses.url`), and the SPA route
-/// (`/statuses/{id}`). Only local, live statuses resolve — a mention
-/// of anything else stays recorded in the ledger without a reply.
+/// (`/@{u}/{id}` — equal to `statuses.url`), the SPA route
+/// (`/statuses/{id}`), and the standalone embed page
+/// (`/statuses/{id}/embed` or Mastodon's `/@{u}/{id}/embed`). Only
+/// local, live statuses resolve — a mention of anything else stays
+/// recorded in the ledger without a reply.
 pub async fn resolve_target_status(db: &PgPool, target: &str) -> Result<Option<StatusRow>> {
     let row = sqlx::query(&format!(
         "SELECT {} FROM statuses WHERE local AND NOT tombstone AND (uri = $1 OR url = $1)",
@@ -201,7 +203,10 @@ pub async fn resolve_target_status(db: &PgPool, target: &str) -> Result<Option<S
         .map(|s| s.collect())
         .unwrap_or_default();
     let id: Option<i64> = match segments.as_slice() {
-        ["ap", "users", _, "statuses", id] | ["statuses", id] => id.parse().ok(),
+        ["ap", "users", _, "statuses", id] | ["statuses", id] | ["statuses", id, "embed"] => {
+            id.parse().ok()
+        }
+        [acct, id, "embed"] if acct.starts_with('@') => id.parse().ok(),
         _ => None,
     };
     match id {

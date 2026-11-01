@@ -419,6 +419,19 @@
     "useSecurityKey": "Usa una chiave di sicurezza",
     "touchKey": "Tocca la chiave ora"
   },
+  "embed": {
+    "title": "Incorpora post",
+    "hint": "Incolla uno di questi snippet in una pagina web per incorporare questo post.",
+    "iframe": "Iframe",
+    "iframeHint": "Un semplice frame inline — nessun JavaScript richiesto. Regola l'altezza in base al post.",
+    "script": "Script",
+    "scriptHint": "Mostra il post e mantiene automaticamente l'altezza del frame sincronizzata.",
+    "postBy": "Post di {user}",
+    "copy": "Copia",
+    "copied": "Copiato",
+    "viewPost": "Vedi post",
+    "unavailable": "Questo post non è disponibile."
+  },
   "oauth": {
     "title": "Autorizza applicazione",
     "wantsAccess": "vorrebbe il permesso di accedere al tuo account",
@@ -447,6 +460,7 @@
     "more": "Altro",
     "copyLink": "Copia link",
     "openTab": "Apri in nuova scheda",
+    "embed": "Incorpora",
     "mention": "Menziona",
     "dm": "Messaggio diretto",
     "mute": "Silenzia {user}",
@@ -508,6 +522,7 @@
     "notFound": "Questo post non è disponibile.",
     "loadError": "Impossibile caricare il post.",
     "loadingRemoteContext": "Recupero delle risposte dall'istanza remota…",
+    "repliesCount": "{count} risposta | {count} risposte",
     "boostsCount": "{count} boost | {count} boost",
     "quotesCount": "{count} citazione | {count} citazioni",
     "likesCount": "{count} mi piace | {count} mi piace",

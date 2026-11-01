@@ -845,3 +845,88 @@ async fn post_status_ext(app: &Router, token: &str, payload: &Value) -> String {
     let body: Value = serde_json::from_slice(&body).unwrap();
     body["id"].as_str().unwrap().to_string()
 }
+
+/// A mention whose target is the standalone embed page resolves to the
+/// same status — the embed URL form (`/statuses/{id}/embed`, the
+/// `<iframe>`/`<script>` target) folds under the post it renders.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn incoming_webmention_to_embed_url_materializes_reply() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let token = register(&env.app, "wmembed", "wmembed@example.com").await;
+    let status_id = post_status(&env.app, &token, "an embedded post").await;
+    let target = format!("{BASE}/statuses/{status_id}/embed");
+    let tgt = target.clone();
+    let (site, _) = mock_site(move |base| {
+        h_entry(
+            &format!("{base}/article"),
+            &format!("{base}/author"),
+            &tgt,
+            &format!("{base}/wm"),
+        )
+    })
+    .await;
+    let source = format!("{site}/article");
+
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/webmentions",
+        None,
+        "application/x-www-form-urlencoded",
+        format!("source={}&target={}", urlenc(&source), urlenc(&target)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (cancel, worker) = start_worker(&env);
+    let db = env.state.db.clone();
+    let src = source.clone();
+    let tgt2 = target.clone();
+    let materialized = wait_for(Duration::from_secs(20), move || {
+        let db = db.clone();
+        let src = src.clone();
+        let tgt = tgt2.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT status_id FROM webmentions \
+                 WHERE source = $1 AND target = $2 AND direction = 'incoming'",
+            )
+            .bind(&src)
+            .bind(&tgt)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+            .flatten()
+            .is_some()
+        }
+    })
+    .await;
+    if !materialized {
+        let rows: Vec<(String, String, String, Option<i64>)> =
+            sqlx::query_as("SELECT source, target, status, status_id FROM webmentions")
+                .fetch_all(&env.state.db)
+                .await
+                .unwrap();
+        panic!("embed-target webmention not materialized; ledger: {rows:?}");
+    }
+
+    // The reply hangs off the same status as a permalink-target mention.
+    let reply_parent: i64 = sqlx::query_scalar(
+        "SELECT in_reply_to_id FROM statuses WHERE uri LIKE 'urn:yonder:webmention:%'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(reply_parent.to_string(), status_id);
+
+    cancel.cancel();
+    worker.await.unwrap().unwrap();
+}

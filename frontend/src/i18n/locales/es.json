@@ -419,6 +419,19 @@
     "useSecurityKey": "Usar una llave de seguridad",
     "touchKey": "Toca la llave ahora"
   },
+  "embed": {
+    "title": "Insertar publicación",
+    "hint": "Pega uno de estos fragmentos en una página web para insertar esta publicación.",
+    "iframe": "Iframe",
+    "iframeHint": "Un marco en línea sencillo — no requiere JavaScript. Ajusta la altura a la publicación.",
+    "script": "Script",
+    "scriptHint": "Muestra la publicación y mantiene la altura del marco sincronizada automáticamente.",
+    "postBy": "Publicación de {user}",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "viewPost": "Ver publicación",
+    "unavailable": "Esta publicación no está disponible."
+  },
   "oauth": {
     "title": "Autorizar aplicación",
     "wantsAccess": "quiere permiso para acceder a tu cuenta",
@@ -447,6 +460,7 @@
     "more": "Más",
     "copyLink": "Copiar enlace",
     "openTab": "Abrir en nueva pestaña",
+    "embed": "Insertar",
     "mention": "Mencionar",
     "dm": "Mensaje directo",
     "mute": "Silenciar a {user}",
@@ -508,6 +522,7 @@
     "notFound": "Esta publicación no está disponible.",
     "loadError": "No se pudo cargar la publicación.",
     "loadingRemoteContext": "Obteniendo respuestas de la instancia remota…",
+    "repliesCount": "{count} respuesta | {count} respuestas",
     "boostsCount": "{count} impulso | {count} impulsos",
     "quotesCount": "{count} cita | {count} citas",
     "likesCount": "{count} me gusta | {count} me gusta",

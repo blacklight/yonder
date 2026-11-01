@@ -10,6 +10,8 @@ declare module "vue-router" {
     requiresRole?: "moderator" | "admin";
     /** Page sets `document.title` itself once async data resolves. */
     dynamicTitle?: boolean;
+    /** Standalone page served inside embed iframes — no app chrome. */
+    embed?: boolean;
   }
 }
 
@@ -113,6 +115,16 @@ export const router = createRouter({
       name: "status",
       component: () => import("@/pages/StatusPage.vue"),
       props: true,
+    },
+    {
+      // Standalone embeddable status — the <iframe>/<script> target
+      // copied out of the card's "Embed" dialog. No app chrome, no
+      // auth requirement (public/unlisted posts fetch anonymously).
+      path: "/statuses/:id/embed",
+      name: "status-embed",
+      component: () => import("@/pages/StatusEmbedPage.vue"),
+      props: true,
+      meta: { embed: true },
     },
     {
       path: "/statuses/:id/boosts",

@@ -37,7 +37,8 @@ watch(
 </script>
 
 <template>
-  <AppLayout>
+  <router-view v-if="route.meta.embed" />
+  <AppLayout v-else>
     <router-view />
   </AppLayout>
   <Toasts />

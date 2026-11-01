@@ -165,7 +165,41 @@ either a hardcoded public host or an admin-configured URL that may
 legitimately live on a LAN. The API keys count as sensitive in the
 admin settings registry.
 
-## ActivityPub
+## Embedding
+
+Every public or unlisted status carries an "Embed" menu entry that
+opens a dialog with two copiable snippets. Both target the standalone
+`/statuses/{id}/embed` page — the SPA route renders a chromeless
+status card that fetches the status anonymously (`can_see` still
+applies, so followers-only and direct posts 404 there, which is why
+the menu entry only appears on public visibilities) and opens every
+link in a new top-level tab rather than inside the frame. Quotes are
+rendered recursively: `quote.quoted_status` only materializes at entity
+depth 0, so deeper levels (an `accepted` quote carrying just
+`quote_id`) are lazily re-fetched by the embed page, up to a cap of 4
+nested cards. Media attachments, polls (read-only) and the
+link-preview card (`status.card`, always rendered as a plain link —
+the click-to-play video iframe is not offered inside embeds) all
+appear at every level.
+
+- `<script>` — a `<div class="yonder-embed" data-status="{id}">`
+  placeholder plus the static `/embed.js` (served from the frontend's
+  `public/` directory). The script swaps each placeholder for an
+  iframe and keeps its height in sync with the post: the embed page
+  reports `documentElement.scrollHeight` through a
+  `{source: "yonder-embed", type: "resize"}` postMessage, verified
+  against the script's origin and `event.source`.
+- `<iframe>` — a plain `width="100%" height="400"` frame for
+  JavaScript-free contexts; the fixed height can be edited.
+
+Incoming Webmentions targeting an embed URL fold under the embedded
+status: `resolve_target_status` recognizes `/statuses/{id}/embed` and
+Mastodon's `/@{acct}/{id}/embed` alongside the permalink and AP URI
+forms. Source verification works for both snippets — the `<iframe>`
+carries the target in its `src`, and the `<script>` placeholder wraps
+a fallback `<a href>` that doubles as the no-JS link and the backlink
+Webmention receivers look for (`embed.js` clears it once the live
+frame mounts).
 
 Outbound `Create`/`Update`/`Delete` are built through pubby's
 `OutboxProcessor`; `source` (markdown round-trip), poll fields

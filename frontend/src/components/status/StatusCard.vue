@@ -12,6 +12,7 @@ import ShowMore from "./ShowMore.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusQuote from "./StatusQuote.vue";
 import StatusPoll from "./StatusPoll.vue";
+import StatusEmbedModal from "./StatusEmbedModal.vue";
 import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
 import ComposeBox from "@/components/compose/ComposeBox.vue";
@@ -237,6 +238,17 @@ const faviconFailed = ref(false);
 const pickerOpen = ref(false);
 const reportOpen = ref(false);
 const reportComment = ref("");
+const embedOpen = ref(false);
+// The embed page loads anonymously on third-party sites — only
+// publicly fetchable visibilities get the menu entry.
+const embeddable = computed(
+  () =>
+    shown.value.visibility === "public" ||
+    shown.value.visibility === "unlisted",
+);
+const embedTitle = computed(() =>
+  t("embed.postBy", { user: `@${account.value.acct}` }),
+);
 const actionError = ref("");
 
 // Card URLs are scheme-checked upstream (`preview.rs` only writes
@@ -333,6 +345,9 @@ const menuItems = computed<MenuItem[]>(() => {
       icon: "arrow-up-right-from-square",
     },
   ];
+  if (embeddable.value) {
+    items.push({ id: "embed", label: t("status.embed"), icon: "code" });
+  }
   if (auth.isLoggedIn) {
     const isOwn = auth.account?.id === account.value.id;
     items.push(
@@ -469,6 +484,9 @@ async function runAction(item: MenuItem) {
         break;
       case "open":
         window.open(s.url ?? s.uri, "_blank", "noopener");
+        break;
+      case "embed":
+        embedOpen.value = true;
         break;
       case "mention":
         compose.openMention(s.account.acct);
@@ -831,6 +849,13 @@ async function onReact(emoji: string) {
         </button>
       </div>
     </Modal>
+
+    <StatusEmbedModal
+      v-if="embedOpen"
+      :status-id="status.id"
+      :title="embedTitle"
+      @close="embedOpen = false"
+    />
 
     <Modal
       v-if="reportOpen"

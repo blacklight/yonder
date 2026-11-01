@@ -419,6 +419,19 @@
     "useSecurityKey": "Sicherheitsschlüssel verwenden",
     "touchKey": "Schlüssel jetzt berühren"
   },
+  "embed": {
+    "title": "Beitrag einbetten",
+    "hint": "Füge eines dieser Snippets in eine Webseite ein, um diesen Beitrag einzubetten.",
+    "iframe": "Iframe",
+    "iframeHint": "Ein einfacher Inline-Frame — kein JavaScript nötig. Passe die Höhe an den Beitrag an.",
+    "script": "Skript",
+    "scriptHint": "Rendert den Beitrag und hält die Frame-Höhe automatisch synchron.",
+    "postBy": "Beitrag von {user}",
+    "copy": "Kopieren",
+    "copied": "Kopiert",
+    "viewPost": "Beitrag ansehen",
+    "unavailable": "Dieser Beitrag ist nicht verfügbar."
+  },
   "oauth": {
     "title": "Anwendung autorisieren",
     "wantsAccess": "möchte Zugriff auf dein Konto erhalten",
@@ -447,6 +460,7 @@
     "more": "Mehr",
     "copyLink": "Link kopieren",
     "openTab": "In neuem Tab öffnen",
+    "embed": "Einbetten",
     "mention": "Erwähnen",
     "dm": "Direktnachricht",
     "mute": "{user} stummschalten",
@@ -508,6 +522,7 @@
     "notFound": "Dieser Beitrag ist nicht verfügbar.",
     "loadError": "Beitrag konnte nicht geladen werden.",
     "loadingRemoteContext": "Antworten werden von der Remote-Instanz geladen…",
+    "repliesCount": "{count} Antwort | {count} Antworten",
     "boostsCount": "{count} Boost | {count} Boosts",
     "quotesCount": "{count} Zitat | {count} Zitate",
     "likesCount": "{count} „Gefällt mir“ | {count} „Gefällt mir“",

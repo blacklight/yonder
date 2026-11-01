@@ -328,6 +328,40 @@ describe("StatusCard", () => {
     ).toBe(true);
   });
 
+  it("public posts offer an Embed item that opens the snippet modal", async () => {
+    const { wrapper } = mountWith(StatusCard, { props: { status: status() } });
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Embed"))!
+      .trigger("click");
+    await flushPromises();
+    const origin = window.location.origin;
+    const script = document.querySelector<HTMLTextAreaElement>(
+      "[data-testid='embed-script']",
+    );
+    const iframe = document.querySelector<HTMLTextAreaElement>(
+      "[data-testid='embed-iframe']",
+    );
+    expect(script?.value).toContain('data-status="1"');
+    expect(script?.value).toContain(`${origin}/embed.js`);
+    expect(iframe?.value).toContain(`src="${origin}/statuses/1/embed"`);
+  });
+
+  it("non-public posts do not offer Embed", async () => {
+    for (const visibility of ["private", "direct"] as const) {
+      const { wrapper } = mountWith(StatusCard, {
+        props: { status: status({ visibility }) },
+      });
+      await wrapper.get(".menu__trigger").trigger("click");
+      const texts = menuItems().map((i) => i.text());
+      expect(texts.some((x) => x.includes("Embed"))).toBe(false);
+      wrapper.unmount();
+      document
+        .querySelectorAll("[role='menuitem']")
+        .forEach((el) => el.remove());
+    }
+  });
+
   it("destructive menu actions require confirmation first", async () => {
     const auth = useAuthStore();
     auth.setToken("t");

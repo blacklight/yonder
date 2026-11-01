@@ -434,6 +434,7 @@
     "more": "More",
     "copyLink": "Copy link",
     "openTab": "Open in new tab",
+    "embed": "Embed",
     "mention": "Mention",
     "dm": "Direct message",
     "mute": "Mute {user}",
@@ -495,6 +496,7 @@
     "notFound": "This status is not available.",
     "loadError": "Could not load the status.",
     "loadingRemoteContext": "Fetching replies from the remote instance…",
+    "repliesCount": "{count} reply | {count} replies",
     "boostsCount": "{count} boost | {count} boosts",
     "quotesCount": "{count} quote | {count} quotes",
     "likesCount": "{count} like | {count} likes",
@@ -1057,6 +1059,19 @@
   "footer": {
     "links": "Links",
     "source": "Source code"
+  },
+  "embed": {
+    "title": "Embed post",
+    "hint": "Paste one of these snippets into a web page to embed this post.",
+    "iframe": "Iframe",
+    "iframeHint": "A plain inline frame — no JavaScript needed. Adjust the height to fit the post.",
+    "script": "Script",
+    "scriptHint": "Renders the post and automatically keeps the frame height in sync.",
+    "postBy": "Post by {user}",
+    "copy": "Copy",
+    "copied": "Copied",
+    "viewPost": "View post",
+    "unavailable": "This post is not available."
   },
   "oauth": {
     "title": "Authorize application",

@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { applyLocale, isRtlLocale, getSupportedLocales } from "./index";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  applyLocale,
+  isRtlLocale,
+  getSupportedLocales,
+  initialLocale,
+  loadInitialLocale,
+} from "./index";
 import en from "./locales/en.json";
 import es from "./locales/es.json";
 import it_ from "./locales/it.json";
@@ -48,6 +54,28 @@ describe("applyLocale", () => {
     await applyLocale("fr");
     expect(document.documentElement.lang).toBe("en");
     expect(document.documentElement.dir).toBe("ltr");
+  });
+});
+
+describe("storage-blocked contexts (third-party iframe)", () => {
+  const realStorage = localStorage;
+  afterEach(() => vi.stubGlobal("localStorage", realStorage));
+
+  it("falls back to the navigator locale without throwing", async () => {
+    // Firefox ETP / Tor deny Web Storage in cross-site frames.
+    const denied = () => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    };
+    vi.stubGlobal("localStorage", {
+      getItem: denied,
+      setItem: denied,
+      removeItem: denied,
+      clear: denied,
+      key: denied,
+      length: 0,
+    });
+    expect(initialLocale()).toBe("en");
+    await expect(loadInitialLocale()).resolves.toBeUndefined();
   });
 });
 

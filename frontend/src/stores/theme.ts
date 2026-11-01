@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { storageGet, storageRemove, storageSet } from "@/utils/storage";
 
 export type ThemeMode = "light" | "dark" | "system";
 
@@ -102,8 +103,8 @@ export function accentLink(accent: string, bg: string): string {
 
 export const useThemeStore = defineStore("theme", {
   state: () => ({
-    mode: (localStorage.getItem(MODE_KEY) as ThemeMode | null) ?? "system",
-    accent: localStorage.getItem(ACCENT_KEY),
+    mode: (storageGet(MODE_KEY) as ThemeMode | null) ?? "system",
+    accent: storageGet(ACCENT_KEY),
   }),
   getters: {
     resolvedMode(state): "light" | "dark" {
@@ -117,13 +118,13 @@ export const useThemeStore = defineStore("theme", {
   actions: {
     setMode(mode: ThemeMode) {
       this.mode = mode;
-      localStorage.setItem(MODE_KEY, mode);
+      storageSet(MODE_KEY, mode);
       this.apply();
     },
     setAccent(accent: string | null) {
       this.accent = accent;
-      if (accent) localStorage.setItem(ACCENT_KEY, accent);
-      else localStorage.removeItem(ACCENT_KEY);
+      if (accent) storageSet(ACCENT_KEY, accent);
+      else storageRemove(ACCENT_KEY);
       this.apply();
     },
     // Applies the resolved mode to <html data-theme> and the accent

@@ -1,4 +1,5 @@
 import { createI18n } from "vue-i18n";
+import { storageGet, storageSet } from "@/utils/storage";
 import en from "./locales/en.json";
 
 const STORAGE_LOCALE_KEY = "yonder.locale";
@@ -47,11 +48,11 @@ export function getSupportedLocales(): string[] {
 }
 
 export function getStoredLocale(): string | null {
-  return localStorage.getItem(STORAGE_LOCALE_KEY) || null;
+  return storageGet(STORAGE_LOCALE_KEY) || null;
 }
 
 export function storeLocale(locale: string): void {
-  localStorage.setItem(STORAGE_LOCALE_KEY, locale);
+  storageSet(STORAGE_LOCALE_KEY, locale);
 }
 
 function navigatorLocale(): string {

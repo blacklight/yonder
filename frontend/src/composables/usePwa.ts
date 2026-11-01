@@ -37,9 +37,11 @@ export function usePwa() {
 
   function registerServiceWorker() {
     if (import.meta.env.DEV || !("serviceWorker" in navigator)) return;
-    void import("virtual:pwa-register").then((m) => {
-      m.registerSW({ immediate: true });
-    });
+    // Third-party contexts (a cross-site iframe under ETP/Tor) deny
+    // SW registration — a rejection must never surface unhandled.
+    void import("virtual:pwa-register")
+      .then((m) => m.registerSW({ immediate: true }))
+      .catch(() => {});
     void guardFrontendSwitch();
   }
   return { registerServiceWorker, guardFrontendSwitch };

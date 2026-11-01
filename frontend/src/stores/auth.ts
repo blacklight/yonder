@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import type { CredentialAccount } from "@/api/entities";
+import { storageGet, storageRemove, storageSet } from "@/utils/storage";
 
 const TOKEN_KEY = "yonder.token";
 
@@ -12,7 +13,7 @@ export type Role = "user" | "moderator" | "admin";
 // (`restore`), never persisted, so a role change can't go stale.
 export const useAuthStore = defineStore("auth", {
   state: () => ({
-    token: localStorage.getItem(TOKEN_KEY) as string | null,
+    token: storageGet(TOKEN_KEY) as string | null,
     account: null as CredentialAccount | null,
     role: null as Role | null,
   }),
@@ -24,8 +25,8 @@ export const useAuthStore = defineStore("auth", {
   actions: {
     setToken(token: string | null) {
       this.token = token;
-      if (token) localStorage.setItem(TOKEN_KEY, token);
-      else localStorage.removeItem(TOKEN_KEY);
+      if (token) storageSet(TOKEN_KEY, token);
+      else storageRemove(TOKEN_KEY);
       if (!token) {
         this.account = null;
         this.role = null;

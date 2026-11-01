@@ -186,9 +186,10 @@ appear at every level.
   placeholder plus the static `/embed.js` (served from the frontend's
   `public/` directory). The script swaps each placeholder for an
   iframe and keeps its height in sync with the post: the embed page
-  reports `documentElement.scrollHeight` through a
-  `{source: "yonder-embed", type: "resize"}` postMessage, verified
-  against the script's origin and `event.source`.
+  reports the card element's measured height (the document's
+  `scrollHeight` bottoms out at the viewport and could never shrink)
+  through a `{source: "yonder-embed", type: "resize"}` postMessage,
+  verified against the script's origin and `event.source`.
 - `<iframe>` — a plain `width="100%" height="400"` frame for
   JavaScript-free contexts; the fixed height can be edited.
 
@@ -201,7 +202,11 @@ a fallback `<a href>` that doubles as the no-JS link and the backlink
 Webmention receivers look for (`embed.js` clears it once the live
 frame mounts). The `<script>` snippet also ends with a
 `<noscript><iframe>` fallback so browsers that block third-party
-scripts entirely still render the fixed-height frame.
+scripts entirely still render the fixed-height frame. The embed page
+also boots without Web Storage: under Firefox ETP / Tor Browser
+third-party storage blocking every `localStorage` access throws a
+`SecurityError`, so all storage goes through no-throw helpers
+(`utils/storage.ts`) and the frame renders anonymously.
 
 Outbound `Create`/`Update`/`Delete` are built through pubby's
 `OutboxProcessor`; `source` (markdown round-trip), poll fields

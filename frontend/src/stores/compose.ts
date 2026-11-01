@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import type { Status, StatusVisibility } from "@/api/entities";
+import { storageGet, storageRemove, storageSet } from "@/utils/storage";
 import { useAuthStore } from "./auth";
 
 const DRAFT_KEY = "yonder.compose.draft";
@@ -69,7 +70,7 @@ function emptyDraft(): ComposeDraft {
 
 function loadDraft(): ComposeDraft {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    const raw = storageGet(DRAFT_KEY);
     if (!raw) return emptyDraft();
     const parsed = JSON.parse(raw) as Partial<ComposeDraft>;
     // Merge over the defaults so fields added later can't be undefined.
@@ -81,7 +82,7 @@ function loadDraft(): ComposeDraft {
 
 function loadDrafts(): DraftEntry[] {
   try {
-    const raw = localStorage.getItem(DRAFTS_KEY);
+    const raw = storageGet(DRAFTS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -155,11 +156,11 @@ export const useComposeStore = defineStore("compose", {
   },
   actions: {
     persist() {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(this.draft));
+      storageSet(DRAFT_KEY, JSON.stringify(this.draft));
     },
 
     persistDrafts() {
-      localStorage.setItem(DRAFTS_KEY, JSON.stringify(this.drafts));
+      storageSet(DRAFTS_KEY, JSON.stringify(this.drafts));
     },
 
     update(patch: Partial<ComposeDraft>) {
@@ -283,9 +284,9 @@ export const useComposeStore = defineStore("compose", {
     /** Drop the persisted draft + stash + drafts (explicit logout /
      * account deletion). */
     clearPersisted() {
-      localStorage.removeItem(DRAFT_KEY);
-      localStorage.removeItem(STASH_KEY);
-      localStorage.removeItem(DRAFTS_KEY);
+      storageRemove(DRAFT_KEY);
+      storageRemove(STASH_KEY);
+      storageRemove(DRAFTS_KEY);
       this.drafts = [];
     },
 
@@ -309,12 +310,12 @@ export const useComposeStore = defineStore("compose", {
      * edit can hand it back — `unstash` restores and clears.
      */
     stash() {
-      localStorage.setItem(STASH_KEY, JSON.stringify(this.draft));
+      storageSet(STASH_KEY, JSON.stringify(this.draft));
     },
     unstash() {
-      const raw = localStorage.getItem(STASH_KEY);
+      const raw = storageGet(STASH_KEY);
       if (!raw) return;
-      localStorage.removeItem(STASH_KEY);
+      storageRemove(STASH_KEY);
       try {
         this.draft = {
           ...emptyDraft(),

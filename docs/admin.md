@@ -136,7 +136,12 @@ but not retried.
 `POST /api/v1/yonder/admin/webpush/generate_keys` mints a VAPID P-256
 pair, stores it as `http.vapid_public_key`/`http.vapid_private_key`
 overlays, and returns the public key. Rotation invalidates existing
-push subscriptions' encryption. The same mint-and-store path is
+push subscriptions' encryption, and `webpush_subject` must be set for
+delivery (RFC 8292 `sub` claim). With all three configured, the
+notification fanout enqueues `WebPushSend` jobs that deliver
+RFC 8291 `aes128gcm`-encrypted payloads to each subscription's
+endpoint, honoring its `data.alerts`/`data.policy`; endpoints that
+answer 400/401/403/404/410 are pruned. The same mint-and-store path is
 available offline as `yonder webpush generate-keys --store`; a bare
 `yonder webpush generate-keys` only prints a pair (private half on
 stderr) for manual install via `config.toml`, env vars, or

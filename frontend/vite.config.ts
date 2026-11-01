@@ -31,6 +31,12 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
       VitePWA({
+        // Custom SW source — the generateSW workbox config lives in
+        // `src/sw.ts` alongside the WebPush `push`/`notificationclick`
+        // handlers a generated worker can't carry.
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
         registerType: "autoUpdate",
         devOptions: { enabled: false },
         manifest: {
@@ -63,29 +69,10 @@ export default defineConfig(({ mode }) => {
             },
           ],
         },
-        workbox: {
-          navigateFallback: "/index.html",
-          // API and streaming endpoints must never be answered from
-          // the cache — they are live federation/notification traffic.
-          navigateFallbackDenylist: [
-            /^\/api/,
-            /^\/\.well-known/,
-            /^\/(users|tags|lists)\/.*\.(atom|rss)$/,
-            /^\/media\//,
-            /^\/oauth/,
-            /^\/swagger-ui/,
-            /^\/openapi\.json$/,
-          ],
-          runtimeCaching: [
-            {
-              urlPattern: ({ request }) => request.destination === "image",
-              handler: "CacheFirst",
-              options: {
-                cacheName: "yonder-images",
-                expiration: { maxEntries: 256, maxAgeSeconds: 7 * 24 * 3600 },
-              },
-            },
-          ],
+        injectManifest: {
+          // The sw.ts build itself ships workbox imports — let Rollup
+          // resolve them into the worker bundle instead of importScripts.
+          rollupFormat: "iife",
         },
         includeAssets: ["favicon.ico", "favicon.svg", "icons/*.png"],
       }),

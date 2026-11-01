@@ -164,7 +164,7 @@ async fn register_login_verify_credentials_flow() {
     };
     let (status, body) = register_user(&env.app, "alice", "alice@example.com").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["scope"], "read write");
+    assert_eq!(body["scope"], "read write push");
     // No mail server configured — nothing pending (epic 25 auth pass).
     assert_eq!(body["verification_pending"], false);
     let reg_token = body["access_token"].as_str().unwrap();
@@ -185,9 +185,9 @@ async fn register_login_verify_credentials_flow() {
     // Password login → new token + session, works on the same endpoint.
     let (status, body) = password_login(&env.app, "alice@example.com", "hunter2password").await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    // Anonymous (client-less) password grants default to `read write`,
-    // matching anonymous registration.
-    assert_eq!(body["scope"], "read write");
+    // Anonymous (client-less) password grants default to
+    // `read write push`, matching anonymous registration.
+    assert_eq!(body["scope"], "read write push");
     assert!(body["refresh_token"].is_string());
     let refresh = body["refresh_token"].as_str().unwrap().to_string();
     let token = body["access_token"].as_str().unwrap().to_string();

@@ -28,6 +28,7 @@
 pub mod emit;
 pub mod fanout;
 pub mod jobs;
+pub mod webpush;
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};

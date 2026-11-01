@@ -1,7 +1,8 @@
 //! WebPush key administration (epic 22): generate a VAPID P-256
 //! keypair and store it as `http.vapid_public_key` /
-//! `http.vapid_private_key` overlays. Push delivery itself lands in a
-//! later epic — this module only mints, stores and audits the keys.
+//! `http.vapid_private_key` overlays. Delivery lives in
+//! `notifications::webpush` — this module only mints, stores and
+//! audits the keys.
 //!
 //! Encodings follow the WebPush convention (RFC 8292): the public key
 //! is the 65-byte uncompressed point, base64url unpadded; the private

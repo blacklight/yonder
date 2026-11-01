@@ -97,6 +97,9 @@ pub enum JobKind {
     RemoteStatusFetch,
     /// Fan a notification out to its recipients.
     NotificationFanout,
+    /// Deliver one notification to the recipient's Web Push
+    /// subscriptions (`{"notification_id": …, "account_id": …}`).
+    WebPushSend,
     /// Send an email.
     EmailSend,
     /// Import an account archive.
@@ -161,6 +164,7 @@ impl JobKind {
         JobKind::RemoteActorFetch,
         JobKind::RemoteStatusFetch,
         JobKind::NotificationFanout,
+        JobKind::WebPushSend,
         JobKind::EmailSend,
         JobKind::Import,
         JobKind::Export,
@@ -192,6 +196,7 @@ impl JobKind {
             JobKind::RemoteActorFetch => "remote_actor_fetch",
             JobKind::RemoteStatusFetch => "remote_status_fetch",
             JobKind::NotificationFanout => "notification_fanout",
+            JobKind::WebPushSend => "web_push_send",
             JobKind::EmailSend => "email_send",
             JobKind::Import => "import",
             JobKind::Export => "export",

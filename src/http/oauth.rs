@@ -168,9 +168,12 @@ fn requested_scope(
 ) -> std::result::Result<String, crate::auth::oauth::GrantError> {
     let requested = requested.unwrap_or_default();
     if requested.trim().is_empty() {
+        // App-less grants match anonymous registration: `push` is
+        // included so first-party clients can subscribe to Web Push
+        // without an OAuth app round-trip.
         return Ok(app
             .map(|a| a.scopes.clone())
-            .unwrap_or_else(|| "read write".to_string()));
+            .unwrap_or_else(|| "read write push".to_string()));
     }
     let scopes = crate::auth::scopes::ScopeSet::parse(requested)
         .map_err(|e| crate::auth::oauth::invalid_scope(&e.to_string()))?;

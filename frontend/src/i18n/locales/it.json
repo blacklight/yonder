@@ -28,6 +28,7 @@
     "label": "Sezioni delle impostazioni",
     "preferences": "Preferenze",
     "profile": "Profilo",
+    "notifications": "Notifiche",
     "security": "Account e sicurezza",
     "tokens": "Token API",
     "invites": "Link d'invito"
@@ -236,6 +237,48 @@
     "revoke": "Revoca",
     "revokeConfirm": "Revocare?",
     "cancel": "Annulla"
+  },
+  "settingsNotifications": {
+    "title": "Notifiche",
+    "enable": "Attiva notifiche",
+    "disable": "Disattiva notifiche",
+    "push": {
+      "title": "Notifiche push",
+      "hint": "Ricevi avvisi su menzioni, boost, preferiti e nuovi follower su questo dispositivo, anche ad app chiusa."
+    },
+    "status": {
+      "loading": "Verifica…",
+      "unsupported": "Questo browser non supporta le notifiche push",
+      "unavailable": "Le notifiche push non sono configurate su questa istanza",
+      "denied": "Le notifiche sono bloccate nelle impostazioni del browser",
+      "prompt": "Le notifiche push sono disattivate",
+      "subscribed": "Le notifiche push sono attivate"
+    },
+    "alerts": {
+      "title": "Notificami per",
+      "hint": "Scegli quali eventi inviano una notifica push a questo dispositivo."
+    },
+    "types": {
+      "mention": "Menzioni",
+      "favourite": "Preferiti",
+      "reblog": "Boost",
+      "quote": "Citazioni",
+      "follow": "Nuovi follower",
+      "follow_request": "Richieste di seguito",
+      "poll": "Risultati dei sondaggi",
+      "status": "Nuovi post da chi segui",
+      "update": "Modifiche ai post"
+    },
+    "policy": {
+      "title": "Filtra per autore",
+      "fromLabel": "Ricevi notifiche da",
+      "options": {
+        "all": "Chiunque",
+        "followed": "Persone che seguo",
+        "follower": "I miei follower",
+        "none": "Nessuno"
+      }
+    }
   },
   "route": {
     "moderation-report": {

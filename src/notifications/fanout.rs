@@ -60,6 +60,7 @@ impl JobHandler for NotificationFanoutJob {
             return Ok(());
         };
         push_live(ctx, id, &ev).await;
+        enqueue_push(ctx, id, &ev).await;
         enqueue_email(ctx, &ev).await;
         Ok(())
     }
@@ -295,6 +296,33 @@ async fn push_live(ctx: &JobContext, id: i64, ev: &Target) {
         &json!({ "unread_count": count }),
     )
     .await;
+}
+
+/// Enqueue `WebPushSend` when the recipient owns at least one push
+/// subscription — the job then applies each subscription's
+/// `alerts`/`policy`. No-op when none exist (the common case for
+/// accounts that never opted in).
+async fn enqueue_push(ctx: &JobContext, id: i64, ev: &Target) {
+    let subscribed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM web_push_subscriptions WHERE account_id = $1)",
+    )
+    .bind(ev.to)
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap_or(false);
+    if !subscribed {
+        return;
+    }
+    let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+    if let Err(e) = dispatcher
+        .enqueue(
+            JobKind::WebPushSend,
+            json!({"notification_id": id, "account_id": ev.to}),
+        )
+        .await
+    {
+        tracing::warn!(error = %e, "webpush notification enqueue failed");
+    }
 }
 
 /// Enqueue `EmailSend` when the recipient enabled this notification

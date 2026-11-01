@@ -1518,3 +1518,242 @@ async fn status_notifications_respect_visibility() {
         "only the public post's notification survives"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Web Push delivery
+// ---------------------------------------------------------------------------
+
+/// A captured request to the mock push service.
+struct CapturedPush {
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl CapturedPush {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A one-shot loopback push service: accepts one POST, records its
+/// headers and body, replies with `status`. Returns `(endpoint_url,
+/// receiver)` — the receiver delivers the captured request once the
+/// sender's `WebPushSend` run lands.
+fn mock_push_service(status: u16) -> (String, std::sync::mpsc::Receiver<CapturedPush>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 8192];
+        let header_end = loop {
+            match stream.read(&mut tmp) {
+                Ok(0) | Err(_) => return,
+                Ok(n) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                }
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
+        let content_length: usize = head
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .and_then(|v| v.trim().parse().ok())
+            })
+            .unwrap_or(0);
+        while buf.len() < header_end + content_length {
+            match stream.read(&mut tmp) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            }
+        }
+        let _ = stream
+            .write_all(format!("HTTP/1.1 {status} Done\r\nContent-Length: 0\r\n\r\n").as_bytes());
+        let _ = stream.flush();
+        let headers = head
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                l.split_once(':')
+                    .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+            })
+            .collect();
+        let _ = tx.send(CapturedPush {
+            headers,
+            body: buf[header_end..].to_vec(),
+        });
+    });
+    (format!("http://127.0.0.1:{port}/"), rx)
+}
+
+/// Register the caller's push subscription pointing at `endpoint`
+/// through the real API, using a valid VAPID-format public key as
+/// `p256dh` (the same 65-byte uncompressed-point encoding).
+async fn subscribe_push(app: &Router, token: &str, endpoint: &str, alerts: Value) {
+    let (p256dh, _private) = yonder::admin::webpush::generate();
+    let auth = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        b"0123456789abcdef",
+    );
+    let (status, _, body) = request(
+        app,
+        "POST",
+        "/api/v1/push/subscription",
+        Some(token),
+        Some(json!({
+            "subscription": {
+                "endpoint": endpoint,
+                "keys": {"p256dh": p256dh, "auth": auth},
+            },
+            "data": {"alerts": alerts},
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "subscribe failed: {body}");
+}
+
+/// Run every `WebPushSend` envelope a fanout pass produced —
+/// `run_pending_fanouts` already drained them off the stream, so the
+/// test runs them straight from the returned list.
+async fn run_push_envelopes(env: &Env, envelopes: &[JobEnvelope]) -> usize {
+    let mut ran = 0;
+    for envelope in envelopes {
+        if envelope.kind == JobKind::WebPushSend {
+            yonder::notifications::webpush::WebPushJob
+                .run(&job_ctx(env), &envelope.payload)
+                .await
+                .unwrap();
+            ran += 1;
+        }
+    }
+    ran
+}
+
+/// A config with VAPID delivery enabled — `test_env` then opens the
+/// private-target gate the loopback push service needs.
+fn vapid_config() -> Config {
+    let mut config = Config::default();
+    let (public, private) = yonder::admin::webpush::generate();
+    config.http.vapid_public_key = Some(public);
+    config.http.vapid_private_key = Some(private);
+    config.http.webpush_subject = Some("mailto:admin@example.com".to_string());
+    config
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webpush_delivers_signed_encrypted_payload() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(vapid_config()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    let (endpoint, rx) = mock_push_service(201);
+    subscribe_push(&env.app, &alice, &endpoint, json!({})).await;
+    // The subscription API reports the instance key.
+    let (_, _, sub) = request(
+        &env.app,
+        "GET",
+        "/api/v1/push/subscription",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(
+        sub["server_key"].as_str().unwrap(),
+        env.state.config().http.vapid_public_key.as_deref().unwrap()
+    );
+
+    // Bob mentions Alice → fanout → WebPushSend → mock service.
+    let status_id: i64 = post(&env.app, &bob, json!({"status": "hi @alice"}))
+        .await
+        .parse()
+        .unwrap();
+    let envelopes = run_pending_fanouts(&env).await;
+    assert!(
+        envelopes.iter().any(|e| e.kind == JobKind::WebPushSend),
+        "fanout should enqueue WebPushSend for a subscribed recipient"
+    );
+    assert_eq!(run_push_envelopes(&env, &envelopes).await, 1);
+
+    let captured = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("push service received no request");
+    let authz = captured.header("Authorization").unwrap_or_default();
+    assert!(authz.starts_with("vapid t="), "bad Authorization: {authz}");
+    assert!(authz.contains(", k="), "bad Authorization: {authz}");
+    assert_eq!(
+        captured.header("Content-Encoding"),
+        Some("aes128gcm"),
+        "headers: {:?}",
+        captured.headers
+    );
+    assert_eq!(captured.header("TTL"), Some("86400"));
+    // Body: salt(16) | rs(4) | keyid-len(1) | keyid(65) | ciphertext.
+    assert!(captured.body.len() > 16 + 4 + 1 + 65 + 16);
+    assert_eq!(captured.body[20], 65);
+    // The ciphertext must not leak the (public) status id or the
+    // actor name in cleartext.
+    let body_text = String::from_utf8_lossy(&captured.body);
+    assert!(!body_text.contains(&status_id.to_string()));
+    assert!(!body_text.contains("bob"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn webpush_alerts_and_dead_subscription_pruning() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(vapid_config()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    let a = account_id(&env.state.db, "alice").await;
+
+    // Mentions disabled on this subscription → no delivery attempt.
+    let (endpoint, rx) = mock_push_service(201);
+    subscribe_push(&env.app, &alice, &endpoint, json!({"mention": false})).await;
+    post(&env.app, &bob, json!({"status": "hi @alice"})).await;
+    let envelopes = run_pending_fanouts(&env).await;
+    run_push_envelopes(&env, &envelopes).await;
+    assert!(
+        rx.recv_timeout(Duration::from_secs(2)).is_err(),
+        "alerts.mention=false must suppress delivery"
+    );
+
+    // A dead endpoint (410 Gone) is pruned so retries stop.
+    let (dead_endpoint, dead_rx) = mock_push_service(410);
+    subscribe_push(&env.app, &alice, &dead_endpoint, json!({})).await;
+    post(&env.app, &bob, json!({"status": "hi @alice again"})).await;
+    let envelopes = run_pending_fanouts(&env).await;
+    run_push_envelopes(&env, &envelopes).await;
+    assert!(dead_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+    let remaining: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM web_push_subscriptions WHERE account_id = $1 AND endpoint = $2",
+    )
+    .bind(a)
+    .bind(&dead_endpoint)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(remaining, 0, "410 subscription should be deleted");
+    // The mention-disabled subscription is untouched.
+    let kept: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM web_push_subscriptions WHERE account_id = $1")
+            .bind(a)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, 1);
+}

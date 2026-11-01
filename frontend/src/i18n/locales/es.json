@@ -28,6 +28,7 @@
     "label": "Secciones de ajustes",
     "preferences": "Preferencias",
     "profile": "Perfil",
+    "notifications": "Notificaciones",
     "security": "Cuenta y seguridad",
     "tokens": "Tokens de API",
     "invites": "Enlaces de invitación"
@@ -236,6 +237,48 @@
     "revoke": "Revocar",
     "revokeConfirm": "¿Revocar?",
     "cancel": "Cancelar"
+  },
+  "settingsNotifications": {
+    "title": "Notificaciones",
+    "enable": "Activar notificaciones",
+    "disable": "Desactivar notificaciones",
+    "push": {
+      "title": "Notificaciones push",
+      "hint": "Recibe avisos de menciones, impulsos, favoritos y seguimientos en este dispositivo, incluso con la app cerrada."
+    },
+    "status": {
+      "loading": "Comprobando…",
+      "unsupported": "Este navegador no admite notificaciones push",
+      "unavailable": "Las notificaciones push no están configuradas en esta instancia",
+      "denied": "Las notificaciones están bloqueadas en los ajustes del navegador",
+      "prompt": "Las notificaciones push están desactivadas",
+      "subscribed": "Las notificaciones push están activadas"
+    },
+    "alerts": {
+      "title": "Notificarme sobre",
+      "hint": "Elige qué eventos envían una notificación push a este dispositivo."
+    },
+    "types": {
+      "mention": "Menciones",
+      "favourite": "Favoritos",
+      "reblog": "Impulsos",
+      "quote": "Citas",
+      "follow": "Nuevos seguidores",
+      "follow_request": "Solicitudes de seguimiento",
+      "poll": "Resultados de encuestas",
+      "status": "Nuevas publicaciones de personas que sigues",
+      "update": "Ediciones de publicaciones"
+    },
+    "policy": {
+      "title": "Filtrar por autor",
+      "fromLabel": "Recibir notificaciones de",
+      "options": {
+        "all": "Cualquiera",
+        "followed": "Personas que sigo",
+        "follower": "Mis seguidores",
+        "none": "Nadie"
+      }
+    }
   },
   "route": {
     "moderation-report": {

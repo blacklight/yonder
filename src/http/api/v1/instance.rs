@@ -141,6 +141,11 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
             "metadata": {
                 "features": ["pleroma_emoji_reactions", "yonder"],
                 "post_formats": ["text/plain", "text/markdown"],
+                // Akkoma-style WebPush discovery: clients need the
+                // VAPID public key *before* they can create a
+                // subscription (`GET /api/v1/push/subscription` only
+                // reports it once one exists).
+                "vapid_public_key": config.http.vapid_public_key,
                 "fields_limits": {
                     "max_fields": config.content.max_profile_fields,
                     "max_remote_fields": config.content.max_profile_fields,

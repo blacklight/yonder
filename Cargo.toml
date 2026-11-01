@@ -10,6 +10,9 @@ keywords = ["activitypub", "fediverse", "federation", "mastodon"]
 # axum 0.8, redis 0.27 and thiserror 2 are pinned to match pubby-sdk's
 # dependency versions — types from these crates cross the pubby boundary
 [dependencies]
+# AES-128-GCM for RFC 8291 `aes128gcm` Web Push payloads (VAPID ECDH
+# + HKDF pieces come from the existing p256/hkdf/sha2 deps).
+aes-gcm = "0.10"
 arc-swap = "=1.9.2" # pinned: 1.9.3 published <7 days ago at add time
 argon2 = "0.5"
 async-trait = "0.1"
@@ -47,9 +50,10 @@ lettre = { version = "0.11", default-features = false, features = [
     "aws-lc-rs",
     "rustls-native-certs",
 ] }
-# VAPID keypair generation for the admin "generate keys" action (epic
-# 22; push delivery itself lands in a later epic).
-p256 = { version = "0.14", features = ["ecdsa", "arithmetic", "getrandom"] }
+# VAPID keypair generation (admin "generate keys", epic 22) and Web
+# Push delivery — `ecdh` for the RFC 8291 shared secret, `ecdsa` for
+# VAPID JWT signing.
+p256 = { version = "0.14", features = ["ecdsa", "ecdh", "arithmetic", "getrandom"] }
 pubby-sdk = { version = "0.6.9", features = ["axum", "redis", "async"] }
 redis = "0.27"
 rsa = "0.9"

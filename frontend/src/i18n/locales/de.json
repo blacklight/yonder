@@ -28,6 +28,7 @@
     "label": "Einstellungsbereiche",
     "preferences": "Einstellungen",
     "profile": "Profil",
+    "notifications": "Mitteilungen",
     "security": "Konto & Sicherheit",
     "tokens": "API-Tokens",
     "invites": "Einladungslinks"
@@ -236,6 +237,48 @@
     "revoke": "Widerrufen",
     "revokeConfirm": "Widerrufen?",
     "cancel": "Abbrechen"
+  },
+  "settingsNotifications": {
+    "title": "Mitteilungen",
+    "enable": "Benachrichtigungen aktivieren",
+    "disable": "Benachrichtigungen deaktivieren",
+    "push": {
+      "title": "Push-Benachrichtigungen",
+      "hint": "Lass dich auf diesem Gerät über Erwähnungen, Boosts, Favoriten und neue Follower benachrichtigen – auch wenn die App geschlossen ist."
+    },
+    "status": {
+      "loading": "Prüfe…",
+      "unsupported": "Push-Benachrichtigungen werden von diesem Browser nicht unterstützt",
+      "unavailable": "Push-Benachrichtigungen sind auf dieser Instanz nicht konfiguriert",
+      "denied": "Benachrichtigungen sind in den Browsereinstellungen blockiert",
+      "prompt": "Push-Benachrichtigungen sind aus",
+      "subscribed": "Push-Benachrichtigungen sind an"
+    },
+    "alerts": {
+      "title": "Benachrichtige mich über",
+      "hint": "Wähle, welche Ereignisse eine Push-Benachrichtigung auf diesem Gerät auslösen."
+    },
+    "types": {
+      "mention": "Erwähnungen",
+      "favourite": "Favoriten",
+      "reblog": "Boosts",
+      "quote": "Zitate",
+      "follow": "Neue Follower",
+      "follow_request": "Follow-Anfragen",
+      "poll": "Umfrageergebnisse",
+      "status": "Neue Beiträge von gefolgten Konten",
+      "update": "Beitragsbearbeitungen"
+    },
+    "policy": {
+      "title": "Nach Autor filtern",
+      "fromLabel": "Benachrichtigungen erhalten von",
+      "options": {
+        "all": "Allen",
+        "followed": "Personen, denen ich folge",
+        "follower": "Meinen Followern",
+        "none": "Niemandem"
+      }
+    }
   },
   "route": {
     "moderation-report": {

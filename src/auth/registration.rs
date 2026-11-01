@@ -410,9 +410,13 @@ pub async fn register(
 
     // The first token pair (+ the authorization record for app-bound
     // registrations) commits with the account, not after it.
+    // First-party (app-less) registrations get the same scope set the
+    // first-party OAuth flow requests minus `follow`/`admin` — `push`
+    // included, or a user who registers through the SPA could never
+    // enable push notifications without re-signing-in.
     let scopes = app
         .map(|a| a.scopes.clone())
-        .unwrap_or_else(|| "read write".to_string());
+        .unwrap_or_else(|| "read write push".to_string());
     let issued = tokens::issue_token_pair_conn(
         &mut tx,
         config,

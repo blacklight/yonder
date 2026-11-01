@@ -12,6 +12,7 @@ const router = useRouter();
 const items = computed(() => [
   { key: "settings", label: t("settingsNav.preferences") },
   { key: "settings-profile", label: t("settingsNav.profile") },
+  { key: "settings-notifications", label: t("settingsNav.notifications") },
   { key: "settings-security", label: t("settingsNav.security") },
   { key: "settings-tokens", label: t("settingsNav.tokens") },
   { key: "settings-invites", label: t("settingsNav.invites") },

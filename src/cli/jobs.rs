@@ -81,6 +81,13 @@ pub enum JobCommand {
     /// (`{"source_actor_id", "target_resource", "interaction_type"}`).
     #[command(name = "notification_fanout")]
     NotificationFanout(JobArgs),
+    /// Deliver one notification to the recipient's Web Push
+    /// subscriptions.
+    ///
+    /// Internal kind — `{"notification_id", "account_id"}` enqueued
+    /// by the fanout pass.
+    #[command(name = "web_push_send")]
+    WebPushSend(JobArgs),
     /// Send one email via SMTP.
     ///
     /// Internal kind (payloads may carry secrets) — template sends
@@ -213,6 +220,7 @@ impl JobCommand {
             Self::RemoteActorFetch(a) => (JobKind::RemoteActorFetch, a),
             Self::RemoteStatusFetch(a) => (JobKind::RemoteStatusFetch, a),
             Self::NotificationFanout(a) => (JobKind::NotificationFanout, a),
+            Self::WebPushSend(a) => (JobKind::WebPushSend, a),
             Self::EmailSend(a) => (JobKind::EmailSend, a),
             Self::Import(a) => (JobKind::Import, a),
             Self::Export(a) => (JobKind::Export, a),

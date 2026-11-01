@@ -28,6 +28,7 @@
     "label": "Settings sections",
     "preferences": "Preferences",
     "profile": "Profile",
+    "notifications": "Notifications",
     "security": "Account & security",
     "tokens": "API tokens",
     "invites": "Invite links"
@@ -236,6 +237,48 @@
     "revoke": "Revoke",
     "revokeConfirm": "Revoke?",
     "cancel": "Cancel"
+  },
+  "settingsNotifications": {
+    "title": "Notifications",
+    "enable": "Enable notifications",
+    "disable": "Disable notifications",
+    "push": {
+      "title": "Push notifications",
+      "hint": "Get notified about mentions, boosts, favourites and follows on this device, even when the app is closed."
+    },
+    "status": {
+      "loading": "Checking…",
+      "unsupported": "Push notifications are not supported by this browser",
+      "unavailable": "Push notifications are not configured on this instance",
+      "denied": "Notifications are blocked in your browser settings",
+      "prompt": "Push notifications are off",
+      "subscribed": "Push notifications are on"
+    },
+    "alerts": {
+      "title": "Notify me about",
+      "hint": "Choose which events trigger a push notification on this device."
+    },
+    "types": {
+      "mention": "Mentions",
+      "favourite": "Favourites",
+      "reblog": "Boosts",
+      "quote": "Quotes",
+      "follow": "New followers",
+      "follow_request": "Follow requests",
+      "poll": "Poll results",
+      "status": "New posts from people you follow",
+      "update": "Post edits"
+    },
+    "policy": {
+      "title": "Filter by author",
+      "fromLabel": "Receive notifications from",
+      "options": {
+        "all": "Anyone",
+        "followed": "People I follow",
+        "follower": "My followers",
+        "none": "No one"
+      }
+    }
   },
   "route": {
     "moderation-report": {

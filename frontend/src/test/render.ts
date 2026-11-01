@@ -21,6 +21,11 @@ export const stubRoutes: RouteRecordRaw[] = [
     component: stub,
   },
   {
+    path: "/settings/notifications",
+    name: "settings-notifications",
+    component: stub,
+  },
+  {
     path: "/settings/security",
     name: "settings-security",
     component: stub,

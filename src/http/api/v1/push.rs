@@ -3,9 +3,10 @@
 //! `account_id`-keyed, `endpoint` globally unique, `data` JSONB).
 //! Mobile apps (official Mastodon, Moshidon via UnifiedPush) register
 //! on login; `server_key` is the instance VAPID public key
-//! (`http.vapid_public_key` — `yonder webpush generate-keys`).
-//! Subscriptions are stored now; actual push delivery lands with the
-//! WebPush epic — the endpoint contract is already correct.
+//! (`http.vapid_public_key` — `yonder webpush generate-keys`, also
+//! advertised at `pleroma.metadata.vapid_public_key` on
+//! `/api/v1/instance` for pre-subscription discovery). Delivery is the
+//! `WebPushSend` job in `notifications::webpush`.
 //!
 //! `data` layout: `{"alerts": {<type>: bool}, "policy": "all|…"}`.
 

@@ -61,6 +61,20 @@ export function markNotificationsRead(ids: string[]): Promise<void> {
   });
 }
 
+/**
+ * `POST /api/v1/notifications/read` `{all: true}` — mark every
+ * notification read. The list is paginated, so the bulk action can't
+ * enumerate ids like the viewport pass does. Not `silent`: this is a
+ * user-initiated click, a failure should toast.
+ */
+export function markAllNotificationsRead(): Promise<void> {
+  return request<void>({
+    path: "/notifications/read",
+    method: "POST",
+    body: { all: true },
+  });
+}
+
 /** `POST /api/v1/notifications/clear` — dismiss everything. */
 export function clearNotifications(): Promise<void> {
   return request<void>({ path: "/notifications/clear", method: "POST" });

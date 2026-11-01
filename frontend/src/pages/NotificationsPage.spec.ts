@@ -183,6 +183,38 @@ describe("NotificationsPage", () => {
     expect(urls.some((u) => u.includes("max_id=99"))).toBe(true);
   });
 
+  it("mark-all button posts {all:true}, flips rows and hides itself", async () => {
+    setup([notif()]);
+    const { wrapper } = mountWith(NotificationsPage);
+    const store = useNotificationsStore();
+    await flushPromises();
+    // No unread count yet — the bulk action stays hidden.
+    expect(
+      wrapper.findAll("button").some((b) => b.text().includes("Mark all")),
+    ).toBe(false);
+    store.unread = 3;
+    await nextTick();
+    const btn = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Mark all as read");
+    expect(btn).toBeTruthy();
+    // The viewport pass already posted `{ids:[…]}` — drop it so the
+    // only /read call left is the button's.
+    vi.mocked(globalThis.fetch).mockClear();
+    await btn!.trigger("click");
+    await flushPromises();
+    const post = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find((c) => String(c[0]).includes("/notifications/read"));
+    expect(JSON.parse(post![1]!.body as string)).toEqual({ all: true });
+    expect(store.items.every((n) => n.read)).toBe(true);
+    expect(store.unread).toBe(0);
+    await nextTick();
+    expect(
+      wrapper.findAll("button").some((b) => b.text().includes("Mark all")),
+    ).toBe(false);
+  });
+
   it("live events prepend a row while the page is open", async () => {
     setup([]);
     const { wrapper } = mountWith(NotificationsPage);

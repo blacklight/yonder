@@ -961,6 +961,7 @@
     "reject": "Ablehnen",
     "clear": "Leeren",
     "dismiss": "Verwerfen",
+    "markAllRead": "Alle als gelesen markieren",
     "clearTitle": "Mitteilungen leeren",
     "clearBody": "Alle Mitteilungen löschen? Kann nicht rückgängig gemacht werden.",
     "viewReport": "Meldung ansehen"

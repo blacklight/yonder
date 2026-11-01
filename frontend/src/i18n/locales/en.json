@@ -948,6 +948,7 @@
     "reject": "Reject",
     "clear": "Clear",
     "dismiss": "Dismiss",
+    "markAllRead": "Mark all as read",
     "clearTitle": "Clear notifications",
     "clearBody": "Delete all notifications? This cannot be undone.",
     "viewReport": "View report"

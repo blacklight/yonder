@@ -1165,6 +1165,76 @@ async fn mark_read_updates_unread_count_but_keeps_rows() {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mark_all_read_covers_unseen_pages() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+
+    for text in ["x", "y"] {
+        let id = post(&env.app, &alice, json!({"status": text})).await;
+        request(
+            &env.app,
+            "POST",
+            &format!("/api/v1/statuses/{id}/favourite"),
+            Some(&bob),
+            Some(json!({})),
+        )
+        .await;
+    }
+    run_pending_fanouts(&env).await;
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 2);
+
+    // `all` marks rows the client never rendered — the paginated list
+    // can't enumerate them.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/notifications/read",
+        Some(&alice),
+        Some(json!({ "all": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, _, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 0);
+    // Read ≠ dismissed — every row stays in the list, flagged read.
+    let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
+    let rows = body.as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|n| n["read"] == true));
+
+    // `all` ignores `ids` — even malformed ones can't 422 it.
+    let (status, _, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/notifications/read",
+        Some(&alice),
+        Some(json!({ "all": true, "ids": ["not-a-number"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 // ---------------------------------------------------------------------------
 // Live push
 // ---------------------------------------------------------------------------

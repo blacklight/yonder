@@ -273,6 +273,46 @@ describe("notifications store", () => {
     expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(calls);
   });
 
+  it("markAllRead flips every row, zeroes the badge and posts the bulk form", async () => {
+    const store = start();
+    await flushPromises();
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("8"),
+    });
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("9"),
+    });
+    store.unread = 5;
+    await store.markAllRead();
+    expect(store.items.every((n) => n.read)).toBe(true);
+    expect(store.unread).toBe(0);
+    const post = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find((c) => String(c[0]).includes("/notifications/read"));
+    expect(JSON.parse(post![1]!.body as string)).toEqual({ all: true });
+  });
+
+  it("markAllRead keeps state untouched when the request fails", async () => {
+    const store = start();
+    await flushPromises();
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("8"),
+    });
+    store.unread = 1;
+    vi.mocked(globalThis.fetch).mockImplementationOnce(() =>
+      Promise.resolve(new Response("boom", { status: 500 })),
+    );
+    await expect(store.markAllRead()).rejects.toThrow();
+    expect(store.items[0].read).toBeFalsy();
+    expect(store.unread).toBe(1);
+  });
+
   it("stop unsubscribes and clears state", async () => {
     const store = start();
     await flushPromises();

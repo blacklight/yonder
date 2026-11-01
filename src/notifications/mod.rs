@@ -356,6 +356,19 @@ pub async fn mark_read(db: &PgPool, account_id: i64, ids: &[i64]) -> Result<u64>
     .map_err(Into::into)
 }
 
+/// Mark every unread notification owned by `account_id` read — the
+/// "mark all as read" bulk action. Rows the list hides (muted
+/// conversations, `hide` rules) flip too, so they can't resurface as
+/// unread when the rule is lifted.
+pub async fn mark_all_read(db: &PgPool, account_id: i64) -> Result<u64> {
+    sqlx::query("UPDATE notifications SET read = true WHERE account_id = $1 AND NOT read")
+        .bind(account_id)
+        .execute(db)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(Into::into)
+}
+
 /// Delete one notification owned by `account_id`. `false` when the row
 /// does not exist or belongs to someone else.
 pub async fn dismiss(db: &PgPool, account_id: i64, id: i64) -> Result<bool> {

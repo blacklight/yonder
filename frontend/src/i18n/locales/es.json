@@ -961,6 +961,7 @@
     "reject": "Rechazar",
     "clear": "Limpiar",
     "dismiss": "Descartar",
+    "markAllRead": "Marcar todo como leído",
     "clearTitle": "Limpiar notificaciones",
     "clearBody": "¿Eliminar todas las notificaciones? No se puede deshacer.",
     "viewReport": "Ver informe"

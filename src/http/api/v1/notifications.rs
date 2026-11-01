@@ -390,11 +390,18 @@ pub async fn clear(State(state): State<Arc<AppState>>, auth: AuthContext) -> Res
     Ok(Json(json!({})))
 }
 
-/// Body for `POST /notifications/read` — ids the client rendered.
+/// Body for `POST /notifications/read` — ids the client rendered, or
+/// `all` for the bulk mark-read action.
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 pub struct MarkReadBody {
     /// Notification ids to mark read (max [`MAX_MARK_READ_IDS`]).
+    #[serde(default)]
     pub ids: Vec<EntityId>,
+    /// `true` marks every unread notification read; `ids` is ignored.
+    /// The list is paginated, so a client can't enumerate all ids —
+    /// the bulk action needs the server-side form.
+    #[serde(default)]
+    pub all: bool,
 }
 
 /// Upper bound on ids per `mark_read` call — the SPA batches viewport
@@ -403,6 +410,8 @@ const MAX_MARK_READ_IDS: usize = 200;
 
 /// `POST /api/v1/notifications/read` — mark the caller's rows read
 /// (Yonder extension; the SPA drives it from the rendered viewport).
+/// `{"all": true}` marks every unread row — the bulk action can't
+/// enumerate ids across pages.
 #[utoipa::path(
     post,
     path = "/api/v1/notifications/read",
@@ -421,14 +430,18 @@ pub async fn mark_read(
     Json(body): Json<MarkReadBody>,
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:notifications")?;
-    if body.ids.len() > MAX_MARK_READ_IDS {
-        return Err(Error::Validation("too many notification ids".into()));
+    if body.all {
+        notifications::mark_all_read(&state.db, auth.account_id).await?;
+    } else {
+        if body.ids.len() > MAX_MARK_READ_IDS {
+            return Err(Error::Validation("too many notification ids".into()));
+        }
+        let mut ids = Vec::with_capacity(body.ids.len());
+        for id in &body.ids {
+            ids.push(id.to_i64()?);
+        }
+        notifications::mark_read(&state.db, auth.account_id, &ids).await?;
     }
-    let mut ids = Vec::with_capacity(body.ids.len());
-    for id in &body.ids {
-        ids.push(id.to_i64()?);
-    }
-    notifications::mark_read(&state.db, auth.account_id, &ids).await?;
     publish_count(&state, auth.user_id, auth.account_id).await;
     Ok(Json(json!({})))
 }

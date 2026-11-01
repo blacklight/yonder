@@ -961,6 +961,7 @@
     "reject": "Rifiuta",
     "clear": "Cancella",
     "dismiss": "Ignora",
+    "markAllRead": "Segna tutto come letto",
     "clearTitle": "Cancella notifiche",
     "clearBody": "Eliminare tutte le notifiche? Non si può annullare.",
     "viewReport": "Vedi segnalazione"

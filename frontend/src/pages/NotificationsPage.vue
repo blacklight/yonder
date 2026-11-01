@@ -100,6 +100,21 @@ async function clearAll() {
   await store.clear();
 }
 
+const markingAll = ref(false);
+
+async function markAllRead() {
+  if (markingAll.value) return;
+  markingAll.value = true;
+  actionError.value = null;
+  try {
+    await store.markAllRead();
+  } catch {
+    actionError.value = t("common.error");
+  } finally {
+    markingAll.value = false;
+  }
+}
+
 // Infinite scroll — same sentinel semantics as the timelines. Older
 // pages load as the bottom edge scrolls into view; the button below
 // stays only as the no-IntersectionObserver fallback.
@@ -182,6 +197,15 @@ onUnmounted(() => {
       :label="t('notifications.filters')"
       @update:model-value="store.setFilter"
     >
+      <Button
+        v-if="store.unread"
+        variant="secondary"
+        size="sm"
+        :loading="markingAll"
+        @click="markAllRead"
+      >
+        {{ t("notifications.markAllRead") }}
+      </Button>
       <Button variant="secondary" size="sm" @click="confirming = true">
         {{ t("notifications.clear") }}
       </Button>

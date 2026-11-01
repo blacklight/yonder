@@ -3,6 +3,7 @@ import { ref } from "vue";
 import {
   clearNotifications,
   dismissNotification,
+  markAllNotificationsRead,
   markNotificationsRead,
   notifications as fetchNotifications,
   unreadCount,
@@ -295,6 +296,17 @@ export const useNotificationsStore = defineStore("notifications", () => {
     }
   }
 
+  /**
+   * `POST /notifications/read {all}` — the page's bulk button. Unlike
+   * `markRead` the local flip waits on the server: a failed click
+   * (already toasted by the request layer) must not fake-read rows.
+   */
+  async function markAllRead() {
+    await markAllNotificationsRead();
+    for (const n of items.value) n.read = true;
+    unread.value = 0;
+  }
+
   return {
     unread,
     items,
@@ -310,5 +322,6 @@ export const useNotificationsStore = defineStore("notifications", () => {
     clear,
     dismiss,
     markRead,
+    markAllRead,
   };
 });

@@ -1085,5 +1085,26 @@
   "footer": {
     "links": "Enlaces",
     "source": "Código fuente"
+  },
+  "about": {
+    "loadError": "No se pudo cargar la información del servidor.",
+    "bannerAlt": "Banner de {title}",
+    "logoAlt": "Logo de {title}",
+    "stats": {
+      "activeUsers": "Usuarios activos",
+      "users": "Usuarios",
+      "statuses": "Publicaciones",
+      "domains": "Servidores conocidos del fediverso"
+    },
+    "aboutThisServer": "Acerca de este servidor",
+    "serverRules": "Reglas del servidor",
+    "administeredBy": "Administrado por",
+    "moderatedServers": "Servidores moderados",
+    "severity": {
+      "noop": "sin restricciones",
+      "silence": "limitado",
+      "suspend": "suspendido"
+    },
+    "languages": "Idiomas"
   }
 }

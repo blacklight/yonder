@@ -1085,5 +1085,26 @@
     "invalidRequest": "This authorization link is incomplete — required parameters are missing or invalid.",
     "unknownApp": "Unknown application. Check that the app is registered on this server.",
     "loadFailed": "Couldn't load the application's details."
+  },
+  "about": {
+    "loadError": "Could not load the server information.",
+    "bannerAlt": "{title} banner",
+    "logoAlt": "{title} logo",
+    "stats": {
+      "activeUsers": "Active users",
+      "users": "Users",
+      "statuses": "Posts",
+      "domains": "Known fediverse servers"
+    },
+    "aboutThisServer": "About this server",
+    "serverRules": "Server rules",
+    "administeredBy": "Administered by",
+    "moderatedServers": "Moderated servers",
+    "severity": {
+      "noop": "no restrictions",
+      "silence": "limited",
+      "suspend": "suspended"
+    },
+    "languages": "Languages"
   }
 }

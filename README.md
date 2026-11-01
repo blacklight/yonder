@@ -201,6 +201,16 @@ posts only), `/tags/{tag}.atom|.rss` (public tagged posts) and
 rel="alternate">` tags the frontend will inject into pages.
 `docs/feeds.md` has the full contract.
 
+### Instance metadata & `/about`
+
+`GET /api/v1/instance` and `GET /api/v2/instance` expose the
+Mastodon-shaped entities (stats, `usage`, `rules` as `{id,text}`
+objects, resolved `contact.account`), `extended_description`,
+`peers` and public `domain_blocks` round out the surface, and
+`instance.logo_path`/`banner_path` serve at
+`/api/v1/instance/logo|banner` for the `icon`/`thumbnail` fields and
+the SPA's `/about` page. `docs/instance.md` has the full contract.
+
 ## Federation (ActivityPub)
 
 Federation runs on [`pubby-sdk`](https://crates.io/crates/pubby-sdk)

@@ -825,3 +825,102 @@ async fn media_get_v1() {
     let (code, _, _) = request(&env.app, "GET", "/api/v1/media/999999", Some(&token), None).await;
     assert_eq!(code, StatusCode::NOT_FOUND);
 }
+
+/// `/about` data surface — branding assets served from the
+/// `instance.*_path` config, `{id,text}` rule entities, a resolved
+/// `contact.account`, `usage.users.active_month` and `source_url`.
+#[tokio::test(flavor = "multi_thread")]
+async fn instance_about_surface() {
+    let dir = std::env::temp_dir().join(format!("yonder-about-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let logo = dir.join("logo.png");
+    let banner = dir.join("banner.png");
+    std::fs::write(&logo, b"\x89PNG fake").unwrap();
+    std::fs::write(&banner, b"\x89PNG fake").unwrap();
+
+    let mut config = Config::default();
+    config.instance.logo_path = Some(logo.display().to_string());
+    config.instance.banner_path = Some(banner.display().to_string());
+    config.instance.rules = vec!["Be kind".into(), "No spam".into()];
+    config.instance.contact_name = Some("The Admin".into());
+    config.instance.contact_email = Some("admin@x.test".into());
+    config.instance.contact_url = Some(format!("{BASE}/@carol"));
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env.app, "carol", "carol@x.test").await;
+    post_status(&env.app, &token, "hello about").await;
+
+    // Branding assets serve from the configured paths.
+    for (path, mime) in [
+        ("/api/v1/instance/logo", "image/png"),
+        ("/api/v1/instance/banner", "image/png"),
+    ] {
+        let (status, headers, _) = request(&env.app, "GET", path, None, None).await;
+        assert_eq!(status, StatusCode::OK, "{path}");
+        assert_eq!(headers["content-type"], mime, "{path}");
+        assert!(
+            headers["cache-control"]
+                .to_str()
+                .unwrap()
+                .contains("public"),
+            "{path}"
+        );
+    }
+
+    // v2 entity: Mastodon shapes plus Yonder contact extensions.
+    let (status, _, body) = request(&env.app, "GET", "/api/v2/instance", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["thumbnail"]["url"],
+        format!("{BASE}/api/v1/instance/banner")
+    );
+    assert_eq!(
+        body["icon"][0]["src"],
+        format!("{BASE}/api/v1/instance/logo")
+    );
+    assert_eq!(body["rules"][0], json!({"id": "1", "text": "Be kind"}));
+    assert_eq!(body["rules"][1], json!({"id": "2", "text": "No spam"}));
+    assert_eq!(body["contact"]["name"], "The Admin");
+    assert_eq!(body["contact"]["email"], "admin@x.test");
+    assert_eq!(body["contact"]["account"]["username"], "carol");
+    assert_eq!(body["usage"]["users"]["active_month"], 1);
+    assert_eq!(body["source_url"], env!("CARGO_PKG_REPOSITORY"));
+
+    // v1 entity: `thumbnail` is a URL string, `contact_account` the
+    // resolved entity, `rules` the same {id, text} shape.
+    let (status, _, body) = request(&env.app, "GET", "/api/v1/instance", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["thumbnail"], format!("{BASE}/api/v1/instance/banner"));
+    assert_eq!(body["contact_account"]["username"], "carol");
+    assert_eq!(body["rules"][1]["text"], "No spam");
+}
+
+/// Unconfigured branding stays absent — 404s on the asset routes,
+/// null thumbnail, empty icon list, null contact account.
+#[tokio::test(flavor = "multi_thread")]
+async fn instance_about_unconfigured() {
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    for path in ["/api/v1/instance/logo", "/api/v1/instance/banner"] {
+        let (status, _, _) = request(&env.app, "GET", path, None, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+    }
+    let (_, _, body) = request(&env.app, "GET", "/api/v2/instance", None, None).await;
+    assert!(body["thumbnail"].is_null());
+    assert_eq!(body["icon"], json!([]));
+    assert_eq!(body["rules"], json!([]));
+    assert!(body["contact"]["account"].is_null());
+    assert_eq!(body["usage"]["users"]["active_month"], 0);
+
+    // A remote contact_url never resolves to a local account.
+    let mut config = Config::default();
+    config.instance.contact_url = Some("https://remote.example/@admin".into());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let (_, _, body) = request(&env.app, "GET", "/api/v2/instance", None, None).await;
+    assert!(body["contact"]["account"].is_null());
+    assert_eq!(body["contact"]["url"], "https://remote.example/@admin");
+}

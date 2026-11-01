@@ -10,7 +10,12 @@ use std::sync::Arc;
 use axum::{extract::State, Json};
 use serde_json::{json, Value};
 
-use crate::{config::RegistrationMode, http::AppState, Result};
+use crate::{
+    config::RegistrationMode,
+    http::api::v1::instance::{asset_url, contact_account, rules_json},
+    http::AppState,
+    Result,
+};
 
 /// `GET /api/v2/instance` — public, `MaybeAuth`-eligible.
 #[utoipa::path(
@@ -21,14 +26,34 @@ use crate::{config::RegistrationMode, http::AppState, Result};
 )]
 pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let config = &state.config();
+    let base_url = crate::activitypub::federation_base_url(config);
     let mode = config.auth.registration_mode;
+    let thumbnail = asset_url(&base_url, &config.instance.banner_path, "banner");
+    let icon = asset_url(&base_url, &config.instance.logo_path, "logo");
+    let active_month: i64 = sqlx::query_scalar(
+        "SELECT count(DISTINCT account_id) FROM statuses \
+         WHERE local AND created_at > now() - interval '30 days'",
+    )
+    .fetch_one(&state.db)
+    .await?;
     Ok(Json(json!({
         "domain": config.instance.domain,
         "title": config.instance.name,
         "version": format!("Yonder/{}", env!("CARGO_PKG_VERSION")),
+        "source_url": env!("CARGO_PKG_REPOSITORY"),
         "description": config.instance.description,
         "short_description": config.instance.short_description,
         "languages": config.instance.languages,
+        // Mastodon 4.x v2 shapes: `thumbnail` is an object, `icon` a
+        // `[{src, size}]` list — empty rather than null when no logo
+        // is configured so strict clients never see the wrong type.
+        "thumbnail": thumbnail.map(|u| json!({
+            "url": u,
+            "blurhash": Value::Null,
+            "versions": {"@1x": u, "@2x": u},
+        })),
+        "icon": icon.map(|src| json!([{"src": src, "size": "1x"}])).unwrap_or(json!([])),
+        "usage": {"users": {"active_month": active_month}},
         "registrations": {
             "enabled": !matches!(mode, RegistrationMode::Closed),
             "approval_required": matches!(mode, RegistrationMode::ApprovalRequired),
@@ -57,8 +82,13 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         },
         "contact": {
             "email": config.instance.contact_email,
-            "account": Value::Null,
+            "account": contact_account(&state.db, config, &base_url).await,
+            // Yonder extensions — the /about page's "administered by"
+            // block uses these when `account` stays null (remote or
+            // unresolvable `contact_url`).
+            "name": config.instance.contact_name,
+            "url": config.instance.contact_url,
         },
-        "rules": config.instance.rules,
+        "rules": rules_json(&config.instance.rules),
     })))
 }

@@ -1085,5 +1085,26 @@
   "footer": {
     "links": "روابط",
     "source": "الكود المصدري"
+  },
+  "about": {
+    "loadError": "تعذّر تحميل معلومات الخادم.",
+    "bannerAlt": "لافتة {title}",
+    "logoAlt": "شعار {title}",
+    "stats": {
+      "activeUsers": "المستخدمون النشطون",
+      "users": "المستخدمون",
+      "statuses": "المنشورات",
+      "domains": "خوادم الفيديفرس المعروفة"
+    },
+    "aboutThisServer": "حول هذا الخادم",
+    "serverRules": "قواعد الخادم",
+    "administeredBy": "يديره",
+    "moderatedServers": "الخوادم المُشرف عليها",
+    "severity": {
+      "noop": "بدون قيود",
+      "silence": "محدود",
+      "suspend": "موقوف"
+    },
+    "languages": "اللغات"
   }
 }

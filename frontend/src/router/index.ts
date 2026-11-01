@@ -101,9 +101,11 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Mastodon's /about layout — instance metadata, rules and
+      // moderated servers, all anonymous-eligible.
       path: "/about",
       name: "about",
-      ...stub("nav.about"),
+      component: () => import("@/pages/AboutPage.vue"),
     },
     {
       path: "/search",

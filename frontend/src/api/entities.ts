@@ -408,7 +408,21 @@ export interface InstanceEntity {
   domain?: string;
   title?: string;
   version?: string;
+  source_url?: string;
   description?: string;
+  short_description?: string;
+  languages?: string[];
+  /** Mastodon 4.x object; `thumbnail.url` is the /about hero image. */
+  thumbnail?: { url?: string; blurhash?: string | null } | null;
+  icon?: { src?: string; size?: string }[];
+  usage?: { users?: { active_month?: number } };
+  contact?: {
+    email?: string | null;
+    name?: string | null;
+    /** Yonder extension — the configured profile/link of the admin. */
+    url?: string | null;
+    account?: Account | null;
+  };
   configuration?: {
     statuses?: {
       max_characters?: number;

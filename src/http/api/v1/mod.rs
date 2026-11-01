@@ -185,6 +185,10 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/instance/domain_blocks",
             get(instance::domain_blocks),
         )
+        // Branding assets the /about page and the entity's
+        // `thumbnail`/`icon` fields reference.
+        .route("/api/v1/instance/logo", get(instance::logo))
+        .route("/api/v1/instance/banner", get(instance::banner))
         // Epic 21 — user report filing.
         .route("/api/v1/reports", post(reports::file))
         // Epic 21 — moderator report queue.
@@ -899,6 +903,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     two_factor::disable,
     instance::instance,
     instance::peers,
+    instance::logo,
+    instance::banner,
     instance::domain_blocks,
     settings::preferences,
     settings::get_settings,

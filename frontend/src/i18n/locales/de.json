@@ -1085,5 +1085,26 @@
   "footer": {
     "links": "Links",
     "source": "Quellcode"
+  },
+  "about": {
+    "loadError": "Serverinformationen konnten nicht geladen werden.",
+    "bannerAlt": "{title}-Banner",
+    "logoAlt": "{title}-Logo",
+    "stats": {
+      "activeUsers": "Aktive Nutzer:innen",
+      "users": "Nutzer:innen",
+      "statuses": "Beiträge",
+      "domains": "Bekannte Fediverse-Server"
+    },
+    "aboutThisServer": "Über diesen Server",
+    "serverRules": "Serverregeln",
+    "administeredBy": "Administriert von",
+    "moderatedServers": "Moderierte Server",
+    "severity": {
+      "noop": "keine Einschränkungen",
+      "silence": "eingeschränkt",
+      "suspend": "suspendiert"
+    },
+    "languages": "Sprachen"
   }
 }

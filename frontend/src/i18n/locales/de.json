@@ -1060,7 +1060,8 @@
     "copyHandle": "Handle kopieren",
     "handleCopied": "Kopiert",
     "viewAvatar": "Avatar ansehen",
-    "viewBanner": "Header ansehen"
+    "viewBanner": "Header ansehen",
+    "joined": "Beigetreten {date}"
   },
   "register": {
     "title": "Konto erstellen",

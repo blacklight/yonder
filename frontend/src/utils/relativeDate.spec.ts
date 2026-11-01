@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRelativeDate } from "./relativeDate";
+import { formatMonthYear, formatRelativeDate } from "./relativeDate";
 
 const NOW = new Date("2026-06-15T12:00:00Z");
 const ago = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
@@ -33,5 +33,16 @@ describe("formatRelativeDate", () => {
   it("month, day, year when older", () => {
     const out = formatRelativeDate(ago(400 * 24 * 3600_000), NOW, "en");
     expect(out).toMatch(/^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+  });
+});
+
+describe("formatMonthYear", () => {
+  it("renders the full month and year", () => {
+    expect(formatMonthYear("2019-04-15T12:00:00Z", "en")).toBe("April 2019");
+  });
+
+  it("localises the month name", () => {
+    expect(formatMonthYear("2019-03-15T12:00:00Z", "de")).toBe("März 2019");
+    expect(formatMonthYear("2019-03-15T12:00:00Z", "it")).toBe("marzo 2019");
   });
 });

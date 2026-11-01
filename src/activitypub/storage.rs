@@ -269,6 +269,12 @@ async fn upsert_remote_account(
     let followers_count = count("followersCount");
     let following_count = count("followingCount");
     let statuses_count = count("statusesCount");
+    // The origin server's account-creation claim — Mastodon exposes
+    // the same value as the entity's `created_at`. Absent/unparseable
+    // `published` leaves the row's stamp (first-seen time) untouched.
+    let published = actor_data
+        .get("published")
+        .and_then(pubby_sdk::model::parse_dt);
     // The stamp carry-over needs the stored list — only fetched when
     // the doc actually projects fields.
     let previous_fields: Vec<Value> = if actor_data.get("attachment").is_some() {
@@ -302,10 +308,10 @@ async fn upsert_remote_account(
             outbox_url, public_key, actor_data, display_name, bio, bot,
             avatar_remote_url, banner_remote_url,
             followers_count, following_count, statuses_count,
-            profile_fields
+            profile_fields, created_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
                   COALESCE($15, 0), COALESCE($16, 0), COALESCE($17, 0),
-                  COALESCE($18, '[]'::jsonb))
+                  COALESCE($18, '[]'::jsonb), COALESCE($19, now()))
         ON CONFLICT (actor_id) DO UPDATE SET
             url = EXCLUDED.url,
             inbox = EXCLUDED.inbox,
@@ -322,6 +328,7 @@ async fn upsert_remote_account(
             avatar_remote_url = COALESCE(EXCLUDED.avatar_remote_url, accounts.avatar_remote_url),
             banner_remote_url = COALESCE(EXCLUDED.banner_remote_url, accounts.banner_remote_url),
             profile_fields = COALESCE($18, accounts.profile_fields),
+            created_at = COALESCE($19, accounts.created_at),
             updated_at = now()
         RETURNING id
         "#,
@@ -344,6 +351,7 @@ async fn upsert_remote_account(
     .bind(following_count)
     .bind(statuses_count)
     .bind(&profile_fields)
+    .bind(published)
     .fetch_one(pool)
     .await
     .map(Some)

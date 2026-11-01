@@ -1060,7 +1060,8 @@
     "copyHandle": "نسخ المعرّف",
     "handleCopied": "تم النسخ",
     "viewAvatar": "عرض الصورة الرمزية",
-    "viewBanner": "عرض صورة الغلاف"
+    "viewBanner": "عرض صورة الغلاف",
+    "joined": "انضم في {date}"
   },
   "register": {
     "title": "إنشاء حساب",

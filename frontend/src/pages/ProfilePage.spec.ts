@@ -327,6 +327,23 @@ describe("ProfilePage", () => {
     expect(wrapper.find(".profile__handle-feed").exists()).toBe(false);
   });
 
+  it("shows the account's joined month and year", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({ created_at: "2019-04-15T12:00:00Z" }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const joined = wrapper.get(".profile__joined");
+    expect(joined.text()).toContain("April 2019");
+    // The full timestamp stays available as the hover tooltip.
+    expect(joined.attributes("title")).toContain("2019");
+  });
+
+  it("hides the joined line when created_at is unparseable", async () => {
+    vi.mocked(lookup).mockResolvedValue(account({ created_at: "not-a-date" }));
+    const wrapper = await openProfile("/@alice");
+    expect(wrapper.find(".profile__joined").exists()).toBe(false);
+  });
+
   it("renders an email field value as a mailto link", async () => {
     vi.mocked(lookup).mockResolvedValue(
       account({

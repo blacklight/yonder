@@ -1034,7 +1034,8 @@
     "copyHandle": "Copy handle",
     "handleCopied": "Copied",
     "viewAvatar": "View avatar",
-    "viewBanner": "View banner"
+    "viewBanner": "View banner",
+    "joined": "Joined {date}"
   },
   "register": {
     "title": "Create an account",

@@ -37,6 +37,7 @@ import type {
   Status,
 } from "@/api/entities";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
+import { formatAbsoluteDate, formatMonthYear } from "@/utils/relativeDate";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import { useInstanceStore } from "@/stores/instance";
@@ -249,6 +250,18 @@ const feedHref = computed(() => {
   const a = account.value;
   if (!a || a.acct.includes("@")) return null;
   return `/users/${encodeURIComponent(a.username)}.rss`;
+});
+
+/**
+ * The account's creation stamp — registration time for local
+ * accounts, the origin server's `published` claim for remote ones
+ * (the backend mirrors the actor doc into `created_at`). Renders
+ * Mastodon's "Joined <month year>" line.
+ */
+const joinedAt = computed(() => {
+  const iso = account.value?.created_at;
+  if (!iso || Number.isNaN(new Date(iso).getTime())) return null;
+  return iso;
 });
 
 const copied = ref(false);
@@ -986,6 +999,14 @@ watch([tab, showReplies, showBoosts], () => {
             </dd>
           </template>
         </dl>
+        <p
+          v-if="joinedAt"
+          class="profile__joined"
+          :title="formatAbsoluteDate(joinedAt)"
+        >
+          <FontAwesomeIcon icon="calendar-days" />
+          {{ t("profile.joined", { date: formatMonthYear(joinedAt) }) }}
+        </p>
         <div v-if="rel?.note" class="profile__note">
           <div class="profile__note-head">
             <h2 class="profile__note-title">
@@ -1419,6 +1440,14 @@ watch([tab, showReplies, showBoosts], () => {
 .profile__field--verified a {
   font-weight: 600;
   margin-right: var(--space-2);
+}
+.profile__joined {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
 }
 .profile__note {
   margin-top: var(--space-4);

@@ -1060,7 +1060,8 @@
     "copyHandle": "Copiar identificador",
     "handleCopied": "Copiado",
     "viewAvatar": "Ver avatar",
-    "viewBanner": "Ver cabecera"
+    "viewBanner": "Ver cabecera",
+    "joined": "Se unió en {date}"
   },
   "register": {
     "title": "Crear una cuenta",

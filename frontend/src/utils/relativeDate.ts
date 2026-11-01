@@ -32,6 +32,14 @@ export function formatAbsoluteDate(
   }).format(new Date(iso));
 }
 
+/** Month + year only ("April 2019") — the "Joined" granularity. */
+export function formatMonthYear(iso: string, locale = activeLocale()): string {
+  return new Intl.DateTimeFormat(locale, {
+    month: "long",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 export function formatRelativeDate(
   iso: string,
   now: Date = new Date(),

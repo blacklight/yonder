@@ -171,6 +171,7 @@ fn actor_doc(base: &str, name: &str) -> Value {
         "type": "Person",
         "preferredUsername": name,
         "name": "Remote User",
+        "published": "2020-03-15T09:30:00Z",
         "inbox": format!("{base}/inbox"),
         "outbox": format!("{base}/outbox"),
         "followers": format!("{base}/followers"),
@@ -384,6 +385,47 @@ async fn sync_remote_backfills_outbox_pages() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["imported"].as_i64().unwrap(), 0, "{body}");
     assert!(body["complete"].as_bool().unwrap(), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_remote_mirrors_actor_published_as_created_at() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let base = serve_docs(remote_docs).await;
+    let remote_id = seed_remote_account(&env.state.db, &base).await;
+    let token = register(&env.app, "joiner", "joiner@example.com").await;
+
+    // The actor fetch inside the sync upserts the account row — the
+    // doc's `published` becomes `created_at` (the origin's claim,
+    // replacing the stub's first-seen stamp).
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{remote_id}/sync_remote"),
+        Some(&token),
+        Some(json!({"limit": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let (status, _, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{remote_id}"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["created_at"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("2020-03-15T09:30:00"),
+        "{body}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

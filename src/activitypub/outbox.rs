@@ -157,8 +157,9 @@ async fn release_sync_lock(ap: &ApContext, account_id: i64) {
 
 /// A signed remote GET with bounded retry: `429`/`Failed` back off
 /// through [`RETRY_BACKOFF`] (clipped to the deadline), everything
-/// else returns as-is.
-async fn fetch_doc(ap: &ApContext, url: &str, deadline: Instant) -> Result<RemoteFetch> {
+/// else returns as-is. `pub(crate)` — the thread-context fetch shares
+/// the same remote politeness budget.
+pub(crate) async fn fetch_doc(ap: &ApContext, url: &str, deadline: Instant) -> Result<RemoteFetch> {
     let mut attempt = 0usize;
     loop {
         match lookup::fetch_remote_object_detailed(ap, url).await? {
@@ -221,14 +222,17 @@ async fn resolve_outbox_url(
 
 /// Where the walk continues from after `doc`: an inline `first` page,
 /// a `first`/`next` link, or nothing (collection exhausted).
-enum PageRef {
+/// `pub(crate)` — `replies` collections paginate the same way.
+pub(crate) enum PageRef {
     Inline(Value),
     Url(String),
 }
 
 /// `first`/`next` link: bare URL string, `{id}`/`{href}` reference —
 /// or, for `first`, an inline page object (`orderedItems` inside).
-fn link_ref(doc: &Value, key: &str) -> Option<PageRef> {
+/// `pub(crate)` — the thread-context fetch paginates `replies`
+/// collections with it.
+pub(crate) fn link_ref(doc: &Value, key: &str) -> Option<PageRef> {
     match doc.get(key) {
         Some(Value::String(s)) if !s.is_empty() => Some(PageRef::Url(s.clone())),
         Some(Value::Object(o)) => {

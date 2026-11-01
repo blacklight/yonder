@@ -507,6 +507,7 @@
     },
     "notFound": "Dieser Beitrag ist nicht verfügbar.",
     "loadError": "Beitrag konnte nicht geladen werden.",
+    "loadingRemoteContext": "Antworten werden von der Remote-Instanz geladen…",
     "boostsCount": "{count} Boost | {count} Boosts",
     "quotesCount": "{count} Zitat | {count} Zitate",
     "likesCount": "{count} „Gefällt mir“ | {count} „Gefällt mir“",

@@ -30,6 +30,7 @@ mod posting;
 mod profile;
 mod redis;
 mod remote_sync;
+mod remote_thread;
 mod search;
 mod settings;
 mod social_graph;

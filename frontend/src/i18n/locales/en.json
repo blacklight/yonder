@@ -494,6 +494,7 @@
     },
     "notFound": "This status is not available.",
     "loadError": "Could not load the status.",
+    "loadingRemoteContext": "Fetching replies from the remote instance…",
     "boostsCount": "{count} boost | {count} boosts",
     "quotesCount": "{count} quote | {count} quotes",
     "likesCount": "{count} like | {count} likes",

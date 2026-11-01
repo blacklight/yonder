@@ -507,6 +507,7 @@
     },
     "notFound": "Questo post non è disponibile.",
     "loadError": "Impossibile caricare il post.",
+    "loadingRemoteContext": "Recupero delle risposte dall'istanza remota…",
     "boostsCount": "{count} boost | {count} boost",
     "quotesCount": "{count} citazione | {count} citazioni",
     "likesCount": "{count} mi piace | {count} mi piace",

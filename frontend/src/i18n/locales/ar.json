@@ -507,6 +507,7 @@
     },
     "notFound": "هذا المنشور غير متاح.",
     "loadError": "تعذّر تحميل المنشور.",
+    "loadingRemoteContext": "جارٍ جلب الردود من الخادم البعيد…",
     "boostsCount": "{count} تعزيزات | تعزيز واحد | تعزيزان | {count} تعزيزات | {count} تعزيزًا | {count} تعزيز",
     "quotesCount": "{count} اقتباسات | اقتباس واحد | اقتباسان | {count} اقتباسات | {count} اقتباسًا | {count} اقتباس",
     "likesCount": "{count} إعجابات | إعجاب واحد | إعجابان | {count} إعجابات | {count} إعجابًا | {count} إعجاب",

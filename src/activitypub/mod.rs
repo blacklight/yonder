@@ -26,6 +26,7 @@ pub mod outbox;
 pub mod permalinks;
 pub mod posts;
 pub mod storage;
+pub mod thread;
 
 use std::sync::Arc;
 

@@ -10,6 +10,7 @@ scheduling, link previews and ActivityPub federation.
 | POST | `/api/v1/statuses` | `write:statuses` | create; `Idempotency-Key` replays |
 | GET | `/api/v1/statuses/{id}` | — | `can_see` gated |
 | GET | `/api/v1/statuses/{id}/context` | — | ancestors + descendants, `can_see` gated |
+| POST | `/api/v1/statuses/{id}/fetch_remote_context` | `read` | lazy remote-thread backfill (Yonder ext.) |
 | PUT | `/api/v1/statuses/{id}` | `write:statuses` | owner edit → `Update` |
 | DELETE | `/api/v1/statuses/{id}` | `write:statuses` | owner → tombstone + `Delete` |
 | POST | `/api/v1/media` | `write:media` | multipart `file`/`description`/`focus` |
@@ -202,3 +203,43 @@ job turns into the article card (og:image header image). The
 ownership gate requires
 `activity.actor == attributedTo`, and Update/Delete must match the
 stored `account_id` — spoofed mutations are dropped.
+
+### Remote thread fetch (lazy thread expansion)
+
+`POST /api/v1/statuses/{id}/fetch_remote_context` (auth: `read`
+scope; remote statuses only — local ones 422; suspended author
+domains 403) backfills the thread a remote status belongs to, so
+opening a remote reply shows its context without visiting the
+origin instance. The SPA's status page calls it automatically for
+remote statuses, then re-reads `GET …/context` and swaps in the
+refreshed ancestors/descendants.
+
+Two passes over the remote thread, all through the same ingest path
+an inbox `Create` takes (`materialize_remote` — the per-origin
+`trusted_note` check included):
+
+- **Ancestors**: the status's own object is re-fetched (`inReplyTo`
+  isn't stored locally), then the walk climbs. A locally-known parent
+  whose `in_reply_to_id` is still `NULL` means the gap continues
+  above it — its remote doc is fetched to keep climbing. Fetched
+  ancestors ingest root-first so every child finds its parent, and
+  the target is re-ingested last, repairing its own `NULL`
+  `in_reply_to_id` via the `ON CONFLICT (uri)` upsert.
+- **Replies**: breadth-first expansion of the target's and each
+  fetched ancestor's `replies` collection (inline items or
+  `first`/`next` linked pages). Items materialize by URI — an inline
+  object that passes the same-origin trust check for its page
+  ingests directly, anything else is fetched from its own origin
+  first, so replies by other authors land (unlike outbox sync, no
+  ownership check — that's what the collection is for). Already-local
+  items are skipped and their subtrees stay lazy: opening them
+  expands their own context.
+
+The response is `{imported, scanned, pages, complete}` — `complete`
+when the chain reached a root and every `replies` collection
+exhausted inside the budgets. Bounds: signed GETs with bounded
+backoff on 429/transient failure, a 60s wall-clock deadline, caps of
+64 ancestors / 20 collection pages / 100 remote GETs / 10 expansion
+depth, and a per-status Redis lock that 429s a concurrent fetch.
+Rate limiting has a dedicated `rate_limit.remote_context` bucket
+(default 30 per 5 minutes).

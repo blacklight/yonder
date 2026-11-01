@@ -387,6 +387,13 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "status")),
         )
         .route("/api/v1/statuses/{id}/context", get(statuses::context))
+        // Lazy remote-thread expansion: one call can fan out to many
+        // remote GETs — dedicated `remote_context` bucket.
+        .route(
+            "/api/v1/statuses/{id}/fetch_remote_context",
+            axum::routing::post(statuses::fetch_remote_context)
+                .route_layer(ratelimit::layer(state, "remote_context")),
+        )
         // Epic 26 — raw source (edit composer) + edit history.
         .route("/api/v1/statuses/{id}/source", get(statuses::source))
         .route("/api/v1/statuses/{id}/history", get(statuses::history))
@@ -917,6 +924,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     statuses::create,
     statuses::show,
     statuses::context,
+    statuses::fetch_remote_context,
     statuses::translate,
     statuses::update,
     statuses::delete_status,

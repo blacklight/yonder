@@ -167,6 +167,69 @@ pub async fn context(
     })))
 }
 
+/// `POST /api/v1/statuses/{id}/fetch_remote_context` — Yonder
+/// extension: lazily pull the remote thread (ancestors + replies)
+/// for a remote status, so the context view renders the conversation
+/// without sending the user to the origin instance. The walk is
+/// bounded (wall-clock deadline, page/fetch caps) and per-status
+/// locked; it returns `{imported, scanned, pages, complete}` —
+/// `complete` when the whole remote context was exhausted rather
+/// than stopped early.
+#[utoipa::path(
+    post,
+    path = "/api/v1/statuses/{id}/fetch_remote_context",
+    tag = "statuses",
+    params(("id" = String, Path, description = "Status id")),
+    responses(
+        (status = 200, description = "Fetch report"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+        (status = 403, description = "The author's instance is suspended", body = crate::error::ErrorBody),
+        (status = 404, description = "Not found, not visible, or the remote object is gone", body = crate::error::ErrorBody),
+        (status = 422, description = "Local status or federation disabled", body = crate::error::ErrorBody),
+        (status = 429, description = "A fetch is already running for this status", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn fetch_remote_context(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read")?;
+    let ctx = PostContext::new(&state);
+    let status = posts::load(&ctx.db, id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !posts::can_see(&ctx.db, &status, Some(auth.account_id)).await? {
+        return Err(Error::NotFound("status".into()));
+    }
+    if status.local {
+        return Err(Error::Validation(
+            "only remote statuses can fetch remote context".into(),
+        ));
+    }
+    // A suspended instance gets no requests at all — the same gate
+    // the account outbox sync applies.
+    let domain: Option<String> = sqlx::query_scalar("SELECT domain FROM accounts WHERE id = $1")
+        .bind(status.account_id)
+        .fetch_one(&ctx.db)
+        .await?;
+    if let Some(domain) = domain {
+        if crate::search::resolve::domain_suspended(&ctx.db, &domain).await? {
+            return Err(Error::Forbidden("the author's instance is suspended"));
+        }
+    }
+    let Some(ap) = &ctx.ap else {
+        return Err(Error::Validation("federation is not enabled".into()));
+    };
+    let report = crate::activitypub::thread::fetch_remote_context(ap, &status).await?;
+    Ok(Json(json!({
+        "imported": report.imported,
+        "scanned": report.scanned,
+        "pages": report.pages,
+        "complete": report.complete,
+    })))
+}
+
 /// `PUT /api/v1/statuses/{id}` — owner edit; republishes `Update`.
 #[utoipa::path(
     put,

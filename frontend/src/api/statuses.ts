@@ -78,6 +78,32 @@ export function getStatusContext(id: string): Promise<StatusContext> {
   });
 }
 
+/** `POST …/fetch_remote_context` — the lazy remote-thread backfill. */
+export interface RemoteContextReport {
+  /** Statuses materialized that weren't local before. */
+  imported: number;
+  /** Remote items examined (ancestor steps + collection items). */
+  scanned: number;
+  /** `replies` collection pages fetched. */
+  pages: number;
+  /** `false` when a cap/deadline stopped the walk early. */
+  complete: boolean;
+}
+
+/**
+ * `POST /api/v1/statuses/{id}/fetch_remote_context` — Yonder
+ * extension: pull the remote thread (ancestors + replies) for a
+ * remote status so the context view renders the conversation
+ * without visiting the origin instance.
+ */
+export function fetchRemoteContext(id: string): Promise<RemoteContextReport> {
+  return request<RemoteContextReport>({
+    path: `/statuses/${encodeURIComponent(id)}/fetch_remote_context`,
+    method: "POST",
+    body: {},
+  });
+}
+
 async function pageOfAccounts(
   path: string,
   query?: RequestOptions["query"],

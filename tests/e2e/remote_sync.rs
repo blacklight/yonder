@@ -349,7 +349,7 @@ async fn sync_remote_backfills_outbox_pages() {
     // the foreign-actor Create are scanned but skipped.
     assert_eq!(body["imported"].as_i64().unwrap(), 5, "{body}");
     assert_eq!(body["pages"].as_i64().unwrap(), 2, "{body}");
-    assert_eq!(body["complete"].as_bool().unwrap(), true, "{body}");
+    assert!(body["complete"].as_bool().unwrap(), "{body}");
 
     // The statuses materialized under the remote account.
     for n in 1..=4u32 {
@@ -383,7 +383,7 @@ async fn sync_remote_backfills_outbox_pages() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["imported"].as_i64().unwrap(), 0, "{body}");
-    assert_eq!(body["complete"].as_bool().unwrap(), true, "{body}");
+    assert!(body["complete"].as_bool().unwrap(), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -407,7 +407,7 @@ async fn sync_remote_limit_and_bounds() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["imported"].as_i64().unwrap(), 2, "{body}");
-    assert_eq!(body["complete"].as_bool().unwrap(), false, "{body}");
+    assert!(!body["complete"].as_bool().unwrap(), "{body}");
 
     // max_id = objects/2 → only strictly-older items import.
     let anchor = status_id_by_uri(&env.state.db, &format!("{base}/objects/2"))

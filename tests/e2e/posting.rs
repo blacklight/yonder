@@ -1500,14 +1500,14 @@ async fn link_preview_video_card_embeds() {
             .fetch_one(&env.state.db)
             .await
             .unwrap();
-    assert_eq!(scan, 2, "sweep must mark the row scanned");
+    assert_eq!(scan, 3, "sweep must mark the row scanned");
     let jobs = drain_queue(&env, "bulk").await;
     let swept: Vec<_> = jobs
         .iter()
         .filter(|j| j.kind == JobKind::FetchLinkPreview)
         .collect();
-    // Only the stale row fans out — the scan_version=1 cards written
-    // above are not re-enqueued.
+    // Only the stale row fans out — the cards written above already
+    // carry the current scan_version, so they are not re-enqueued.
     assert_eq!(swept.len(), 1, "{jobs:?}");
     assert_eq!(swept[0].payload["status_id"], id);
 

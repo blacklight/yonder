@@ -507,6 +507,7 @@
     },
     "notFound": "Esta publicación no está disponible.",
     "loadError": "No se pudo cargar la publicación.",
+    "loadingRemoteContext": "Obteniendo respuestas de la instancia remota…",
     "boostsCount": "{count} impulso | {count} impulsos",
     "quotesCount": "{count} cita | {count} citas",
     "likesCount": "{count} me gusta | {count} me gusta",

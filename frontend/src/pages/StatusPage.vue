@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { request } from "@/api/client";
-import { getStatusContext } from "@/api/statuses";
+import { fetchRemoteContext, getStatusContext } from "@/api/statuses";
 import type { Status } from "@/api/entities";
 import StatusCard from "@/components/status/StatusCard.vue";
 import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
@@ -24,6 +24,31 @@ const status = ref<Status | null>(null);
 const ancestors = ref<Status[]>([]);
 const descendants = ref<Status[]>([]);
 const error = ref<number | null>(null);
+const fetchingRemote = ref(false);
+// Remote statuses already expanded this session — one fetch per id.
+const remoteExpanded = new Set<string>();
+
+// A remote status's thread may live mostly on the origin instance —
+// the local context was ingested piecemeal. Lazily backfill it once:
+// the endpoint walks the remote ancestors and replies collections,
+// then the refreshed context replaces both lists wholesale.
+async function expandRemoteContext(s: Status) {
+  if (!auth.isLoggedIn || !s.account.acct.includes("@")) return;
+  if (remoteExpanded.has(s.id)) return;
+  remoteExpanded.add(s.id);
+  fetchingRemote.value = true;
+  try {
+    await fetchRemoteContext(s.id);
+    const ctx = await getStatusContext(props.id);
+    ancestors.value = ctx.ancestors;
+    descendants.value = ctx.descendants;
+  } catch {
+    // Remote context is best-effort — a dead or throttling remote
+    // still leaves the local partial thread.
+  } finally {
+    fetchingRemote.value = false;
+  }
+}
 
 // A delete from a thread card — or over the stream — drops it from
 // the rendered lists; deleting the opened status leaves the page.
@@ -83,6 +108,7 @@ async function load() {
     status.value = s;
     ancestors.value = ctx.ancestors;
     descendants.value = ctx.descendants;
+    void expandRemoteContext(s);
   } catch (e) {
     error.value = e instanceof ApiError ? e.status : 500;
   }
@@ -162,6 +188,9 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
           expanded
           @removed="() => router.push({ name: 'home' })"
         />
+        <p v-if="fetchingRemote" class="remote-loading" role="status">
+          {{ t("status.loadingRemoteContext") }}
+        </p>
         <div v-for="(thread, i) in threads" :key="i" class="thread">
           <StatusCard
             v-for="s in thread"
@@ -190,6 +219,11 @@ onBeforeUnmount(() => unsub.forEach((f) => f()));
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+.remote-loading {
+  margin: var(--space-sm) var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
 }
 /* Mastodon-style thread connector: a vertical line runs from the
    thread head's avatar column down to the last member's; every member

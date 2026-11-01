@@ -124,6 +124,7 @@ impl Config {
             "authentication",
             "federation_inbox",
             "remote_sync",
+            "remote_context",
         ] {
             let limit = self.rate_limit.bucket(name).expect("static bucket name");
             if limit.limit == 0 || limit.period_seconds == 0 {
@@ -792,12 +793,17 @@ pub struct RateLimitConfig {
     /// Remote outbox backfill (`POST …/accounts/{id}/sync_remote`) —
     /// one call can fan out to several remote requests.
     pub remote_sync: RateLimit,
+    /// Remote thread-context fetch
+    /// (`POST …/statuses/{id}/fetch_remote_context`) — one call can
+    /// fan out to several remote requests.
+    pub remote_context: RateLimit,
 }
 
 impl RateLimitConfig {
     /// Look up a named bucket (`"search"`, `"feed"`, `"timeline"`,
     /// `"account_creation"`, `"relation"`, `"status"`, `"media"`,
-    /// `"authentication"`, `"federation_inbox"`, `"remote_sync"`).
+    /// `"authentication"`, `"federation_inbox"`, `"remote_sync"`,
+    /// `"remote_context"`).
     pub fn bucket(&self, name: &str) -> Option<&RateLimit> {
         match name {
             "search" => Some(&self.search),
@@ -810,6 +816,7 @@ impl RateLimitConfig {
             "authentication" => Some(&self.authentication),
             "federation_inbox" => Some(&self.federation_inbox),
             "remote_sync" => Some(&self.remote_sync),
+            "remote_context" => Some(&self.remote_context),
             _ => None,
         }
     }
@@ -871,6 +878,11 @@ impl Default for RateLimitConfig {
             },
             remote_sync: RateLimit {
                 limit: 6,
+                period_seconds: 300,
+                authenticated_limit: None,
+            },
+            remote_context: RateLimit {
+                limit: 30,
                 period_seconds: 300,
                 authenticated_limit: None,
             },

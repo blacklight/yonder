@@ -31,5 +31,6 @@ pub mod tags;
 pub mod timelines;
 pub mod translation;
 pub mod users;
+pub mod webmentions;
 
 pub use error::{Error, Result};

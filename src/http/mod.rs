@@ -174,12 +174,30 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // `/users/{u}.atom`-style URLs for profiles, tags and lists.
     router = router.merge(crate::feeds::router(&state));
 
+    // Webmentions — the `POST /webmentions` receiver and the
+    // `h-entry` outgoing-source page live outside `/api` (like the
+    // AP surface).
+    if crate::webmentions::enabled(&state.config()) {
+        router = router.merge(crate::webmentions::router(&state));
+    }
+
     // Epic 23 — the active frontend's SPA files are the catch-all:
     // every route above wins by construction, and anything else lands
     // on `index.html` (or the placeholder page until `frontend/dist`
     // exists). Registered while the router still carries its state
     // type so the handler can use the `State` extractor.
     router = router.fallback(frontend::fallback);
+
+    // The `Link: <…>; rel="webmention"` header is injected on every
+    // `text/*` response so remote senders discover the endpoint from
+    // the pages they link to — registered after the fallback so the
+    // SPA shell carries it too.
+    if crate::webmentions::enabled(&state.config()) {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::webmentions::inject_link_header,
+        ));
+    }
 
     let router = match cors_layer(&state.config().http) {
         Some(cors) => router.layer(cors),

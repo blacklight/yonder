@@ -317,6 +317,10 @@ pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
     crate::admin::register_jobs(&mut registry);
     // Epic-18 media jobs (remote fetch + cleanup sweep).
     crate::media::register_jobs(&mut registry);
+    // Webmention send/receive — local work regardless of the
+    // federation gate (it is a separate protocol); `ap` only improves
+    // the streaming/fan-out side of materialization.
+    crate::webmentions::register_jobs(&mut registry, ap);
     registry
 }
 

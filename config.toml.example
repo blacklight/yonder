@@ -297,6 +297,11 @@ authenticated_limit = 60
 limit = 300
 period_seconds = 300
 
+# Inbound Webmention POSTs (per remote IP).
+[rate_limit.webmention]
+limit = 60
+period_seconds = 300
+
 [polls]
 max_options = 10
 max_option_chars = 200
@@ -416,3 +421,20 @@ max_uncompressed_size = 209715200
 # Allow installing frontends from a Git repository (`source = "git"`;
 # shells out to `git clone` and fetches remote content).
 git_enabled = false
+
+[webmentions]
+# W3C Webmention send/receive: remote sites can notify a local status
+# they linked to (it materializes as a reply by a pseudo-actor), and
+# links in local public/unlisted posts are delivered to targets'
+# Webmention endpoints. Requires `instance.domain` to be set.
+enabled = true
+# Timeout (seconds) for remote fetches — incoming source pages and
+# outgoing endpoint discovery/delivery.
+request_timeout_seconds = 10
+# Body cap (bytes) for endpoint-discovery responses.
+discovery_max_bytes = 1048576
+# Body cap (bytes) for fetched incoming source pages.
+source_max_bytes = 1048576
+# Allow targets/sources on private/loopback addresses — disables the
+# SSRF guard. Dev/test only, never in production.
+allow_private_targets = false

@@ -36,3 +36,4 @@ mod settings;
 mod social_graph;
 mod timelines;
 mod two_factor;
+mod webmentions;

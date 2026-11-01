@@ -89,6 +89,7 @@ webauthn-rs = { version = "0.5.5", features = ["danger-allow-state-serialisation
 pulldown-cmark = "0.13.5"
 ammonia = "4.2.4"
 quick-xml = "0.42"
+webmentions-sdk = "0.2"
 
 [dev-dependencies]
 base64 = "0.22"

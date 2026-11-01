@@ -53,6 +53,9 @@ pub async fn favourite(ctx: &PostContext, auth: &AuthContext, status_id: i64) ->
             status.account_id,
         )
         .await;
+        // Liking a webmention-materialized reply backfeeds a
+        // `like-of` mention to the source site.
+        crate::webmentions::outgoing::enqueue_like(ctx, &status, auth.account_id).await;
     }
     posts::load(&ctx.db, status.id)
         .await?
@@ -94,6 +97,11 @@ pub async fn unfavourite(
         if let Err(e) = publish_undo_like(ctx, ap, auth.account_id, &status, &activity_uri).await {
             tracing::error!(status_id = status.id, error = %e, "AP Undo(Like) publish failed");
         }
+    }
+    if removed.is_some() {
+        // The `like-of` backfeed retracts — the source page now
+        // renders empty and the SDK notifies stored targets.
+        crate::webmentions::outgoing::enqueue_like(ctx, &status, auth.account_id).await;
     }
     posts::load(&ctx.db, status.id)
         .await?

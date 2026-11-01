@@ -141,6 +141,14 @@ pub enum JobKind {
     /// Prune `audit_log` entries past `admin.audit_log_retention_days`
     /// (epic 21, `admin.audit_log_sweep_schedule`).
     AuditLogCleanup,
+    /// Verify an inbound Webmention (`{"source": …, "target": …}`) —
+    /// fetch the source page, confirm it links back, materialize the
+    /// mention as a pseudo-actor reply.
+    WebmentionIncoming,
+    /// Deliver a local status's links to their Webmention endpoints
+    /// (`{"status_id": …}`); also retracts mentions whose links were
+    /// edited out or deleted.
+    WebmentionOutgoing,
 }
 
 impl JobKind {
@@ -170,6 +178,8 @@ impl JobKind {
         JobKind::TimelineFanOut,
         JobKind::DeleteMediaObject,
         JobKind::AuditLogCleanup,
+        JobKind::WebmentionIncoming,
+        JobKind::WebmentionOutgoing,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -199,6 +209,8 @@ impl JobKind {
             JobKind::TimelineFanOut => "timeline_fan_out",
             JobKind::DeleteMediaObject => "delete_media_object",
             JobKind::AuditLogCleanup => "audit_log_cleanup",
+            JobKind::WebmentionIncoming => "webmention_incoming",
+            JobKind::WebmentionOutgoing => "webmention_outgoing",
         }
     }
 

@@ -61,6 +61,7 @@ pub struct Config {
     pub jobs: JobsConfig,
     pub timelines: TimelinesConfig,
     pub frontends: FrontendsConfig,
+    pub webmentions: WebmentionsConfig,
 }
 
 impl Config {
@@ -125,6 +126,7 @@ impl Config {
             "federation_inbox",
             "remote_sync",
             "remote_context",
+            "webmention",
         ] {
             let limit = self.rate_limit.bucket(name).expect("static bucket name");
             if limit.limit == 0 || limit.period_seconds == 0 {
@@ -797,6 +799,10 @@ pub struct RateLimitConfig {
     /// (`POST …/statuses/{id}/fetch_remote_context`) — one call can
     /// fan out to several remote requests.
     pub remote_context: RateLimit,
+    /// Inbound Webmention receiver (`POST /webmentions`) —
+    /// unauthenticated, so the anonymous ceiling is the anti-spam
+    /// knob.
+    pub webmention: RateLimit,
 }
 
 impl RateLimitConfig {
@@ -817,6 +823,7 @@ impl RateLimitConfig {
             "federation_inbox" => Some(&self.federation_inbox),
             "remote_sync" => Some(&self.remote_sync),
             "remote_context" => Some(&self.remote_context),
+            "webmention" => Some(&self.webmention),
             _ => None,
         }
     }
@@ -883,6 +890,11 @@ impl Default for RateLimitConfig {
             },
             remote_context: RateLimit {
                 limit: 30,
+                period_seconds: 300,
+                authenticated_limit: None,
+            },
+            webmention: RateLimit {
+                limit: 60,
                 period_seconds: 300,
                 authenticated_limit: None,
             },
@@ -1201,6 +1213,42 @@ impl Default for JobsConfig {
             reclaim_idle_seconds: 300,
             stream_maxlen: 10_000,
             poll_interval_ms: 1_000,
+        }
+    }
+}
+
+/// `[webmentions]` — W3C Webmention send/receive (see
+/// `docs/webmentions.md`). Incoming mentions materialize as replies
+/// authored by a pseudo-actor; outgoing delivery scans links in
+/// public/unlisted local posts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebmentionsConfig {
+    /// Master switch for both directions (receiver route, source
+    /// page and the processing jobs).
+    pub enabled: bool,
+    /// Timeout for remote HTTP fetches (source verification,
+    /// endpoint discovery), in seconds.
+    pub request_timeout_seconds: u64,
+    /// Maximum response body size when discovering a remote
+    /// Webmention endpoint from target HTML, in bytes.
+    pub discovery_max_bytes: u64,
+    /// Maximum response body size when fetching an incoming
+    /// mention's source page, in bytes.
+    pub source_max_bytes: u64,
+    /// Allow Webmention traffic to loopback/private targets.
+    /// Dev/test only — the SSRF guard refuses them otherwise.
+    pub allow_private_targets: bool,
+}
+
+impl Default for WebmentionsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            request_timeout_seconds: 10,
+            discovery_max_bytes: 1024 * 1024,
+            source_max_bytes: 1024 * 1024,
+            allow_private_targets: false,
         }
     }
 }

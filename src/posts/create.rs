@@ -738,6 +738,7 @@ pub async fn publish(
     crate::timelines::fanout::enqueue(&ctx.dispatcher, status.id).await;
     crate::timelines::stream::publish_update(ctx, &status).await;
     crate::notifications::emit::emit_for_status(&ctx.db, &ctx.dispatcher, &status).await;
+    crate::webmentions::outgoing::enqueue(ctx, &status).await;
     if let Some(ap) = &ctx.ap {
         if let Err(e) = crate::activitypub::posts::publish_create(ap, ctx, &status, &resolved).await
         {
@@ -990,6 +991,9 @@ pub async fn edit_status(
         }
     };
     super::preview::enqueue(ctx, &status, &effective_media).await;
+    // Link additions/removals in an edit have to reach the targets'
+    // Webmention endpoints too (deliver new, retract removed).
+    crate::webmentions::outgoing::enqueue(ctx, &status).await;
     Ok(status)
 }
 
@@ -1094,6 +1098,10 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     )
     .await;
     crate::timelines::stream::publish_delete(&ctx.db, &ctx.bus, status).await;
+    // Previously delivered Webmentions retract: the job renders an
+    // empty source document for the tombstoned row and the SDK
+    // notifies every stored target.
+    crate::webmentions::outgoing::enqueue(ctx, status).await;
     super::load_any(&ctx.db, status.id)
         .await?
         .ok_or_else(|| Error::Internal("status missing after delete".to_string()))

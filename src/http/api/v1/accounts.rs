@@ -238,7 +238,9 @@ async fn load_public_account(state: &AppState, id: i64) -> Result<account_mapper
 /// `actor_cache` row is stale or absent. Never fails the read — a
 /// federation hiccup shouldn't 5xx a profile page.
 async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::AccountRow) {
-    if account.domain.is_none() || state.ap.is_none() {
+    // `urn:` actor ids are pseudo-actors (Webmention sources) — they
+    // have no AP document to refresh.
+    if account.domain.is_none() || account.actor_id.starts_with("urn:") || state.ap.is_none() {
         return;
     }
     let fresh: Option<chrono::DateTime<chrono::Utc>> =

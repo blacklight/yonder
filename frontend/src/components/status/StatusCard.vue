@@ -869,6 +869,9 @@ async function onReact(emoji: string) {
   font-size: var(--text-sm);
   margin: 0 0 var(--space-2);
 }
+.status-card__boost svg {
+  margin-right: var(--space-2);
+}
 .status-card__header {
   display: flex;
   align-items: center;

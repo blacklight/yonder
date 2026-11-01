@@ -133,7 +133,11 @@ records which card-shape version wrote each row; running
 Bulk-queue refresh per stale row, so admins can rescan existing
 cards once after upgrading. The Redis metadata envelope is
 versioned in lockstep (`preview:vN:`), so the rescan re-fetches
-instead of replaying pre-upgrade cache entries.
+instead of replaying pre-upgrade cache entries. The same sweep also
+repairs remote `content` flattened before anchors emitted their
+hrefs (a `scheme:// rest` signature — the URL split across
+Mastodon's invisible-span markup): `content` is re-flattened from
+`content_html` and the status re-enqueues for its card.
 
 ## Translation
 

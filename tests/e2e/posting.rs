@@ -1096,6 +1096,39 @@ async fn remote_note_link_preview_enqueue() {
         !jobs.iter().any(|j| j.kind == JobKind::FetchLinkPreview),
         "{jobs:?}"
     );
+
+    // Mastodon's invisible-span link markup flattens to the href —
+    // the URL must survive into `content` or the extractor finds only
+    // a bare `https://` and no card is ever fetched.
+    let create = preview_create(
+        8,
+        json!({
+            "content": "<p>watch <a href=\"https://youtu.be/abc123\">\
+                        <span class=\"invisible\">https://</span>\
+                        <span>youtu.be/abc123</span></a></p>",
+        }),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-8'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let content: String = sqlx::query_scalar("SELECT content FROM statuses WHERE id = $1")
+        .bind(status_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(content, "watch https://youtu.be/abc123");
+    let jobs = drain_default_queue(&env).await;
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::FetchLinkPreview)
+            .count(),
+        1,
+        "{jobs:?}"
+    );
 }
 
 /// A stale `preview_cards` row for the status — what a re-run must
@@ -1201,6 +1234,59 @@ async fn link_preview_job_converges_cards() {
     assert!(
         !urls.iter().any(|u| u == "https://example.com/old"),
         "stale card must be reconciled: {urls:?}"
+    );
+}
+
+/// Remote `content` flattened before anchors emitted their hrefs is
+/// healed by the sweep: `content_html` kept the real URL, the
+/// re-flatten restores it to `content`, and the status re-enqueues on
+/// the bulk queue for a card — the reported "remote video link, no
+/// embed" repair path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn link_preview_sweep_repairs_flattened_content() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    let create = preview_create(
+        9,
+        json!({
+            "content": "<p>watch <a href=\"https://youtu.be/xyz789\">\
+                        <span class=\"invisible\">https://</span>\
+                        <span>youtu.be/xyz789</span></a></p>",
+        }),
+    );
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/prev-9'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let _ = drain_default_queue(&env).await;
+
+    // Pre-fix damage: the URL split at the scheme boundary and the
+    // href never reached `content` — so no card was ever fetched.
+    sqlx::query("UPDATE statuses SET content = 'watch https:// youtu.be/xyz789' WHERE id = $1")
+        .bind(status_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let job = FetchLinkPreviewJob::new(env.state.ap.clone());
+    job.run(&job_ctx(&env), &json!({})).await.unwrap();
+    let content: String = sqlx::query_scalar("SELECT content FROM statuses WHERE id = $1")
+        .bind(status_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(content, "watch https://youtu.be/xyz789");
+    let jobs = drain_queue(&env, "bulk").await;
+    assert!(
+        jobs.iter().any(|j| j.kind == JobKind::FetchLinkPreview
+            && j.payload["status_id"].as_i64() == Some(status_id)),
+        "{jobs:?}"
     );
 }
 

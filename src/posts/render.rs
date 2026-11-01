@@ -103,16 +103,58 @@ pub fn render(
 /// Plain text of an HTML fragment, whitespace-collapsed and capped at
 /// 20000 chars — the searchable `content` of a remote status that
 /// carries no `source` text.
+///
+/// Anchors are tokens, not containers. A link whose visible text is
+/// itself a URL — Mastodon renders links as `href` +
+/// `<span class="invisible">scheme</span>` + truncated/ellipsis spans,
+/// which flattens to a broken `https:// host/…` — emits its `href`:
+/// the href is the whole URL, so search and the link-preview
+/// extractor see the real target. `@`/`#` single-token anchors
+/// (mentions, hashtags) emit their text compacted (`@ user` →
+/// `@user`). Descriptive anchors keep their text — a link the author
+/// didn't spell out never becomes a preview candidate.
 pub fn html_to_text(html: &str) -> String {
-    scraper::Html::parse_fragment(html)
-        .root_element()
-        .text()
-        .flat_map(str::split_whitespace)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(20000)
-        .collect()
+    use scraper::node::Node;
+    fn walk(el: &scraper::ElementRef<'_>, out: &mut Vec<String>) {
+        for child in el.children() {
+            match child.value() {
+                Node::Text(text) => out.extend(text.split_whitespace().map(str::to_string)),
+                Node::Element(elem) => {
+                    let Some(eref) = scraper::ElementRef::wrap(child) else {
+                        continue;
+                    };
+                    if elem.name() == "a" {
+                        let text: String = eref.text().collect();
+                        let trimmed = text.trim();
+                        let compact: String =
+                            trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+                        if compact.starts_with("http://") || compact.starts_with("https://") {
+                            if let Some(href) = elem
+                                .attr("href")
+                                .filter(|h| h.starts_with("http://") || h.starts_with("https://"))
+                            {
+                                out.push(href.to_string());
+                                continue;
+                            }
+                        }
+                        if let Some(rest) = trimmed.strip_prefix(['@', '#']) {
+                            let rest = rest.trim();
+                            if !rest.is_empty() && !rest.contains(char::is_whitespace) {
+                                out.push(compact);
+                                continue;
+                            }
+                        }
+                    }
+                    walk(&eref, out);
+                }
+                _ => {}
+            }
+        }
+    }
+    let fragment = scraper::Html::parse_fragment(html);
+    let mut out = Vec::new();
+    walk(&fragment.root_element(), &mut out);
+    out.join(" ").chars().take(20000).collect()
 }
 
 /// The hardened allowlist applied to markdown output and inbound
@@ -466,6 +508,45 @@ mod tests {
         assert!(r.html.contains("#Rust"));
         assert!(r.html.contains("<br>"));
         assert_eq!(r.hashtags, vec!["rust"]);
+    }
+
+    #[test]
+    fn html_to_text_url_anchor_emits_href() {
+        // Mastodon's invisible-span markup flattens to a broken
+        // `scheme:// rest` — the href is the real URL.
+        let html = "<p>see <a href=\"https://youtu.be/abc123\">\
+                    <span class=\"invisible\">https://</span>\
+                    <span>youtu.be/abc123</span></a> now</p>";
+        assert_eq!(html_to_text(html), "see https://youtu.be/abc123 now");
+
+        // Truncated ellipsis markup — still the full href.
+        let html = "<p><a href=\"https://example.com/very/long/path\">\
+                    <span class=\"invisible\">https://</span>\
+                    <span class=\"ellipsis\">example.com/very/lon…</span></a></p>";
+        assert_eq!(html_to_text(html), "https://example.com/very/long/path");
+
+        // A non-http href never lands in the text.
+        let html = "<p><a href=\"javascript:x\">https://example.com</a></p>";
+        assert_eq!(html_to_text(html), "https://example.com");
+    }
+
+    #[test]
+    fn html_to_text_descriptive_and_token_anchors() {
+        // Descriptive text stays text — no URL leak into the
+        // searchable content.
+        let html = "<p>see <a href=\"https://example.com/a\">this article</a></p>";
+        assert_eq!(html_to_text(html), "see this article");
+
+        // Mention/hashtag anchors compact to their token.
+        let html = "<p><a href=\"https://mas.to/@nemo\" class=\"mention\">\
+                    @<span>nemo</span></a> said \
+                    <a href=\"https://mas.to/tags/rust\" rel=\"tag\">\
+                    #<span>rust</span></a></p>";
+        assert_eq!(html_to_text(html), "@nemo said #rust");
+
+        // Multi-word anchor text is not a token — kept verbatim.
+        let html = "<p><a href=\"https://x.test\">@ our team</a></p>";
+        assert_eq!(html_to_text(html), "@ our team");
     }
 
     #[test]

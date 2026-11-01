@@ -281,6 +281,8 @@ impl FetchLinkPreviewJob {
     /// time — not at fetch time — bounds the fan-out: a page that
     /// keeps failing can't be re-enqueued forever, and a full batch
     /// re-enqueues the sweep itself so the remainder is covered.
+    /// A second phase repairs remote `content` flattened before
+    /// anchors emitted their hrefs — see [`Self::repair_content`].
     async fn sweep(&self, ctx: &JobContext) -> Result<()> {
         let status_ids: Vec<i64> = sqlx::query_scalar(
             "UPDATE preview_cards SET scan_version = $1 \
@@ -294,14 +296,11 @@ impl FetchLinkPreviewJob {
         .bind(SWEEP_BATCH_CAP)
         .fetch_all(&ctx.db)
         .await?;
-        if status_ids.is_empty() {
-            return Ok(());
-        }
         let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
         let mut status_ids = status_ids;
         status_ids.sort_unstable();
         status_ids.dedup();
-        let hit_cap = status_ids.len() as i64 >= SWEEP_BATCH_CAP;
+        let mut hit_cap = status_ids.len() as i64 >= SWEEP_BATCH_CAP;
         for status_id in status_ids {
             dispatcher
                 .enqueue_on(
@@ -311,12 +310,64 @@ impl FetchLinkPreviewJob {
                 )
                 .await?;
         }
+        hit_cap |= self.repair_content(ctx, &dispatcher).await?;
         if hit_cap {
             dispatcher
                 .enqueue_on(Queue::Bulk, JobKind::FetchLinkPreview, json!({}))
                 .await?;
         }
         Ok(())
+    }
+
+    /// Remote statuses flattened before [`render::html_to_text`]
+    /// emitted anchor hrefs carry a `scheme:// <rest>` signature —
+    /// Mastodon's invisible-span link markup split the URL across
+    /// text nodes, and the href never reached `content`, so no card
+    /// was ever fetched (and URL/mention search can't match the
+    /// broken text). Re-flatten from `content_html` — the hrefs
+    /// survive there — and re-run the fetch on the repaired text.
+    /// Candidates must contain an `http(s)` href or the re-flatten
+    /// could never change the row; locals are skipped (their
+    /// `content` is the author's source text, not a flatten).
+    /// Returns `true` when the batch was full and at least one row
+    /// changed — an unchanging full batch is permanently broken and
+    /// must not re-enqueue the sweep forever.
+    async fn repair_content(&self, ctx: &JobContext, dispatcher: &Dispatcher) -> Result<bool> {
+        let rows = sqlx::query_as::<_, (i64, String, String)>(
+            "SELECT id, content, content_html FROM statuses \
+             WHERE NOT local AND NOT tombstone \
+               AND content_html <> '' \
+               AND content ~ 'https?://\\s' \
+               AND content_html ~ 'href=\"https?://' \
+             ORDER BY id LIMIT $1",
+        )
+        .bind(SWEEP_BATCH_CAP)
+        .fetch_all(&ctx.db)
+        .await?;
+        let hit_cap = rows.len() as i64 >= SWEEP_BATCH_CAP;
+        let mut changed = 0usize;
+        for (status_id, _, content_html) in rows {
+            let repaired = super::render::html_to_text(&content_html);
+            let updated =
+                sqlx::query("UPDATE statuses SET content = $2 WHERE id = $1 AND content <> $2")
+                    .bind(status_id)
+                    .bind(&repaired)
+                    .execute(&ctx.db)
+                    .await?
+                    .rows_affected()
+                    > 0;
+            if updated {
+                changed += 1;
+                dispatcher
+                    .enqueue_on(
+                        Queue::Bulk,
+                        JobKind::FetchLinkPreview,
+                        json!({"status_id": status_id}),
+                    )
+                    .await?;
+            }
+        }
+        Ok(hit_cap && changed > 0)
     }
 }
 

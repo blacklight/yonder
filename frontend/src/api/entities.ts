@@ -471,6 +471,19 @@ export interface InstanceEntity {
     message?: string | null;
     invites_enabled?: boolean;
   };
+  /** Akkoma-style capability block — `fields_limits` drives the
+   * profile-edit caps; emitted identically on v1 and v2. */
+  pleroma?: {
+    metadata?: {
+      vapid_public_key?: string | null;
+      fields_limits?: {
+        max_fields?: number;
+        max_remote_fields?: number;
+        name_length?: number;
+        value_length?: number;
+      };
+    };
+  };
   [key: string]: unknown;
 }
 

@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { updateCredentials, verifyCredentials } from "@/api/accounts";
 import { safeHttpUrl } from "@/utils/sanitize";
 import { useAuthStore } from "@/stores/auth";
+import { useInstanceStore } from "@/stores/instance";
 import Avatar from "@/components/ui/Avatar.vue";
 import Button from "@/components/ui/Button.vue";
 import Card from "@/components/ui/Card.vue";
@@ -14,12 +15,20 @@ import { FontAwesomeIcon } from "@/icons";
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const instance = useInstanceStore();
 
-// Backend defaults (`content.max_*`) — the instance endpoint doesn't
-// expose them, so the PATCH 422 stays authoritative.
+// Bio/display-name caps aren't on the instance entity — the PATCH
+// 422 stays authoritative for them. The field caps come from
+// `pleroma.metadata.fields_limits`; the fallbacks match the backend
+// defaults (`content.max_profile_*`).
 const MAX_DISPLAY_NAME = 100;
 const MAX_BIO = 5000;
-const MAX_FIELDS = 10;
+const fieldsLimits = computed(
+  () => instance.entity?.pleroma?.metadata?.fields_limits,
+);
+const maxFields = computed(() => fieldsLimits.value?.max_fields ?? 10);
+const maxFieldName = computed(() => fieldsLimits.value?.name_length ?? 250);
+const maxFieldValue = computed(() => fieldsLimits.value?.value_length ?? 2000);
 
 const state = ref<"loading" | "ok" | "error">("loading");
 const pending = ref(false);
@@ -95,7 +104,7 @@ function clearImage(kind: "avatar" | "header") {
 }
 
 function addField() {
-  if (fields.value.length < MAX_FIELDS)
+  if (fields.value.length < maxFields.value)
     fields.value.push({ name: "", value: "" });
 }
 
@@ -156,6 +165,9 @@ async function save() {
 }
 
 onMounted(async () => {
+  // Lazy + shared — `fields_limits` arrives whenever it resolves; the
+  // form renders against the fallbacks until then.
+  instance.ensure();
   try {
     // Always re-fetch — `source` (raw note/fields) only exists on the
     // CredentialAccount, not on the public entity in `auth.account`.
@@ -308,11 +320,13 @@ onUnmounted(() => {
             <Input
               v-model="field.name"
               :label="t('settingsProfile.fieldName')"
+              :maxlength="maxFieldName"
               :disabled="pending"
             />
             <Input
               v-model="field.value"
               :label="t('settingsProfile.fieldValue')"
+              :maxlength="maxFieldValue"
               :disabled="pending"
             />
             <Button
@@ -326,7 +340,7 @@ onUnmounted(() => {
             </Button>
           </div>
           <Button
-            v-if="fields.length < MAX_FIELDS"
+            v-if="fields.length < maxFields"
             variant="secondary"
             size="sm"
             @click="addField"

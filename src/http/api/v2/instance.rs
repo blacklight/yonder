@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::{
     config::RegistrationMode,
-    http::api::v1::instance::{asset_url, contact_account, rules_json},
+    http::api::v1::instance::{asset_url, contact_account, pleroma_metadata, rules_json},
     http::AppState,
     Result,
 };
@@ -90,5 +90,9 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
             "url": config.instance.contact_url,
         },
         "rules": rules_json(&config.instance.rules),
+        // The same Akkoma-style block the v1 entity carries — the SPA
+        // reads `fields_limits` for the profile-edit caps and v2-only
+        // clients get identical discovery.
+        "pleroma": pleroma_metadata(config),
     })))
 }

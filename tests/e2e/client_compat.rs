@@ -886,6 +886,18 @@ async fn instance_about_surface() {
     assert_eq!(body["contact"]["account"]["username"], "carol");
     assert_eq!(body["usage"]["users"]["active_month"], 1);
     assert_eq!(body["source_url"], env!("CARGO_PKG_REPOSITORY"));
+    // The v2 entity carries the same Akkoma-style `pleroma` block —
+    // `fields_limits` drives the profile-edit caps regardless of which
+    // entity shape a client reads.
+    assert_eq!(
+        body["pleroma"]["metadata"]["fields_limits"],
+        json!({
+            "max_fields": 10,
+            "max_remote_fields": 10,
+            "name_length": 250,
+            "value_length": 2000,
+        })
+    );
 
     // v1 entity: `thumbnail` is a URL string, `contact_account` the
     // resolved entity, `rules` the same {id, text} shape.

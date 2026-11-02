@@ -35,6 +35,30 @@ pub(crate) fn asset_url(base_url: &str, path: &Option<String>, name: &str) -> Op
         .map(|_| format!("{}/api/v1/instance/{name}", base_url.trim_end_matches('/')))
 }
 
+/// The `pleroma` block shared by the v1 and v2 instance entities —
+/// Akkoma-style capability metadata (`fields_limits`, the VAPID
+/// discovery key) a client can read regardless of which entity shape
+/// it fetches.
+pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
+    json!({
+        "metadata": {
+            "features": ["pleroma_emoji_reactions", "yonder"],
+            "post_formats": ["text/plain", "text/markdown"],
+            // Akkoma-style WebPush discovery: clients need the VAPID
+            // public key *before* they can create a subscription
+            // (`GET /api/v1/push/subscription` only reports it once
+            // one exists).
+            "vapid_public_key": config.http.vapid_public_key,
+            "fields_limits": {
+                "max_fields": config.content.max_profile_fields,
+                "max_remote_fields": config.content.max_profile_fields,
+                "name_length": config.content.max_profile_field_name_length,
+                "value_length": config.content.max_profile_field_value_length,
+            },
+        },
+    })
+}
+
 /// Resolve `instance.contact_url` to a local Account entity for
 /// `contact.account` (v2) / `contact_account` (v1). Only `/@user` and
 /// `/users/{user}` URLs on this instance's own host resolve — remote
@@ -137,23 +161,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         // `POST /statuses` accepts (markdown is rendered server-side),
         // `pleroma_emoji_reactions` points them at the
         // `/api/v1/pleroma/statuses/{id}/reactions` endpoints.
-        "pleroma": {
-            "metadata": {
-                "features": ["pleroma_emoji_reactions", "yonder"],
-                "post_formats": ["text/plain", "text/markdown"],
-                // Akkoma-style WebPush discovery: clients need the
-                // VAPID public key *before* they can create a
-                // subscription (`GET /api/v1/push/subscription` only
-                // reports it once one exists).
-                "vapid_public_key": config.http.vapid_public_key,
-                "fields_limits": {
-                    "max_fields": config.content.max_profile_fields,
-                    "max_remote_fields": config.content.max_profile_fields,
-                    "name_length": config.content.max_profile_field_name_length,
-                    "value_length": config.content.max_profile_field_value_length,
-                },
-            },
-        },
+        "pleroma": pleroma_metadata(config),
     })))
 }
 

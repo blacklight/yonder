@@ -3,6 +3,7 @@ import { flushPromises } from "@vue/test-utils";
 import type { DOMWrapper, VueWrapper } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
+import { useInstanceStore } from "@/stores/instance";
 import ProfileSettingsPage from "./ProfileSettingsPage.vue";
 
 vi.mock("@/api/accounts", () => ({
@@ -173,6 +174,72 @@ describe("ProfileSettingsPage", () => {
     expect(wrapper.get(".avatar__img").attributes("src")).toBe(
       "https://example.com/avatar-new.png",
     );
+  });
+
+  it("lets the instance's fields_limits raise the add-field cap", async () => {
+    const instance = useInstanceStore();
+    instance.entity = {
+      pleroma: { metadata: { fields_limits: { max_fields: 3 } } },
+    } as never;
+    mockedVerify.mockResolvedValue({
+      ...credentialAccount,
+      source: {
+        ...credentialAccount.source,
+        fields: [
+          { name: "a", value: "1" },
+          { name: "b", value: "2" },
+        ],
+      },
+    } as never);
+    const { wrapper } = mountWith(ProfileSettingsPage);
+    await flushPromises();
+
+    const add = wrapper
+      .findAll("button")
+      .find((b) => b.text().includes("Add field"));
+    expect(add).toBeDefined();
+    await add!.trigger("click");
+
+    // At the cap — the button disappears.
+    expect(wrapper.findAll(".profile-edit__field-row")).toHaveLength(3);
+    expect(
+      wrapper.findAll("button").some((b) => b.text().includes("Add field")),
+    ).toBe(false);
+  });
+
+  it("defaults the add-field cap to 10 without instance limits", async () => {
+    mockedVerify.mockResolvedValue({
+      ...credentialAccount,
+      source: {
+        ...credentialAccount.source,
+        fields: Array.from({ length: 10 }, (_, i) => ({
+          name: `f${i}`,
+          value: `${i}`,
+        })),
+      },
+    } as never);
+    const { wrapper } = mountWith(ProfileSettingsPage);
+    await flushPromises();
+    expect(
+      wrapper.findAll("button").some((b) => b.text().includes("Add field")),
+    ).toBe(false);
+  });
+
+  it("applies the instance field name/value lengths to the inputs", async () => {
+    const instance = useInstanceStore();
+    instance.entity = {
+      pleroma: {
+        metadata: {
+          fields_limits: { name_length: 42, value_length: 4242 },
+        },
+      },
+    } as never;
+    const { wrapper } = await mountOk();
+    const inputs = wrapper.findAll<HTMLInputElement>(
+      ".profile-edit__field-row input",
+    );
+    expect(inputs[0].attributes("maxlength")).toBe("42");
+    expect(inputs[1].attributes("maxlength")).toBe("4242");
   });
 
   it("sends a blank fields_attributes pair to clear all fields", async () => {

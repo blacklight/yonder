@@ -10,7 +10,7 @@
 
 use sqlx::PgPool;
 
-use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::StatusRow};
+use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::StatusRow, Result};
 
 /// Emit `mention` and `status` notification events for a new status.
 ///
@@ -24,8 +24,16 @@ use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::Stat
 /// followers-only status reaches a subscriber only through an accepted
 /// follow. `emit_notification_event` drops self/remote recipients
 /// itself.
-pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &StatusRow) {
-    let mentioned = match sqlx::query_scalar::<_, i64>(
+/// Lookup errors propagate — inside a job the caller must let them
+/// retry (`?`), since a dropped lookup silently loses the
+/// notification forever: the status is already durable, and dedupe
+/// can only collapse events that were actually emitted.
+pub async fn emit_for_status(
+    db: &PgPool,
+    dispatcher: &Dispatcher,
+    status: &StatusRow,
+) -> Result<()> {
+    let mentioned = sqlx::query_scalar::<_, i64>(
         "SELECT sm.account_id FROM status_mentions sm \
          JOIN accounts a ON a.id = sm.account_id AND a.domain IS NULL \
          WHERE sm.status_id = $1 AND sm.account_id <> $2",
@@ -33,14 +41,7 @@ pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &Stat
     .bind(status.id)
     .bind(status.account_id)
     .fetch_all(db)
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(status_id = status.id, error = %e, "mention lookup failed");
-            Vec::new()
-        }
-    };
+    .await?;
     for to in mentioned {
         emit_notification_event(
             db,
@@ -53,9 +54,9 @@ pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &Stat
         .await;
     }
     if status.visibility == "direct" {
-        return;
+        return Ok(());
     }
-    let subscribed = match sqlx::query_scalar::<_, i64>(
+    let subscribed = sqlx::query_scalar::<_, i64>(
         "SELECT account_id FROM follows WHERE target_account_id = $1 AND notify \
          UNION \
          SELECT s.account_id FROM subscriptions s \
@@ -67,14 +68,7 @@ pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &Stat
     .bind(status.account_id)
     .bind(&status.visibility)
     .fetch_all(db)
-    .await
-    {
-        Ok(ids) => ids,
-        Err(e) => {
-            tracing::warn!(status_id = status.id, error = %e, "status-notify lookup failed");
-            Vec::new()
-        }
-    };
+    .await?;
     for to in subscribed {
         emit_notification_event(
             db,
@@ -86,4 +80,5 @@ pub async fn emit_for_status(db: &PgPool, dispatcher: &Dispatcher, status: &Stat
         )
         .await;
     }
+    Ok(())
 }

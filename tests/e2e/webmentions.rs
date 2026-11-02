@@ -356,9 +356,11 @@ async fn incoming_webmention_materializes_reply() {
     }
 
     // The `mention` notification goes through the NotificationFanout
-    // job — it lands while the worker is still running.
+    // job — it lands while the worker is still running. Generous
+    // window for the shared CI host, where enqueue→drain→insert can
+    // lag well past a few seconds under load.
     let db = env.state.db.clone();
-    let notified = wait_for(Duration::from_secs(10), move || {
+    let notified = wait_for(Duration::from_secs(30), move || {
         let db = db.clone();
         async move {
             sqlx::query_scalar::<_, bool>(

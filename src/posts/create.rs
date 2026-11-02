@@ -736,7 +736,11 @@ pub async fn publish(
     .await;
     crate::timelines::fanout::enqueue(&ctx.dispatcher, status.id).await;
     crate::timelines::stream::publish_update(ctx, &status).await;
-    crate::notifications::emit::emit_for_status(&ctx.db, &ctx.dispatcher, &status).await;
+    if let Err(e) =
+        crate::notifications::emit::emit_for_status(&ctx.db, &ctx.dispatcher, &status).await
+    {
+        tracing::warn!(status_id, error = %e, "notification emit failed");
+    }
     crate::webmentions::outgoing::enqueue(ctx, &status).await;
     if let Some(ap) = &ctx.ap {
         if let Err(e) = crate::activitypub::posts::publish_create(ap, ctx, &status, &resolved).await

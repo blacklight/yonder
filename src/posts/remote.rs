@@ -64,12 +64,19 @@ pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) 
                                         .await;
                                         crate::timelines::stream::publish_update(&ctx, &status)
                                             .await;
-                                        crate::notifications::emit::emit_for_status(
+                                        if let Err(e) = crate::notifications::emit::emit_for_status(
                                             &core.db,
                                             &core.dispatcher,
                                             &status,
                                         )
-                                        .await;
+                                        .await
+                                        {
+                                            tracing::warn!(
+                                                status_id = status.id,
+                                                error = %e,
+                                                "notification emit failed"
+                                            );
+                                        }
                                     }
                                     // An accepted remote edit pushes
                                     // `status.update`: live timelines

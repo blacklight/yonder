@@ -476,11 +476,16 @@ async fn materialize(ctx: &JobContext, ap: Option<&ApContext>, mention: &Webment
     if is_new {
         crate::timelines::fanout::enqueue(&post_ctx.dispatcher, status.id).await;
         crate::timelines::stream::publish_update(&post_ctx, &status).await;
-        crate::notifications::emit::emit_for_status(&ctx.db, &post_ctx.dispatcher, &status).await;
         crate::posts::preview::enqueue(&post_ctx, &status, &[]).await;
     } else {
         crate::timelines::stream::publish_status_update(&post_ctx, &status).await;
     }
+    // Emit unconditionally (not gated on `is_new`): the dedupe index
+    // collapses a repeat, and a notification dropped by a transient
+    // failure — or by a retry that only reached this point — re-fires
+    // here. Errors propagate so the job retries rather than losing
+    // the notification after the status is already durable.
+    crate::notifications::emit::emit_for_status(&ctx.db, &post_ctx.dispatcher, &status).await?;
     Ok(())
 }
 

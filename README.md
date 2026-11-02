@@ -289,7 +289,24 @@ Layout and conventions:
 `.drone.yml` mirrors the Songhive pipeline: lint + tests on push,
 image publish to quay.io and `cargo publish` of the `yonder-server`
 crate on tag (`yonder` is taken on crates.io by an unrelated project;
-the binary is still `yonder`). Required Drone secrets:
-`ssh_pubkey`/`ssh_privkey` (GitHub mirror), `docker_user`/`docker_pass`
-(registry), `crates_io_token`. The `cargo_cache` volume expects a
-writable `/home/drone/.cargo/drone` on the Drone host.
+the binary is still `yonder`). `backend-tests` runs the suite through
+`cargo llvm-cov` and emits `lcov.info`, uploaded to Codacy on pushes
+to `main`. Required Drone secrets: `ssh_pubkey`/`ssh_privkey` (GitHub
+mirror), `docker_user`/`docker_pass` (registry), `crates_io_token`,
+`codacy_project_token` (coverage upload). The `cargo_cache` volume
+expects a writable `/home/drone/.cargo/drone` on the Drone host.
+
+### Cutting a release
+
+Bump the version with `scripts/bump-version.sh` — the Rust equivalent
+of bumpversion, backed by cargo-edit's `cargo set-version`
+(`cargo install cargo-edit --locked`):
+
+```bash
+scripts/bump-version.sh minor   # or patch|major, or an explicit 1.2.3
+```
+
+It updates `Cargo.toml` and `Cargo.lock`. Commit both, then push a
+`v<version>` tag — the tag pipeline publishes
+`quay.io/yonder/yonder:<version>` (+ `:latest`) and the
+`yonder-server` crate.

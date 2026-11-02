@@ -8,6 +8,19 @@ trigger:
     exclude:
       - pull_request
 
+# Shared service containers, reachable from every step by name on the
+# pipeline network. `services:` must be a TOP-LEVEL key for docker
+# pipelines — a per-step `services:` section is silently ignored and
+# the step then fails DNS lookups for these hostnames.
+services:
+  - name: postgres
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+  - name: redis
+    image: redis:7-alpine
+
 volumes:
   - name: docker_sock
     host:
@@ -92,15 +105,6 @@ steps:
     - name: cargo_cache
       path: /usr/local/cargo/registry/cache
 
-  services:
-    - name: postgres
-      image: postgres:17-alpine
-      environment:
-        POSTGRES_USER: postgres
-        POSTGRES_PASSWORD: postgres
-    - name: redis
-      image: redis:7-alpine
-
   environment:
     # Each test provisions its own yonder_t_<slug> database and Redis
     # key prefix — the PG URL points at the server, not a database.
@@ -110,8 +114,13 @@ steps:
   commands:
     # aws-lc-sys (lettre) compiles C code — the full rust image has a
     # C toolchain but no cmake.
-    - apt-get update && apt-get install -y cmake
-    - cargo test --locked
+    - apt-get update && apt-get install -y cmake curl
+    # cargo llvm-cov wraps `cargo test` with coverage instrumentation —
+    # the test run doubles as the coverage report input (lcov.info
+    # stays in the shared workspace for the codacy-coverage step).
+    - rustup component add llvm-tools-preview
+    - curl -fsSL https://github.com/taiki-e/cargo-llvm-cov/releases/latest/download/cargo-llvm-cov-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C /usr/local/cargo/bin
+    - cargo llvm-cov --locked --lcov --output-path lcov.info
 
   when:
     event:
@@ -171,7 +180,7 @@ steps:
 
   environment:
     REGISTRY_ENDPOINT: quay.io
-    IMAGE_NAME: quay.io/blacklight/yonder
+    IMAGE_NAME: quay.io/yonder/yonder
     DOCKER_USER:
       from_secret: docker_user
     DOCKER_PASS:
@@ -204,3 +213,32 @@ steps:
 
   commands:
     - . .drone/publish-crate.sh
+
+###
+### Upload coverage to Codacy
+###
+
+- name: codacy-coverage
+  image: alpine
+  depends_on:
+    - backend-tests
+  when:
+    branch:
+      - main
+    event:
+      - push
+    paths:
+      include:
+        - src/**
+        - tests/**
+        - migrations/**
+        - Cargo.*
+
+  environment:
+    CODACY_PROJECT_TOKEN:
+      from_secret: codacy_project_token
+
+  commands:
+    - apk add --update --no-cache bash curl
+    - curl -fsSL https://coverage.codacy.com/get.sh -o /tmp/codacy-coverage.sh
+    - bash /tmp/codacy-coverage.sh report -r lcov.info --commit-uuid "$DRONE_COMMIT_SHA"

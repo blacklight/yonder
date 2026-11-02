@@ -364,6 +364,11 @@ async fn run_inline(
     out: &Output,
 ) -> Result<u8> {
     let ctx = context::load_runtime(path, true).await?;
+    // Inline runs emit their handler's tracing to stderr — without a
+    // subscriber a silent `job completed` hides every delivery error.
+    if let Err(e) = crate::logging::init(&ctx.config.server) {
+        out.warn(&format!("logging init skipped: {e}"));
+    }
     let registry = build_registry(ctx.ap.as_ref());
     let handler = registry
         .handler(kind)

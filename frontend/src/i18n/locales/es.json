@@ -494,7 +494,11 @@
     "failed": "La autorización falló.",
     "invalidRequest": "Este enlace de autorización está incompleto: faltan parámetros obligatorios o no son válidos.",
     "unknownApp": "Aplicación desconocida. Comprueba que la aplicación esté registrada en este servidor.",
-    "loadFailed": "No se pudieron cargar los datos de la aplicación."
+    "loadFailed": "No se pudieron cargar los datos de la aplicación.",
+    "codeTitle": "Autorización concedida",
+    "codeHint": "Copia este código y pégalo en la aplicación para terminar de iniciar sesión.",
+    "copy": "Copiar",
+    "copied": "Copiado"
   },
   "menu": {
     "title": "Menú",

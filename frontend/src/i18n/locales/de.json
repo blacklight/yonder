@@ -494,7 +494,11 @@
     "failed": "Autorisierung fehlgeschlagen.",
     "invalidRequest": "Dieser Autorisierungslink ist unvollständig — erforderliche Parameter fehlen oder sind ungültig.",
     "unknownApp": "Unbekannte Anwendung. Prüfe, ob die App auf diesem Server registriert ist.",
-    "loadFailed": "Die Details der Anwendung konnten nicht geladen werden."
+    "loadFailed": "Die Details der Anwendung konnten nicht geladen werden.",
+    "codeTitle": "Autorisierung erteilt",
+    "codeHint": "Kopiere diesen Code und füge ihn in der Anwendung ein, um die Anmeldung abzuschließen.",
+    "copy": "Kopieren",
+    "copied": "Kopiert"
   },
   "menu": {
     "title": "Menü",

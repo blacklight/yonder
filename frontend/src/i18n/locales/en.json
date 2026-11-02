@@ -1141,7 +1141,11 @@
     "failed": "Authorization failed.",
     "invalidRequest": "This authorization link is incomplete — required parameters are missing or invalid.",
     "unknownApp": "Unknown application. Check that the app is registered on this server.",
-    "loadFailed": "Couldn't load the application's details."
+    "loadFailed": "Couldn't load the application's details.",
+    "codeTitle": "Authorization granted",
+    "codeHint": "Copy this code and paste it into the application to finish signing in.",
+    "copy": "Copy",
+    "copied": "Copied"
   },
   "about": {
     "loadError": "Could not load the server information.",

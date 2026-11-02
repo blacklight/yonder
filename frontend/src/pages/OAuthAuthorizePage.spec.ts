@@ -107,6 +107,47 @@ describe("OAuthAuthorizePage", () => {
     expect(oauth.authorizeApp).not.toHaveBeenCalled();
   });
 
+  it("authorize on an OOB redirect shows the code instead of navigating", async () => {
+    oauth.authorizeApp.mockResolvedValue({
+      code: "oob-code-1",
+      state: null,
+      redirect_to: "urn:ietf:wg:oauth:2.0:oob?code=oob-code-1",
+    });
+    const { wrapper, router } = mountWith(OAuthAuthorizePage);
+    await router.push(
+      "/oauth/authorize?client_id=cid-1&redirect_uri=" +
+        encodeURIComponent("urn:ietf:wg:oauth:2.0:oob") +
+        "&response_type=code",
+    );
+    await flushPromises();
+    await button(wrapper, "Authorize").trigger("click");
+    await flushPromises();
+    expect(oauth.navigateTo).not.toHaveBeenCalled();
+    expect(wrapper.get(".authorize__code").text()).toBe("oob-code-1");
+  });
+
+  it("copies the OOB code to the clipboard", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    oauth.authorizeApp.mockResolvedValue({
+      code: "oob-code-2",
+      state: null,
+      redirect_to: "urn:ietf:wg:oauth:2.0:oob?code=oob-code-2",
+    });
+    const { wrapper, router } = mountWith(OAuthAuthorizePage);
+    await router.push(
+      "/oauth/authorize?client_id=cid-1&redirect_uri=" +
+        encodeURIComponent("urn:ietf:wg:oauth:2.0:oob") +
+        "&response_type=code",
+    );
+    await flushPromises();
+    await button(wrapper, "Authorize").trigger("click");
+    await flushPromises();
+    await button(wrapper, "Copy").trigger("click");
+    await flushPromises();
+    expect(writeText).toHaveBeenCalledWith("oob-code-2");
+  });
+
   it("deny on an OOB redirect just confirms instead of navigating", async () => {
     const { wrapper, router } = mountWith(OAuthAuthorizePage);
     await router.push(

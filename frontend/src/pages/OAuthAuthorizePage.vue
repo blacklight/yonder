@@ -40,6 +40,11 @@ const error = ref("");
 // Set by "deny" when the redirect URI can't carry the error back to
 // the client (the urn:* out-of-band placeholders go nowhere).
 const denied = ref(false);
+// Set by "authorize" on those same urn:* targets — the code can't
+// ride a redirect that resolves nowhere, so it renders in-page for
+// the user to paste into the client (tut, CLI tools).
+const grantedCode = ref("");
+const codeCopied = ref(false);
 
 const requestedScopes = computed(() => {
   const raw = query.value?.scope || (info.value?.scopes ?? []).join(" ");
@@ -110,11 +115,24 @@ async function authorize() {
   pending.value = true;
   try {
     const res = await authorizeApp(query.value);
-    navigateTo(res.redirect_to);
+    if (isOob.value) {
+      grantedCode.value = res.code;
+      pending.value = false;
+    } else {
+      navigateTo(res.redirect_to);
+    }
   } catch (e) {
     error.value = e instanceof ApiError ? e.message : t("oauth.failed");
     pending.value = false;
   }
+}
+
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+async function copyCode() {
+  await navigator.clipboard.writeText(grantedCode.value);
+  codeCopied.value = true;
+  clearTimeout(copiedTimer);
+  copiedTimer = setTimeout(() => (codeCopied.value = false), 2000);
 }
 
 // RFC 6749 §4.1.2.1 — the denial rides back to the client on its
@@ -152,6 +170,17 @@ function deny() {
     <p v-else-if="denied" class="authorize__muted" role="status">
       {{ t("oauth.denied") }}
     </p>
+    <div v-else-if="grantedCode" class="authorize__body">
+      <p class="authorize__prompt">{{ t("oauth.codeTitle") }}</p>
+      <code class="authorize__code">{{ grantedCode }}</code>
+      <p class="authorize__muted">{{ t("oauth.codeHint") }}</p>
+      <div class="authorize__actions">
+        <Button variant="secondary" @click="copyCode">
+          <FontAwesomeIcon :icon="codeCopied ? 'check' : 'copy'" />
+          {{ codeCopied ? t("oauth.copied") : t("oauth.copy") }}
+        </Button>
+      </div>
+    </div>
     <div v-else class="authorize__body">
       <p class="authorize__prompt">
         <strong>{{ info?.client_name }}</strong> {{ t("oauth.wantsAccess") }}
@@ -218,5 +247,15 @@ function deny() {
 .authorize__error {
   color: var(--danger);
   margin: 0;
+}
+.authorize__code {
+  display: block;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 0.5rem);
+  background: var(--accent-soft);
+  font-size: var(--text-lg, 1.1rem);
+  overflow-wrap: anywhere;
+  user-select: all;
 }
 </style>

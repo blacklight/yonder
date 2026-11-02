@@ -494,7 +494,11 @@
     "failed": "Autorizzazione non riuscita.",
     "invalidRequest": "Questo link di autorizzazione è incompleto: mancano parametri obbligatori o non sono validi.",
     "unknownApp": "Applicazione sconosciuta. Verifica che l'app sia registrata su questo server.",
-    "loadFailed": "Impossibile caricare i dettagli dell'applicazione."
+    "loadFailed": "Impossibile caricare i dettagli dell'applicazione.",
+    "codeTitle": "Autorizzazione concessa",
+    "codeHint": "Copia questo codice e incollalo nell'applicazione per completare l'accesso.",
+    "copy": "Copia",
+    "copied": "Copiato"
   },
   "menu": {
     "title": "Menu",

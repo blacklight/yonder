@@ -13,8 +13,15 @@ volumes:
     host:
       path: /var/run/docker.sock
   # NOTE: Requires /home/drone/.cargo/drone to exist (or be symlinked)
-  # and be writable by the Drone server UID. Shared between the lint,
-  # test and publish steps so crates are fetched/compiled once.
+  # and be writable by the Drone server UID.
+  #
+  # Mounted at `registry/cache` — the .crate download archives — NOT
+  # the whole registry. registry/src (extractions) and registry/index
+  # stay per-step: parallel Rust steps unpacking the same crate into a
+  # shared registry/src race and fail with "failed to unpack package
+  # ... File exists (os error 17)". Download archives are written
+  # atomically, so sharing them is safe — crates are fetched once
+  # while each step still extracts/compiles independently.
   - name: cargo_cache
     host:
       path: /home/drone/.cargo/drone
@@ -29,7 +36,7 @@ steps:
   image: rust:1
   volumes:
     - name: cargo_cache
-      path: /usr/local/cargo/registry
+      path: /usr/local/cargo/registry/cache
   commands:
     - rustup component add rustfmt clippy
     - cargo fmt --all -- --check
@@ -83,7 +90,7 @@ steps:
   image: rust:1
   volumes:
     - name: cargo_cache
-      path: /usr/local/cargo/registry
+      path: /usr/local/cargo/registry/cache
 
   services:
     - name: postgres
@@ -185,7 +192,7 @@ steps:
   image: rust:1
   volumes:
     - name: cargo_cache
-      path: /usr/local/cargo/registry
+      path: /usr/local/cargo/registry/cache
 
   environment:
     CARGO_REGISTRY_TOKEN:

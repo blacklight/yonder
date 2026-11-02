@@ -92,11 +92,14 @@ async fn make_request(req: Request) -> std::result::Result<DispatchRequest, Box<
 /// The AP GET fallback: `/.well-known/*`, `/nodeinfo/*` and every
 /// `/ap/*` GET route land here and fan into `dispatch_multi`.
 pub async fn serve(state: Arc<AppState>, req: Request) -> Response {
+    let anonymous = super::edge::anonymous(req.headers());
     let dreq = match make_request(req).await {
         Ok(r) => r,
         Err(resp) => return *resp,
     };
-    dispatch(&state, &dreq)
+    // dispatch_multi only serves public documents — private objects
+    // go through `posts::serve_named_object`.
+    super::edge::apply(dispatch(&state, &dreq), true, anonymous)
 }
 
 /// Fan a [`DispatchRequest`] into `dispatch_multi` with the standard

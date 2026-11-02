@@ -930,3 +930,67 @@ async fn delivery_sweep_requeues_only_stale_pending() {
     .unwrap();
     assert!(fresh_unchanged);
 }
+
+async fn get(
+    app: &axum::Router,
+    path: &str,
+    headers: &[(&'static str, &'static str)],
+) -> axum::response::Response {
+    let mut builder = Request::builder().method("GET").uri(path);
+    for (k, v) in headers {
+        builder = builder.header(*k, *v);
+    }
+    app.clone()
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// The edge-cache contract (`src/activitypub/edge.rs`): anonymous
+/// AP-JSON fetches get `X-Accel-Expires` + a public `Cache-Control`,
+/// credential-bearing ones get `X-Accel-Expires: 0` + `no-store`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dereference_routes_emit_edge_cache_headers() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
+        return;
+    };
+    let app = ap_router(&state);
+    seed_actor(&state.db, "alice").await;
+
+    // Anonymous fetch of a public actor doc → cacheable.
+    let resp = get(
+        &app,
+        "/ap/users/alice",
+        &[("accept", "application/activity+json")],
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["x-accel-expires"], "15");
+    assert_eq!(resp.headers()["cache-control"], "public, max-age=15");
+
+    // The same fetch carrying credentials → explicitly uncacheable.
+    let resp = get(
+        &app,
+        "/ap/users/alice",
+        &[
+            ("accept", "application/activity+json"),
+            ("authorization", "Bearer x"),
+        ],
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.headers()["x-accel-expires"], "0");
+    assert_eq!(resp.headers()["cache-control"], "no-store");
+
+    // An anonymous miss → cacheable 404 (signers bypass the edge
+    // cache, so it can't hide a private document from them).
+    let resp = get(
+        &app,
+        "/ap/users/nobody",
+        &[("accept", "application/activity+json")],
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(resp.headers()["x-accel-expires"], "15");
+}

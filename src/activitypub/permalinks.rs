@@ -160,7 +160,12 @@ async fn actor(
         remote_addr: remote_addr.map(|a| a.ip().to_string()).unwrap_or_default(),
         request_target: Some(request_target),
     };
-    adapter::dispatch(state, &dreq)
+    // Actors are public documents — same contract as the /ap/* fallback.
+    super::edge::apply(
+        adapter::dispatch(state, &dreq),
+        true,
+        super::edge::anonymous(headers),
+    )
 }
 
 /// Whether `domain` names this instance — the WebFinger domain or the

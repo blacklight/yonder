@@ -407,20 +407,28 @@ pub(crate) async fn serve_named_object(
     uri: &axum::http::Uri,
 ) -> Response {
     match serve_object_inner(state, username, status_id, headers, uri).await {
-        Ok(doc) => json_response(doc),
+        Ok((doc, public)) => {
+            super::edge::apply(json_response(doc), public, super::edge::anonymous(headers))
+        }
         Err(Error::Unauthorized) => StatusCode::UNAUTHORIZED.into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => super::edge::apply(
+            StatusCode::NOT_FOUND.into_response(),
+            true,
+            super::edge::anonymous(headers),
+        ),
     }
 }
 
-/// Gate + build the object document.
+/// Gate + build the object document. The flag is whether the document
+/// is anonymous-readable (`public`/`unlisted`) — signer-gated
+/// documents are never edge-cacheable.
 async fn serve_object_inner(
     state: &Arc<AppState>,
     username: &str,
     status_id: i64,
     headers: &HeaderMap,
     uri: &axum::http::Uri,
-) -> Result<Value> {
+) -> Result<(Value, bool)> {
     let Some(ap) = &state.ap else {
         return Err(Error::NotFound("ap".into()));
     };
@@ -472,7 +480,9 @@ async fn serve_object_inner(
                 None,
             )
             .map_err(|e| Error::Internal(e.to_string()))?;
-        return cached.ok_or_else(|| Error::NotFound("status".into()));
+        return cached
+            .map(|doc| (doc, true))
+            .ok_or_else(|| Error::NotFound("status".into()));
     }
 
     // followers_only / direct — the verified signer must be allowed.
@@ -482,7 +492,7 @@ async fn serve_object_inner(
     let account = signer_account_id(&ctx, &signer).await?;
     match account {
         Some(id) if posts::can_see(&ctx.db, &status, Some(id)).await? => {
-            build_object(&ctx, &status).await
+            build_object(&ctx, &status).await.map(|doc| (doc, false))
         }
         _ => Err(Error::NotFound("status".into())),
     }

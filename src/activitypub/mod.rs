@@ -16,6 +16,7 @@
 pub mod actors;
 pub mod adapter;
 pub mod delivery;
+pub(crate) mod edge;
 pub mod featured;
 pub mod follows;
 pub mod inbox;

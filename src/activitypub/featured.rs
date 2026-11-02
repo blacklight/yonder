@@ -36,15 +36,20 @@ pub async fn serve_featured(
     headers: HeaderMap,
     uri: axum::http::Uri,
 ) -> Response {
+    let anonymous = super::edge::anonymous(&headers);
     match serve_featured_inner(&state, &username, &headers, &uri).await {
-        Ok(doc) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/activity+json")],
-            Json(doc),
-        )
-            .into_response(),
+        Ok(doc) => super::edge::apply(
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/activity+json")],
+                Json(doc),
+            )
+                .into_response(),
+            true,
+            anonymous,
+        ),
         Err(Error::Unauthorized) => StatusCode::UNAUTHORIZED.into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(_) => super::edge::apply(StatusCode::NOT_FOUND.into_response(), true, anonymous),
     }
 }
 

@@ -2,8 +2,8 @@
 //!
 //! [`document`] merges every API module's fragment into one spec;
 //! [`router`] serves it at `GET /openapi.json` and mounts Swagger-UI
-//! at `/swagger-ui` (the epic-28 container deployment consumes the
-//! same JSON).
+//! at `/swagger-ui` — the bundled UI is the only Swagger surface (the
+//! reverse proxy just passes both through).
 
 use std::sync::Arc;
 

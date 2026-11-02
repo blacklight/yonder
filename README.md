@@ -2,6 +2,7 @@
 
 ![yonder](branding/banner.png)
 
+[![Build Status](https://ci-cd.platypush.tech/api/badges/blacklight/yonder/status.svg)](https://ci-cd.platypush.tech/blacklight/yonder)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/02b6f6c4ec79460f847018963e4bbc00)](https://app.codacy.com/gh/blacklight/yonder/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Github stars](https://img.shields.io/github/stars/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)
 [![Github forks](https://img.shields.io/github/forks/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)
@@ -97,8 +98,8 @@ by default).
 
 Run the worker standalone (`yonder worker`, the production deployment)
 or in-process with `serve` (`jobs.enabled = true`, the dev default).
-`docker-compose.yml` wires a `worker` service — it's a stub until
-epic 28 ships the image.
+`docker-compose.yml` wires a dedicated `worker` service while the app
+runs with `jobs.enabled = false` (see *Docker deployment* below).
 
 ### Adding a job kind
 
@@ -234,3 +235,61 @@ Mastodon-compatible auth: registration under `auth.registration_mode`
 device flow), scoped and revocable tokens, authorized-app management,
 and session tracking. Bearer material is random 32-byte secrets stored
 sha256-hex; only passwords use the KDF. See `docs/authentication.md`.
+
+## Docker deployment
+
+`docker-compose.yml` runs the full stack — `yonder` (HTTP),
+`worker` (job queues), `postgres`, `redis` and an `nginx` reverse
+proxy that fronts everything on `YONDER_HTTP_PORT` (default 80). The
+image is published at `quay.io/yonder/yonder`; uncomment the
+`build:` blocks to build it locally instead.
+
+```bash
+cp config.toml.example config.toml   # REQUIRED before first `up` —
+                                     # the bind mount fails loudly
+                                     # without it
+cp .env.example .env                 # PUID/PGID, domain, secrets
+docker compose up -d
+```
+
+Before exposing the instance to browsers, generate the Web Push VAPID
+keys once and add them to `.env` (or `config.toml`):
+
+```bash
+docker compose run --rm yonder webpush generate-keys
+```
+
+Layout and conventions:
+
+- **Volumes** — `./volumes/{data,db,redis}` bind-mounted into the
+  containers (`/data` holds media, installed frontends and the
+  generated `secret_key`). A root `setup` container creates and chowns
+  them to `PUID`/`PGID` before the stack starts; the services run
+  rootless as that UID/GID.
+- **Config** — `./config.toml` mounts read-only at
+  `/etc/yonder/config.toml` (`create_host_path: false` — create it
+  first). `.env` reaches the containers via `env_file`, so any
+  `YONDER_<SECTION>__<KEY>` override or secret works there.
+- **Entrypoint** — generates `YONDER_AUTH__SECRET_KEY` into
+  `/data/secret_key` when unset (race-free across app and worker),
+  waits for Redis/Postgres and runs `yonder migrate` before `serve`/
+  `worker`. Non-daemon subcommands (`user create`, `webpush …`,
+  `openapi`, `config`, `run-job …`) skip the waits:
+  `docker compose run --rm yonder user create …`.
+- **nginx** (`docker/nginx.conf`) — proxies the app, upgrades
+  `/api/v1/streaming` WebSockets, serves `local`-backend media straight
+  from a read-only mount, and edge-caches anonymous ActivityPub
+  dereferences (`yonder_fedoc` zone, single-flighted). The app bounds
+  that cache itself: public documents get `X-Accel-Expires` + a public
+  `Cache-Control`, private/credentialed answers get `X-Accel-Expires:
+  0` + `no-store`, and signed fetches bypass the cache entirely.
+
+## CI/CD
+
+`.drone.yml` mirrors the Songhive pipeline: lint + tests on push,
+image publish to quay.io and `cargo publish` of the `yonder-server`
+crate on tag (`yonder` is taken on crates.io by an unrelated project;
+the binary is still `yonder`). Required Drone secrets:
+`ssh_pubkey`/`ssh_privkey` (GitHub mirror), `docker_user`/`docker_pass`
+(registry), `crates_io_token`. The `cargo_cache` volume expects a
+writable `/home/drone/.cargo/drone` on the Drone host.

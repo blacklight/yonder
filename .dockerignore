@@ -1,0 +1,30 @@
+# Git and local environment
+.git
+.gitignore
+.env
+.envrc
+config.toml
+
+# Rust build artifacts (rebuilt inside the image)
+target/
+
+# Frontend artifacts (rebuilt inside the image)
+frontend/node_modules/
+frontend/dist/
+
+# Runtime data and volumes
+volumes/
+*.db
+*.sqlite
+
+# IDE and CI
+.idea/
+.vscode/
+.drone/
+
+# Build metadata and docs
+*.tsbuildinfo
+docs/
+
+# NOTE: migrations/ and src/ MUST stay in the build context —
+# sqlx::migrate! embeds the schema at compile time.

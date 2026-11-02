@@ -1,0 +1,199 @@
+---
+kind: pipeline
+type: docker
+name: default
+
+trigger:
+  event:
+    exclude:
+      - pull_request
+
+volumes:
+  - name: docker_sock
+    host:
+      path: /var/run/docker.sock
+  # NOTE: Requires /home/drone/.cargo/drone to exist (or be symlinked)
+  # and be writable by the Drone server UID. Shared between the lint,
+  # test and publish steps so crates are fetched/compiled once.
+  - name: cargo_cache
+    host:
+      path: /home/drone/.cargo/drone
+
+steps:
+
+###
+### Backend lint
+###
+
+- name: backend-lint
+  image: rust:1
+  volumes:
+    - name: cargo_cache
+      path: /usr/local/cargo/registry
+  commands:
+    - rustup component add rustfmt clippy
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets -- -D warnings
+
+  when:
+    event:
+      - push
+    paths:
+      include:
+        - src/**
+        - tests/**
+        - migrations/**
+        - Cargo.*
+
+###
+### Frontend build
+###
+
+- name: frontend-build
+  image: node:24
+  commands:
+    # Skip lifecycle scripts: esbuild's postinstall rewrites and then
+    # immediately spawns its binary, which can fail on CI filesystems.
+    # The esbuild platform binary ships as an optional dependency, so
+    # the build works without the script.
+    - cd frontend && npm ci --ignore-scripts && npm run build
+
+  when:
+    event:
+      - push
+      - tag
+    paths:
+      include:
+        - frontend/**
+
+###
+### Backend tests
+###
+### `cargo test` doubles as the release build input — there is no
+### separate `cargo build` step, so the workspace compiles exactly once
+### per run and the cargo_cache volume keeps dependencies warm across
+### runs on the shared CI host.
+###
+### docker.sock is deliberately NOT mounted: the e2e harness's
+### container-spawning tests (dedicated_redis, media) would see a
+### runtime, start a sibling container, then fail connecting from
+### inside this step. Without the socket they skip cleanly.
+
+- name: backend-tests
+  image: rust:1
+  volumes:
+    - name: cargo_cache
+      path: /usr/local/cargo/registry
+
+  services:
+    - name: postgres
+      image: postgres:17-alpine
+      environment:
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+    - name: redis
+      image: redis:7-alpine
+
+  environment:
+    # Each test provisions its own yonder_t_<slug> database and Redis
+    # key prefix — the PG URL points at the server, not a database.
+    YONDER_TEST_PG_URL: postgres://postgres:postgres@postgres:5432
+    YONDER_TEST_REDIS_URL: redis://redis:6379
+
+  commands:
+    # aws-lc-sys (lettre) compiles C code — the full rust image has a
+    # C toolchain but no cmake.
+    - apt-get update && apt-get install -y cmake
+    - cargo test --locked
+
+  when:
+    event:
+      - push
+    paths:
+      include:
+        - src/**
+        - tests/**
+        - migrations/**
+        - Cargo.*
+
+###
+### Frontend lint
+###
+
+- name: frontend-lint
+  image: node:24
+  commands:
+    - cd frontend && npm run lint && ./node_modules/.bin/prettier --check src
+  when:
+    event:
+      - push
+    paths:
+      include:
+        - frontend/**
+  depends_on:
+    - frontend-build
+
+###
+### Frontend tests
+###
+
+- name: frontend-tests
+  image: node:24
+  commands:
+    - cd frontend && npm run test
+  when:
+    event:
+      - push
+    paths:
+      include:
+        - frontend/**
+  depends_on:
+    - frontend-build
+
+###
+### Build and publish the Docker image (x86_64 — see
+### .drone/build-image.sh)
+###
+
+- name: build-image
+  image: docker
+  privileged: true
+  volumes:
+    - name: docker_sock
+      path: /var/run/docker.sock
+
+  environment:
+    REGISTRY_ENDPOINT: quay.io
+    IMAGE_NAME: quay.io/blacklight/yonder
+    DOCKER_USER:
+      from_secret: docker_user
+    DOCKER_PASS:
+      from_secret: docker_pass
+
+  when:
+    event:
+      - tag
+
+  commands:
+    - . .drone/build-image.sh
+
+###
+### Publish the crate to crates.io as `yonder-server`
+###
+
+- name: publish-crate
+  image: rust:1
+  volumes:
+    - name: cargo_cache
+      path: /usr/local/cargo/registry
+
+  environment:
+    CARGO_REGISTRY_TOKEN:
+      from_secret: crates_io_token
+
+  when:
+    event:
+      - tag
+
+  commands:
+    - . .drone/publish-crate.sh

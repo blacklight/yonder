@@ -6829,7 +6829,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "yonder"
+name = "yonder-server"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

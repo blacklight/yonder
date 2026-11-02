@@ -1,11 +1,36 @@
 [package]
-name = "yonder"
+# `yonder` is taken on crates.io by an unrelated project — the package
+# publishes as `yonder-server` while the lib/bin targets stay `yonder`
+# (all `use yonder::…` imports, `env!("CARGO_BIN_EXE_yonder")` and the
+# installed binary name are unchanged).
+name = "yonder-server"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "A Mastodon-compatible ActivityPub server in Rust"
 repository = "https://git.platypush.tech/blacklight/yonder"
 keywords = ["activitypub", "fediverse", "federation", "mastodon"]
+# Not compile-time inputs (migrations/ and src/ must stay packaged —
+# sqlx::migrate! embeds the schema).
+exclude = [
+    ".drone/",
+    ".drone.yml",
+    ".dockerignore",
+    ".env.example",
+    "Dockerfile",
+    "docker/",
+    "docker-compose.yml",
+    "docs/",
+    "frontend/",
+]
+
+[lib]
+name = "yonder"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yonder"
+path = "src/main.rs"
 
 # axum 0.8, redis 0.27 and thiserror 2 are pinned to match pubby-sdk's
 # dependency versions — types from these crates cross the pubby boundary

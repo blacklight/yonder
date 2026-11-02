@@ -359,6 +359,76 @@ describe("ProfilePage", () => {
     expect(link.attributes("target")).toBeUndefined();
   });
 
+  it("expands :shortcode: in field names from account emojis", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        emojis: [
+          {
+            shortcode: "platypush",
+            url: "https://e.test/platypush.png",
+            visible_in_picker: true,
+          },
+        ],
+        fields: [
+          {
+            name: ":platypush: Platypush",
+            value: "https://platypush.tech",
+            verified_at: null,
+          },
+        ],
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const img = wrapper.get(".profile__fields dt img.emoji");
+    expect(img.attributes("src")).toBe("https://e.test/platypush.png");
+    expect(img.attributes("alt")).toBe(":platypush:");
+    expect(wrapper.get(".profile__fields dt").text()).toContain("Platypush");
+  });
+
+  it("expands :shortcode: inside a link-valued field's label", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        emojis: [
+          {
+            shortcode: "blob",
+            url: "https://e.test/blob.png",
+            visible_in_picker: true,
+          },
+        ],
+        fields: [
+          {
+            name: "Site",
+            value: '<a href="https://x.example">:blob: den</a>',
+            verified_at: null,
+          },
+        ],
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const img = wrapper.get(".profile__fields dd a img.emoji");
+    expect(img.attributes("src")).toBe("https://e.test/blob.png");
+  });
+
+  it("expands :shortcode: left in a non-link field value", async () => {
+    vi.mocked(lookup).mockResolvedValue(
+      account({
+        emojis: [
+          {
+            shortcode: "blob",
+            url: "https://e.test/blob.png",
+            visible_in_picker: true,
+          },
+        ],
+        fields: [
+          { name: "Mood", value: "feeling :blob: today", verified_at: null },
+        ],
+      }),
+    );
+    const wrapper = await openProfile("/@alice");
+    const img = wrapper.get(".profile__fields dd img.emoji");
+    expect(img.attributes("src")).toBe("https://e.test/blob.png");
+  });
+
   it("offers 'Open on <domain>' for remote accounts, opening their url", async () => {
     const auth = useAuthStore();
     auth.setToken("tk");

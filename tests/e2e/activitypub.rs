@@ -405,7 +405,8 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
         return;
     };
     sqlx::query(
-        "INSERT INTO custom_emojis (shortcode, image_path) VALUES ('arch', 'emoji/arch.png')",
+        "INSERT INTO custom_emojis (shortcode, image_path) VALUES \
+         ('arch', 'emoji/arch.png'), ('tools', 'emoji/tools.png')",
     )
     .execute(&pool)
     .await
@@ -413,6 +414,9 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
     let mut alice = seed_actor(&pool, "alice").await;
     alice.display_name = Some("Alice :arch:".into());
     alice.bio = Some("I post about #Yonder, #FOSS and #Scheinkünstler :arch:".into());
+    // A shortcode used only in a field *name* still needs its `Emoji`
+    // tag — remote instances expand `attachment.name` from `tag`.
+    alice.profile_fields = json!([{ "name": ":tools: toolbox", "value": "https://tools.example" }]);
     let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
     let handler = actors::handler_for(
         storage,
@@ -444,8 +448,8 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
         "{summary}"
     );
     // `tag` carries a Hashtag entry per bio hashtag (deduplicated) and
-    // an Emoji entry per `:code:` used in name/bio — remote instances
-    // render profile emojis from it.
+    // an Emoji entry per `:code:` used in name/bio/fields — remote
+    // instances render profile emojis from it.
     let tags = doc["tag"].as_array().expect("actor tag array");
     let hashtag_names: Vec<&str> = tags
         .iter()
@@ -458,13 +462,12 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
         "{tags:?}"
     );
     let emoji: Vec<&Value> = tags.iter().filter(|t| t["type"] == "Emoji").collect();
-    assert_eq!(emoji.len(), 1, "{tags:?}");
-    assert_eq!(emoji[0]["name"], ":arch:");
+    assert_eq!(emoji.len(), 2, "{tags:?}");
+    let mut emoji_names: Vec<&str> = emoji.iter().filter_map(|t| t["name"].as_str()).collect();
+    emoji_names.sort();
+    assert_eq!(emoji_names, [":arch:", ":tools:"]);
     assert_eq!(emoji[0]["icon"]["type"], "Image");
-    assert!(emoji[0]["icon"]["url"]
-        .as_str()
-        .unwrap()
-        .contains("arch.png"));
+    assert!(emoji[0]["icon"]["url"].as_str().unwrap().contains(".png"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

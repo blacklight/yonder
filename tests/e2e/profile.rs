@@ -1418,3 +1418,44 @@ async fn profile_change_publishes_actor_update() {
         "summary not escaped: {summary}"
     );
 }
+
+/// A `:code:` used only in a field *name* still lands in `emojis` —
+/// the name itself stays plain text for clients to expand, matching
+/// `display_name` (Mastodon's contract).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn field_name_shortcode_feeds_account_emojis() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    sqlx::query(
+        "INSERT INTO custom_emojis (shortcode, image_path) \
+         VALUES ('platypush', 'emoji/platypush.png')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let token = token_for(&env.app, "moji").await;
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "PATCH",
+                PATCH,
+                json!({ "fields_attributes": [
+                    {"name": ":platypush: Platypush", "value": "https://platypush.tech"},
+                ] }),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // `name` federates/serves as raw text; `emojis` carries the image.
+    assert_eq!(body["fields"][0]["name"], ":platypush: Platypush", "{body}");
+    let emojis = body["emojis"].as_array().expect("emojis array");
+    assert!(
+        emojis.iter().any(|e| e["shortcode"] == "platypush"),
+        "{emojis:?}"
+    );
+}

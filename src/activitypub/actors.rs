@@ -298,9 +298,9 @@ fn actor_config(
         .unwrap_or_default();
     // The actor `tag` array carries `Hashtag` entries for bio hashtags
     // and `Emoji` entries for local `:code:`s used in the name, bio and
-    // field values — Mastodon renders remote-profile emojis and indexes
-    // bio hashtags from it. `for_author_texts` skips the emoji query
-    // entirely when no `:code:` candidate exists.
+    // field names/values — Mastodon renders remote-profile emojis and
+    // indexes bio hashtags from it. `for_author_texts` skips the emoji
+    // query entirely when no `:code:` candidate exists.
     cfg.tag = pubby_sdk::build_hashtag_tags(
         bio_rendered.map(|r| r.hashtags).unwrap_or_default(),
         &hashtag_url,
@@ -312,14 +312,15 @@ fn actor_config(
     if let Some(n) = actor.display_name.as_deref() {
         texts.push(n);
     }
-    for f in actor
-        .profile_fields
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|f| f.get("value").and_then(Value::as_str))
-    {
-        texts.push(f);
+    for f in actor.profile_fields.as_array().into_iter().flatten() {
+        // `attachment.name` federates raw — a shortcode used only in a
+        // field name still needs its `Emoji` tag so remote instances
+        // can render it.
+        for key in ["name", "value"] {
+            if let Some(v) = f.get(key).and_then(Value::as_str) {
+                texts.push(v);
+            }
+        }
     }
     let emoji_map = sync_block(crate::emoji::render::EmojiMap::for_author_texts(
         db, config, base_url, None, &texts,

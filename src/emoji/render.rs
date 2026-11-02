@@ -319,9 +319,10 @@ fn substitute_segment(segment: &str, map: &EmojiMap) -> String {
 
 /// Apply a pre-built map to an assembled Account entity: `note` and
 /// `fields[].value` get `<img>` substitution (both are already-
-/// rendered HTML); `display_name` keeps its raw text — Mastodon
-/// serves it as plain text and clients render `:code:` themselves
-/// from `emojis`, which lists every shortcode used across all three.
+/// rendered HTML); `display_name` and `fields[].name` keep their raw
+/// text — Mastodon serves them as plain text and clients render
+/// `:code:` themselves from `emojis`, which lists every shortcode
+/// used across all four.
 pub fn apply_account_with_map(entity: &mut serde_json::Value, map: &EmojiMap) {
     let mut haystack = String::new();
     if let Some(note) = entity
@@ -337,6 +338,9 @@ pub fn apply_account_with_map(entity: &mut serde_json::Value, map: &EmojiMap) {
             if let Some(v) = f.get("value").and_then(|v| v.as_str()).map(str::to_string) {
                 haystack.push_str(&v);
                 f["value"] = serde_json::Value::String(substitute(&v, map));
+            }
+            if let Some(n) = f.get("name").and_then(|n| n.as_str()) {
+                haystack.push_str(n);
             }
         }
     }
@@ -432,6 +436,24 @@ mod tests {
         assert_eq!(entity["display_name"], "Name :blobcat: <b>");
         // …but its shortcode still lands in `emojis` once (dedup).
         assert_eq!(entity["emojis"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn field_name_stays_text_but_feeds_emojis() {
+        let mut entity = serde_json::json!({
+            "note": "",
+            "display_name": "Alice",
+            "fields": [
+                {"name": ":blobcat: blog", "value": "https://x.example"},
+                {"name": "plain", "value": "v"},
+            ],
+        });
+        apply_account_with_map(&mut entity, &map());
+        // Like `display_name`, the name is served as plain text —
+        // clients expand it from `emojis`.
+        assert_eq!(entity["fields"][0]["name"], ":blobcat: blog");
+        assert_eq!(entity["emojis"].as_array().unwrap().len(), 1);
+        assert_eq!(entity["emojis"][0]["shortcode"], "blobcat");
     }
 
     #[test]

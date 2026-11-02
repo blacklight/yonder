@@ -99,7 +99,11 @@ const noteError = ref<string | null>(null);
 const visitedIds = new Set<string>();
 const MAX_HOPS = 5;
 
-const bio = computed(() => sanitizeHtml(account.value?.note ?? ""));
+const bio = computed(() =>
+  sanitizeHtml(account.value?.note ?? "", {
+    emojis: account.value?.emojis,
+  }),
+);
 const headerUrl = computed(() => safeHttpUrl(account.value?.header));
 
 const FIELD_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -164,6 +168,7 @@ const fieldsView = computed(() =>
   (account.value?.fields ?? []).map((f) => ({
     ...f,
     link: fieldLink(f.value),
+    html: sanitizeHtml(f.value, { emojis: account.value?.emojis }),
   })),
 );
 
@@ -980,22 +985,22 @@ watch([tab, showReplies, showBoosts], () => {
         <div v-if="bio" class="profile__bio" v-html="bio" />
         <dl v-if="account.fields.length" class="profile__fields">
           <template v-for="f in fieldsView" :key="f.name">
-            <dt>{{ f.name }}</dt>
+            <dt><EmojiText :text="f.name" :emojis="account.emojis" /></dt>
             <dd :class="{ 'profile__field--verified': f.verified_at }">
               <a
                 v-if="f.link"
                 :href="f.link.href"
                 :target="f.link.external ? '_blank' : undefined"
                 rel="nofollow noopener noreferrer"
-                >{{ f.link.text }}</a
-              >
+                ><EmojiText :text="f.link.text" :emojis="account.emojis"
+              /></a>
               <FontAwesomeIcon
                 v-if="f.verified_at"
                 icon="circle-check"
                 class="verified"
                 :title="t('profile.verified')"
               />
-              <span v-else-if="!f.link" v-html="sanitizeHtml(f.value)" />
+              <span v-else-if="!f.link" v-html="f.html" />
             </dd>
           </template>
         </dl>

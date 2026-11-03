@@ -28,6 +28,24 @@ use sqlx::Row;
 
 use crate::{http::AppState, Error, Result};
 
+/// The credential class a token belongs to: ordinary full-access
+/// tokens, or `restricted` export-only sessions issued to suspended
+/// accounts (epic 31 restricted access).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessClass {
+    Ordinary,
+    Restricted,
+}
+
+impl AccessClass {
+    fn from_wire(s: &str) -> AccessClass {
+        match s {
+            "restricted" => AccessClass::Restricted,
+            _ => AccessClass::Ordinary,
+        }
+    }
+}
+
 /// The authenticated principal attached to a request.
 #[derive(Debug, Clone)]
 pub struct AuthContext {
@@ -49,6 +67,9 @@ pub struct AuthContext {
     pub approved: bool,
     /// `users.email_verified_at IS NOT NULL`.
     pub email_verified: bool,
+    /// Ordinary tokens exercise their scopes; restricted tokens only
+    /// reach the export-only surface ([`RestrictedAuth`]/[`ExportAuth`]).
+    pub access_class: AccessClass,
 }
 
 /// Cached outcome of resolving a request's token — stored in the
@@ -86,22 +107,29 @@ pub fn token_hash(token: &str) -> String {
 }
 
 /// Resolve a bearer token to an [`AuthContext`], or `Unauthorized`
-/// when unknown, revoked, expired, or belonging to a suspended account.
+/// when unknown, revoked, expired, or mismatched with the account's
+/// state. Ordinary tokens require a live account (unsuspended,
+/// enabled, not deleted); restricted tokens resolve only while the
+/// account is suspended — an unsuspension kills them, forcing a fresh
+/// normal login — and never for accounts pending deletion.
 pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext> {
     let row = sqlx::query(
         "SELECT t.id AS token_id, t.user_id, u.account_id, t.scopes, \
-                a.role, s.id AS session_id, \
+                t.access_class, a.role, s.id AS session_id, \
                 u.approved_at IS NOT NULL AS approved, \
-                u.email_verified_at IS NOT NULL AS email_verified
+                u.email_verified_at IS NOT NULL AS email_verified, \
+                a.suspended_at IS NOT NULL AS suspended, \
+                a.disabled_at IS NOT NULL OR a.deleted_at IS NOT NULL AS gone, \
+                EXISTS(SELECT 1 FROM account_deletions d \
+                       WHERE d.account_id = a.id AND d.state IN ('pending','running')) \
+                    AS deleting
          FROM oauth_access_tokens t
          JOIN users u ON u.id = t.user_id
          JOIN accounts a ON a.id = u.account_id
          LEFT JOIN sessions s ON s.access_token_id = t.id
          WHERE t.token_hash = $1
            AND t.revoked_at IS NULL
-           AND (t.expires_at IS NULL OR t.expires_at > now())
-           AND a.suspended_at IS NULL
-           AND a.disabled_at IS NULL",
+           AND (t.expires_at IS NULL OR t.expires_at > now())",
     )
     .bind(token_hash(token))
     .fetch_optional(&state.db)
@@ -109,6 +137,17 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
     let Some(row) = row else {
         return Err(Error::Unauthorized);
     };
+    let access_class = AccessClass::from_wire(row.get("access_class"));
+    let suspended: bool = row.get("suspended");
+    let gone: bool = row.get("gone");
+    let deleting: bool = row.get("deleting");
+    let usable = match access_class {
+        AccessClass::Ordinary => !suspended && !gone,
+        AccessClass::Restricted => suspended && !gone && !deleting,
+    };
+    if !usable {
+        return Err(Error::Unauthorized);
+    }
     let auth = AuthContext {
         token_id: row.get("token_id"),
         user_id: row.get("user_id"),
@@ -118,6 +157,7 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
         session_id: row.get("session_id"),
         approved: row.get("approved"),
         email_verified: row.get("email_verified"),
+        access_class,
     };
     if let Some(session_id) = auth.session_id {
         touch_session(state, session_id).await;
@@ -199,7 +239,82 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
             None => resolve_request(state, &parts.headers, &parts.uri).await,
         };
         match resolution {
+            // Restricted credentials resolve but never act as an
+            // ordinary principal — 403, not 401, so clients know the
+            // token is real yet out of scope.
+            TokenResolution::Authed(auth) if auth.access_class == AccessClass::Restricted => Err(
+                Error::Forbidden("This token is restricted to account exports"),
+            ),
             TokenResolution::Authed(auth) => Ok(auth),
+            TokenResolution::Anonymous | TokenResolution::Rejected => Err(Error::Unauthorized),
+            TokenResolution::Failed(e) => Err(Error::Internal(e.to_string())),
+        }
+    }
+}
+
+/// Extractor for the suspended-account export surface: accepts **only**
+/// restricted-class tokens (issued by the password grant while the
+/// account is suspended). Ordinary principals get 403 — the restricted
+/// endpoints expose suspension metadata normal sessions should not
+/// rely on.
+#[derive(Debug, Clone)]
+pub struct RestrictedAuth(pub AuthContext);
+
+impl FromRequestParts<Arc<AppState>> for RestrictedAuth {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let resolution = match parts.extensions.get::<TokenResolution>() {
+            Some(cached) => cached.clone(),
+            None => resolve_request(state, &parts.headers, &parts.uri).await,
+        };
+        match resolution {
+            TokenResolution::Authed(auth) if auth.access_class == AccessClass::Restricted => {
+                Ok(RestrictedAuth(auth))
+            }
+            TokenResolution::Authed(_) => Err(Error::Forbidden(
+                "This endpoint requires a restricted session",
+            )),
+            TokenResolution::Anonymous | TokenResolution::Rejected => Err(Error::Unauthorized),
+            TokenResolution::Failed(e) => Err(Error::Internal(e.to_string())),
+        }
+    }
+}
+
+/// Extractor for the export surface shared by ordinary and restricted
+/// sessions: `POST/GET /api/v1/yonder/exports*` admit either class —
+/// ordinary callers still pass the normal scope gate, restricted
+/// callers exercise their implicit export capability.
+#[derive(Debug, Clone)]
+pub struct ExportAuth(pub AuthContext);
+
+impl ExportAuth {
+    /// The scope gate for ordinary callers; restricted sessions carry
+    /// their capability in the class itself and skip it.
+    pub fn require_scope(&self, config: &crate::config::Config, required: &str) -> Result<()> {
+        match self.0.access_class {
+            AccessClass::Ordinary => crate::auth::scopes::require_scope(config, &self.0, required),
+            AccessClass::Restricted => Ok(()),
+        }
+    }
+}
+
+impl FromRequestParts<Arc<AppState>> for ExportAuth {
+    type Rejection = Error;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &Arc<AppState>,
+    ) -> std::result::Result<Self, Self::Rejection> {
+        let resolution = match parts.extensions.get::<TokenResolution>() {
+            Some(cached) => cached.clone(),
+            None => resolve_request(state, &parts.headers, &parts.uri).await,
+        };
+        match resolution {
+            TokenResolution::Authed(auth) => Ok(ExportAuth(auth)),
             TokenResolution::Anonymous | TokenResolution::Rejected => Err(Error::Unauthorized),
             TokenResolution::Failed(e) => Err(Error::Internal(e.to_string())),
         }
@@ -209,7 +324,9 @@ impl FromRequestParts<Arc<AppState>> for AuthContext {
 /// Optional authentication: `Some` when a valid token was presented,
 /// `None` for anonymous requests. An invalid token is anonymous; an
 /// infrastructure failure during resolution rejects the request with
-/// a 5xx rather than silently downgrading it.
+/// a 5xx rather than silently downgrading it. Restricted tokens are
+/// anonymous here: they hold no read capability outside the export
+/// surface.
 #[derive(Debug, Clone)]
 pub struct MaybeAuth(pub Option<AuthContext>);
 
@@ -225,6 +342,9 @@ impl FromRequestParts<Arc<AppState>> for MaybeAuth {
             None => resolve_request(state, &parts.headers, &parts.uri).await,
         };
         match resolution {
+            TokenResolution::Authed(auth) if auth.access_class == AccessClass::Restricted => {
+                Ok(MaybeAuth(None))
+            }
             TokenResolution::Authed(auth) => Ok(MaybeAuth(Some(auth))),
             TokenResolution::Anonymous | TokenResolution::Rejected => Ok(MaybeAuth(None)),
             TokenResolution::Failed(e) => Err(Error::Internal(e.to_string())),

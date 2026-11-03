@@ -169,6 +169,58 @@ pub async fn issue_token_pair_conn(
     })
 }
 
+/// Restricted sessions are deliberately short-lived — long enough to
+/// request and download an export, never a durable credential.
+const RESTRICTED_TOKEN_MINUTES: i64 = 120;
+
+/// Issue a restricted (export-only) token for a suspended account:
+/// `access_class = 'restricted'` on both the token and its session
+/// row, a fixed short expiry, and **no refresh token** — nothing may
+/// extend or upgrade the credential past the suspension.
+pub async fn issue_restricted_token(
+    state: &AppState,
+    user_id: i64,
+    session: Option<&SessionMeta>,
+) -> Result<IssuedTokens> {
+    let access_token = random_secret();
+    let access_hash = crate::http::middleware::auth::token_hash(&access_token);
+    let access_token_id: i64 = sqlx::query_scalar(
+        "INSERT INTO oauth_access_tokens \
+         (user_id, token_hash, scopes, access_class, expires_at) \
+         VALUES ($1, $2, 'read:backups', 'restricted', \
+                 now() + $3::int * interval '1 minute') \
+         RETURNING id",
+    )
+    .bind(user_id)
+    .bind(&access_hash)
+    .bind(RESTRICTED_TOKEN_MINUTES as i32)
+    .fetch_one(&state.db)
+    .await?;
+
+    if let Some(meta) = session {
+        sqlx::query(
+            "INSERT INTO sessions (user_id, token_hash, access_token_id, user_agent, ip, access_class) \
+             VALUES ($1, $2, $3, $4, $5::inet, 'restricted')",
+        )
+        .bind(user_id)
+        .bind(&access_hash)
+        .bind(access_token_id)
+        .bind(&meta.user_agent)
+        .bind(&meta.ip)
+        .execute(&state.db)
+        .await?;
+    }
+
+    Ok(IssuedTokens {
+        access_token,
+        refresh_token: None,
+        access_token_id,
+        scope: "read:backups".to_string(),
+        created_at: now_unix(),
+        expires_in: Some(RESTRICTED_TOKEN_MINUTES as u64 * 60),
+    })
+}
+
 /// Issue a `client_credentials` application token (`user_id NULL`,
 /// no refresh token, no session).
 pub async fn issue_app_token(
@@ -267,7 +319,8 @@ pub async fn rotate_refresh_token(
                 t.id AS access_id, t.user_id, t.application_id, t.scopes, t.revoked_at AS access_revoked \
          FROM oauth_refresh_tokens r \
          JOIN oauth_access_tokens t ON t.id = r.access_token_id \
-         WHERE r.token_hash = $1 FOR UPDATE OF r, t",
+         WHERE r.token_hash = $1 AND t.access_class = 'ordinary' \
+         FOR UPDATE OF r, t",
     )
     .bind(&hash)
     .fetch_optional(&mut *tx)

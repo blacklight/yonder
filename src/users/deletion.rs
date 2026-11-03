@@ -497,6 +497,11 @@ pub async fn purge_account(
         "DELETE FROM web_push_subscriptions WHERE account_id = $1",
         "DELETE FROM media_attachments WHERE account_id = $1",
         "DELETE FROM archive_exports WHERE account_id = $1",
+        // Imported rows (contract §7.6): the tombstone keeps the
+        // `accounts` row, so the cascades never fire — the owner's
+        // private history and import sessions go explicitly.
+        "DELETE FROM private_history_messages WHERE owner_id = $1",
+        "DELETE FROM archive_imports WHERE account_id = $1",
         "DELETE FROM tag_follows WHERE account_id = $1",
         "DELETE FROM reports WHERE account_id = $1",
         "DELETE FROM status_pins WHERE account_id = $1",

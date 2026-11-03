@@ -25,6 +25,7 @@ const KNOWN_SCOPES: &[&str] = &[
     "profile",
     // read:*
     "read:accounts",
+    "read:backups",
     "read:blocks",
     "read:bookmarks",
     "read:favourites",

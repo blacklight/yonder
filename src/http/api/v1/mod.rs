@@ -34,6 +34,7 @@ pub mod polls;
 pub mod push;
 pub mod relationships;
 pub mod reports;
+pub mod restricted;
 pub mod scheduled_statuses;
 pub mod search;
 pub mod sessions;
@@ -380,6 +381,15 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .get(transfer::list_imports),
         )
         .route("/api/v1/yonder/imports/{id}", get(transfer::get_import))
+        // Restricted (suspended-account) surface — export-only.
+        .route(
+            "/api/v1/yonder/restricted/session",
+            get(restricted::restricted_session),
+        )
+        .route(
+            "/api/v1/yonder/restricted/logout",
+            post(restricted::restricted_logout),
+        )
         // Posting (epic 12) — outside the `authentication` bucket;
         // writes carry their own buckets.
         .route(
@@ -932,6 +942,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     transfer::create_import,
     transfer::list_imports,
     transfer::get_import,
+    restricted::restricted_session,
+    restricted::restricted_logout,
     statuses::create,
     statuses::show,
     statuses::context,

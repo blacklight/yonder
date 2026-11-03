@@ -44,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     http::{
-        middleware::auth::{self, AuthContext, TokenResolution},
+        middleware::auth::{self, AccessClass, AuthContext, TokenResolution},
         AppState,
     },
     Error,
@@ -78,6 +78,7 @@ enum Outbound {
     responses(
         (status = 101, description = "WebSocket upgrade"),
         (status = 401, description = "Invalid access token", body = crate::error::ErrorBody),
+        (status = 403, description = "Restricted (export-only) token", body = crate::error::ErrorBody),
     )
 )]
 pub async fn streaming(
@@ -88,6 +89,11 @@ pub async fn streaming(
     ws: WebSocketUpgrade,
 ) -> Response {
     let auth = match auth::resolve_request(&state, &headers, &uri).await {
+        // Restricted (suspended-account) credentials are export-only —
+        // live streams are part of the forbidden surface (epic 31 §5).
+        TokenResolution::Authed(auth) if auth.access_class == AccessClass::Restricted => {
+            return Error::Forbidden("This token is restricted to account exports").into_response()
+        }
         TokenResolution::Authed(auth) => Some(auth),
         TokenResolution::Anonymous => None,
         TokenResolution::Rejected => return Error::Unauthorized.into_response(),

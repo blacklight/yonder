@@ -214,6 +214,12 @@ pub enum JobCommand {
     /// Internal kind — `{"status_id"}` enqueued on create/edit/delete.
     #[command(name = "webmention_outgoing")]
     WebmentionOutgoing(JobArgs),
+    /// Republish a migration event's actor Update and signed Move.
+    ///
+    /// Payload: `{"event_id": <migration_events row id>}` — the durable
+    /// backstop for moves whose inline publication did not complete.
+    #[command(name = "publish_move")]
+    PublishMove(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -254,6 +260,7 @@ impl JobCommand {
             Self::AuditLogCleanup(a) => (JobKind::AuditLogCleanup, a),
             Self::WebmentionIncoming(a) => (JobKind::WebmentionIncoming, a),
             Self::WebmentionOutgoing(a) => (JobKind::WebmentionOutgoing, a),
+            Self::PublishMove(a) => (JobKind::PublishMove, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

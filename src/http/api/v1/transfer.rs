@@ -17,7 +17,10 @@ use sqlx::Row;
 
 use crate::{
     auth::scopes::require_scope,
-    http::{middleware::auth::AuthContext, AppState},
+    http::{
+        middleware::auth::{AuthContext, ExportAuth},
+        AppState,
+    },
     jobs::JobKind,
     users::transfer::{self, Kind},
     Error, Result,
@@ -100,17 +103,17 @@ pub(crate) async fn queue_import(
 )]
 pub async fn create_export(
     State(state): State<Arc<AppState>>,
-    auth: AuthContext,
+    auth: ExportAuth,
     Json(params): Json<ExportParams>,
 ) -> Result<Response> {
     let kind = Kind::parse(&params.kind)?;
-    require_scope(&state.config(), &auth, "read:accounts")?;
-    require_scope(&state.config(), &auth, kind.read_scope())?;
+    auth.require_scope(&state.config(), "read:accounts")?;
+    auth.require_scope(&state.config(), kind.read_scope())?;
     if kind != Kind::Archive {
         let (name, content_type, bytes) = transfer::export_kind(
             &state.db,
             &state.config().instance.domain,
-            auth.account_id,
+            auth.0.account_id,
             kind,
         )
         .await?;
@@ -123,17 +126,25 @@ pub async fn create_export(
     }
     // Archive cooldown: one per 7 days per account (Mastodon).
     // Failed exports don't count — a broken run must not lock the user
-    // out of retries for a week.
+    // out of retries for a week. The per-account advisory lock
+    // serializes the check+insert so concurrent requests can't race
+    // past the cooldown.
+    let mut tx = state.db.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("export-cooldown:{}", auth.0.account_id))
+        .execute(&mut *tx)
+        .await?;
     let last: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
         "SELECT max(created_at) FROM archive_exports \
          WHERE account_id = $1 AND kind = 'archive' AND state <> 'failed'",
     )
-    .bind(auth.account_id)
-    .fetch_one(&state.db)
+    .bind(auth.0.account_id)
+    .fetch_one(&mut *tx)
     .await?;
     if let Some(last) = last {
         let cooldown = chrono::Duration::days(7);
         if chrono::Utc::now() - last < cooldown {
+            tx.rollback().await?;
             let retry = (cooldown - (chrono::Utc::now() - last))
                 .num_seconds()
                 .max(60);
@@ -153,9 +164,10 @@ pub async fn create_export(
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO archive_exports (account_id, kind) VALUES ($1, 'archive') RETURNING id",
     )
-    .bind(auth.account_id)
-    .fetch_one(&state.db)
+    .bind(auth.0.account_id)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     state
         .dispatcher
         .enqueue(JobKind::Export, json!({ "export_id": id }))
@@ -176,13 +188,13 @@ pub async fn create_export(
 )]
 pub async fn list_exports(
     State(state): State<Arc<AppState>>,
-    auth: AuthContext,
+    auth: ExportAuth,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config(), &auth, "read:accounts")?;
+    auth.require_scope(&state.config(), "read:accounts")?;
     let rows = sqlx::query(
         "SELECT * FROM archive_exports WHERE account_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
-    .bind(auth.account_id)
+    .bind(auth.0.account_id)
     .fetch_all(&state.db)
     .await?;
     Ok(Json(Value::Array(rows.iter().map(status_json).collect())))
@@ -201,13 +213,13 @@ pub async fn list_exports(
 )]
 pub async fn get_export(
     State(state): State<Arc<AppState>>,
-    auth: AuthContext,
+    auth: ExportAuth,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    require_scope(&state.config(), &auth, "read:accounts")?;
+    auth.require_scope(&state.config(), "read:accounts")?;
     let row = sqlx::query("SELECT * FROM archive_exports WHERE id = $1 AND account_id = $2")
         .bind(id)
-        .bind(auth.account_id)
+        .bind(auth.0.account_id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(|| Error::NotFound("export".into()))?;
@@ -229,16 +241,16 @@ pub async fn get_export(
 )]
 pub async fn download_export(
     State(state): State<Arc<AppState>>,
-    auth: AuthContext,
+    auth: ExportAuth,
     Path(id): Path<i64>,
 ) -> Result<Response> {
-    require_scope(&state.config(), &auth, "read:accounts")?;
+    auth.require_scope(&state.config(), "read:accounts")?;
     let row = sqlx::query(
         "SELECT state, file_key, expires_at FROM archive_exports \
          WHERE id = $1 AND account_id = $2",
     )
     .bind(id)
-    .bind(auth.account_id)
+    .bind(auth.0.account_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| Error::NotFound("export".into()))?;
@@ -276,6 +288,8 @@ pub async fn download_export(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("attachment; filename=\"archive.zip\""),
     );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
@@ -343,12 +357,27 @@ pub async fn create_import(
     }
     require_scope(&state.config(), &auth, kind.write_scope())?;
     let bytes = file.ok_or_else(|| Error::Validation("file is required".into()))?;
-    // Sniff the format before queueing: a zip for `archive`, anything
-    // else must be a plausible text file.
+    // Sniff the format before queueing: a parseable ZIP directory or
+    // a valid gzip stream (`0x1f 0x8b`, pre-4.2 Mastodon tarballs) for
+    // `archive`; anything else must be a plausible text file. A 422
+    // here beats an async failure deep in the job.
     if kind == Kind::Archive {
-        let sniff = zip::ZipArchive::new(std::io::Cursor::new(&bytes[..]))
-            .map_err(|e| Error::Validation(format!("archive is not a valid zip: {e}")))?;
-        let _ = sniff.len();
+        use std::io::Read;
+        let ok = if bytes.starts_with(b"PK\x03\x04") {
+            zip::ZipArchive::new(std::io::Cursor::new(&bytes[..])).is_ok()
+        } else if bytes.starts_with(b"\x1f\x8b") {
+            flate2::read::GzDecoder::new(&bytes[..])
+                .take(1 << 20)
+                .read_to_end(&mut Vec::new())
+                .is_ok()
+        } else {
+            false
+        };
+        if !ok {
+            return Err(Error::Validation(
+                "archive is not a valid zip or tar.gz".into(),
+            ));
+        }
     }
     // Row-limit check at request time (Mastodon's 20k cap → 422), and
     // `total` counts data rows only — headers excluded.
@@ -359,7 +388,7 @@ pub async fn create_import(
         kind,
         &mode,
         &bytes,
-        "application/zip",
+        "application/octet-stream",
         total,
     )
     .await

@@ -537,8 +537,10 @@ async fn remote_dm_ingest_keys_and_groups_with_reply() {
     assert_eq!(convs.len(), 1, "{convs:?}");
 }
 
+/// A received DM restores as owner-only history, never as a status — so
+/// it has no conversation row in the live DM view.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn imported_dm_gets_key() {
+async fn imported_dm_becomes_owner_history() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
@@ -599,16 +601,24 @@ async fn imported_dm_gets_key() {
         )
         .await
         .unwrap();
-    let (vis, key): (String, Option<String>) = sqlx::query_as(
-        "SELECT visibility, conversation_key FROM statuses \
+    let statuses: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM statuses \
          WHERE account_id = $1 AND original_id = 'https://old.example/statuses/700'",
     )
     .bind(alice)
     .fetch_one(&env.state.db)
     .await
     .unwrap();
-    assert_eq!(vis, "direct");
-    assert!(key.is_some(), "imported DM must get a conversation key");
+    assert_eq!(statuses, 0, "a received DM must never become a status");
+    let (sender, source): (String, String) = sqlx::query_as(
+        "SELECT sender_uri, source_uri FROM private_history_messages WHERE owner_id = $1",
+    )
+    .bind(alice)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(sender, alice_actor);
+    assert_eq!(source, "https://old.example/statuses/700");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

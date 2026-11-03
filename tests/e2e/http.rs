@@ -504,6 +504,50 @@ async fn websocket_rejects_invalid_token_and_scopes_user_stream() {
     assert_eq!(event["stream"], json!(["user"]));
 }
 
+/// A restricted (suspended-account) token resolves but may only use
+/// the export surface — streaming stays forbidden (epic 31 §5).
+#[tokio::test]
+async fn websocket_rejects_restricted_tokens() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
+        return;
+    };
+    // Seed the same credential shape `issue_restricted_token` writes:
+    // restricted tokens resolve only while the account is suspended.
+    let account_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (username, actor_id, suspended_at) \
+         VALUES ('banned', 'https://yonder.test/ap/actor/banned', now()) RETURNING id",
+    )
+    .fetch_one(&state.db)
+    .await
+    .expect("insert account");
+    let user_id: i64 =
+        sqlx::query_scalar("INSERT INTO users (account_id) VALUES ($1) RETURNING id")
+            .bind(account_id)
+            .fetch_one(&state.db)
+            .await
+            .expect("insert user");
+    let token = "restricted-token";
+    sqlx::query(
+        "INSERT INTO oauth_access_tokens \
+         (user_id, token_hash, scopes, access_class, expires_at) \
+         VALUES ($1, $2, 'read:backups', 'restricted', now() + interval '2 hours')",
+    )
+    .bind(user_id)
+    .bind(token_hash(token))
+    .execute(&state.db)
+    .await
+    .expect("insert restricted token");
+
+    let addr = serve_ephemeral(state.clone()).await;
+    let err = tokio_tungstenite::connect_async(format!(
+        "ws://{addr}/api/v1/streaming?access_token={token}"
+    ))
+    .await
+    .expect_err("restricted token must be rejected");
+    assert!(err.to_string().contains("403"), "expected 403, got {err:?}");
+}
+
 #[tokio::test]
 async fn websocket_pre_subscribes_via_query_and_folds_params() {
     let _permit = harness::acquire().await;

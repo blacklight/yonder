@@ -202,8 +202,14 @@ async fn password_grant(
         return Err(invalid_request("Missing username or password."));
     }
     // Mastodon uses the email as `username`; accept a plain username too.
+    // Disabled, deleted and pending-deletion accounts stay locked out;
+    // a suspended account may still log in but only receives a
+    // restricted (export-only) credential.
     let row = sqlx::query(
-        "SELECT u.id, u.password_hash, a.suspended_at \
+        "SELECT u.id, u.password_hash, a.suspended_at, a.deleted_at, \
+                EXISTS(SELECT 1 FROM account_deletions d \
+                       WHERE d.account_id = a.id AND d.state IN ('pending','running')) \
+                    AS deleting \
          FROM users u JOIN accounts a ON a.id = u.account_id \
          WHERE (lower(u.email) = lower($1) OR (lower(a.username) = lower($1) AND a.domain IS NULL)) \
            AND a.disabled_at IS NULL",
@@ -218,17 +224,29 @@ async fn password_grant(
         ));
     };
     use sqlx::Row;
+    if !crate::auth::password::verify_password(&password, row.get("password_hash")) {
+        return Err(invalid_grant(
+            "The provided authorization grant is invalid, expired or revoked.",
+        ));
+    }
     if row
-        .get::<Option<chrono::DateTime<chrono::Utc>>, _>("suspended_at")
+        .get::<Option<chrono::DateTime<chrono::Utc>>, _>("deleted_at")
         .is_some()
-        || !crate::auth::password::verify_password(&password, row.get("password_hash"))
+        || row.get::<bool, _>("deleting")
     {
         return Err(invalid_grant(
             "The provided authorization grant is invalid, expired or revoked.",
         ));
     }
+    let restricted = row
+        .get::<Option<chrono::DateTime<chrono::Utc>>, _>("suspended_at")
+        .is_some();
     let user_id: i64 = row.get("id");
-    let scope = requested_scope(params.scope.as_deref(), client.as_ref())?;
+    let scope = if restricted {
+        "read:backups".to_string()
+    } else {
+        requested_scope(params.scope.as_deref(), client.as_ref())?
+    };
 
     // 2FA gate: an enrolled account either finishes inline (a `code`
     // form param — TOTP first, then backup code) or gets an
@@ -279,22 +297,15 @@ async fn password_grant(
             .map(String::from),
         ip: ip.parse::<std::net::IpAddr>().ok().map(|_| ip.to_string()),
     };
-    let issued = tokens::issue_token_pair(
+    issue_credentials(
         state,
-        client.as_ref().map(|a| a.id),
         user_id,
+        client.as_ref().map(|a| a.id),
         &scope,
-        None,
         Some(&meta),
+        restricted,
     )
     .await
-    .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    if let Some(app) = &client {
-        tokens::record_authorization(&state.db, user_id, app.id, &scope)
-            .await
-            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    }
-    Ok(tokens::token_entity(&issued))
 }
 
 async fn client_credentials_grant(
@@ -328,20 +339,16 @@ async fn authorization_code_grant(
         params.code_verifier.as_deref(),
     )
     .await?;
-    let issued = tokens::issue_token_pair(
+    let suspended = account_gate(&state.db, payload.user_id).await?;
+    issue_credentials(
         state,
-        Some(client.id),
         payload.user_id,
+        Some(client.id),
         &payload.scope,
         None,
-        None,
+        suspended,
     )
     .await
-    .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    tokens::record_authorization(&state.db, payload.user_id, client.id, &payload.scope)
-        .await
-        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    Ok(tokens::token_entity(&issued))
 }
 
 async fn refresh_grant(
@@ -373,14 +380,9 @@ async fn device_code_grant(
     let user_id = entry
         .user_id
         .ok_or_else(|| invalid_grant("The device code is invalid."))?;
+    let suspended = account_gate(&state.db, user_id).await?;
     let scope = entry.granted_scope.unwrap_or(entry.scope);
-    let issued = tokens::issue_token_pair(state, Some(client.id), user_id, &scope, None, None)
-        .await
-        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    tokens::record_authorization(&state.db, user_id, client.id, &scope)
-        .await
-        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    Ok(tokens::token_entity(&issued))
+    issue_credentials(state, user_id, Some(client.id), &scope, None, suspended).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -562,9 +564,70 @@ async fn failed_second_factor(state: &Arc<AppState>, mfa_token: &str) -> oauth::
     invalid_grant("The provided two-factor credential is invalid.")
 }
 
+/// The lifecycle gate every issuance path shares: `Ok(suspended)`
+/// for a live account (suspension gates restricted issuance), `Err`
+/// when the account is gone or unknown — disabled, deleted, pending
+/// self-deletion and a missing user all lock out the same way.
+async fn account_gate(
+    db: &sqlx::PgPool,
+    user_id: i64,
+) -> std::result::Result<bool, oauth::GrantError> {
+    let row: Option<(bool, bool)> = sqlx::query_as(
+        "SELECT a.suspended_at IS NOT NULL, \
+                a.disabled_at IS NOT NULL OR a.deleted_at IS NOT NULL OR \
+                EXISTS(SELECT 1 FROM account_deletions d \
+                       WHERE d.account_id = a.id AND d.state IN ('pending','running')) \
+         FROM users u JOIN accounts a ON a.id = u.account_id WHERE u.id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    match row {
+        Some((suspended, false)) => Ok(suspended),
+        _ => Err(invalid_grant(
+            "The provided authorization grant is invalid, expired or revoked.",
+        )),
+    }
+}
+
+/// Issue the credential for an account that passed [`account_gate`]:
+/// a restricted export-only token while suspended, otherwise an
+/// ordinary pair recorded as an authorization for application-bound
+/// grants. Returns the token entity.
+async fn issue_credentials(
+    state: &Arc<AppState>,
+    user_id: i64,
+    application_id: Option<i64>,
+    scope: &str,
+    session: Option<&SessionMeta>,
+    suspended: bool,
+) -> std::result::Result<Value, oauth::GrantError> {
+    if suspended {
+        let issued = tokens::issue_restricted_token(state, user_id, session)
+            .await
+            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+        let mut entity = tokens::token_entity(&issued);
+        entity["yonder"] = json!({ "restricted": true });
+        return Ok(entity);
+    }
+    let issued = tokens::issue_token_pair(state, application_id, user_id, scope, None, session)
+        .await
+        .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    if let Some(application_id) = application_id {
+        tokens::record_authorization(&state.db, user_id, application_id, scope)
+            .await
+            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
+    }
+    Ok(tokens::token_entity(&issued))
+}
+
 /// Finish a completed pending login exactly like a successful
 /// `password_grant`: token pair + session row (interactive login) +
-/// `oauth_authorizations` upsert for client-bound grants.
+/// `oauth_authorizations` upsert for client-bound grants. Account
+/// state is re-checked at issuance: a suspension that lands between
+/// the password and second-factor steps still yields only a
+/// restricted credential, and deletion locks the account out.
 async fn issue_for_pending_login(
     state: &Arc<AppState>,
     mfa_token: &str,
@@ -577,6 +640,7 @@ async fn issue_for_pending_login(
         .ok_or_else(|| {
             invalid_grant("The provided authorization grant is invalid, expired or revoked.")
         })?;
+    let suspended = account_gate(&state.db, pending.user_id).await?;
     let meta = SessionMeta {
         user_agent: headers
             .get(axum::http::header::USER_AGENT)
@@ -584,22 +648,15 @@ async fn issue_for_pending_login(
             .map(String::from),
         ip: ip.parse::<std::net::IpAddr>().ok().map(|_| ip.to_string()),
     };
-    let issued = tokens::issue_token_pair(
+    issue_credentials(
         state,
-        pending.application_id,
         pending.user_id,
+        pending.application_id,
         &pending.scope,
-        None,
         Some(&meta),
+        suspended,
     )
     .await
-    .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    if let Some(application_id) = pending.application_id {
-        tokens::record_authorization(&state.db, pending.user_id, application_id, &pending.scope)
-            .await
-            .map_err(|e| oauth::GrantError::server(&e.to_string()))?;
-    }
-    Ok(tokens::token_entity(&issued))
 }
 
 #[derive(Debug, Deserialize)]

@@ -467,6 +467,25 @@ async fn self_delete_schedules_revokes_and_tombstones() {
     .fetch_one(&env.state.db)
     .await
     .unwrap();
+    // Imported rows: an archive session and a private-history message.
+    // The tombstone keeps the `accounts` row, so their cascades never
+    // fire — purge must remove them explicitly (contract §7.6).
+    sqlx::query(
+        "INSERT INTO archive_imports (account_id, kind, mode, file_key) \
+         VALUES ($1, 'archive', 'merge', 'imports/dummy.zip')",
+    )
+    .bind(leaver)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO private_history_messages (owner_id, sender_uri, source_uri) \
+         VALUES ($1, 'https://old.test/ap/users/sender', 'https://old.test/statuses/1')",
+    )
+    .bind(leaver)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
 
     // The endpoint confirms the password, schedules and returns 200.
     let (status, body) = request(
@@ -545,6 +564,15 @@ async fn self_delete_schedules_revokes_and_tombstones() {
             .await
             .unwrap();
     assert!(!status_gone);
+    let imported_left: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM archive_imports WHERE account_id = $1) \
+         OR EXISTS(SELECT 1 FROM private_history_messages WHERE owner_id = $1)",
+    )
+    .bind(leaver)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(!imported_left, "imported rows must not survive purge");
     // The Delete activity is kept (deliveries cascade-protected) and
     // addressed to Public + followers.
     let delete: Option<Value> = sqlx::query_scalar(
@@ -1011,7 +1039,7 @@ async fn inline_export_and_archive_round_trip() {
         "following_accounts.csv",
         "blocked_accounts.csv",
         "bookmarks.json",
-        "filters.json",
+        "custom_filters.json",
     ] {
         assert!(
             names.contains(&member.to_string()),

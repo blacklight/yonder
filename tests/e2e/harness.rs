@@ -251,10 +251,25 @@ fn hash(s: &str) -> u64 {
     h.finish()
 }
 
-/// Unique, deterministic per-test name derived from the libtest
-/// thread name (the full test path), e.g. `admin::settings_reset` →
-/// `admin_settings_reset`. Truncated to fit Postgres' 63-byte ident.
+/// Unique per-test name derived from the libtest thread name (the
+/// full test path), e.g. `admin::settings_reset` →
+/// `admin_settings_reset`. Two suffixes keep it collision-proof:
+///
+/// - a hash of the *full* name, so tests sharing the truncated
+///   prefix still get distinct databases;
+/// - a per-process run id, so two overlapping `cargo test`
+///   invocations never share a database, Redis prefix, or account
+///   rows — a crashed run may leave stale `yonder_t_*` databases
+///   behind (drop them with `DROP DATABASE`).
+///
+/// Sized to fit Postgres' 63-byte ident with the `yonder_t_` prefix.
 pub fn test_slug() -> String {
+    static RUN_ID: OnceLock<String> = OnceLock::new();
+    let run = RUN_ID.get_or_init(|| {
+        let mut b = [0u8; 3];
+        getrandom::fill(&mut b).expect("OS entropy source unavailable");
+        hex::encode(b)
+    });
     let name = std::thread::current()
         .name()
         .unwrap_or("anonymous")
@@ -269,7 +284,12 @@ pub fn test_slug() -> String {
             }
         })
         .collect();
-    slug.chars().take(48).collect()
+    // 9 (`yonder_t_`) + 38 + 1 + 8 + 1 + 6 = 63.
+    format!(
+        "{}_{:08x}_{run}",
+        slug.chars().take(38).collect::<String>(),
+        hash(&name) as u32
+    )
 }
 
 /// Fresh database `yonder_t_<slug>` on the shared Postgres, migrated

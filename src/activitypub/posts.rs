@@ -340,7 +340,7 @@ pub async fn publish_delete(ap: &ApContext, ctx: &PostContext, status: &StatusRo
 /// Copy the doc-only fields (`source`, poll fields, quote fields,
 /// `interactionPolicy`) `Object::to_json` dropped onto the activity's
 /// embedded object.
-fn merge_object_extras(target: &mut Value, doc: &Value) {
+pub(crate) fn merge_object_extras(target: &mut Value, doc: &Value) {
     for key in [
         "source",
         "oneOf",

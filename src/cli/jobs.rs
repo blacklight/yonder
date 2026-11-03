@@ -220,6 +220,17 @@ pub enum JobCommand {
     /// backstop for moves whose inline publication did not complete.
     #[command(name = "publish_move")]
     PublishMove(JobArgs),
+    /// Drain an import's pending `publication_work` rows.
+    ///
+    /// Payload: `{"import_id": <archive_imports row id>}` — enqueued by
+    /// the import job when the session opted into `federate`.
+    #[command(name = "import_publish")]
+    ImportPublish(JobArgs),
+    /// Re-enqueue import sessions whose job envelope was lost.
+    ///
+    /// Payload: `{}` — scheduled by `admin.import_sweep_schedule`.
+    #[command(name = "import_sweep")]
+    ImportSweep(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -261,6 +272,8 @@ impl JobCommand {
             Self::WebmentionIncoming(a) => (JobKind::WebmentionIncoming, a),
             Self::WebmentionOutgoing(a) => (JobKind::WebmentionOutgoing, a),
             Self::PublishMove(a) => (JobKind::PublishMove, a),
+            Self::ImportPublish(a) => (JobKind::ImportPublish, a),
+            Self::ImportSweep(a) => (JobKind::ImportSweep, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

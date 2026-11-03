@@ -77,12 +77,64 @@ pub struct ApCore {
     /// table and invalidates the handler cache. SQL-facing reads
     /// (inbox edge, timelines, search) are live and don't need it.
     pub blocked: std::sync::RwLock<Vec<String>>,
+    /// Fan-out failure tracking for activities a caller publishes and
+    /// retries on failure (the import publication drain). `deliver_fn`
+    /// cannot return errors (pubby's callback is `Fn(&str, &Value) ->
+    /// ()`), so a failed `deliveries` ledger enqueue is recorded here
+    /// and the caller checks it after `publish` returns.
+    pub delivery_watch: DeliveryWatch,
 }
 
 impl ApCore {
     /// The storage as the pubby trait object handlers expect.
     pub fn storage_trait(&self) -> Arc<dyn pubby_sdk::ActivityPubStorage> {
         self.storage.clone()
+    }
+}
+
+/// Per-activity fan-out failure markers. Only watched activities are
+/// tracked, so ordinary publications never accumulate entries here.
+#[derive(Default)]
+pub struct DeliveryWatch(std::sync::Mutex<std::collections::HashMap<String, (usize, bool)>>);
+
+impl DeliveryWatch {
+    fn with<T>(
+        &self,
+        f: impl FnOnce(&mut std::collections::HashMap<String, (usize, bool)>) -> T,
+    ) -> T {
+        f(&mut self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Start tracking `activity_id` for the publish about to run.
+    pub fn watch(&self, activity_id: &str) {
+        self.with(|w| {
+            w.entry(activity_id.to_string()).or_default().0 += 1;
+        });
+    }
+
+    /// Record a failed ledger enqueue — a no-op unless watched.
+    pub fn fail(&self, activity_id: &str) {
+        self.with(|w| {
+            if let Some(failed) = w.get_mut(activity_id) {
+                failed.1 = true;
+            }
+        });
+    }
+
+    /// Stop tracking `activity_id`; `true` when a ledger enqueue failed
+    /// while it was watched.
+    pub fn unwatch(&self, activity_id: &str) -> bool {
+        self.with(|w| {
+            let Some((users, failed)) = w.get_mut(activity_id) else {
+                return false;
+            };
+            let result = *failed;
+            *users -= 1;
+            if *users == 0 {
+                w.remove(activity_id);
+            }
+            result
+        })
     }
 }
 
@@ -169,6 +221,7 @@ pub async fn build(
         bus: bus.clone(),
         base_url: base_url.clone(),
         blocked: std::sync::RwLock::new(moderation::blocked_domains(pool, config).await?),
+        delivery_watch: DeliveryWatch::default(),
     });
 
     let instance_actor = actors::ensure_instance_actor(pool, &base_url).await?;
@@ -303,4 +356,41 @@ pub fn handler_for_username(
     ctx.multi
         .for_username(username)
         .map_err(|e| crate::Error::Internal(format!("resolver failed: {e}")))
+}
+
+#[cfg(test)]
+mod delivery_watch_tests {
+    use super::DeliveryWatch;
+
+    #[test]
+    fn overlapping_watchers_preserve_failures_until_the_last_unwatch() {
+        let watch = DeliveryWatch::default();
+        watch.watch("activity");
+        watch.fail("activity");
+        watch.watch("activity");
+        assert!(watch.unwatch("activity"));
+        watch.fail("activity");
+        assert!(watch.unwatch("activity"));
+        watch.watch("activity");
+        assert!(!watch.unwatch("activity"));
+    }
+
+    #[test]
+    fn only_watched_activities_record_ledger_failures() {
+        let watch = DeliveryWatch::default();
+        watch.fail("https://yonder.test/unwatched#1");
+        watch.watch("https://yonder.test/import#1");
+        watch.fail("https://yonder.test/import#1");
+        assert!(watch.unwatch("https://yonder.test/import#1"));
+        assert!(!watch.unwatch("https://yonder.test/unwatched#1"));
+    }
+
+    #[test]
+    fn a_clean_publish_reports_no_failure_and_forgets_the_watch() {
+        let watch = DeliveryWatch::default();
+        watch.watch("https://yonder.test/import#2");
+        assert!(!watch.unwatch("https://yonder.test/import#2"));
+        watch.fail("https://yonder.test/import#2");
+        assert!(!watch.unwatch("https://yonder.test/import#2"));
+    }
 }

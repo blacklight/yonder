@@ -145,8 +145,16 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
         file_key,
         cursor,
         bytes,
+        options,
+        lease,
         deadline,
+        ..
     } = run;
+    let federate = options
+        .get("federate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && rel.ap.is_some();
     // Decompression of a full-size archive is CPU-bound — it runs on
     // the blocking pool, never on an async worker.
     let indexed = tokio::task::spawn_blocking(move || {
@@ -157,7 +165,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
     let index = match indexed {
         Ok(i) => i,
         Err(e) => {
-            return fail_import(ctx, import_id, file_key, &e.to_string()).await;
+            return fail_import(ctx, import_id, lease, file_key, &e.to_string()).await;
         }
     };
     // A recognizable archive imports at least one member — a `done`
@@ -166,6 +174,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
         return fail_import(
             ctx,
             import_id,
+            lease,
             file_key,
             "archive has no importable members",
         )
@@ -190,7 +199,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             let items = match collection_items(content, member) {
                 Ok(i) => i,
                 Err(e) => {
-                    return fail_import(ctx, import_id, file_key, &e.to_string()).await;
+                    return fail_import(ctx, import_id, lease, file_key, &e.to_string()).await;
                 }
             };
             let mut idx = offset as usize;
@@ -200,7 +209,9 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             {
                 let mut item = items[idx].clone();
                 strip_envelope(&mut item);
-                match import_outbox_item(ctx, &index, import_id, account_id, &item).await {
+                match import_outbox_item(ctx, Some(&index), import_id, account_id, &item, federate)
+                    .await
+                {
                     Ok(o) => record(&mut tally, o),
                     Err(e) => {
                         tally.failed += 1;
@@ -217,7 +228,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             let items = match collection_items(content, member) {
                 Ok(i) => uri_items(&i),
                 Err(e) => {
-                    return fail_import(ctx, import_id, file_key, &e.to_string()).await;
+                    return fail_import(ctx, import_id, lease, file_key, &e.to_string()).await;
                 }
             };
             let favourite = member == "likes.json";
@@ -226,7 +237,9 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
                 && tally.seen() < BATCH_ROWS
                 && std::time::Instant::now() < deadline
             {
-                match apply_collection_item(ctx, account_id, &items[idx], favourite).await {
+                match apply_collection_item(ctx, account_id, import_id, &items[idx], favourite)
+                    .await
+                {
                     Ok(o) => record(&mut tally, o),
                     Err(e) => {
                         tally.failed += 1;
@@ -243,7 +256,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             let entries = match normalize_filter_doc(content) {
                 Ok(e) => e,
                 Err(e) => {
-                    return fail_import(ctx, import_id, file_key, &e.to_string()).await;
+                    return fail_import(ctx, import_id, lease, file_key, &e.to_string()).await;
                 }
             };
             if mode == "overwrite" && offset == 0 {
@@ -271,16 +284,19 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             let rows = match parse_rows(kind, content) {
                 Ok(r) => r,
                 Err(e) => {
-                    return fail_import(ctx, import_id, file_key, &e.to_string()).await;
+                    return fail_import(ctx, import_id, lease, file_key, &e.to_string()).await;
                 }
             };
-            overwrite_prep(ctx, rel, account_id, kind, &rows, mode, offset).await?;
+            overwrite_prep(
+                ctx, rel, account_id, kind, &rows, mode, offset, import_id, lease,
+            )
+            .await?;
             let mut idx = offset as usize;
             while idx < rows.len()
                 && tally.seen() < BATCH_ROWS
                 && std::time::Instant::now() < deadline
             {
-                match apply_row(ctx, rel, account_id, kind, &rows[idx]).await {
+                match apply_row(ctx, rel, account_id, import_id, kind, &rows[idx]).await {
                     Ok(()) => tally.applied += 1,
                     Err(e) => {
                         tally.failed += 1;
@@ -300,14 +316,27 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
 
     let cursor = kind_idx * KIND_OFFSET + offset;
     if (kind_idx as usize) < ARCHIVE_KINDS.len() {
-        return requeue_import(ctx, import_id, cursor, &tally).await;
+        return requeue_import(ctx, import_id, lease, file_key, cursor, &tally).await;
     }
-    persist_progress(ctx, import_id, cursor, &tally).await?;
+    if !persist_progress(ctx, import_id, lease, file_key, cursor, &tally).await? {
+        return Ok(());
+    }
     // Two-pass fix-up: replies/quotes resolve through the source-ID
     // mapping regardless of archive order (imported self-copies win,
     // original remote URIs still match for other authors).
     fix_up_graph(&ctx.db, account_id).await?;
-    finish_import(ctx, import_id, file_key).await
+    // §8: enqueue the drain *before* committing `done` — a crash or
+    // enqueue failure here keeps the import `running` so the retry
+    // re-enqueues it; work rows can never be stranded.
+    if federate {
+        crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs)
+            .enqueue(
+                crate::jobs::JobKind::ImportPublish,
+                json!({ "import_id": import_id }),
+            )
+            .await?;
+    }
+    finish_import(ctx, import_id, lease, file_key).await
 }
 
 fn record(tally: &mut Tally, outcome: ItemOutcome) {
@@ -326,7 +355,7 @@ fn record(tally: &mut Tally, outcome: ItemOutcome) {
 /// Resolve self-replies and quotes after all items landed. Self-copies
 /// win through the per-account `original_id`; other authors match the
 /// canonical remote `uri` only — never another importer's copy.
-async fn fix_up_graph(db: &PgPool, account_id: i64) -> Result<()> {
+pub(crate) async fn fix_up_graph(db: &PgPool, account_id: i64) -> Result<()> {
     for (col, link, extra) in [
         (
             "in_reply_to_id",
@@ -358,10 +387,12 @@ async fn fix_up_graph(db: &PgPool, account_id: i64) -> Result<()> {
 }
 
 /// A favourites/bookmarks row on a possibly-remote object: the status
-/// is stubbed by URI when unknown locally.
+/// is stubbed by URI when unknown locally. Self-posts map to the
+/// imported copy through `original_id` before the canonical `uri`.
 pub(crate) async fn apply_collection_item(
     ctx: &JobContext,
     account_id: i64,
+    import_id: i64,
     uri: &str,
     favourite: bool,
 ) -> Result<ItemOutcome> {
@@ -371,7 +402,20 @@ pub(crate) async fn apply_collection_item(
         )));
     }
     let mut tx = ctx.db.begin().await?;
-    let status_id = ensure_remote_status(&mut tx, uri).await?;
+    // The importer's own copy wins — a like/bookmark on their own
+    // post attaches to the imported row, not a remote stub.
+    let status_id: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE (account_id = $1 AND original_id = $2) OR uri = $2 \
+         ORDER BY (account_id = $1 AND original_id = $2) DESC LIMIT 1",
+    )
+    .bind(account_id)
+    .bind(uri)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let status_id = match status_id {
+        Some(id) => id,
+        None => ensure_remote_status(&mut tx, uri).await?,
+    };
     let n = sqlx::query(&format!(
         "INSERT INTO {} (account_id, status_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         if favourite { "favourites" } else { "bookmarks" }
@@ -381,12 +425,94 @@ pub(crate) async fn apply_collection_item(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    record_item(
+        &mut tx,
+        import_id,
+        account_id,
+        if favourite { "like" } else { "bookmark" },
+        uri,
+        Some(status_id),
+        if n > 0 { "done" } else { "skipped" },
+        None,
+        None,
+        None,
+    )
+    .await?;
     tx.commit().await?;
     Ok(if n > 0 {
         ItemOutcome::Applied
     } else {
         ItemOutcome::Present
     })
+}
+
+/// Upsert the `import_items` bookkeeping row (source→destination
+/// mapping, contract §2.4). Retries and replays coalesce on the
+/// `(account, source_uri, kind)` unique key.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn record_item(
+    tx: &mut PgConnection,
+    import_id: i64,
+    account_id: i64,
+    kind: &str,
+    source_uri: &str,
+    target_status_id: Option<i64>,
+    state: &str,
+    in_reply_to_uri: Option<&str>,
+    quote_uri: Option<&str>,
+    reblog_uri: Option<&str>,
+) -> Result<i64> {
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO import_items (import_id, account_id, kind, source_uri, \
+                                   target_status_id, state, in_reply_to_uri, \
+                                   quote_uri, reblog_uri) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+         ON CONFLICT (account_id, source_uri, kind) DO UPDATE SET \
+           import_id = EXCLUDED.import_id, \
+           target_status_id = COALESCE(EXCLUDED.target_status_id, import_items.target_status_id), \
+           state = EXCLUDED.state, updated_at = now() \
+         RETURNING id",
+    )
+    .bind(import_id)
+    .bind(account_id)
+    .bind(kind)
+    .bind(source_uri)
+    .bind(target_status_id)
+    .bind(state)
+    .bind(in_reply_to_uri)
+    .bind(quote_uri)
+    .bind(reblog_uri)
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(id)
+}
+
+/// A `publication_work` row for one authored item (contract §8): the
+/// durable bridge between the committed status and the delivery
+/// enqueue — deterministic `activity_id` makes retries once-only.
+async fn queue_publication(
+    tx: &mut PgConnection,
+    import_id: i64,
+    import_item_id: i64,
+    status_id: i64,
+    status_uri: &str,
+    activity_type: &str,
+    username: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO publication_work (import_id, import_item_id, status_id, \
+                                       activity_type, activity_id, payload) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (activity_id) DO NOTHING",
+    )
+    .bind(import_id)
+    .bind(import_item_id)
+    .bind(status_id)
+    .bind(activity_type)
+    .bind(format!("{status_uri}#imports/{import_id}/{activity_type}"))
+    .bind(json!({ "status_id": status_id, "username": username }))
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
 }
 
 /// Find or stub a remote status row by URI (boost/like/bookmark
@@ -477,16 +603,18 @@ fn id_str(v: Option<&Value>) -> Option<String> {
 
 /// Dispatch one normalized outbox item: `Create` Note/Question →
 /// authored status (or DM history); `Announce` → boost row.
-async fn import_outbox_item(
+/// `index` is `None` for API-sourced items (no embedded media).
+pub(crate) async fn import_outbox_item(
     ctx: &JobContext,
-    index: &archive::ArchiveIndex,
+    index: Option<&archive::ArchiveIndex>,
     import_id: i64,
     account_id: i64,
     item: &Value,
+    federate: bool,
 ) -> Result<ItemOutcome> {
     match item.get("type").and_then(Value::as_str) {
-        Some("Create") => import_post(ctx, index, import_id, account_id, item).await,
-        Some("Announce") => import_boost(ctx, account_id, item).await,
+        Some("Create") => import_post(ctx, index, import_id, account_id, item, federate).await,
+        Some("Announce") => import_boost(ctx, import_id, account_id, item, federate).await,
         _ => Ok(ItemOutcome::Unsupported),
     }
 }
@@ -494,7 +622,13 @@ async fn import_outbox_item(
 /// Import an `Announce` as a boost of the (possibly stubbed) original.
 /// The Announce's own id/timestamp stay provenance on the boost row;
 /// its audience sets the boost's visibility.
-async fn import_boost(ctx: &JobContext, account_id: i64, item: &Value) -> Result<ItemOutcome> {
+async fn import_boost(
+    ctx: &JobContext,
+    import_id: i64,
+    account_id: i64,
+    item: &Value,
+    federate: bool,
+) -> Result<ItemOutcome> {
     let db = &ctx.db;
     let Some(object_uri) = id_str(item.get("object")) else {
         return Ok(ItemOutcome::Skipped);
@@ -530,13 +664,15 @@ async fn import_boost(ctx: &JobContext, account_id: i64, item: &Value) -> Result
         tx.rollback().await?;
         return Ok(ItemOutcome::Present);
     };
-    let actor_id: String = sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
-        .bind(account_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (actor_id, username): (String, String) =
+        sqlx::query_as("SELECT actor_id, username FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let boost_uri = format!("{actor_id}/statuses/{boost_id}");
     sqlx::query("UPDATE statuses SET uri = $2 WHERE id = $1")
         .bind(boost_id)
-        .bind(format!("{actor_id}/statuses/{boost_id}"))
+        .bind(&boost_uri)
         .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1")
@@ -547,6 +683,27 @@ async fn import_boost(ctx: &JobContext, account_id: i64, item: &Value) -> Result
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+    let item_id = record_item(
+        &mut tx,
+        import_id,
+        account_id,
+        "boost",
+        &announce_id,
+        Some(boost_id),
+        "done",
+        None,
+        None,
+        Some(&object_uri),
+    )
+    .await?;
+    // `federate` never bulk re-sends non-public audiences (contract
+    // §8.3): only public/unlisted boosts get durable work.
+    if federate && matches!(visibility, "public" | "unlisted") {
+        queue_publication(
+            &mut tx, import_id, item_id, boost_id, &boost_uri, "Announce", &username,
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(ItemOutcome::Applied)
 }
@@ -644,10 +801,11 @@ type StagedMedia = (
 /// transaction so a crash cannot leave a dedupe-keyed partial row.
 async fn import_post(
     ctx: &JobContext,
-    index: &archive::ArchiveIndex,
+    index: Option<&archive::ArchiveIndex>,
     import_id: i64,
     account_id: i64,
     item: &Value,
+    federate: bool,
 ) -> Result<ItemOutcome> {
     let db = &ctx.db;
     let obj = item.get("object").cloned().unwrap_or(Value::Null);
@@ -730,6 +888,23 @@ async fn import_post(
         return Ok(ItemOutcome::Present);
     }
 
+    // Remote-side aggregate counters are provenance, not live
+    // interactions — they ride the `remote_*_count` columns (0042)
+    // which render as GREATEST(local, remote) without inflating the
+    // transactional counters.
+    let remote_likes = item
+        .get("yonder_likes_count")
+        .and_then(Value::as_i64)
+        .map(|n| n.clamp(0, i32::MAX as i64) as i32);
+    let remote_shares = item
+        .get("yonder_shares_count")
+        .and_then(Value::as_i64)
+        .map(|n| n.clamp(0, i32::MAX as i64) as i32);
+    let remote_quotes = item
+        .get("yonder_quotes_count")
+        .and_then(Value::as_i64)
+        .map(|n| n.clamp(0, i32::MAX as i64) as i32);
+
     // Stage attachments: embedded bytes are validated and put to
     // storage first (the row insert happens inside the item
     // transaction; a failed commit leaves only an orphan object,
@@ -778,9 +953,10 @@ async fn import_post(
     let status_id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO statuses (id, account_id, content, content_html, spoiler_text, sensitive, language, \
                                visibility, local, original_id, original_created_at, created_at, \
-                               in_reply_to_uri, quote_uri) \
+                               in_reply_to_uri, quote_uri, \
+                               remote_likes_count, remote_shares_count, remote_quotes_count) \
          VALUES (timestamp_id('statuses', COALESCE($8, now())), \
-                 $1, $2, $3, $4, $5, $6, $7, true, $9, $8, $8, $10, $11) \
+                 $1, $2, $3, $4, $5, $6, $7, true, $9, $8, $8, $10, $11, $12, $13, $14) \
          ON CONFLICT (account_id, original_id) WHERE original_id IS NOT NULL DO NOTHING \
          RETURNING id",
     )
@@ -799,6 +975,9 @@ async fn import_post(
     .bind(&original_id)
     .bind(&in_reply_to_uri)
     .bind(&quote_uri)
+    .bind(remote_likes)
+    .bind(remote_shares)
+    .bind(remote_quotes)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(status_id) = status_id else {
@@ -807,9 +986,10 @@ async fn import_post(
     };
     // Mint the local URI from the new id (Mastodon's /statuses/{id}
     // shape under the actor) and a profile URL.
+    let status_uri = format!("{actor_id}/statuses/{status_id}");
     sqlx::query("UPDATE statuses SET uri = $2, url = $3 WHERE id = $1")
         .bind(status_id)
-        .bind(format!("{actor_id}/statuses/{status_id}"))
+        .bind(&status_uri)
         .bind(format!(
             "{}/@{}/{}",
             activitypub::federation_base_url(&ctx.config),
@@ -981,6 +1161,37 @@ async fn import_post(
         .execute(&mut *tx)
         .await?;
     }
+    let item_id = record_item(
+        &mut tx,
+        import_id,
+        account_id,
+        if in_reply_to_uri.is_some() {
+            "reply"
+        } else {
+            "post"
+        },
+        &original_id,
+        Some(status_id),
+        "done",
+        in_reply_to_uri.as_deref(),
+        quote_uri.as_deref(),
+        None,
+    )
+    .await?;
+    // §8: only public/unlisted audiences may bulk re-send — private
+    // and followers-only posts never leave through this toggle.
+    if federate && matches!(visibility, "public" | "unlisted") {
+        queue_publication(
+            &mut tx,
+            import_id,
+            item_id,
+            status_id,
+            &status_uri,
+            "Create",
+            &username,
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(with_unavailable(ItemOutcome::Applied, unavailable))
 }
@@ -998,13 +1209,13 @@ fn with_unavailable(outcome: ItemOutcome, unavailable: i64) -> ItemOutcome {
 /// as a reference. `None` when neither survives.
 async fn stage_attachment(
     ctx: &JobContext,
-    index: &archive::ArchiveIndex,
+    index: Option<&archive::ArchiveIndex>,
     account_id: i64,
     url: &str,
     declared: &str,
     description: Option<String>,
 ) -> Result<Option<StagedMedia>> {
-    if let Some(bytes) = index.get(url) {
+    if let Some(bytes) = index.and_then(|i| i.get(url)) {
         if let Some(row) =
             stage_embedded(ctx, account_id, bytes, declared, description.clone()).await?
         {
@@ -1125,6 +1336,23 @@ async fn import_dm(
     .bind(&source_origin)
     .bind(dm.original_at)
     .fetch_optional(&mut *tx)
+    .await?;
+    record_item(
+        &mut tx,
+        import_id,
+        account_id,
+        "dm",
+        dm.source_uri,
+        None,
+        if inserted.is_some() {
+            "done"
+        } else {
+            "skipped"
+        },
+        None,
+        None,
+        None,
+    )
     .await?;
     tx.commit().await?;
     Ok(if inserted.is_some() {

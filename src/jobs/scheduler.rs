@@ -86,6 +86,10 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             JobKind::ExportCleanup,
         ),
         (
+            config.admin.import_sweep_schedule.as_deref(),
+            JobKind::ImportSweep,
+        ),
+        (
             config.admin.audit_log_sweep_schedule.as_deref(),
             JobKind::AuditLogCleanup,
         ),

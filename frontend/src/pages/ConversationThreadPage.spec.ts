@@ -94,7 +94,7 @@ describe("ConversationThreadPage", () => {
     mockApi();
     const { wrapper } = mount(KEY_A);
     await flushPromises();
-    await wrapper.setProps({ id: KEY_B });
+    await wrapper.setProps({ id: KEY_B } as never);
     await flushPromises();
     const draft = useComposeStore().draft;
     expect(draft.text).toBe("@y@b.test ");

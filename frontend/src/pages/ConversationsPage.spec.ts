@@ -79,8 +79,8 @@ describe("ConversationsPage", () => {
     expect(rows[0].get(".preview").text()).toContain("questa è una prova");
     expect(rows[0].find(".dot").exists()).toBe(false);
     expect(rows[1].classes()).toContain("unread");
-    expect(rows[1].get(".dot").exists()).toBe(true);
-    expect(rows[1].get(".conv-when").exists()).toBe(true);
+    expect(rows[1].find(".dot").exists()).toBe(true);
+    expect(rows[1].find(".conv-when").exists()).toBe(true);
   });
 
   it("opens the thread on click and on Enter", async () => {

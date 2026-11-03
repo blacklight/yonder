@@ -381,6 +381,42 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .get(transfer::list_imports),
         )
         .route("/api/v1/yonder/imports/{id}", get(transfer::get_import))
+        .route(
+            "/api/v1/yonder/imports/{id}/cancel",
+            post(transfer::cancel_import),
+        )
+        .route(
+            "/api/v1/yonder/imports/{id}/resume",
+            post(transfer::resume_import),
+        )
+        .route(
+            "/api/v1/yonder/import_sessions",
+            post(transfer::create_import_session),
+        )
+        .route(
+            "/api/v1/yonder/import_connections",
+            post(transfer::begin_connection).get(transfer::list_connections),
+        )
+        .route(
+            "/api/v1/yonder/import_connections/callback",
+            get(transfer::connection_callback),
+        )
+        .route(
+            "/api/v1/yonder/import_connections/{id}",
+            axum::routing::delete(transfer::revoke_connection),
+        )
+        .route(
+            "/api/v1/yonder/statuses/{id}/history",
+            get(transfer::status_history),
+        )
+        .route(
+            "/api/v1/yonder/history/messages",
+            get(transfer::history_messages),
+        )
+        .route(
+            "/api/v1/yonder/history/messages/{id}/media/{index}",
+            get(transfer::history_media),
+        )
         // Restricted (suspended-account) surface — export-only.
         .route(
             "/api/v1/yonder/restricted/session",
@@ -939,6 +975,16 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     transfer::list_exports,
     transfer::get_export,
     transfer::download_export,
+    transfer::begin_connection,
+    transfer::list_connections,
+    transfer::connection_callback,
+    transfer::revoke_connection,
+    transfer::create_import_session,
+    transfer::cancel_import,
+    transfer::resume_import,
+    transfer::status_history,
+    transfer::history_messages,
+    transfer::history_media,
     transfer::create_import,
     transfer::list_imports,
     transfer::get_import,

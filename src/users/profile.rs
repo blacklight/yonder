@@ -605,7 +605,7 @@ fn html_text(text: &str) -> String {
 /// Validate field inputs without touching storage: `max_profile_fields`
 /// counts *non-empty* entries (all-blank rows are dropped, matching
 /// Mastodon), and name/value char limits apply after trimming.
-fn validate_fields(config: &Config, inputs: &[FieldInput]) -> Result<()> {
+pub(crate) fn validate_fields(config: &Config, inputs: &[FieldInput]) -> Result<()> {
     let max = config.content.max_profile_fields as usize;
     let mut kept = 0;
     for input in inputs {
@@ -647,7 +647,11 @@ fn hashtag_url(config: &Config) -> impl Fn(&str) -> String {
 /// preserving `verified_at` for entries whose `name`+`value_raw` pair
 /// survives anywhere in the previous list — a reorder shouldn't cost a
 /// field its stamp. Assumes [`validate_fields`] already ran.
-fn render_fields(config: &Config, inputs: &[FieldInput], previous: &[Value]) -> Result<Vec<Value>> {
+pub(crate) fn render_fields(
+    config: &Config,
+    inputs: &[FieldInput],
+    previous: &[Value],
+) -> Result<Vec<Value>> {
     let mut out = Vec::with_capacity(inputs.len());
     for input in inputs {
         let name = input.name.trim();

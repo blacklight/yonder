@@ -384,14 +384,65 @@ export interface TransferRow {
   id: string;
   kind: string;
   state: string;
+  source_type?: string;
+  source_origin?: string | null;
+  source_actor_uri?: string | null;
+  stage?: string | null;
   processed: number;
   total: number | null;
   failed: number;
   file_size: number | null;
   error: string | null;
+  options?: Record<string, unknown>;
+  category_state?: Record<string, Record<string, unknown>>;
+  summary?: Record<string, unknown> | null;
   created_at: string;
   completed_at: string | null;
   expires_at: string | null;
+}
+
+/** `import_connections` row projection — never secrets. */
+export interface ImportConnection {
+  id: string;
+  origin: string;
+  source_actor_uri: string;
+  source_acct: string | null;
+  scopes: string;
+  state: string;
+  created_at: string;
+}
+
+/** One `historical_observations` row (owner-scoped read). */
+export interface HistoricalObservation {
+  kind: "like" | "boost" | "quote" | "reply";
+  actor_uri: string | null;
+  activity_uri: string | null;
+  object_uri: string | null;
+  observed_at: string;
+  original_at: string | null;
+  source_origin: string | null;
+  visibility: string;
+}
+
+/** One `private_history_messages` row. */
+export interface HistoryMessage {
+  id: string;
+  sender_uri: string;
+  recipient_uris: string[];
+  body: string | null;
+  media: { kind: "local" | "remote"; url: string }[];
+  source_uri: string;
+  source_origin: string | null;
+  original_at: string | null;
+}
+
+/** `GET /api/v1/yonder/move` — the account's move state. */
+export interface MoveState {
+  state: string;
+  target_acct?: string | null;
+  cooldown_until?: string | null;
+  followers_migrated?: number;
+  followers_total?: number;
 }
 
 /** `invites::list` row. */

@@ -6862,6 +6862,7 @@ dependencies = [
  "figment",
  "flate2",
  "futures-util",
+ "getrandom 0.4.3",
  "hex",
  "hkdf 0.13.0",
  "hostname",

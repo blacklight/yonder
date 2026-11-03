@@ -175,6 +175,7 @@ async fn list_import(
         &bytes,
         "text/csv",
         total,
+        serde_json::json!({}),
     )
     .await
 }

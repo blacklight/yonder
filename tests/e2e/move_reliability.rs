@@ -1,8 +1,6 @@
 //! Move-reliability baseline tests: durable migration events,
-//! retryable publication, and failure-retaining follower migration.
-//!
-//! `move` notifications are still `#[ignore]`d until the
-//! notifications workstream lands (contract section 4).
+//! retryable publication, failure-retaining follower migration, and
+//! `move` notification dedupe (contract sections 3–4).
 //!
 //! Skipped when no container runtime is reachable.
 

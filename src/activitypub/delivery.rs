@@ -51,6 +51,12 @@ pub fn deliver_fn(ctx: &Arc<super::ApCore>) -> DeliverFn {
         let activity = activity.clone();
         if let Err(e) = sync_block(enqueue_delivery(&ctx, &inbox_url, &activity)) {
             tracing::error!(error = %e, inbox = %inbox_url, "delivery enqueue failed");
+            // The ledger row is missing permanently — the sweep can
+            // only revive rows that exist. Watched callers (the import
+            // publication drain) see it and retry the publish.
+            if let Some(id) = activity.get("id").and_then(|v| v.as_str()) {
+                ctx.delivery_watch.fail(id);
+            }
         }
     })
 }

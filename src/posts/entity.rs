@@ -1155,6 +1155,27 @@ impl StatusBatch {
                     poll_json,
                 ),
             };
+        // Standard counters mean live interactions only when the
+        // totals were fetched (remote statuses); on imported copies
+        // the same columns are labelled source provenance instead.
+        let remote_counts: Option<(i32, i32, i32)> = status.remote_counts_fetched_at.map(|_| {
+            (
+                status.remote_shares_count.unwrap_or(0),
+                status.remote_likes_count.unwrap_or(0),
+                status.remote_quotes_count.unwrap_or(0),
+            )
+        });
+        let imported_block = status.original_id.as_ref().map(|uri| {
+            json!({
+                "source_uri": uri,
+                "original_created_at": status
+                    .original_created_at
+                    .map(|t| t.to_rfc3339()),
+                "source_likes_count": status.remote_likes_count.unwrap_or(0),
+                "source_shares_count": status.remote_shares_count.unwrap_or(0),
+                "source_quotes_count": status.remote_quotes_count.unwrap_or(0),
+            })
+        });
         Ok(json!({
             "id": status.id.to_string(),
             "uri": status.uri,
@@ -1195,16 +1216,19 @@ impl StatusBatch {
             // Remote totals fetched at expansion are *separate*
             // columns — the local counters keep their transactional
             // invariant and only ever undercount (they see received
-            // activities), so the render takes the maximum.
+            // activities), so the render takes the maximum. Only rows
+            // whose totals were actually fetched (`remote_counts_fetched_at`
+            // set by thread expansion) participate; provenance totals
+            // written at import keep standard counters local-only.
             "reblogs_count": status
                 .reblogs_count
-                .max(status.remote_shares_count.unwrap_or(0)),
+                .max(remote_counts.map(|(r, _, _)| r).unwrap_or(0)),
             "favourites_count": status
                 .favourites_count
-                .max(status.remote_likes_count.unwrap_or(0)),
+                .max(remote_counts.map(|(_, r, _)| r).unwrap_or(0)),
             "quotes_count": status
                 .quotes_count
-                .max(status.remote_quotes_count.unwrap_or(0)),
+                .max(remote_counts.map(|(_, _, r)| r).unwrap_or(0)),
             "quote_id": quote_block.get("quote_id").cloned().unwrap_or(Value::Null),
             "quote": quote_block.get("quote").cloned().unwrap_or(Value::Null),
             "reblogged": flags["reblogged"],
@@ -1223,6 +1247,11 @@ impl StatusBatch {
                     (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
                     _ => Value::Null,
                 },
+                // §10: import provenance — the source URI and the
+                // post's original publication instant, present only
+                // on imported copies. Observation details stay on the
+                // owner-scoped history endpoint.
+                "imported": imported_block,
             },
         }))
     }

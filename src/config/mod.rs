@@ -1131,6 +1131,11 @@ pub struct AdminConfig {
     /// Cron expression for expired archive-export cleanup. Set to `""`
     /// to disable.
     pub export_cleanup_schedule: Option<String>,
+    /// Cron expression for the import sweep — re-enqueues
+    /// `archive_imports` rows stuck `pending` or waiting on a lost
+    /// delayed retry, and drains `publication_work` left behind by a
+    /// lost `ImportPublish` enqueue. Set to `""` to disable.
+    pub import_sweep_schedule: Option<String>,
     /// Multipart size cap for `/api/v1/yonder/imports` uploads (bytes).
     pub max_import_size: u64,
     /// Root directory for admin filesystem emoji imports
@@ -1192,6 +1197,7 @@ impl Default for AdminConfig {
             account_deletion_grace_days: 0,
             account_deletion_sweep_schedule: Some("*/15 * * * *".to_string()),
             export_cleanup_schedule: Some("0 3 * * *".to_string()),
+            import_sweep_schedule: Some("*/10 * * * *".to_string()),
             max_import_size: 50 * 1024 * 1024,
             emoji_import_dir: None,
         }

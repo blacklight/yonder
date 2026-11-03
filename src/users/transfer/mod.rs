@@ -24,8 +24,10 @@ const ROWS_LIMIT: i64 = 20_000;
 /// Rows applied per `Import` run before re-enqueueing.
 const BATCH_ROWS: i64 = 500;
 
-/// Wall-clock budget per `Import` run — comfortably under the 240 s
-/// handler timeout.
+/// Wall-clock budget per `Import` run — under the 240 s handler timeout.
+/// Progress and the `updated_at` heartbeat are written at each batch
+/// boundary and after every overwrite removal, so a silent gap stays far
+/// below the sweep's 30-minute stale threshold.
 const BATCH_SECONDS: u64 = 60;
 
 /// Cursor multiplier separating sub-kinds inside an archive import.
@@ -167,14 +169,18 @@ fn normalize_acct(acct: &str, local_domain: &str) -> String {
 }
 
 pub mod archive;
+mod crypto;
 mod csv;
 pub mod export;
 mod import;
+mod publish;
+pub mod remote;
 mod restore;
 
 pub use csv::export_kind;
 pub use export::{ExportCleanupJob, ExportJob};
-pub use import::{count_rows, ImportJob};
+pub use import::{count_rows, ImportJob, ImportSweepJob};
+pub use publish::ImportPublishJob;
 pub(crate) use restore::str_list;
 
 /// Register this module's job handlers.
@@ -182,4 +188,11 @@ pub fn register_jobs(registry: &mut crate::jobs::Registry, ap: Option<&ApContext
     registry.register(JobKind::Import, ImportJob::new(ap.cloned()));
     registry.register(JobKind::Export, ExportJob::new(ap.cloned()));
     registry.register(JobKind::ExportCleanup, ExportCleanupJob);
+    registry.register(JobKind::ImportSweep, ImportSweepJob);
+    if let Some(ap) = ap {
+        registry.register(
+            JobKind::ImportPublish,
+            publish::ImportPublishJob::new(ap.clone()),
+        );
+    }
 }

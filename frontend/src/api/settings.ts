@@ -1,9 +1,12 @@
-import { request } from "./client";
+import { request, requestBlob } from "./client";
 import type {
   AuthorizedApp,
   CreatedToken,
   Filter,
   FilterKeyword,
+  HistoricalObservation,
+  HistoryMessage,
+  ImportConnection,
   Invite,
   Preferences,
   SessionEntity,
@@ -222,20 +225,100 @@ export function getExport(id: string): Promise<TransferRow> {
 export function listImports(): Promise<TransferRow[]> {
   return request<TransferRow[]>({ path: "/yonder/imports" });
 }
-/** `POST /api/v1/yonder/imports` — multipart: kind, mode, file. */
+/** `POST /api/v1/yonder/imports` — multipart: kind, mode, federate, file. */
 export function createImport(
   kind: string,
   mode: "merge" | "overwrite",
   file: File,
+  federate = false,
 ): Promise<TransferRow> {
   const form = new FormData();
   form.set("kind", kind);
   form.set("mode", mode);
+  if (federate) form.set("federate", "true");
   form.set("file", file);
   return request<TransferRow>({
     path: "/yonder/imports",
     method: "POST",
     body: form,
+  });
+}
+
+/** `POST /api/v1/yonder/imports/{id}/cancel`. */
+export function cancelImport(id: string): Promise<unknown> {
+  return request<unknown>({
+    path: `/yonder/imports/${encodeURIComponent(id)}/cancel`,
+    method: "POST",
+  });
+}
+/** `POST /api/v1/yonder/imports/{id}/resume` — optional connection rebind. */
+export function resumeImport(
+  id: string,
+  connectionId?: string,
+): Promise<unknown> {
+  return request<unknown>({
+    path: `/yonder/imports/${encodeURIComponent(id)}/resume`,
+    method: "POST",
+    // Snowflake ids exceed Number.MAX_SAFE_INTEGER — send the decimal
+    // string; the backend accepts string or number.
+    body: connectionId ? { connection_id: connectionId } : {},
+  });
+}
+
+// Remote OAuth/API import (epic 31 §9)
+export function listImportConnections(): Promise<ImportConnection[]> {
+  return request<ImportConnection[]>({ path: "/yonder/import_connections" });
+}
+export function beginImportConnection(
+  origin: string,
+  categories: string[],
+): Promise<{ authorization_url: string }> {
+  return request<{ authorization_url: string }>({
+    path: "/yonder/import_connections",
+    method: "POST",
+    body: { origin, categories },
+  });
+}
+export function revokeImportConnection(id: string): Promise<unknown> {
+  return request<unknown>({
+    path: `/yonder/import_connections/${encodeURIComponent(id)}`,
+    method: "DELETE",
+  });
+}
+export function createImportSession(opts: {
+  /** Snowflake id as decimal string — never `Number()`. */
+  connection_id: string;
+  categories: string[];
+  limit?: number;
+  order?: "newest" | "oldest";
+  since?: string;
+  until?: string;
+  federate?: boolean;
+  /** Replace destination profile values even when the source sends empty ones. */
+  overwrite_profile?: boolean;
+}): Promise<{ id: string; state: string }> {
+  return request<{ id: string; state: string }>({
+    path: "/yonder/import_sessions",
+    method: "POST",
+    body: opts,
+  });
+}
+
+// Historical overlay reads (epic 31 §10) — owner-scoped.
+export function statusHistory(id: string): Promise<HistoricalObservation[]> {
+  return request<HistoricalObservation[]>({
+    path: `/yonder/statuses/${encodeURIComponent(id)}/history`,
+  });
+}
+export function historyMessages(maxId?: string): Promise<HistoryMessage[]> {
+  return request<HistoryMessage[]>({
+    path: "/yonder/history/messages",
+    query: maxId ? { max_id: maxId } : {},
+  });
+}
+export function historyMedia(id: string, index: number) {
+  return requestBlob({
+    path: `/yonder/history/messages/${encodeURIComponent(id)}/media/${index}`,
   });
 }
 
@@ -260,8 +343,11 @@ export function revokeInvite(id: string): Promise<unknown> {
   });
 }
 
-export function listAliases(): Promise<string[]> {
-  return request<string[]>({ path: "/yonder/aliases" });
+export async function listAliases(): Promise<string[]> {
+  const body = await request<{ aliases: string[] } | string[]>({
+    path: "/yonder/aliases",
+  });
+  return Array.isArray(body) ? body : (body.aliases ?? []);
 }
 export function addAlias(acct: string): Promise<unknown> {
   return request<unknown>({

@@ -167,6 +167,14 @@ pub enum JobKind {
     /// (`{"status_id": …}`); also retracts mentions whose links were
     /// edited out or deleted.
     WebmentionOutgoing,
+    /// Drain `publication_work` rows for one import session
+    /// (`{"import_id": …}`) — the durable, once-only federation path
+    /// for imports created with `federate` (epic 31 §8).
+    ImportPublish,
+    /// Re-enqueue import sessions whose job envelope was lost after
+    /// the state write (`{}` — the `admin.import_sweep_schedule`
+    /// fan-out).
+    ImportSweep,
 }
 
 impl JobKind {
@@ -202,6 +210,8 @@ impl JobKind {
         JobKind::ThreadExpand,
         JobKind::ThreadPath,
         JobKind::PublishMove,
+        JobKind::ImportPublish,
+        JobKind::ImportSweep,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -237,6 +247,8 @@ impl JobKind {
             JobKind::ThreadExpand => "thread_expand",
             JobKind::ThreadPath => "thread_path",
             JobKind::PublishMove => "publish_move",
+            JobKind::ImportPublish => "import_publish",
+            JobKind::ImportSweep => "import_sweep",
         }
     }
 
@@ -251,13 +263,15 @@ impl JobKind {
             | JobKind::Export
             | JobKind::VerifyProfileLinks
             | JobKind::MigrateFollowers
-            | JobKind::StatusDeletion => Queue::Bulk,
+            | JobKind::StatusDeletion
+            | JobKind::ImportPublish => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
             | JobKind::AccountDeletion
             | JobKind::ExportCleanup
             | JobKind::CleanupOrphanMedia
             | JobKind::AuditLogCleanup
+            | JobKind::ImportSweep
             | JobKind::DeleteMediaObject => Queue::Cleanup,
             _ => Queue::Default,
         }

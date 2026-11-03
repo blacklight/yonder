@@ -126,6 +126,7 @@ flate2 = "1.1.10"
 # control plus response-header access (Link/Retry-After) — wraps
 # `ureq` (pubby's own transitive dep, same version).
 ureq = "3.5"
+getrandom = "0.4"
 
 [dev-dependencies]
 base64 = "0.22"

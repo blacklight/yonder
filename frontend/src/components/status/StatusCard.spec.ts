@@ -591,7 +591,7 @@ describe("StatusCard", () => {
 
     await wrapper.get("[data-testid='show-original']").trigger("click");
     expect(wrapper.find(".status-card__content").text()).toBe("hello");
-    expect(wrapper.get("[data-testid='translate']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='translate']").exists()).toBe(true);
   });
 
   it("hides translate when not eligible", async () => {

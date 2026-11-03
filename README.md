@@ -3,6 +3,7 @@
 ![yonder](branding/banner.png)
 
 [![Build Status](https://ci-cd.platypush.tech/api/badges/blacklight/yonder/status.svg)](https://ci-cd.platypush.tech/blacklight/yonder)
+[![Codacy Badge](https://app.codacy.com/project/badge/Coverage/02b6f6c4ec79460f847018963e4bbc00)](https://app.codacy.com/gh/blacklight/yonder/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_coverage)
 [![Codacy Badge](https://app.codacy.com/project/badge/Grade/02b6f6c4ec79460f847018963e4bbc00)](https://app.codacy.com/gh/blacklight/yonder/dashboard?utm_source=gh&utm_medium=referral&utm_content=&utm_campaign=Badge_grade)
 [![Github stars](https://img.shields.io/github/stars/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)
 [![Github forks](https://img.shields.io/github/forks/blacklight/yonder?style=flat&logo=Github)](https://github.com/blacklight/yonder)

@@ -46,8 +46,17 @@ registerRoute(
   }),
 );
 
+// Only same-origin images go through the runtime cache. Cross-origin
+// media (remote avatars/attachments served from other instances' media
+// hosts) stays on the browser's native image pipeline: any rejection of
+// the promise passed to `respondWith` surfaces in Firefox as a hard
+// NS_ERROR_INTERCEPTION_FAILED that only a cache-bypassing reload heals,
+// each opaque response costs ~7 MB of Cache API quota there, and remote
+// servers already send their own cache headers — interception buys
+// nothing and only adds failure modes.
 registerRoute(
-  ({ request }) => request.destination === "image",
+  ({ request, url }) =>
+    request.destination === "image" && url.origin === self.location.origin,
   new CacheFirst({
     cacheName: "yonder-images",
     plugins: [

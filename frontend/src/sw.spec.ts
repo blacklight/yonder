@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { registerRoute } from "workbox-routing";
 
 // `src/sw.ts` is a service-worker module: importing it registers
 // listeners on the global `self`. Workbox is mocked out; `self` is
@@ -145,6 +146,24 @@ describe("service worker", () => {
     self.listeners.notificationclick(event as never);
     await waited;
     expect(self.clients.openWindow).toHaveBeenCalledWith("/notifications");
+  });
+
+  it("only caches same-origin images", async () => {
+    await loadWorker();
+    const matcher = vi
+      .mocked(registerRoute)
+      .mock.calls
+      .map(([capture]) => capture)
+      .find((c) => typeof c === "function");
+    expect(matcher).toBeDefined();
+    const match = (url: string, destination = "image") =>
+      matcher?.({
+        url: new URL(url),
+        request: { destination },
+      } as never);
+    expect(match("https://yonder.example/media/avatar.png")).toBe(true);
+    expect(match("https://media.remote.example/avatar.png")).toBe(false);
+    expect(match("https://yonder.example/app.css", "style")).toBe(false);
   });
 
   it("never navigates a click off-origin", async () => {

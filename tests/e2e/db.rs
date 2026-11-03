@@ -28,7 +28,7 @@ async fn migrations_apply_idempotently() {
 
     db::migrate::run(&pool).await.unwrap();
     let after_first = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(after_first, (1..=42).collect::<Vec<i64>>());
+    assert_eq!(after_first, (1..=47).collect::<Vec<i64>>());
 
     db::migrate::run(&pool).await.unwrap();
     let after_second = db::migrate::applied_versions(&pool).await.unwrap();
@@ -47,7 +47,7 @@ async fn down_migrations_revert_cleanly() {
     // Single-step revert: 42 applied -> 41 applied.
     db::migrate::revert(&pool, None).await.unwrap();
     let versions = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(versions, (1..=41).collect::<Vec<i64>>());
+    assert_eq!(versions, (1..=46).collect::<Vec<i64>>());
 
     // Full revert: only the migrations bookkeeping table remains.
     db::migrate::revert(&pool, Some(0)).await.unwrap();
@@ -66,7 +66,7 @@ async fn down_migrations_revert_cleanly() {
     db::migrate::run(&pool).await.unwrap();
     assert_eq!(
         db::migrate::applied_versions(&pool).await.unwrap(),
-        (1..=42).collect::<Vec<i64>>()
+        (1..=47).collect::<Vec<i64>>()
     );
 }
 

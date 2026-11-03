@@ -123,6 +123,25 @@ pub struct PasswordParams {
     pub password: String,
 }
 
+/// `GET /api/v1/yonder/move` — redirect, cooldown and latest
+/// migration-event state so settings can render move progress.
+#[utoipa::path(
+    get,
+    path = "/api/v1/yonder/move",
+    tag = "account",
+    responses(
+        (status = 200, description = "Move state, cooldown and follower progress"),
+        (status = 401, description = "Missing or invalid token", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn get_move(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "read:accounts")?;
+    Ok(Json(moves::move_state(&state, auth.account_id).await?))
+}
+
 /// `DELETE /api/v1/yonder/move` — cancel the redirect.
 #[utoipa::path(
     delete,

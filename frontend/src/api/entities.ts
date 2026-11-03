@@ -35,6 +35,8 @@ export interface Account {
     header_blurhash?: string | null;
     /** Staff role — only emitted on local non-`user` accounts. */
     role?: string;
+    /** Set when `moved_to_account_id` points at a gone destination. */
+    moved_unavailable?: boolean;
   };
 }
 
@@ -287,6 +289,8 @@ export interface Notification {
   status?: Status | null;
   /** `admin.report` rows carry the referenced Report object. */
   report?: Report | null;
+  /** `move` rows (Yonder/Akkoma extension) carry the destination. */
+  target?: Account | null;
 }
 
 /** `moderation::reports` entity (subset consumed by the SPA). */

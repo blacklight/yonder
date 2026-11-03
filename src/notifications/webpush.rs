@@ -226,6 +226,7 @@ fn event_text(kind: super::NotificationType, actor: &str) -> String {
             "You received a moderation warning".to_string()
         }
         super::NotificationType::AdminReport => "A new report was filed".to_string(),
+        super::NotificationType::Move => format!("{actor} moved to a new account"),
     }
 }
 

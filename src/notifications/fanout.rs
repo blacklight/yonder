@@ -41,6 +41,9 @@ struct Target {
     from: i64,
     status_id: Option<i64>,
     report_id: Option<i64>,
+    /// `move` only: the migration event + destination account.
+    migration_event_id: Option<i64>,
+    target_account_id: Option<i64>,
     to: i64,
 }
 
@@ -54,9 +57,22 @@ impl JobHandler for NotificationFanoutJob {
             return Ok(());
         }
         // `None` = dedupe hit: no row, no events, no email.
-        let Some(id) =
-            super::insert(&ctx.db, ev.to, ev.from, ev.kind, ev.status_id, ev.report_id).await?
-        else {
+        let id = match (ev.kind, ev.migration_event_id, ev.target_account_id) {
+            (NotificationType::Move, Some(event_id), Some(target)) => {
+                super::insert_move(&ctx.db, ev.to, ev.from, event_id, target).await?
+            }
+            // A `move` without its event/target ids would dedupe on
+            // status_id = 0 like any other type — wrong semantics, so
+            // the malformed payload is dropped instead.
+            (NotificationType::Move, _, _) => {
+                tracing::warn!("move notification payload lacks event/target ids; dropping");
+                return Ok(());
+            }
+            _ => {
+                super::insert(&ctx.db, ev.to, ev.from, ev.kind, ev.status_id, ev.report_id).await?
+            }
+        };
+        let Some(id) = id else {
             return Ok(());
         };
         push_live(ctx, id, &ev).await;
@@ -85,6 +101,8 @@ async fn resolve(db: &PgPool, payload: &Value) -> Result<Option<Target>> {
             from,
             status_id: payload.get("status_id").and_then(Value::as_i64),
             report_id: payload.get("report_id").and_then(Value::as_i64),
+            migration_event_id: payload.get("migration_event_id").and_then(Value::as_i64),
+            target_account_id: payload.get("target_account_id").and_then(Value::as_i64),
             to,
         }));
     }
@@ -147,6 +165,8 @@ async fn resolve(db: &PgPool, payload: &Value) -> Result<Option<Target>> {
         from,
         status_id: Some(status_id),
         report_id: None,
+        migration_event_id: None,
+        target_account_id: None,
         to,
     }))
 }

@@ -1026,7 +1026,8 @@
       "admin_sign_up": "{name} hat sich registriert",
       "moderation_warning": "Du hast eine Moderationswarnung erhalten",
       "admin_report": "Eine Meldung wurde eingereicht",
-      "unknown": "{name} hat eine Mitteilung gesendet"
+      "unknown": "{name} hat eine Mitteilung gesendet",
+      "move": "{name} ist zu einem neuen Konto umgezogen"
     },
     "accept": "Annehmen",
     "reject": "Ablehnen",
@@ -1111,7 +1112,9 @@
     "handleCopied": "Kopiert",
     "viewAvatar": "Avatar ansehen",
     "viewBanner": "Header ansehen",
-    "joined": "Beigetreten {date}"
+    "joined": "Beigetreten {date}",
+    "movedTo": "Dieses Konto ist zu @{acct} umgezogen",
+    "movedUnavailable": "Dieses Konto ist zu einem nicht mehr verfügbaren Konto umgezogen"
   },
   "register": {
     "title": "Konto erstellen",

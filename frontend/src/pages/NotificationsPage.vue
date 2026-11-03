@@ -247,6 +247,12 @@ onUnmounted(() => {
                   /></router-link>
                 </template>
               </I18nT>
+              <router-link
+                v-if="n.type === 'move' && n.target"
+                :to="`/@${n.target.acct}`"
+                class="notif-when"
+                >&nbsp;→ @{{ n.target.acct }}</router-link
+              >
               <Tooltip :text="formatAbsoluteDate(n.created_at)">
                 <router-link
                   v-if="n.status"

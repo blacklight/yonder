@@ -1026,7 +1026,8 @@
       "admin_sign_up": "{name} se registró",
       "moderation_warning": "Recibiste una advertencia de moderación",
       "admin_report": "Se presentó un informe",
-      "unknown": "{name} envió una notificación"
+      "unknown": "{name} envió una notificación",
+      "move": "{name} se ha mudado a una nueva cuenta"
     },
     "accept": "Aceptar",
     "reject": "Rechazar",
@@ -1111,7 +1112,9 @@
     "handleCopied": "Copiado",
     "viewAvatar": "Ver avatar",
     "viewBanner": "Ver cabecera",
-    "joined": "Se unió en {date}"
+    "joined": "Se unió en {date}",
+    "movedTo": "Esta cuenta se ha movido a @{acct}",
+    "movedUnavailable": "Esta cuenta se ha movido a una cuenta que ya no está disponible"
   },
   "register": {
     "title": "Crear una cuenta",

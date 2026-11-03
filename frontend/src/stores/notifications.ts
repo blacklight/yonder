@@ -49,6 +49,7 @@ const TYPE_ICONS: Record<string, IconProp> = {
   "admin.sign_up": "user-plus",
   moderation_warning: "triangle-exclamation",
   "admin.report": "flag",
+  move: "right-from-bracket",
 };
 
 /** The per-type icon shown on rows and toasts. */

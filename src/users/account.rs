@@ -467,6 +467,12 @@ pub async fn account_entities(
         let mut entity = to_account(account, base_url, config);
         entity["moved"] =
             crate::users::moves::moved_account_json(db, account, base_url, config).await;
+        // A dangling `moved_to_account_id` (deleted or unresolvable
+        // destination) serializes `moved: null` like Mastodon, but
+        // flag it so a client can still show "moved to unavailable".
+        if account.moved_to_account_id.is_some() && entity["moved"].is_null() {
+            entity["yonder"]["moved_unavailable"] = json!(true);
+        }
         if emoji_texts(account)
             .iter()
             .any(|t| has_shortcode_candidate(t))

@@ -5,6 +5,7 @@
 //! WebSocket lives here because it shares the API's auth and
 //! rate-limit conventions.
 
+pub mod pleroma;
 pub mod v1;
 pub mod v2;
 
@@ -23,4 +24,5 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route_layer(ratelimit::layer(state, "authentication"))
         .merge(v1::router(state))
         .merge(v2::router(state))
+        .merge(pleroma::router(state))
 }

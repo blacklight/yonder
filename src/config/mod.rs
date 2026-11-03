@@ -125,6 +125,7 @@ impl Config {
             "relation",
             "status",
             "media",
+            "account_move",
             "authentication",
             "federation_inbox",
             "remote_sync",
@@ -792,6 +793,11 @@ pub struct RateLimitConfig {
     pub status: RateLimit,
     /// Media uploads (`/api/v1/media`, `/api/v2/media`).
     pub media: RateLimit,
+    /// Password-reauthenticated account moves (`POST/DELETE
+    /// `/api/v1/yonder/move`, `POST /api/pleroma/move_account`) —
+    /// a password check is a brute-force surface, so the bucket stays
+    /// tight even for authenticated callers.
+    pub account_move: RateLimit,
     pub authentication: RateLimit,
     /// Inbound ActivityPub inbox POSTs.
     pub federation_inbox: RateLimit,
@@ -822,6 +828,7 @@ impl RateLimitConfig {
             "relation" => Some(&self.relation),
             "status" => Some(&self.status),
             "media" => Some(&self.media),
+            "account_move" => Some(&self.account_move),
             "authentication" => Some(&self.authentication),
             "federation_inbox" => Some(&self.federation_inbox),
             "remote_sync" => Some(&self.remote_sync),
@@ -868,6 +875,14 @@ impl Default for RateLimitConfig {
             media: RateLimit {
                 limit: 30,
                 period_seconds: 300,
+                authenticated_limit: None,
+            },
+            // Password verification is already slow (argon2) — keep
+            // the bound tight so a compromised-token brute-force can't
+            // spin the hasher unthrottled.
+            account_move: RateLimit {
+                limit: 10,
+                period_seconds: 60,
                 authenticated_limit: None,
             },
             authentication: RateLimit {

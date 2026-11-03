@@ -120,6 +120,8 @@ ammonia = "4.2.4"
 quick-xml = "0.42"
 webmentions-sdk = "0.2"
 percent-encoding = "2"
+tar = "0.4.46"
+flate2 = "1.1.10"
 
 [dev-dependencies]
 base64 = "0.22"

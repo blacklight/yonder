@@ -337,10 +337,15 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .post(account_management::add_alias)
                 .delete(account_management::remove_alias),
         )
+        // The two password-reauthenticated moves land on the tight
+        // `account_move` bucket; the read-only state GET stays free.
         .route(
             "/api/v1/yonder/move",
-            post(account_management::move_account).delete(account_management::cancel_move),
+            post(account_management::move_account)
+                .delete(account_management::cancel_move)
+                .route_layer(ratelimit::layer(state, "account_move")),
         )
+        .route("/api/v1/yonder/move", get(account_management::get_move))
         .route(
             "/api/v1/yonder/account/delete",
             post(account_management::delete_account),

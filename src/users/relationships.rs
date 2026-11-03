@@ -112,6 +112,13 @@ pub async fn follow(
             "the target account is suspended or deleted".to_string(),
         ));
     }
+    // New follows to a redirected account are refused — the follower
+    // should be pointed at the move target instead.
+    if target.moved {
+        return Err(Error::Validation(
+            "the target account has moved".to_string(),
+        ));
+    }
     // A block in either direction forbids the follow (Mastodon
     // semantics); the move-migration query also filters blockers in
     // SQL, but import/auto-follow go through here.
@@ -290,11 +297,13 @@ struct AccountRow {
     locked: bool,
     suspended_at: Option<chrono::DateTime<chrono::Utc>>,
     deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    moved: bool,
 }
 
 async fn account_row(pool: &PgPool, id: i64) -> Result<Option<AccountRow>> {
     let row = sqlx::query(
-        "SELECT username, actor_id, domain, locked, suspended_at, deleted_at \
+        "SELECT username, actor_id, domain, locked, suspended_at, deleted_at, \
+         moved_to_account_id \
          FROM accounts WHERE id = $1",
     )
     .bind(id)
@@ -307,6 +316,7 @@ async fn account_row(pool: &PgPool, id: i64) -> Result<Option<AccountRow>> {
         locked: r.get("locked"),
         suspended_at: r.get("suspended_at"),
         deleted_at: r.get("deleted_at"),
+        moved: r.get::<Option<i64>, _>("moved_to_account_id").is_some(),
     }))
 }
 

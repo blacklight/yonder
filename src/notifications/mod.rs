@@ -55,6 +55,10 @@ pub enum NotificationType {
     AdminSignUp,
     ModerationWarning,
     AdminReport,
+    /// Akkoma-style account-move notice (Yonder extension — Mastodon
+    /// has no `move` type; standard clients render it via
+    /// `Account.moved` instead).
+    Move,
 }
 
 impl NotificationType {
@@ -74,6 +78,7 @@ impl NotificationType {
             Self::AdminSignUp => "admin.sign_up",
             Self::ModerationWarning => "moderation_warning",
             Self::AdminReport => "admin.report",
+            Self::Move => "move",
         }
     }
 
@@ -93,6 +98,7 @@ impl NotificationType {
             "admin.sign_up" => Self::AdminSignUp,
             "moderation_warning" => Self::ModerationWarning,
             "admin.report" => Self::AdminReport,
+            "move" => Self::Move,
             _ => return None,
         })
     }
@@ -123,6 +129,8 @@ pub struct NotificationRow {
     pub kind: NotificationType,
     pub status_id: Option<i64>,
     pub report_id: Option<i64>,
+    /// `move` only: the account the origin moved to.
+    pub target_account_id: Option<i64>,
     pub read: bool,
     pub created_at: DateTime<Utc>,
 }
@@ -141,13 +149,14 @@ fn row_to_notification(r: &sqlx::postgres::PgRow) -> NotificationRow {
         }),
         status_id: r.get("status_id"),
         report_id: r.get("report_id"),
+        target_account_id: r.try_get("target_account_id").unwrap_or(None),
         read: r.get("read"),
         created_at: r.get("created_at"),
     }
 }
 
-const NOTIFICATION_COLS: &str =
-    "id, account_id, from_account_id, type, status_id, report_id, read, created_at";
+const NOTIFICATION_COLS: &str = "id, account_id, from_account_id, type, status_id, report_id, \
+     target_account_id, read, created_at";
 
 /// The notification's embedded status must be one the recipient
 /// (`$1`) can see — `posts::can_see` inlined so `list`/`unread_count`
@@ -169,10 +178,12 @@ fn status_visible(alias: &str) -> String {
     )
 }
 
+/// The `ON CONFLICT` arbiter — must mirror `ix_notifications_dedupe`
+/// (migration 0047) exactly, including the `COALESCE` expression.
+const DEDUPE_TARGET: &str = "(account_id, from_account_id, type, \
+     COALESCE(status_id, migration_event_id, 0))";
+
 /// Idempotent insert — `Ok(None)` when the event already exists.
-///
-/// The arbiter columns must mirror `ix_notifications_dedupe`,
-/// including the `COALESCE` expression.
 pub async fn insert(
     db: &PgPool,
     account_id: i64,
@@ -181,17 +192,44 @@ pub async fn insert(
     status_id: Option<i64>,
     report_id: Option<i64>,
 ) -> Result<Option<i64>> {
-    sqlx::query_scalar(
+    sqlx::query_scalar(&format!(
         "INSERT INTO notifications (account_id, from_account_id, type, status_id, report_id) \
          VALUES ($1, $2, $3, $4, $5) \
-         ON CONFLICT (account_id, from_account_id, type, COALESCE(status_id, 0)) DO NOTHING \
-         RETURNING id",
-    )
+         ON CONFLICT {DEDUPE_TARGET} DO NOTHING \
+         RETURNING id"
+    ))
     .bind(account_id)
     .bind(from_account_id)
     .bind(kind.as_str())
     .bind(status_id)
     .bind(report_id)
+    .fetch_optional(db)
+    .await
+    .map_err(Into::into)
+}
+
+/// A verified-move notification: `migration_event_id` dedupes
+/// (recipient, mover, event) so job retries and replays notify once,
+/// while a later move to a *different* target notifies again.
+/// `target_account_id` points the entity at the destination.
+pub async fn insert_move(
+    db: &PgPool,
+    account_id: i64,
+    from_account_id: i64,
+    event_id: i64,
+    target_account_id: i64,
+) -> Result<Option<i64>> {
+    sqlx::query_scalar(&format!(
+        "INSERT INTO notifications \
+         (account_id, from_account_id, type, migration_event_id, target_account_id) \
+         VALUES ($1, $2, 'move', $3, $4) \
+         ON CONFLICT {DEDUPE_TARGET} DO NOTHING \
+         RETURNING id"
+    ))
+    .bind(account_id)
+    .bind(from_account_id)
+    .bind(event_id)
+    .bind(target_account_id)
     .fetch_optional(db)
     .await
     .map_err(Into::into)
@@ -487,7 +525,11 @@ pub async fn entities(
         .fetch_all(&ctx.db)
         .await?
     };
-    let mut account_ids: Vec<i64> = rows.iter().map(|r| r.from_account_id).collect();
+    let mut account_ids: Vec<i64> = rows
+        .iter()
+        .flat_map(|r| [r.from_account_id, r.target_account_id.unwrap_or_default()])
+        .filter(|id| *id != 0)
+        .collect();
     for rep in &reports {
         account_ids.push(rep.get("target_account_id"));
         if let Some(a) = rep.get::<Option<i64>, _>("assigned_account_id") {
@@ -584,6 +626,14 @@ pub async fn entities(
                     .cloned()
                     .unwrap_or(Value::Null);
             }
+            // `move` carries the destination account the origin went
+            // to (Yonder/Akkoma extension projection).
+            if let Some(target_id) = row.target_account_id {
+                out["target"] = account_values
+                    .get(&target_id)
+                    .cloned()
+                    .unwrap_or(Value::Null);
+            }
             Some(out)
         })
         .collect())
@@ -664,6 +714,7 @@ mod tests {
             NotificationType::AdminSignUp,
             NotificationType::ModerationWarning,
             NotificationType::AdminReport,
+            NotificationType::Move,
         ] {
             assert_eq!(NotificationType::from_wire(kind.as_str()), Some(kind));
         }

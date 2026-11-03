@@ -1026,7 +1026,8 @@
       "admin_sign_up": "سجّل {name} حسابًا",
       "moderation_warning": "تلقيت تحذير إشراف",
       "admin_report": "قُدّم بلاغ",
-      "unknown": "أرسل {name} إشعارًا"
+      "unknown": "أرسل {name} إشعارًا",
+      "move": "انتقل {name} إلى حساب جديد"
     },
     "accept": "قبول",
     "reject": "رفض",
@@ -1111,7 +1112,9 @@
     "handleCopied": "تم النسخ",
     "viewAvatar": "عرض الصورة الرمزية",
     "viewBanner": "عرض صورة الغلاف",
-    "joined": "انضم في {date}"
+    "joined": "انضم في {date}",
+    "movedTo": "انتقل هذا الحساب إلى @{acct}",
+    "movedUnavailable": "انتقل هذا الحساب إلى حساب لم يعد متاحًا"
   },
   "register": {
     "title": "إنشاء حساب",

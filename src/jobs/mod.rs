@@ -148,6 +148,10 @@ pub enum JobKind {
     /// Fan a status out to follower home feeds, or backfill one
     /// follower's feed from a new followee (epic 15).
     TimelineFanOut,
+    /// Drive one migration event's durable publication + migration
+    /// enqueue (`{"event_id": …}`) — the retryable backstop for a move
+    /// whose publish or `MigrateFollowers` enqueue failed.
+    PublishMove,
     /// Delete one stored object once nothing references it — enqueued
     /// delayed for replaced/cleared profile images so the old URL
     /// survives the actor-`Update` propagation window (epic 18).
@@ -197,6 +201,7 @@ impl JobKind {
         JobKind::WebmentionOutgoing,
         JobKind::ThreadExpand,
         JobKind::ThreadPath,
+        JobKind::PublishMove,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -231,6 +236,7 @@ impl JobKind {
             JobKind::WebmentionOutgoing => "webmention_outgoing",
             JobKind::ThreadExpand => "thread_expand",
             JobKind::ThreadPath => "thread_path",
+            JobKind::PublishMove => "publish_move",
         }
     }
 
@@ -239,7 +245,8 @@ impl JobKind {
         match self {
             JobKind::FederationDelivery
             | JobKind::FederationIncoming
-            | JobKind::FederationDeliverySweep => Queue::Federation,
+            | JobKind::FederationDeliverySweep
+            | JobKind::PublishMove => Queue::Federation,
             JobKind::Import
             | JobKind::Export
             | JobKind::VerifyProfileLinks

@@ -103,6 +103,21 @@ pub async fn validate(
     editing_status_id: Option<i64>,
 ) -> Result<ValidatedStatus> {
     let config = &ctx.config;
+    // New statuses from a moved account are refused; edits to
+    // pre-move posts stay allowed (the author still owns them).
+    if editing_status_id.is_none() {
+        let moved: bool = sqlx::query_scalar(
+            "SELECT moved_to_account_id IS NOT NULL FROM accounts WHERE id = $1",
+        )
+        .bind(auth.account_id)
+        .fetch_one(&ctx.db)
+        .await?;
+        if moved {
+            return Err(Error::Forbidden(
+                "the account has moved; posting is disabled",
+            ));
+        }
+    }
     let user_settings = settings::load(&ctx.db, auth.user_id).await?;
 
     let content_type = params

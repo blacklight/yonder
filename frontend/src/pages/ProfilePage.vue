@@ -96,9 +96,6 @@ const noteText = ref("");
 const noteOpen = ref(false);
 const noteSaving = ref(false);
 const noteError = ref<string | null>(null);
-const visitedIds = new Set<string>();
-const MAX_HOPS = 5;
-
 const bio = computed(() =>
   sanitizeHtml(account.value?.note ?? "", {
     emojis: account.value?.emojis,
@@ -209,9 +206,12 @@ const staffRole = computed(() =>
     ? account.value.yonder.role
     : null,
 );
-/** Blocked and suspended accounts render their avatar in grayscale. */
+/** Blocked, suspended and moved accounts render imagery in grayscale. */
 const avatarGrayscale = computed(
-  () => Boolean(rel.value?.blocking) || Boolean(account.value?.suspended),
+  () =>
+    Boolean(rel.value?.blocking) ||
+    Boolean(account.value?.suspended) ||
+    Boolean(account.value?.moved),
 );
 const limitedReveal = ref(false);
 /**
@@ -441,25 +441,10 @@ async function resolve(): Promise<void> {
       state.value = "not-found";
       return;
     }
-    // Follow `moved` in-band. Redirecting via router.replace would
-    // re-run the route watcher below and reset the visited set, so an
-    // A↔B move cycle would ping-pong forever — the hop cap must live
-    // inside a single resolve pass.
-    let hops = 0;
-    while (a.moved && !visitedIds.has(a.id) && hops < MAX_HOPS) {
-      visitedIds.add(a.id);
-      a = await lookup(a.moved.acct);
-      hops++;
-    }
-    // Point the URL at the canonical handle only when the chain fully
-    // resolved; a capped/looping chain renders where it stopped.
-    if (
-      !a.moved &&
-      route.name === "profile-acct" &&
-      String(route.params.acct) !== a.acct
-    ) {
-      void router.replace(`/@${a.acct}`);
-    }
+    // Mastodon-style moved presentation: the old profile stays
+    // rendered (with a destination banner) rather than auto-following
+    // the `moved` chain — explicit navigation to the target is the
+    // user's choice.
     account.value = a;
     state.value = "ok";
     rel.value = null;
@@ -767,7 +752,6 @@ useStatusEvents({
 watch(
   () => route.fullPath,
   () => {
-    visitedIds.clear();
     void resolve();
   },
   { immediate: true },
@@ -813,7 +797,12 @@ watch([tab, showReplies, showBoosts], () => {
           :aria-label="t('profile.viewBanner')"
           @click="openViewer('header')"
         >
-          <img :src="headerUrl" class="profile__banner" alt="" />
+          <img
+            :src="headerUrl"
+            class="profile__banner"
+            :class="{ 'profile__avatar--grayscale': avatarGrayscale }"
+            alt=""
+          />
         </button>
         <div class="profile__top">
           <button
@@ -845,7 +834,11 @@ watch([tab, showReplies, showBoosts], () => {
               >{{ t("profile.edit") }}</router-link
             >
             <template v-else-if="auth.isLoggedIn">
-              <Button :loading="actionBusy" @click="toggleFollow">
+              <Button
+                v-if="!account.moved"
+                :loading="actionBusy"
+                @click="toggleFollow"
+              >
                 <FontAwesomeIcon
                   :icon="rel?.following ? 'user-check' : 'user-plus'"
                 />
@@ -878,6 +871,19 @@ watch([tab, showReplies, showBoosts], () => {
             />
           </div>
         </div>
+        <router-link
+          v-if="account.moved && !account.moved.suspended"
+          class="profile__moved"
+          :to="`/@${account.moved.acct}`"
+        >
+          {{ t("profile.movedTo", { acct: account.moved.acct }) }}
+        </router-link>
+        <p
+          v-else-if="account.moved || account.yonder?.moved_unavailable"
+          class="profile__moved"
+        >
+          {{ t("profile.movedUnavailable") }}
+        </p>
         <h1 class="profile__name">
           <EmojiText
             :text="account.display_name || account.username"
@@ -1231,6 +1237,20 @@ watch([tab, showReplies, showBoosts], () => {
 }
 .profile__avatar--grayscale {
   filter: grayscale(1);
+}
+.profile__moved {
+  display: block;
+  margin: var(--space-2) var(--space-4) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.profile__moved:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 .profile__actions {
   display: flex;

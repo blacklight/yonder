@@ -31,7 +31,7 @@ pub struct ExportParams {
 }
 
 /// An `archive_exports`/`archive_imports` status projection.
-fn status_json(row: &sqlx::postgres::PgRow) -> Value {
+pub(crate) fn status_json(row: &sqlx::postgres::PgRow) -> Value {
     json!({
         "id": row.get::<i64, _>("id").to_string(),
         "kind": row.get::<String, _>("kind"),
@@ -45,6 +45,42 @@ fn status_json(row: &sqlx::postgres::PgRow) -> Value {
         "completed_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("completed_at").unwrap_or_default().map(|t| t.to_rfc3339()),
         "expires_at": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("expires_at").unwrap_or_default().map(|t| t.to_rfc3339()),
     })
+}
+
+/// Store `bytes`, insert an `archive_imports` row and enqueue the
+/// import job, returning the 202 + status projection shared by the
+/// CSV upload and the Pleroma list imports.
+pub(crate) async fn queue_import(
+    state: &AppState,
+    account_id: i64,
+    kind: Kind,
+    mode: &str,
+    bytes: &[u8],
+    content_type: &str,
+    total: Option<i32>,
+) -> Result<(StatusCode, Json<Value>)> {
+    let key = format!("imports/{}/{}", account_id, uuid::Uuid::new_v4());
+    state.media.put(&key, bytes, content_type).await?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO archive_imports (account_id, kind, mode, file_key, total) \
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    )
+    .bind(account_id)
+    .bind(kind.as_str())
+    .bind(mode)
+    .bind(&key)
+    .bind(total)
+    .fetch_one(&state.db)
+    .await?;
+    state
+        .dispatcher
+        .enqueue(JobKind::Import, json!({ "import_id": id }))
+        .await?;
+    let row = sqlx::query("SELECT * FROM archive_imports WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
+    Ok((StatusCode::ACCEPTED, Json(status_json(&row))))
 }
 
 /// `POST /api/v1/yonder/exports` — CSV/JSON kinds download inline;
@@ -317,28 +353,16 @@ pub async fn create_import(
     // Row-limit check at request time (Mastodon's 20k cap → 422), and
     // `total` counts data rows only — headers excluded.
     let total = transfer::count_rows(kind, &bytes)?;
-    let key = format!("imports/{}/{}", auth.account_id, uuid::Uuid::new_v4());
-    state.media.put(&key, &bytes, "application/zip").await?;
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO archive_imports (account_id, kind, mode, file_key, total) \
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+    queue_import(
+        &state,
+        auth.account_id,
+        kind,
+        &mode,
+        &bytes,
+        "application/zip",
+        total,
     )
-    .bind(auth.account_id)
-    .bind(kind.as_str())
-    .bind(&mode)
-    .bind(&key)
-    .bind(total)
-    .fetch_one(&state.db)
-    .await?;
-    state
-        .dispatcher
-        .enqueue(JobKind::Import, json!({ "import_id": id }))
-        .await?;
-    let row = sqlx::query("SELECT * FROM archive_imports WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
-    Ok((StatusCode::ACCEPTED, Json(status_json(&row))))
+    .await
 }
 
 /// `GET /api/v1/yonder/imports` — list own imports.

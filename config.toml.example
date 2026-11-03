@@ -438,3 +438,38 @@ source_max_bytes = 1048576
 # Allow targets/sources on private/loopback addresses — disables the
 # SSRF guard. Dev/test only, never in production.
 allow_private_targets = false
+
+[remote_context]
+# Remote thread expansion: ancestor paths for followed authors'
+# replies are fetched by a background job; subtrees and engagement
+# counters are expanded when a logged-in viewer opens the status
+# (GET /api/v1/statuses/{id}/context — anonymous reads only serve
+# what's stored). Repeated reads inside the grace window make no
+# remote calls. Context-only remote rows are hard-pruned by
+# CleanupRemoteActivities — off unless a schedule is set via
+# federation.remote_activity_prune_schedule (see [federation]).
+# Max ancestors a path walk climbs before leaving a gap.
+path_max = 20
+# Replies-expansion depth per selected status — deeper subtrees stay
+# lazy and expand when that reply is selected.
+descendant_depth = 2
+# `replies` items materialized per expanded level.
+descendant_breadth = 20
+# Wall-clock budget (milliseconds) for an inline /context expansion;
+# the remainder continues in a background job.
+quick_budget_ms = 3000
+# Remote object GETs a single inline expansion may issue.
+quick_max_fetches = 10
+# Seconds a status's expansion stays fresh (no remote calls).
+expansion_grace_seconds = 600
+# Seconds fetched like/boost/quote totals stay fresh.
+counts_grace_seconds = 900
+# Redis TTL (seconds) for proxied liker/booster collection pages.
+liker_page_cache_ttl_seconds = 300
+# Days without a /context read or local interaction before a
+# context-only remote status is prune-eligible.
+retention_days = 30
+# Maximum context-only rows one pruning sweep deletes.
+prune_batch = 500
+# Path-fetch jobs one remote author may trigger per hour.
+path_jobs_per_author_hour = 20

@@ -428,7 +428,13 @@ async fn ingest_item(
                 if !live {
                     return Ok(false);
                 }
-                posts::remote::handle(&ap.core, &activity, item).await;
+                posts::remote::handle_as(
+                    &ap.core,
+                    &activity,
+                    item,
+                    posts::remote::IngestOrigin::Fetch,
+                )
+                .await;
                 return Ok(posts::load_by_uri(&ap.core.db, &uri)
                     .await?
                     .is_some_and(|s| s.tombstone));
@@ -442,7 +448,13 @@ async fn ingest_item(
             if existing.as_ref().is_some_and(|s| s.tombstone) {
                 return Ok(false);
             }
-            posts::remote::handle(&ap.core, &activity, item).await;
+            posts::remote::handle_as(
+                &ap.core,
+                &activity,
+                item,
+                posts::remote::IngestOrigin::Fetch,
+            )
+            .await;
             Ok(existing.is_none())
         }
         "Announce" => ingest_announce(ap, account_id, actor_id, item, deadline).await,
@@ -472,7 +484,13 @@ async fn ingest_item(
                 "object": item,
             });
             let activity = pubby_sdk::Activity::from_json(&raw);
-            posts::remote::handle(&ap.core, &activity, &raw).await;
+            posts::remote::handle_as(
+                &ap.core,
+                &activity,
+                &raw,
+                posts::remote::IngestOrigin::Fetch,
+            )
+            .await;
             Ok(existing.is_none())
         }
         _ => Ok(false),

@@ -18,6 +18,8 @@ use crate::{
     auth::scopes::require_scope,
     http::{
         middleware::auth::{AuthContext, MaybeAuth},
+        middleware::client_ip::ClientIp,
+        middleware::ratelimit::RateLimiter,
         AppState,
     },
     posts::{
@@ -141,6 +143,7 @@ pub async fn show(
 pub async fn context(
     State(state): State<Arc<AppState>>,
     auth: MaybeAuth,
+    ClientIp(ip): ClientIp,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
     let ctx = PostContext::new(&state);
@@ -150,6 +153,57 @@ pub async fn context(
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     if !posts::can_see(&ctx.db, &status, viewer).await? {
         return Err(Error::NotFound("status".into()));
+    }
+    // Selection-time expansion: a remote status whose expansion is
+    // missing or stale gets a bounded inline walk before the context
+    // reads — that's what lets plain Mastodon-API clients (tut,
+    // mobile apps) see ancestors and descendants without ever calling
+    // `fetch_remote_context`. Within the grace window, or when the
+    // `remote_context` bucket denies the expansion, the response just
+    // serves what's stored.
+    if !status.local && status.uri.is_some() {
+        if let Some(ap) = &ctx.ap {
+            let cfg = &state.config().remote_context;
+            // Anonymous reads never trigger expansion — they serve
+            // what's stored, so an unauthenticated crawler can't turn
+            // the instance into a fetch amplifier. Logged-in viewers
+            // still get the standard Mastodon-API behavior.
+            if auth.0.is_some()
+                && crate::activitypub::thread::expansion_stale(
+                    &ctx.db,
+                    status.id,
+                    cfg.expansion_grace_seconds,
+                )
+                .await?
+                && !crate::activitypub::thread::expansion_cooling(ap, status.id).await
+                && expansion_allowed(&state, &auth, &ip).await
+            {
+                if let Err(e) = crate::activitypub::thread::expand_for_selection(ap, &status).await
+                {
+                    // Lock contention, a dead origin or a mid-walk
+                    // failure all degrade to serving what's stored —
+                    // never a 5xx/404/429 that hides local data. The
+                    // cool-off marker keeps a failing origin from
+                    // being retried on every read.
+                    tracing::debug!(
+                        status_id = status.id,
+                        error = %e,
+                        "selection expansion deferred"
+                    );
+                    crate::activitypub::thread::mark_expansion_cooloff(ap, status.id).await;
+                }
+            }
+            // `last_selected_at` — the pruning recency predicate;
+            // throttled to one write per status per hour.
+            sqlx::query(
+                "UPDATE statuses SET last_selected_at = now() \
+                 WHERE id = $1 AND (last_selected_at IS NULL \
+                     OR last_selected_at < now() - interval '1 hour')",
+            )
+            .bind(status.id)
+            .execute(&ctx.db)
+            .await?;
+        }
     }
     let ancestor_rows = posts::context::ancestors(&ctx.db, id, viewer).await?;
     let descendant_rows = posts::context::descendants(&ctx.db, id, viewer).await?;
@@ -165,6 +219,26 @@ pub async fn context(
         "ancestors": ancestors,
         "descendants": descendants,
     })))
+}
+
+/// The `remote_context` rate-limit bucket applied to `/context`
+/// expansion triggers only — a client hammering the endpoint can't
+/// turn the instance into a fetch amplifier, but reads inside the
+/// grace window cost nothing. A limiter outage fails open.
+async fn expansion_allowed(state: &Arc<AppState>, auth: &MaybeAuth, ip: &str) -> bool {
+    let Some(limit) = state.config().rate_limit.bucket("remote_context").cloned() else {
+        return true;
+    };
+    match RateLimiter::new(state.clone())
+        .check("remote_context", &limit, auth.0.as_ref(), ip)
+        .await
+    {
+        Ok(v) => v.allowed,
+        Err(e) => {
+            tracing::warn!(error = %e, "rate limiter check failed; allowing expansion");
+            true
+        }
+    }
 }
 
 /// `POST /api/v1/statuses/{id}/fetch_remote_context` — Yonder

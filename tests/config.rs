@@ -169,6 +169,7 @@ fn registry_covers_every_leaf_and_all_sections() {
         "content",
         "admin",
         "frontends",
+        "remote_context",
     ] {
         assert!(
             entries
@@ -183,6 +184,32 @@ fn registry_covers_every_leaf_and_all_sections() {
     assert_eq!(entry.env, "YONDER_RATE_LIMIT__SEARCH__LIMIT");
     assert_eq!(registry::env_name("instance.name"), "YONDER_INSTANCE__NAME");
     assert!(registry::find("not.a.key").is_none());
+}
+
+#[test]
+fn remote_context_defaults_and_env_override() {
+    let config = Config::default();
+    assert_eq!(config.remote_context.path_max, 20);
+    assert_eq!(config.remote_context.descendant_depth, 2);
+    assert_eq!(config.remote_context.descendant_breadth, 20);
+    assert_eq!(config.remote_context.quick_budget_ms, 3000);
+    assert_eq!(config.remote_context.quick_max_fetches, 10);
+    assert_eq!(config.remote_context.expansion_grace_seconds, 600);
+    assert_eq!(config.remote_context.counts_grace_seconds, 900);
+    assert_eq!(config.remote_context.liker_page_cache_ttl_seconds, 300);
+    assert_eq!(config.remote_context.retention_days, 30);
+    assert_eq!(config.remote_context.prune_batch, 500);
+
+    Jail::expect_with(|jail| {
+        jail.set_env("YONDER_REMOTE_CONTEXT__DESCENDANT_DEPTH", "3");
+        jail.set_env("YONDER_REMOTE_CONTEXT__QUICK_MAX_FETCHES", "7");
+        let config = Config::load(Some(&jail.directory().join("nope.toml"))).expect("load");
+        assert_eq!(config.remote_context.descendant_depth, 3);
+        assert_eq!(config.remote_context.quick_max_fetches, 7);
+        // Untouched keys keep the defaults.
+        assert_eq!(config.remote_context.path_max, 20);
+        Ok(())
+    });
 }
 
 #[test]

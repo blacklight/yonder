@@ -100,6 +100,17 @@ pub enum JobKind {
     /// Deliver one notification to the recipient's Web Push
     /// subscriptions (`{"notification_id": …, "account_id": …}`).
     WebPushSend,
+    /// Expand one remote status's thread — ancestors, `replies`
+    /// subtree to the configured depth and engagement counters —
+    /// under the full walk budget (`{"status_id": …,
+    /// "round": n}`). Enqueued as the continuation of a
+    /// `GET /context` expansion that the quick budget truncated.
+    ThreadExpand,
+    /// Materialize the ancestor path of a remote reply whose parent
+    /// wasn't local at ingest (`{"status_id": …}`) — ancestors only,
+    /// the replies subtree stays lazy. On success the reply is
+    /// relinked and fanned out.
+    ThreadPath,
     /// Send an email.
     EmailSend,
     /// Import an account archive.
@@ -184,6 +195,8 @@ impl JobKind {
         JobKind::AuditLogCleanup,
         JobKind::WebmentionIncoming,
         JobKind::WebmentionOutgoing,
+        JobKind::ThreadExpand,
+        JobKind::ThreadPath,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -216,6 +229,8 @@ impl JobKind {
             JobKind::AuditLogCleanup => "audit_log_cleanup",
             JobKind::WebmentionIncoming => "webmention_incoming",
             JobKind::WebmentionOutgoing => "webmention_outgoing",
+            JobKind::ThreadExpand => "thread_expand",
+            JobKind::ThreadPath => "thread_path",
         }
     }
 

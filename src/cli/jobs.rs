@@ -106,11 +106,23 @@ pub enum JobCommand {
     /// Payload: `{"export_id": <row id>}` — enqueued by the export API.
     #[command(name = "export")]
     Export(JobArgs),
-    /// Prune remote activities no local user has interacted with.
+    /// Prune context-only remote activities past the retention window.
     ///
     /// Payload: `{}`.
     #[command(name = "cleanup_remote_activities")]
     CleanupRemoteActivities(JobArgs),
+    /// Expand one remote status's thread — ancestors, `replies`
+    /// subtree and engagement counters.
+    ///
+    /// Payload: `{"status_id": <id>}`.
+    #[command(name = "thread_expand")]
+    ThreadExpand(JobArgs),
+    /// Materialize the ancestor path of a remote reply whose parent
+    /// wasn't local at ingest, then relink and fan it out.
+    ///
+    /// Payload: `{"status_id": <id>}`.
+    #[command(name = "thread_path")]
+    ThreadPath(JobArgs),
     /// Evict cached remote media past the retention window.
     ///
     /// Payload: `{}`.
@@ -225,6 +237,8 @@ impl JobCommand {
             Self::Import(a) => (JobKind::Import, a),
             Self::Export(a) => (JobKind::Export, a),
             Self::CleanupRemoteActivities(a) => (JobKind::CleanupRemoteActivities, a),
+            Self::ThreadExpand(a) => (JobKind::ThreadExpand, a),
+            Self::ThreadPath(a) => (JobKind::ThreadPath, a),
             Self::CleanupRemoteMedia(a) => (JobKind::CleanupRemoteMedia, a),
             Self::VerifyProfileLinks(a) => (JobKind::VerifyProfileLinks, a),
             Self::AccountDeletion(a) => (JobKind::AccountDeletion, a),

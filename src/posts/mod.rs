@@ -26,6 +26,7 @@
 //! - **Job due-time checks**: the scheduled-publish handler re-checks
 //!   `scheduled_at` under a row lock and refuses to publish early.
 
+pub mod cleanup;
 pub mod context;
 pub mod conversations;
 pub mod create;
@@ -216,6 +217,10 @@ pub struct StatusRow {
     pub url: Option<String>,
     pub in_reply_to_id: Option<i64>,
     pub in_reply_to_account_id: Option<i64>,
+    /// Remote parent's AP URI — always written on ingest, and the
+    /// link that relink-on-arrival and the ancestor walk use when
+    /// `in_reply_to_id` is still NULL.
+    pub in_reply_to_uri: Option<String>,
     pub reblog_of_id: Option<i64>,
     pub quote_of_id: Option<i64>,
     /// Remote quote target not (yet) materialized — `quote_of_id`
@@ -232,6 +237,20 @@ pub struct StatusRow {
     pub favourites_count: i32,
     pub quotes_count: i32,
     pub edited_at: Option<DateTime<Utc>>,
+    /// Origin-collected like/boost/quote totals — rendered as
+    /// `GREATEST(local, remote)`, never merged into the local
+    /// counters. NULL = never fetched.
+    pub remote_likes_count: Option<i32>,
+    pub remote_shares_count: Option<i32>,
+    pub remote_quotes_count: Option<i32>,
+    pub remote_counts_fetched_at: Option<DateTime<Utc>>,
+    /// Last `/context` read — the pruning recency predicate (written
+    /// at most hourly per status).
+    pub last_selected_at: Option<DateTime<Utc>>,
+    /// Insertion time — remote `created_at` is the origin's
+    /// `published`, so pruning ages context rows from when they were
+    /// *stored*.
+    pub fetched_at: DateTime<Utc>,
     pub tombstone: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -240,8 +259,10 @@ pub struct StatusRow {
 pub(crate) const STATUS_COLS: &str =
     "id, account_id, content, content_html, content_type, language, \
      visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
-     in_reply_to_account_id, reblog_of_id, quote_of_id, quote_uri, object_type, poll_id, replies_count, \
-     reblogs_count, favourites_count, quotes_count, edited_at, tombstone, \
+     in_reply_to_account_id, in_reply_to_uri, reblog_of_id, quote_of_id, quote_uri, object_type, poll_id, replies_count, \
+     reblogs_count, favourites_count, quotes_count, edited_at, \
+     remote_likes_count, remote_shares_count, remote_quotes_count, \
+     remote_counts_fetched_at, last_selected_at, fetched_at, tombstone, \
      created_at, updated_at";
 
 pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
@@ -261,6 +282,7 @@ pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
         url: r.get("url"),
         in_reply_to_id: r.get("in_reply_to_id"),
         in_reply_to_account_id: r.get("in_reply_to_account_id"),
+        in_reply_to_uri: r.get("in_reply_to_uri"),
         reblog_of_id: r.get("reblog_of_id"),
         quote_of_id: r.get("quote_of_id"),
         quote_uri: r.get("quote_uri"),
@@ -271,6 +293,12 @@ pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
         favourites_count: r.get("favourites_count"),
         quotes_count: r.get("quotes_count"),
         edited_at: r.get("edited_at"),
+        remote_likes_count: r.get("remote_likes_count"),
+        remote_shares_count: r.get("remote_shares_count"),
+        remote_quotes_count: r.get("remote_quotes_count"),
+        remote_counts_fetched_at: r.get("remote_counts_fetched_at"),
+        last_selected_at: r.get("last_selected_at"),
+        fetched_at: r.get("fetched_at"),
         tombstone: r.get("tombstone"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),

@@ -62,6 +62,9 @@ pub struct Config {
     pub timelines: TimelinesConfig,
     pub frontends: FrontendsConfig,
     pub webmentions: WebmentionsConfig,
+    /// Remote thread expansion — ancestor-path and subtree fetch
+    /// budgets, grace periods, counter freshness and pruning.
+    pub remote_context: RemoteContextConfig,
 }
 
 impl Config {
@@ -1259,6 +1262,66 @@ impl Default for WebmentionsConfig {
             discovery_max_bytes: 1024 * 1024,
             source_max_bytes: 1024 * 1024,
             allow_private_targets: false,
+        }
+    }
+}
+
+/// `[remote_context]` — remote thread expansion (see
+/// `docs/posting.md` "Remote thread fetch"). Ancestor paths are
+/// fetched eagerly for followed authors' replies; subtrees and
+/// engagement counters are expanded when a local viewer opens the
+/// status. Grace periods keep repeated reads from re-fetching;
+/// context-only rows are pruned periodically and re-hydrate on later
+/// reference.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RemoteContextConfig {
+    /// Maximum ancestors a path walk climbs before leaving a gap
+    /// (`GET /context` can continue it later).
+    pub path_max: u32,
+    /// Replies-expansion depth per selected status — deeper subtrees
+    /// stay lazy and expand when their own status is selected.
+    pub descendant_depth: u32,
+    /// `replies` items materialized per expanded status level.
+    pub descendant_breadth: u32,
+    /// Wall-clock budget for an inline `GET /context` expansion
+    /// (milliseconds). Whatever the budget misses continues in a
+    /// background job.
+    pub quick_budget_ms: u64,
+    /// Remote object GETs a single inline expansion may issue.
+    pub quick_max_fetches: u32,
+    /// Seconds a status's expansion stays fresh — `/context` reads
+    /// within the window make no remote calls.
+    pub expansion_grace_seconds: u64,
+    /// Seconds fetched like/boost/quote totals stay fresh.
+    pub counts_grace_seconds: u64,
+    /// Redis TTL (seconds) for proxied liker/booster collection pages
+    /// and their pagination-cursor mappings.
+    pub liker_page_cache_ttl_seconds: u64,
+    /// Days without a `/context` read or local interaction before a
+    /// context-only remote status is prune-eligible.
+    pub retention_days: u32,
+    /// Maximum context-only rows one pruning sweep deletes.
+    pub prune_batch: u32,
+    /// Path-fetch jobs one remote author may trigger per hour —
+    /// bounds amplification from a spammy followed account.
+    pub path_jobs_per_author_hour: u32,
+}
+
+impl Default for RemoteContextConfig {
+    fn default() -> Self {
+        Self {
+            path_max: 20,
+            descendant_depth: 2,
+            descendant_breadth: 20,
+            quick_budget_ms: 3000,
+            quick_max_fetches: 10,
+            expansion_grace_seconds: 600,
+            counts_grace_seconds: 900,
+            liker_page_cache_ttl_seconds: 300,
+            retention_days: 30,
+            prune_batch: 500,
+            path_jobs_per_author_hour: 20,
         }
     }
 }

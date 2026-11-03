@@ -34,6 +34,10 @@ a Redis marker — repeat ingests and re-reads don't pile up fetches.
   `GET …/reblogged_by` — `public|unlisted` targets only (422
   otherwise); optional `visibility` param (`public|unlisted`,
   accepted in the body or query string).
+  For remote statuses, `favourited_by`/`reblogged_by` proxy the
+  remainder of the origin's `likes`/`shares` collection page-by-page
+  once local rows under-fill (Redis-cached pages, account stubs — no
+  per-like rows are written).
 - `POST /api/v1/statuses/{id}/bookmark|unbookmark`,
   `GET /api/v1/bookmarks` — silent: no AP, no notification.
 - `GET /api/v1/statuses/{id}/quotes` — posts quoting the target,

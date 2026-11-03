@@ -31,11 +31,36 @@ pub(crate) const NOTE_TYPES: &[&str] = &[
     "Note", "Question", "Article", "Page", "Audio", "Video", "Event",
 ];
 
+/// Where a remote object came from — inbox delivery vs a fetch
+/// (context expansion, search resolve, outbox sync). Fetched objects
+/// skip the inbox-only side effects: mention notifications (a
+/// backfilled thread must not notify about years-old replies) and
+/// the `ThreadPath` trigger (the walk that fetched them already
+/// materializes their path — a trigger per ingested ancestor would
+/// cascade past `path_max`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IngestOrigin {
+    Inbox,
+    Fetch,
+}
+
 /// Entry point from `on_activity_fn`: decide whether `activity` is a
 /// status-bearing Create/Update/Delete and materialize it. Returns
 /// `false` when the activity isn't ours to handle (caller passes
-/// through without side effects either way).
+/// through without side effects either way). Inbox delivery — the
+/// normal path.
 pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) -> bool {
+    handle_as(core, activity, raw, IngestOrigin::Inbox).await
+}
+
+/// Same as [`handle`] for a *fetched* object — context expansion,
+/// search resolve and outbox sync all take this path.
+pub(crate) async fn handle_as(
+    core: &ApCore,
+    activity: &pubby_sdk::Activity,
+    raw: &Value,
+    origin: IngestOrigin,
+) -> bool {
     let object = raw.get("object").cloned().unwrap_or(Value::Null);
     match activity.activity_type.as_str() {
         "Create" | "Update" => {
@@ -57,25 +82,88 @@ pub async fn handle(core: &ApCore, activity: &pubby_sdk::Activity, raw: &Value) 
                                     // new. A redelivered Create (or a stale
                                     // Update) must not re-notify.
                                     Upsert::New => {
-                                        crate::timelines::fanout::enqueue(
-                                            &core.dispatcher,
-                                            status.id,
-                                        )
-                                        .await;
-                                        crate::timelines::stream::publish_update(&ctx, &status)
+                                        // A reply whose parent isn't
+                                        // local gets an ancestor-path
+                                        // job — gated on audience (a
+                                        // followed author or a local
+                                        // mention) so stranger replies
+                                        // stay lazy, and per-author
+                                        // throttled. When the job is
+                                        // claimed it owns the reveal:
+                                        // fan-out AND the stream
+                                        // `update` defer to it, so
+                                        // the reply only appears once
+                                        // its parent link is
+                                        // materialized. The delayed
+                                        // `TimelineFanOut` is the
+                                        // slow-walk fallback
+                                        // (idempotent ZADD). Fetched
+                                        // objects skip the gate —
+                                        // the walk that fetched them
+                                        // already materializes their
+                                        // path.
+                                        let fetched = origin == IngestOrigin::Fetch;
+                                        let path_job_claimed = !fetched
+                                            && reply_needs_path(&status)
+                                            && path_audience(core, &status).await.unwrap_or(false)
+                                            && !thread_path_throttled(core, status.account_id)
+                                                .await
+                                            && match core
+                                                .dispatcher
+                                                .enqueue(
+                                                    JobKind::ThreadPath,
+                                                    json!({ "status_id": status.id }),
+                                                )
+                                                .await
+                                            {
+                                                Ok(_) => {
+                                                    let _ = core
+                                                        .dispatcher
+                                                        .enqueue_delayed(
+                                                            JobKind::TimelineFanOut,
+                                                            json!({ "status_id": status.id }),
+                                                            Duration::from_secs(10),
+                                                        )
+                                                        .await;
+                                                    true
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        status_id = status.id,
+                                                        error = %e,
+                                                        "thread-path enqueue failed"
+                                                    );
+                                                    false
+                                                }
+                                            };
+                                        if !path_job_claimed {
+                                            crate::timelines::fanout::enqueue(
+                                                &core.dispatcher,
+                                                status.id,
+                                            )
                                             .await;
-                                        if let Err(e) = crate::notifications::emit::emit_for_status(
-                                            &core.db,
-                                            &core.dispatcher,
-                                            &status,
-                                        )
-                                        .await
-                                        {
-                                            tracing::warn!(
-                                                status_id = status.id,
-                                                error = %e,
-                                                "notification emit failed"
-                                            );
+                                            crate::timelines::stream::publish_update(&ctx, &status)
+                                                .await;
+                                        }
+                                        // Mention notifications are
+                                        // inbox-only — a
+                                        // fetched/backfilled thread
+                                        // must not re-notify about
+                                        // old replies.
+                                        if !fetched {
+                                            let res = crate::notifications::emit::emit_for_status(
+                                                &core.db,
+                                                &core.dispatcher,
+                                                &status,
+                                            )
+                                            .await;
+                                            if let Err(e) = res {
+                                                tracing::warn!(
+                                                    status_id = status.id,
+                                                    error = %e,
+                                                    "notification emit failed"
+                                                );
+                                            }
                                         }
                                     }
                                     // An accepted remote edit pushes
@@ -539,13 +627,15 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
 
     // Upsert the statuses row (ON CONFLICT uri → update). `edited_at`
     // keeps its stored value when the Update carries no `updated`.
+    // `in_reply_to_uri` is always written — it powers relink-on-arrival
+    // and the ancestor walk when `in_reply_to_id` is still NULL.
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (id, account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
-             in_reply_to_account_id, quote_of_id, quote_uri, object_type, \
+             in_reply_to_account_id, in_reply_to_uri, quote_of_id, quote_uri, object_type, \
              created_at, edited_at) \
          VALUES (timestamp_id('statuses', LEAST(COALESCE($12, now()), now())), \
-                 $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$14,$15,$16, \
+                 $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$17,$14,$15,$16, \
                  LEAST(COALESCE($12, now()), now()), $13) \
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
@@ -553,6 +643,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
              spoiler_text = EXCLUDED.spoiler_text, sensitive = EXCLUDED.sensitive, \
              in_reply_to_id = EXCLUDED.in_reply_to_id, \
              in_reply_to_account_id = EXCLUDED.in_reply_to_account_id, \
+             in_reply_to_uri = EXCLUDED.in_reply_to_uri, \
              quote_of_id = EXCLUDED.quote_of_id, \
              quote_uri = EXCLUDED.quote_uri, \
              object_type = EXCLUDED.object_type, \
@@ -576,6 +667,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .bind(quote_of_id)
     .bind(&quote_uri_col)
     .bind(object.get("type").and_then(|v| v.as_str()))
+    .bind(&in_reply_to_uri)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -896,9 +988,12 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // counter bump applies to *this* status only (it is the quoted
     // target); the pending quoters point at it via quote_uri. Same
     // for parked featured refs: a remote pin waiting on this object
-    // becomes a `status_pins` row now.
+    // becomes a `status_pins` row now. And the reply counterpart:
+    // stored replies that parked on `in_reply_to_uri` link to this
+    // status now that the parent row exists.
     backfill_pending_quotes(&core.db, status_id, &object_id).await?;
     backfill_pending_pins(&core.db, status_id, &object_id).await?;
+    backfill_pending_replies(core, status_id, account_id, &object_id).await?;
 
     // A still-pending quote target gets an active fetch — passive
     // backfill alone never resolves quotes whose target's server
@@ -941,6 +1036,69 @@ pub(crate) async fn backfill_pending_quotes(
     .bind(uri)
     .execute(db)
     .await?;
+    Ok(())
+}
+
+/// Orphan replies relinked per round — a late-arriving root connects
+/// its already-stored first-level replies in bounded batches rather
+/// than one unbounded UPDATE; leftovers relink on later deliveries
+/// and Updates.
+const RELINK_BATCH: i64 = 200;
+const RELINK_MAX_BATCHES: u32 = 5;
+
+/// Link every stored reply that parked on `in_reply_to_uri = uri` to
+/// the now-materialized `target` — the reply-chain counterpart of
+/// [`backfill_pending_quotes`]. Each round links up to
+/// [`RELINK_BATCH`] orphans and bumps the parent's `replies_count` by
+/// the linked count; a `status.update` goes out per relinked row so
+/// live timelines re-render the reply link. Mention notifications are
+/// deliberately not re-emitted — they fired at each reply's own
+/// arrival.
+pub(crate) async fn backfill_pending_replies(
+    core: &ApCore,
+    target_id: i64,
+    target_account_id: i64,
+    uri: &str,
+) -> Result<()> {
+    let post_ctx = crate::timelines::stream::post_ctx_for_core(core);
+    for _ in 0..RELINK_MAX_BATCHES {
+        let mut tx = core.db.begin().await?;
+        let linked: Vec<i64> = sqlx::query_scalar(
+            "SELECT id FROM statuses \
+             WHERE in_reply_to_uri = $1 AND in_reply_to_id IS NULL \
+               AND NOT tombstone AND id != $2 \
+             LIMIT $3 FOR UPDATE SKIP LOCKED",
+        )
+        .bind(uri)
+        .bind(target_id)
+        .bind(RELINK_BATCH)
+        .fetch_all(&mut *tx)
+        .await?;
+        if linked.is_empty() {
+            tx.rollback().await?;
+            break;
+        }
+        sqlx::query(
+            "UPDATE statuses SET in_reply_to_id = $1, in_reply_to_account_id = $2, \
+                 updated_at = now() WHERE id = ANY($3)",
+        )
+        .bind(target_id)
+        .bind(target_account_id)
+        .bind(&linked)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("UPDATE statuses SET replies_count = replies_count + $2 WHERE id = $1")
+            .bind(target_id)
+            .bind(linked.len() as i64)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        for id in &linked {
+            if let Ok(Some(row)) = super::load(&core.db, *id).await {
+                crate::timelines::stream::publish_status_update(&post_ctx, &row).await;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1391,6 +1549,54 @@ impl JobHandler for RemoteStatusFetchJob {
             }
         }
     }
+}
+
+/// Whether a freshly materialized remote status is a reply whose
+/// parent isn't stored locally — the `ThreadPath` trigger shape.
+fn reply_needs_path(status: &crate::posts::StatusRow) -> bool {
+    !status.local && status.in_reply_to_id.is_none() && status.in_reply_to_uri.is_some()
+}
+
+/// The `ThreadPath` audience gate: the path job fires only when the
+/// reply's author is followed by a local account or the reply
+/// mentions one — stranger replies on public/federated surfaces stay
+/// fully lazy (decision 3 of the thread-expansion plan).
+async fn path_audience(core: &ApCore, status: &crate::posts::StatusRow) -> Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM follows f \
+                        JOIN accounts la ON la.id = f.account_id \
+                        WHERE f.target_account_id = $1 AND la.domain IS NULL) \
+         OR EXISTS (SELECT 1 FROM status_mentions sm \
+                    JOIN accounts la ON la.id = sm.account_id \
+                    WHERE sm.status_id = $2 AND la.domain IS NULL)",
+    )
+    .bind(status.account_id)
+    .bind(status.id)
+    .fetch_one(&core.db)
+    .await
+    .map_err(Into::into)
+}
+
+/// Per-author throttle for `ThreadPath` jobs — bounds fetch
+/// amplification from a spammy followed account. `true` when the
+/// author is over `remote_context.path_jobs_per_author_hour`.
+async fn thread_path_throttled(core: &ApCore, author_account_id: i64) -> bool {
+    let limit = core.config.remote_context.path_jobs_per_author_hour;
+    let key = core.redis.key(&format!("thread-path:{author_account_id}"));
+    let Ok(mut conn) = core.redis.conn().await else {
+        return false;
+    };
+    let count: Option<u32> = redis::Script::new(
+        "local c = redis.call('INCR', KEYS[1]) \
+         if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end \
+         return c",
+    )
+    .key(&key)
+    .arg(3600u64)
+    .invoke_async(&mut *conn)
+    .await
+    .ok();
+    count.is_some_and(|c| c > limit)
 }
 
 /// Register this module's job handler.

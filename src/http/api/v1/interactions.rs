@@ -147,7 +147,27 @@ pub async fn favourited_by(
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
     let page = paginate::parse(&params);
-    let rows = favourite::favourited_by(&ctx, &status, &page).await?;
+    let mut rows = favourite::favourited_by(&ctx, &status, &page).await?;
+    // Remote fill — the origin's `likes` collection proxies in once
+    // the local page under-fills (page-cached, account stubs, no
+    // per-like rows). Failures degrade to the local rows alone.
+    if let Some(ap) = &ctx.ap {
+        match crate::activitypub::remote_lists::fill(
+            &ctx,
+            ap,
+            &status,
+            crate::activitypub::remote_lists::ListKind::Likes,
+            &page,
+            &rows,
+        )
+        .await
+        {
+            Ok(extra) => rows.extend(extra),
+            Err(e) => {
+                tracing::warn!(status_id = status.id, error = %e, "remote likers fill failed")
+            }
+        }
+    }
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;
@@ -270,7 +290,24 @@ pub async fn reblogged_by(
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
     let page = paginate::parse(&params);
-    let rows = boost::reblogged_by(&ctx, &status, &page).await?;
+    let mut rows = boost::reblogged_by(&ctx, &status, &page).await?;
+    if let Some(ap) = &ctx.ap {
+        match crate::activitypub::remote_lists::fill(
+            &ctx,
+            ap,
+            &status,
+            crate::activitypub::remote_lists::ListKind::Shares,
+            &page,
+            &rows,
+        )
+        .await
+        {
+            Ok(extra) => rows.extend(extra),
+            Err(e) => {
+                tracing::warn!(status_id = status.id, error = %e, "remote boosters fill failed")
+            }
+        }
+    }
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;

@@ -26,6 +26,7 @@ pub mod moderation;
 pub mod outbox;
 pub mod permalinks;
 pub mod posts;
+pub(crate) mod remote_lists;
 pub mod storage;
 pub mod thread;
 
@@ -247,6 +248,9 @@ pub fn register_handlers(registry: &mut crate::jobs::Registry, ctx: &ApContext) 
         crate::jobs::JobKind::FederationDeliverySweep,
         delivery::FederationDeliverySweepJob,
     );
+    // Thread expansion — the `/context` continuation and the
+    // followed-author ancestor-path job.
+    thread::register(registry, ctx);
 }
 
 /// Build the federation router. Merged in [`crate::http::build_router`]

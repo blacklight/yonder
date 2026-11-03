@@ -115,6 +115,10 @@ impl JobHandler for CleanupOrphanMediaJob {
 pub(crate) fn register(registry: &mut crate::jobs::Registry, ap: Option<&ApContext>) {
     registry.register(JobKind::StatusDeletion, StatusDeletionJob::new(ap.cloned()));
     registry.register(JobKind::CleanupOrphanMedia, CleanupOrphanMediaJob);
+    registry.register(
+        JobKind::CleanupRemoteActivities,
+        super::cleanup::CleanupRemoteActivitiesJob,
+    );
     super::scheduled::register(registry, ap);
     super::preview::register(registry, ap);
     super::remote::register(registry, ap);

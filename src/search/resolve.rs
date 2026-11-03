@@ -274,7 +274,13 @@ async fn materialize_status(
         "object": doc,
     });
     let activity = pubby_sdk::Activity::from_json(&raw);
-    posts::remote::handle(&ap.core, &activity, &raw).await;
+    posts::remote::handle_as(
+        &ap.core,
+        &activity,
+        &raw,
+        posts::remote::IngestOrigin::Fetch,
+    )
+    .await;
     let Some(row) = posts::load_by_uri(db, object_id).await? else {
         return Ok(None);
     };

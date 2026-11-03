@@ -1192,9 +1192,19 @@ impl StatusBatch {
             "in_reply_to_account_id": status.in_reply_to_account_id.map(|i| i.to_string()),
             "reblog": reblog,
             "replies_count": status.replies_count,
-            "reblogs_count": status.reblogs_count,
-            "favourites_count": status.favourites_count,
-            "quotes_count": status.quotes_count,
+            // Remote totals fetched at expansion are *separate*
+            // columns — the local counters keep their transactional
+            // invariant and only ever undercount (they see received
+            // activities), so the render takes the maximum.
+            "reblogs_count": status
+                .reblogs_count
+                .max(status.remote_shares_count.unwrap_or(0)),
+            "favourites_count": status
+                .favourites_count
+                .max(status.remote_likes_count.unwrap_or(0)),
+            "quotes_count": status
+                .quotes_count
+                .max(status.remote_quotes_count.unwrap_or(0)),
             "quote_id": quote_block.get("quote_id").cloned().unwrap_or(Value::Null),
             "quote": quote_block.get("quote").cloned().unwrap_or(Value::Null),
             "reblogged": flags["reblogged"],

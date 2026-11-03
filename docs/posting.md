@@ -293,3 +293,69 @@ backoff on 429/transient failure, a 60s wall-clock deadline, caps of
 depth, and a per-status Redis lock that 429s a concurrent fetch.
 Rate limiting has a dedicated `rate_limit.remote_context` bucket
 (default 30 per 5 minutes).
+
+**Selection-time expansion.** A plain `GET /context` on a remote
+status triggers the same expansion inline — no client-side endpoint
+call needed, so stock Mastodon apps, `tut`, and mobile clients get
+thread context automatically. Only *logged-in* viewers trigger it;
+anonymous reads serve what's stored (a crawler can't turn the
+instance into a fetch amplifier). The request-path walk runs under a
+quick budget (`remote_context.quick_budget_ms` ~3s,
+`quick_max_fetches` GETs, one *linked* replies page per walk —
+inline pages cost no GET and don't count); whatever it doesn't
+reach continues in a `ThreadExpand` background job under the
+configured `descendant_depth`/`descendant_breadth` with the full
+GET/page/time caps. A `status_expansions` row records the last pass —
+reads inside `expansion_grace_seconds` (default 10min) make no remote
+calls at all; after it, a refresh re-fetches the target and
+materializes only replies not yet stored. A failed expansion (dead
+origin, lock contention) degrades to serving what's stored — never a
+5xx/429 — and a ~60s cool-off keeps it from being retried on every
+read. Remote `likes`/`shares` (and `quotes` where exposed) collection
+totals are recorded per expansion into separate columns — rendered
+counts are `GREATEST(local, remote)` so transactional local counters
+are never overwritten, refetched at most once per
+`counts_grace_seconds` (15min). Clicking a count proxies the origin's
+collection page-by-page through `favourited_by` / `reblogged_by`
+(Redis-cached, account stubs, no per-like rows; only when the remote
+total exceeds the local count).
+
+Descendants can be partial on first open — that's the intended
+trade-off against Mastodon's eager full-thread fetch. Anything not
+reached stays lazy and expands when *it* is selected, at any depth.
+Objects materialized by an expansion go through a quiet ingest path:
+no mention notifications (a backfilled thread must not re-notify
+about old replies) and no `ThreadPath` triggers (the walk that
+fetched them already materializes their path).
+
+**Arrival paths.** A remote reply whose parent isn't stored keeps the
+parent URI in `in_reply_to_uri`; when the parent later materializes
+(on any ingest path), parked replies relink and the parent's
+`replies_count` moves — no fetch needed. Replies by followed authors
+(or mentioning a local user) additionally get a `ThreadPath` job that
+climbs the ancestors (≤`path_max`, ~15s) then reveals the status —
+both the home-timeline fan-out and the streaming `update` wait for
+the job so the reply only appears once its parent link exists; the
+ingest-time delayed `TimelineFanOut` (~10s) is the slow-walk
+fallback, and `ZADD` fan-out is idempotent so firing twice is a
+no-op. Stranger replies trigger nothing.
+
+**Pruning.** `CleanupRemoteActivities` hard-deletes context-only
+remote statuses in `prune_batch` rounds. It's **off by default** —
+set `federation.remote_activity_prune_schedule` to enable it. A row
+is eligible when it's remote, untombstoned, stored longer than
+`remote_context.retention_days` ago (`fetched_at`, the insertion
+time — remote `created_at` is the origin's `published` and can be
+years old), not read through `/context` in the window, and carries
+no local anchor: no local favourite/bookmark/mention/pin/
+notification/reaction, no report, no conversation mute, no filter
+entry, no local vote on its poll, and an author no local account
+follows. A row is kept when any surviving row references it —
+`in_reply_to_id`/`quote_of_id`/`reblog_of_id` or a parked
+`in_reply_to_uri`/`quote_uri` — and the keep-set is a fixpoint, so a
+kept reply retains its whole ancestor chain. Rows referenced only by
+other deleted rows go together (leaf-up). Hard deletes, not
+tombstones — a re-referenced row re-hydrates through the normal
+ingest on the next expansion or path walk. Candidate scanning uses a
+persistent id cursor so a permanently kept head of the table can't
+stall the sweep.

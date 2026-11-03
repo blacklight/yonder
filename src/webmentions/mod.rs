@@ -100,12 +100,16 @@ fn hex_sha256(input: &str) -> String {
 /// against non-public addresses and bodies are capped), local targets
 /// are excluded from outgoing delivery (same-instance mentions already
 /// flow through the regular reply pipeline), and the callbacks feed
-/// the materialization side.
+/// the materialization side. `on_mention_failed` fires once per
+/// outgoing target whose delivery or retraction failed — the
+/// outgoing job uses it to surface the per-target failures the SDK
+/// otherwise only logs, so they engage the job's retry budget.
 pub fn build_handler(
     config: &Config,
-    storage: Arc<storage::PgWebmentionsStorage>,
+    storage: Arc<dyn webmentions_sdk::WebmentionsStorage>,
     on_mention_processed: Option<webmentions_sdk::MentionCallback>,
     on_mention_deleted: Option<webmentions_sdk::MentionCallback>,
+    on_mention_failed: Option<webmentions_sdk::MentionErrorCallback>,
 ) -> webmentions_sdk::WebmentionsHandler {
     let base_url = federation_base_url(config);
     webmentions_sdk::WebmentionsHandler::new(
@@ -122,6 +126,7 @@ pub fn build_handler(
             user_agent: config.federation.user_agent.clone(),
             on_mention_processed,
             on_mention_deleted,
+            on_mention_failed,
             ..Default::default()
         },
     )

@@ -143,7 +143,7 @@ impl JobHandler for IncomingJob {
         }
 
         let storage = Arc::new(PgWebmentionsStorage::new(ctx.db.clone()));
-        let handler = super::build_handler(&ctx.config, storage, None, None);
+        let handler = super::build_handler(&ctx.config, storage, None, None, None);
         let (source_owned, target_owned) = (source.to_string(), target.to_string());
         let outcome = crate::activitypub::actors::sync_call(move || {
             handler.process_incoming_webmention(Some(&source_owned), Some(&target_owned))

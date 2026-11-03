@@ -52,6 +52,11 @@ retract everything (the source page returns `410`).
 Same-instance links are excluded — they already flow through the local
 mention pipeline.
 
+The SDK reports per-target delivery failures (a failed discovery
+fetch, a `>= 400` endpoint response) through `on_mention_failed` —
+the job fails when any target failed, so a transient error retries
+with the normal job backoff instead of silently dropping the mention.
+
 ## Interaction backfeed
 
 Interactions with a webmention-materialized reply backfeed to its

@@ -58,6 +58,11 @@ async fn test_env() -> Option<Env> {
         };
     }
     config.jobs.poll_interval_ms = 50;
+    // A failed delivery retries after `backoff_base ^ attempt`
+    // seconds — keep the base tiny so a transient hiccup re-runs the
+    // job well inside the assertions' wait windows instead of
+    // landing past them.
+    config.jobs.backoff_base_seconds = 1;
     config.federation.enabled = true;
     config.federation.base_url = Some(BASE.to_string());
     config.federation.allow_private_targets = true;

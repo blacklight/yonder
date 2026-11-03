@@ -11,7 +11,7 @@
 //! newly linked targets get `source`/`target` POSTed to their
 //! discovered endpoints, removed links get a re-verification ping.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     extract::{Path, State},
@@ -325,6 +325,15 @@ pub async fn serve_source(State(state): State<Arc<AppState>>, Path(id): Path<i64
     }
 }
 
+/// The failures a `process_outgoing_webmentions` run swallowed: the
+/// SDK reports them per-target via `log::info!` inside
+/// `notify_added`/`notify_removed` and still returns `Ok`, so the job
+/// would ack a run that delivered nothing — a transient discovery/POST
+/// error would lose the mention silently, with no ledger row to diff
+/// against on a later run. Recording them through `on_mention_failed`
+/// lets [`OutgoingJob`] return `Err` and engage the retry budget.
+type Failures = Arc<Mutex<Vec<String>>>;
+
 /// `JobKind::WebmentionOutgoing` — `{"status_id": …}` for a status's
 /// links, `{"like_status_id": …, "like_account_id": …}` for a
 /// favourite's `like-of` backfeed. Runs the SDK's discovery +
@@ -377,14 +386,46 @@ impl JobHandler for OutgoingJob {
                 return Ok(());
             };
 
+        let failures: Failures = Arc::new(Mutex::new(Vec::new()));
         let storage = Arc::new(PgWebmentionsStorage::new(ctx.db.clone()));
-        let handler = super::build_handler(&ctx.config, storage, None, None);
+        let on_failed: webmentions_sdk::MentionErrorCallback = {
+            let failures = failures.clone();
+            Arc::new(
+                move |m: &webmentions_sdk::Webmention, e: &webmentions_sdk::WebmentionError| {
+                    failures
+                        .lock()
+                        .unwrap()
+                        .push(format!("{} -> {}: {e}", m.source, m.target));
+                },
+            )
+        };
+        let handler = super::build_handler(&ctx.config, storage, None, None, Some(on_failed));
         let log_source = source.clone();
         let result = crate::activitypub::actors::sync_call(move || {
             handler.process_outgoing_webmentions(&source, Some(&doc), Some(ContentTextFormat::Html))
         });
         match result {
-            Ok(()) => Ok(()),
+            // Per-target failures surface through the observing
+            // fetcher/storage rather than the return value: report
+            // them so the retry budget re-drives delivery instead of
+            // dropping the mentions.
+            Ok(()) => {
+                let failures = std::mem::take(&mut *failures.lock().unwrap());
+                if failures.is_empty() {
+                    Ok(())
+                } else {
+                    tracing::warn!(
+                        source = %log_source,
+                        failures = ?failures,
+                        "outgoing webmentions: delivery failures"
+                    );
+                    Err(crate::Error::Internal(format!(
+                        "outgoing webmentions: {} failed target(s): {}",
+                        failures.len(),
+                        failures.join("; ")
+                    )))
+                }
+            }
             // Discovery/delivery errors are per-target inside the
             // processor; a bubbled error is the source-side storage
             // read — retryable.

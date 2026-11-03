@@ -3956,9 +3956,9 @@ dependencies = [
 
 [[package]]
 name = "pubby-sdk"
-version = "0.6.9"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13a29f10350f4f4e900bc27ed165ad58a9b1576f0b8253466c67106f29c0cd23"
+checksum = "1f4aea3f6d1be5a1e202474d0788acb11d11020c30d4ce8e4a2a09373a65a316"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6454,9 +6454,9 @@ dependencies = [
 
 [[package]]
 name = "webmentions-sdk"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41d3e880702e6f161aa61667170b073f3d67d2def8aa9d3129cd71c03bb941c6"
+checksum = "4c4e28e9d6e778d17937cb62ff8bb47b585b4ed2a54a40c018a8130965f386fd"
 dependencies = [
  "chrono",
  "log",
@@ -6893,6 +6893,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "ureq",
  "url",
  "utoipa",
  "utoipa-swagger-ui",

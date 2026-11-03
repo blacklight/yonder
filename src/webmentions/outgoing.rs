@@ -52,7 +52,7 @@ fn is_webmention_reply(status: &StatusRow) -> bool {
 /// The remote permalinks of the statuses this one replies to, boosts
 /// or quotes — `None` for local ones (same-instance targets stay in
 /// the local pipeline and are excluded from delivery anyway).
-async fn related_urls(db: &sqlx::PgPool, status: &StatusRow) -> render::Interactions {
+async fn related_urls(db: &sqlx::PgPool, status: &StatusRow) -> Result<render::Interactions> {
     let ids: Vec<i64> = [
         status.in_reply_to_id,
         status.reblog_of_id,
@@ -62,21 +62,13 @@ async fn related_urls(db: &sqlx::PgPool, status: &StatusRow) -> render::Interact
     .flatten()
     .collect();
     if ids.is_empty() {
-        return render::Interactions::default();
+        return Ok(render::Interactions::default());
     }
-    let rows: Vec<(i64, bool, Option<String>)> = match sqlx::query_as(
-        "SELECT id, local, url FROM statuses WHERE id = ANY($1)",
-    )
-    .bind(&ids)
-    .fetch_all(db)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(status_id = status.id, error = %e, "webmention related-urls query failed");
-            return render::Interactions::default();
-        }
-    };
+    let rows: Vec<(i64, bool, Option<String>)> =
+        sqlx::query_as("SELECT id, local, url FROM statuses WHERE id = ANY($1)")
+            .bind(&ids)
+            .fetch_all(db)
+            .await?;
     let remote_url = |id: Option<i64>| {
         id.and_then(|id| {
             rows.iter()
@@ -84,11 +76,11 @@ async fn related_urls(db: &sqlx::PgPool, status: &StatusRow) -> render::Interact
                 .and_then(|(_, _, u)| u.clone())
         })
     };
-    render::Interactions {
+    Ok(render::Interactions {
         reply: remote_url(status.in_reply_to_id),
         repost: remote_url(status.reblog_of_id),
         quote: remote_url(status.quote_of_id),
-    }
+    })
 }
 
 /// Queue the `WebmentionOutgoing` job for a just-persisted local
@@ -104,8 +96,16 @@ pub async fn enqueue(ctx: &PostContext, status: &StatusRow) {
     if !enabled(&ctx.config) || !status.local {
         return;
     }
+    // The probes are fail-open: a failed lookup can't prove there is
+    // nothing to send, so on error the job is enqueued anyway — it
+    // re-derives everything under its retry budget, while a dropped
+    // enqueue would lose the delivery silently.
     let has_targets = deliverable(status)
-        && (status.content.contains("http") || related_urls(&ctx.db, status).await.any());
+        && (status.content.contains("http")
+            || related_urls(&ctx.db, status)
+                .await
+                .map(|i| i.any())
+                .unwrap_or(true));
     let has_stored = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM webmentions \
          WHERE source = $1 AND direction = 'outgoing' AND status <> 'deleted')",
@@ -113,7 +113,7 @@ pub async fn enqueue(ctx: &PostContext, status: &StatusRow) {
     .bind(source_url(&ctx.config, status.id))
     .fetch_one(&ctx.db)
     .await
-    .unwrap_or(false);
+    .unwrap_or(true);
     if !(has_targets || has_stored) {
         return;
     }
@@ -157,7 +157,7 @@ async fn source_document(ctx: &PostContext, status: &StatusRow) -> Result<String
     let base = ctx.base_url();
     let author = author_card(&ctx.db, &base, status.account_id).await?;
     let (_, status_url) = ctx.status_urls(&author.username, status.id);
-    let interactions = related_urls(&ctx.db, status).await;
+    let interactions = related_urls(&ctx.db, status).await?;
     let tags: Vec<String> = sqlx::query_scalar(
         "SELECT t.name FROM tags t JOIN status_tags st ON st.tag_id = t.id \
          WHERE st.status_id = $1 ORDER BY t.name",
@@ -192,7 +192,9 @@ pub async fn enqueue_like(ctx: &PostContext, status: &StatusRow, account_id: i64
     .bind(like_source_url(&ctx.config, status.id, account_id))
     .fetch_one(&ctx.db)
     .await
-    .unwrap_or(false);
+    // Fail-open like `enqueue` — a transient error must not drop a
+    // retraction run the ledger can't vouch for.
+    .unwrap_or(true);
     if !(visible || has_stored) {
         return;
     }

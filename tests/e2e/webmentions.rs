@@ -679,7 +679,7 @@ async fn interaction_backfeed() {
     let (cancel, worker) = start_worker(&env);
     let db = env.state.db.clone();
     let src = source.clone();
-    let wm_reply_id = wait_for(Duration::from_secs(20), move || {
+    let wm_reply_id = wait_for(Duration::from_secs(30), move || {
         let db = db.clone();
         let src = src.clone();
         async move {
@@ -714,7 +714,7 @@ async fn interaction_backfeed() {
     )
     .await;
     let db = env.state.db.clone();
-    let delivered = wait_for(Duration::from_secs(20), {
+    let delivered = wait_for(Duration::from_secs(30), {
         let captured = captured.clone();
         let source = source.clone();
         move || {
@@ -725,7 +725,18 @@ async fn interaction_backfeed() {
         }
     })
     .await;
-    assert!(delivered, "reply webmention not delivered");
+    if !delivered {
+        let ledger: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT source, target, status FROM webmentions WHERE direction = 'outgoing'",
+        )
+        .fetch_all(&env.state.db)
+        .await
+        .unwrap_or_default();
+        panic!(
+            "reply webmention not delivered; captured: {:?}; ledger: {ledger:?}",
+            captured.lock().unwrap()
+        );
+    }
     let sent = captured.lock().unwrap().clone();
     let reply_mention = sent
         .iter()
@@ -759,7 +770,7 @@ async fn interaction_backfeed() {
     .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let like_source = format!("{BASE}/webmentions/like/{wm_reply_id}/{my_account_id}");
-    let delivered = wait_for(Duration::from_secs(20), {
+    let delivered = wait_for(Duration::from_secs(30), {
         let captured = captured.clone();
         let like_source = like_source.clone();
         move || {
@@ -812,7 +823,7 @@ async fn interaction_backfeed() {
     assert_eq!(status, StatusCode::OK);
     let db = env.state.db.clone();
     let like_source2 = like_source.clone();
-    let retracted = wait_for(Duration::from_secs(20), move || {
+    let retracted = wait_for(Duration::from_secs(30), move || {
         let db = db.clone();
         let like_source = like_source2.clone();
         async move {

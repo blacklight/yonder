@@ -371,6 +371,14 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
+@media (max-width: 767px) {
+  .notif-list {
+    margin: 0 calc(var(--space-4) * -1);
+  }
+  .notif {
+    margin-bottom: var(--space-2);
+  }
+}
 /* The skeleton brings its own row padding — the card chrome stays. */
 .notif--skel {
   padding: 0 var(--space-1);

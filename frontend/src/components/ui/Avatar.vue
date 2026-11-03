@@ -42,16 +42,19 @@ const initial = computed(
 .avatar--sm {
   width: 32px;
   height: 32px;
+  min-width: 32px;
   font-size: var(--text-sm);
 }
 .avatar--md {
   width: 48px;
   height: 48px;
+  min-width: 48px;
   font-size: var(--text-lg);
 }
 .avatar--lg {
   width: 96px;
   height: 96px;
+  min-width: 96px;
   font-size: var(--text-2xl);
 }
 .avatar__img {

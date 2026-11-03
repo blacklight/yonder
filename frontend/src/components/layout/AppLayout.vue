@@ -696,7 +696,7 @@ function clearSearch(which: "sidebar" | "aside") {
   margin-left: auto;
 }
 .layout__main {
-  padding: var(--space-4);
+  padding: 0 var(--space-4);
   /* Room for the fixed bottom navigation bar on mobile. */
   padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
   max-width: 44rem;
@@ -739,6 +739,7 @@ function clearSearch(which: "sidebar" | "aside") {
     flex: 0 1 44rem;
     margin: 0;
     min-height: 100vh;
+    padding-top: var(--space-4);
     padding-bottom: var(--space-4);
   }
 }

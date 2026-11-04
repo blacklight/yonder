@@ -363,9 +363,19 @@ pub async fn read_home(
         }
         return Ok(rows);
     }
-    let rows = query::fetch_by_ids(db, &scope, filters, &ids).await?;
+    let mut rows = query::fetch_by_ids(db, &scope, filters, &ids).await?;
     if rows.len() as i64 >= page.limit {
-        return Ok(rows.into_iter().take(page.limit as usize).collect());
+        let keep = page.limit as usize;
+        // The over-read's slack sits past the page: descending reads
+        // keep the head (nearest below `max_id`); `since_id` reads
+        // pulled the window bottom-up and reversed, so the members
+        // nearest the cursor are the tail — the head is read-ahead.
+        let rows = if page.since_id.is_some() {
+            rows.split_off(rows.len() - keep)
+        } else {
+            rows.into_iter().take(keep).collect()
+        };
+        return Ok(rows);
     }
     query::fetch(db, &scope, filters, page).await
 }

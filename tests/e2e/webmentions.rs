@@ -525,25 +525,42 @@ async fn outgoing_webmention_delivers() {
     })
     .await;
     assert!(delivered, "webmention was not delivered");
+
+    // The mock receiver records the delivery when the POST arrives,
+    // but the SDK only writes the `confirmed` ledger row after the
+    // response completes — poll it instead of racing the write, and
+    // keep the worker alive so a failed store can retry.
+    let expected_source = format!("{BASE}/webmentions/source/{status_id}");
+    let stored = wait_for(Duration::from_secs(20), {
+        let db = env.state.db.clone();
+        let expected_source = expected_source.clone();
+        let target_page = target_page.clone();
+        move || {
+            let db = db.clone();
+            let expected_source = expected_source.clone();
+            let target_page = target_page.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM webmentions WHERE source = $1 \
+                     AND target = $2 AND direction = 'outgoing' AND status = 'confirmed')",
+                )
+                .bind(&expected_source)
+                .bind(&target_page)
+                .fetch_one(&db)
+                .await
+                .unwrap_or(false)
+            }
+        }
+    })
+    .await;
     cancel.cancel();
     worker.await.unwrap().unwrap();
 
     let sent = captured.lock().unwrap().clone();
     assert_eq!(sent.len(), 1, "{sent:?}");
     assert_eq!(sent[0].1, target_page);
-    assert_eq!(sent[0].0, format!("{BASE}/webmentions/source/{status_id}"));
-
-    // The outgoing ledger row was recorded.
-    let stored: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM webmentions WHERE source = $1 \
-         AND target = $2 AND direction = 'outgoing' AND status = 'confirmed')",
-    )
-    .bind(&sent[0].0)
-    .bind(&target_page)
-    .fetch_one(&env.state.db)
-    .await
-    .unwrap();
-    assert!(stored);
+    assert_eq!(sent[0].0, expected_source);
+    assert!(stored, "outgoing webmention not recorded as confirmed");
 
     // The h-entry source page serves the mention markup.
     let (status, headers, body) = request(

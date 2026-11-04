@@ -117,7 +117,7 @@ pub async fn emit_notification_event(
     status_id: Option<i64>,
     to_account_id: i64,
 ) {
-    emit_notification_event_ext(
+    if let Err(e) = emit_notification_event_ext(
         db,
         dispatcher,
         kind,
@@ -126,11 +126,20 @@ pub async fn emit_notification_event(
         None,
         to_account_id,
     )
-    .await;
+    .await
+    {
+        tracing::warn!(error = %e, kind, "notification event enqueue failed");
+    }
 }
 
 /// [`emit_notification_event`] plus a `report_id` — only
 /// `admin.report` events (epic 16 `notify_report`) carry one.
+///
+/// Unlike the fire-and-forget wrapper this propagates failures: a
+/// caller inside a job must let them surface so the retry budget
+/// re-fires the emit — a swallowed error silently loses a
+/// notification whose underlying row is already durable, and the
+/// dedupe index can only collapse events that were emitted.
 pub async fn emit_notification_event_ext(
     db: &PgPool,
     dispatcher: &Dispatcher,
@@ -139,33 +148,28 @@ pub async fn emit_notification_event_ext(
     status_id: Option<i64>,
     report_id: Option<i64>,
     to_account_id: i64,
-) {
-    let outcome = async {
-        if from_account_id == to_account_id {
-            return Ok(());
-        }
-        if !is_local_account(db, to_account_id).await?
-            || is_blocked(db, to_account_id, from_account_id).await?
-        {
-            return Ok(());
-        }
-        dispatcher
-            .enqueue(
-                JobKind::NotificationFanout,
-                json!({
-                    "type": kind,
-                    "from_account_id": from_account_id,
-                    "status_id": status_id,
-                    "report_id": report_id,
-                    "account_id": to_account_id,
-                }),
-            )
-            .await
-            .map(|_| ())
-    };
-    if let Err(e) = outcome.await {
-        tracing::warn!(error = %e, kind, "notification event enqueue failed");
+) -> Result<()> {
+    if from_account_id == to_account_id {
+        return Ok(());
     }
+    if !is_local_account(db, to_account_id).await?
+        || is_blocked(db, to_account_id, from_account_id).await?
+    {
+        return Ok(());
+    }
+    dispatcher
+        .enqueue(
+            JobKind::NotificationFanout,
+            json!({
+                "type": kind,
+                "from_account_id": from_account_id,
+                "status_id": status_id,
+                "report_id": report_id,
+                "account_id": to_account_id,
+            }),
+        )
+        .await
+        .map(|_| ())
 }
 
 /// An activity id under the actor's namespace, matching pubby's

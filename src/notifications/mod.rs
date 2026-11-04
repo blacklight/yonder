@@ -675,7 +675,9 @@ pub async fn notify_report(db: &PgPool, dispatcher: &Dispatcher, report_id: i64)
     .fetch_all(db)
     .await?;
     for to in recipients {
-        crate::interactions::emit_notification_event_ext(
+        // Best-effort per admin: a failed enqueue must not lose the
+        // report already stored, nor block the remaining recipients.
+        if let Err(e) = crate::interactions::emit_notification_event_ext(
             db,
             dispatcher,
             "admin.report",
@@ -684,7 +686,10 @@ pub async fn notify_report(db: &PgPool, dispatcher: &Dispatcher, report_id: i64)
             Some(report_id),
             to,
         )
-        .await;
+        .await
+        {
+            tracing::warn!(error = %e, "report notification enqueue failed");
+        }
     }
     Ok(())
 }

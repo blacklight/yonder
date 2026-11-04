@@ -10,7 +10,9 @@
 
 use sqlx::PgPool;
 
-use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::StatusRow, Result};
+use crate::{
+    interactions::emit_notification_event_ext, jobs::Dispatcher, posts::StatusRow, Result,
+};
 
 /// Emit `mention` and `status` notification events for a new status.
 ///
@@ -22,10 +24,10 @@ use crate::{interactions::emit_notification_event, jobs::Dispatcher, posts::Stat
 /// status never emits one (`mention` above is the DM surface — anything
 /// more would leak the conversation to non-participants), and a
 /// followers-only status reaches a subscriber only through an accepted
-/// follow. `emit_notification_event` drops self/remote recipients
+/// follow. `emit_notification_event_ext` drops self/remote recipients
 /// itself.
-/// Lookup errors propagate — inside a job the caller must let them
-/// retry (`?`), since a dropped lookup silently loses the
+/// Lookup and enqueue errors propagate — inside a job the caller must
+/// let them retry (`?`), since a swallowed failure silently loses the
 /// notification forever: the status is already durable, and dedupe
 /// can only collapse events that were actually emitted.
 pub async fn emit_for_status(
@@ -43,15 +45,16 @@ pub async fn emit_for_status(
     .fetch_all(db)
     .await?;
     for to in mentioned {
-        emit_notification_event(
+        emit_notification_event_ext(
             db,
             dispatcher,
             "mention",
             status.account_id,
             Some(status.id),
+            None,
             to,
         )
-        .await;
+        .await?;
     }
     if status.visibility == "direct" {
         return Ok(());
@@ -70,15 +73,16 @@ pub async fn emit_for_status(
     .fetch_all(db)
     .await?;
     for to in subscribed {
-        emit_notification_event(
+        emit_notification_event_ext(
             db,
             dispatcher,
             "status",
             status.account_id,
             Some(status.id),
+            None,
             to,
         )
-        .await;
+        .await?;
     }
     Ok(())
 }

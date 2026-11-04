@@ -152,8 +152,7 @@ describe("service worker", () => {
     await loadWorker();
     const matcher = vi
       .mocked(registerRoute)
-      .mock.calls
-      .map(([capture]) => capture)
+      .mock.calls.map(([capture]) => capture)
       .find((c) => typeof c === "function");
     expect(matcher).toBeDefined();
     const match = (url: string, destination = "image") =>

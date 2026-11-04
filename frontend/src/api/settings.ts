@@ -420,7 +420,10 @@ export function restrictedSession(): Promise<RestrictedSession> {
 }
 /** `POST /api/v1/yonder/restricted/logout` — revoke the restricted token. */
 export function restrictedLogout(): Promise<unknown> {
-  return request<unknown>({ path: "/yonder/restricted/logout", method: "POST" });
+  return request<unknown>({
+    path: "/yonder/restricted/logout",
+    method: "POST",
+  });
 }
 
 /**

@@ -330,7 +330,13 @@ async fn sync_remote_network(
         if let Ok(Some(doc)) =
             tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&url)).await
         {
-            crate::activitypub::storage::upsert_remote_actor_row(&state.db, actor_id, &doc).await?;
+            crate::activitypub::storage::upsert_remote_actor_row(
+                &state.db,
+                &state.config(),
+                actor_id,
+                &doc,
+            )
+            .await?;
             collection = lookup::actor_collection_uri(&doc, direction);
         }
     }
@@ -444,6 +450,7 @@ async fn sync_remote_network(
         .map(|uri| {
             let db = state.db.clone();
             let dispatcher = state.dispatcher.clone();
+            let config = state.config();
             let handler = handler.clone();
             async move {
                 let u = uri.clone();
@@ -451,7 +458,7 @@ async fn sync_remote_network(
                     tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&u)).await;
                 let id = match doc {
                     Ok(Some(doc)) => {
-                        match crate::activitypub::storage::upsert_remote_actor_row(&db, &uri, &doc)
+                        match crate::activitypub::storage::upsert_remote_actor_row(&db, &config, &uri, &doc)
                             .await
                         {
                             Ok(id) => id,
@@ -467,7 +474,7 @@ async fn sync_remote_network(
                     Some(id) => Some((uri, id)),
                     // Still list the member — a bare row renders
                     // username+domain and the job enriches it.
-                    None => match lookup::upsert_remote_stub(&db, &dispatcher, &uri).await {
+                    None => match lookup::upsert_remote_stub(&db, &dispatcher, &config, &uri).await {
                         Ok(id) => Some((uri, id)),
                         Err(e) => {
                             tracing::warn!(actor = %uri, error = %e, "remote member stub failed");
@@ -488,9 +495,9 @@ async fn sync_remote_network(
     // stale-actor refresh on their next profile read.
     for (i, uri) in stub_later.iter().enumerate() {
         let stub = if i < REMOTE_NETWORK_STUB_JOBS {
-            lookup::upsert_remote_stub(&state.db, &state.dispatcher, uri).await
+            lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), uri).await
         } else {
-            lookup::upsert_remote_stub_row(&state.db, uri).await
+            lookup::upsert_remote_stub_row(&state.db, &state.config(), uri).await
         };
         match stub {
             Ok(id) => {

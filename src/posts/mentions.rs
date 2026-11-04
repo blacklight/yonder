@@ -151,7 +151,14 @@ pub fn extract(text: &str) -> Vec<MentionToken> {
 /// known-remote account matches and WebFinger resolution is
 /// unavailable or failed.
 async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option<ResolvedMention>> {
-    let row = match &token.domain {
+    // `user@<this-instance>` names a local account — its row carries
+    // `domain IS NULL`, so the FQN folds into the bare `user` form and
+    // never touches WebFinger or remote stubbing.
+    let remote_domain = token
+        .domain
+        .as_deref()
+        .filter(|d| !crate::activitypub::own_domain(&ctx.config, d));
+    let row = match remote_domain {
         None => {
             sqlx::query(
                 "SELECT id, actor_id, url, username, domain FROM accounts \
@@ -187,6 +194,7 @@ async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option
                         crate::activitypub::lookup::upsert_remote_stub(
                             &ctx.db,
                             &ctx.dispatcher,
+                            &ctx.config,
                             &actor_url,
                         )
                         .await?;

@@ -199,7 +199,11 @@ pub async fn build(
     bus: &crate::http::ws::EventBus,
 ) -> Result<ApContext> {
     let base_url = federation_base_url(config);
-    let storage = Arc::new(storage::PgActivityPubStorage::new(pool.clone()));
+    let shared_config = Arc::new(config.clone());
+    let storage = Arc::new(storage::PgActivityPubStorage::new(
+        pool.clone(),
+        shared_config.clone(),
+    ));
     let doc_cache = Arc::new(DocumentCache::new(
         Some(Arc::new(pubby_sdk::RedisDocumentStore::with_prefix(
             redis.client().clone(),
@@ -215,7 +219,7 @@ pub async fn build(
         db: pool.clone(),
         storage,
         doc_cache,
-        config: Arc::new(config.clone()),
+        config: shared_config,
         dispatcher: dispatcher.clone(),
         redis: redis.clone(),
         bus: bus.clone(),
@@ -265,6 +269,19 @@ pub const REMOTE_ACTOR_STALE_SECONDS: i64 = 24 * 60 * 60;
 /// retry storm. Stamped as the `actor_gone` `remote_network_syncs`
 /// marker by `RemoteActorFetch`.
 pub const GONE_RECHECK_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Whether `domain` names this instance — `instance.domain` (the
+/// WebFinger identity) or the [`federation_base_url`] host (domain-split
+/// deployments where the AP origin differs). Case-insensitive. Remote
+/// materialization must never fabricate `accounts` rows with this
+/// domain — those identities are local (`domain IS NULL`).
+pub fn own_domain(config: &Config, domain: &str) -> bool {
+    domain.eq_ignore_ascii_case(&config.instance.domain)
+        || url::Url::parse(&federation_base_url(config))
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .is_some_and(|host| host.eq_ignore_ascii_case(domain))
+}
 
 /// The effective public base URL: `federation.base_url` when set,
 /// otherwise `https://{instance.domain}` (trimmed).

@@ -353,7 +353,13 @@ fn preview_art_url(att: &Value, object: &Value) -> Option<String> {
 /// enrichment — the `handle_flag` pattern (no network I/O).
 /// `pub(crate)` — the interaction handlers reuse it (epic 13).
 pub(crate) async fn ensure_account(core: &ApCore, actor_url: &str) -> Result<i64> {
-    crate::activitypub::lookup::upsert_remote_stub(&core.db, &core.dispatcher, actor_url).await
+    crate::activitypub::lookup::upsert_remote_stub(
+        &core.db,
+        &core.dispatcher,
+        &core.config,
+        actor_url,
+    )
+    .await
 }
 
 /// The followers-collection URL `addressing` produces — used to

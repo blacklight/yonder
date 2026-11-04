@@ -157,8 +157,11 @@ pub async fn create_admin_account(
     if !matches!(params.role, "user" | "moderator" | "admin") {
         return Err(Error::Validation(format!("invalid role {:?}", params.role)));
     }
-    let username = params.username.trim();
-    validate_username(config, username)?;
+    // Local usernames are stored lowercase (Mastodon convention): the
+    // stored form bakes into actor_id/profile URLs while every lookup
+    // and the unique index are case-insensitive anyway.
+    let username = params.username.trim().to_lowercase();
+    validate_username(config, &username)?;
     let email = params.email.trim();
     if email.is_empty() || !email.contains('@') || email.chars().count() > 500 {
         return Err(Error::Validation("a valid email is required".to_string()));
@@ -183,7 +186,7 @@ pub async fn create_admin_account(
     let taken: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM accounts WHERE lower(username) = lower($1) AND domain IS NULL)",
     )
-    .bind(username)
+    .bind(&username)
     .fetch_one(&state.db)
     .await?;
     if taken {
@@ -203,7 +206,7 @@ pub async fn create_admin_account(
     let (account_id, user_id) = create_local_account(
         &mut tx,
         &base_url,
-        username,
+        &username,
         email,
         params.password_hash,
         true,
@@ -333,8 +336,11 @@ pub async fn register(
         }
         _ => {}
     }
-    let username = params.username.trim();
-    validate_username(config, username)?;
+    // Local usernames are stored lowercase (Mastodon convention): the
+    // stored form bakes into actor_id/profile URLs while every lookup
+    // and the unique index are case-insensitive anyway.
+    let username = params.username.trim().to_lowercase();
+    validate_username(config, &username)?;
     let email = params.email.trim();
     if email.is_empty() || !email.contains('@') || email.chars().count() > 500 {
         return Err(Error::Validation("a valid email is required".to_string()));
@@ -369,7 +375,7 @@ pub async fn register(
     let taken: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM accounts WHERE lower(username) = lower($1) AND domain IS NULL)",
     )
-    .bind(username)
+    .bind(&username)
     .fetch_one(&state.db)
     .await?;
     if taken {
@@ -397,7 +403,7 @@ pub async fn register(
     let (account_id, user_id) = create_local_account(
         &mut tx,
         &base_url,
-        username,
+        &username,
         email,
         &password_hash,
         approved,

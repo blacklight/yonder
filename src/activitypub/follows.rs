@@ -18,7 +18,6 @@
 use std::sync::Arc;
 
 use pubby_sdk::handlers::inbox::OnFollowResponse;
-use sqlx::PgPool;
 
 use crate::Result;
 
@@ -40,7 +39,7 @@ pub fn on_follow_response_fn(
         let target_actor_id = target_actor_id.to_string();
         let outcome = sync_block(async {
             if accepted {
-                accept_outbound(&core.db, &local_actor_id, &target_actor_id).await
+                accept_outbound(&core, &local_actor_id, &target_actor_id).await
             } else {
                 tracing::info!(
                     follower = %local_actor_id,
@@ -62,12 +61,12 @@ pub fn on_follow_response_fn(
 
 /// Insert the `local → remote` follows row that completes an accepted
 /// outbound follow.
-async fn accept_outbound(pool: &PgPool, local_actor_id: &str, target_actor_id: &str) -> Result<()> {
+async fn accept_outbound(core: &ApCore, local_actor_id: &str, target_actor_id: &str) -> Result<()> {
     // Make sure the remote target exists as an accounts row — the
     // follow target URL is all we may have at this point. The shared
     // stub helper disambiguates a (domain, username) collision with a
     // stale alias row instead of aborting the follow.
-    super::lookup::upsert_remote_stub_row(pool, target_actor_id).await?;
+    super::lookup::upsert_remote_stub_row(&core.db, &core.config, target_actor_id).await?;
 
     sqlx::query(
         r#"
@@ -80,7 +79,7 @@ async fn accept_outbound(pool: &PgPool, local_actor_id: &str, target_actor_id: &
     )
     .bind(local_actor_id)
     .bind(target_actor_id)
-    .execute(pool)
+    .execute(&core.db)
     .await?;
     // Counters: the `follows` triggers (migration `0016`) own them.
     Ok(())

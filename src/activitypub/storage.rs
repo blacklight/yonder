@@ -21,6 +21,7 @@
 
 use std::collections::HashSet;
 use std::future::Future;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use pubby_sdk::{
@@ -45,15 +46,17 @@ fn sync_block<F: Future>(f: F) -> F::Output {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(f))
 }
 
-/// Postgres `ActivityPubStorage` — one struct wrapping the pool.
+/// Postgres `ActivityPubStorage` — the pool plus the config the
+/// self-domain actor guard needs.
 pub struct PgActivityPubStorage {
     pool: PgPool,
+    config: Arc<crate::config::Config>,
 }
 
 impl PgActivityPubStorage {
     /// Create the adapter over `pool`.
-    pub fn new(pool: PgPool) -> Self {
-        PgActivityPubStorage { pool }
+    pub fn new(pool: PgPool, config: Arc<crate::config::Config>) -> Self {
+        PgActivityPubStorage { pool, config }
     }
 
     /// The underlying pool — the rest of the module queries through it.
@@ -213,9 +216,25 @@ fn remote_profile_fields(actor_data: &Value, previous: &[Value]) -> Option<Value
 /// richer data wins over an empty refresh.
 async fn upsert_remote_account(
     pool: &PgPool,
+    config: &crate::config::Config,
     actor_id: &str,
     actor_data: &Value,
 ) -> Result<Option<i64>> {
+    // A self-domain actor URL binds the local row — never upsert one
+    // as remote. A remote collection listing our actor (or a stub
+    // seeded before the lookup guard) would otherwise fabricate a
+    // `domain=<self>` row or re-key the local one on the claimed `id`.
+    match super::lookup::self_actor_account(pool, config, actor_id).await {
+        Ok(found) => {
+            if found.is_some() {
+                return Ok(found);
+            }
+        }
+        Err(e) => {
+            tracing::debug!(actor = %actor_id, error = %e, "self-domain actor upsert skipped");
+            return Ok(None);
+        }
+    }
     // The document's own `id` is the canonical actor identity — a
     // stale permalink or fabricated URI (pubby's `https://{d}/@{u}`
     // guess, a renamed profile's old handle) can still serve the doc
@@ -615,7 +634,8 @@ impl ActivityPubStorage for PgActivityPubStorage {
         sync_block(async {
             let actor_data = map_value(&follower.actor_data);
             let Some(remote_id) =
-                upsert_remote_account(&self.pool, &follower.actor_id, &actor_data).await?
+                upsert_remote_account(&self.pool, &self.config, &follower.actor_id, &actor_data)
+                    .await?
             else {
                 return Ok(());
             };
@@ -779,7 +799,8 @@ impl ActivityPubStorage for PgActivityPubStorage {
             let actor_data = map_value(&request.actor_data);
             let activity = map_value(&request.activity);
             let Some(remote_id) =
-                upsert_remote_account(&self.pool, &request.actor_id, &actor_data).await?
+                upsert_remote_account(&self.pool, &self.config, &request.actor_id, &actor_data)
+                    .await?
             else {
                 return Ok(());
             };
@@ -1240,10 +1261,11 @@ impl ActivityPubStorage for PgActivityPubStorage {
 /// `RemoteActorFetch` job, `on_activity` side-effects).
 pub(crate) async fn upsert_remote_actor_row(
     pool: &PgPool,
+    config: &crate::config::Config,
     actor_id: &str,
     actor_data: &Value,
 ) -> Result<Option<i64>> {
-    upsert_remote_account(pool, actor_id, actor_data).await
+    upsert_remote_account(pool, config, actor_id, actor_data).await
 }
 
 /// Whether a `RemoteActorFetch` for `account_id` recently failed (the

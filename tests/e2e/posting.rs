@@ -2491,6 +2491,42 @@ async fn self_mention_is_linkified_and_recorded() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_domain_mention_resolves_locally() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.instance.domain = "yonder.test".to_string();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    register(&env.app, "olga", "olga@example.com").await;
+    let pete = register(&env.app, "pete", "pete@example.com").await;
+
+    // `@user@<this-instance>` names a local account — it resolves like
+    // the bare `@user` form and must never fabricate a `domain=<self>`
+    // remote row.
+    let (_, status) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&pete),
+        Some(json!({"status": "@olga@yonder.test hi"})),
+        &[],
+    )
+    .await;
+    let mentions = status["mentions"].as_array().unwrap();
+    assert_eq!(mentions.len(), 1, "{mentions:?}");
+    assert_eq!(mentions[0]["acct"].as_str().unwrap(), "olga");
+    let html = status["content"].as_str().unwrap();
+    assert!(html.contains("mention"), "{html}");
+    let remote_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM accounts WHERE lower(domain) = 'yonder.test'")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(remote_rows, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn context_visibility_and_ancestors() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

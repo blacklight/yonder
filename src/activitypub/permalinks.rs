@@ -34,7 +34,7 @@ use pubby_sdk::server::DispatchRequest;
 
 use crate::http::{negotiate, AppState};
 
-use super::{actors::actor_path, adapter, federation_base_url, posts};
+use super::{actors::actor_path, adapter, posts};
 
 /// Whether the `Accept` header asks for an ActivityPub representation.
 /// Plain `application/json` counts — a remote fetcher that accepts only
@@ -172,14 +172,5 @@ async fn actor(
 /// federation base URL's host (dev setups where the base carries a
 /// scheme/port while `instance.domain` is the bare name).
 fn local_domain(state: &Arc<AppState>, domain: &str) -> bool {
-    let domain = domain.to_lowercase();
-    if let Some(ap) = &state.ap {
-        if ap.multi.webfinger_domain.eq_ignore_ascii_case(&domain) {
-            return true;
-        }
-    }
-    url::Url::parse(&federation_base_url(&state.config()))
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_lowercase))
-        .is_some_and(|host| host == domain)
+    super::own_domain(&state.config(), domain)
 }

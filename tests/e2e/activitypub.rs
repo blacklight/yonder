@@ -136,7 +136,7 @@ async fn storage_follower_roundtrip_and_scoping() {
     };
     let alice = seed_actor(&pool, "alice").await;
     let bob = seed_actor(&pool, "bob").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
     let remote = "https://remote.example/ap/users/carol";
 
     for target in [&alice.actor_id, &bob.actor_id] {
@@ -177,7 +177,7 @@ async fn storage_get_following_returns_accepted_outbound() {
     let alice = seed_actor(&pool, "alice").await;
     let remote = "https://remote.example/ap/users/dave";
     seed_remote(&pool, remote, "dave").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
 
     assert!(storage
         .get_following(&alice.actor_id, 10, 0)
@@ -205,7 +205,7 @@ async fn storage_follow_request_lifecycle() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
     let remote = "https://remote.example/ap/users/erin";
 
     let request = FollowRequest {
@@ -245,7 +245,7 @@ async fn storage_activities_scoping() {
     };
     let alice = seed_actor(&pool, "alice").await;
     let bob = seed_actor(&pool, "bob").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
 
     storage
         .store_activity(
@@ -276,7 +276,7 @@ async fn storage_interactions_and_mentions() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
 
     let mut i = Interaction::new(
         "https://remote.example/ap/users/fred",
@@ -321,7 +321,7 @@ async fn storage_actor_cache_and_quote_authorizations() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
 
     let doc = json!({"id": "https://remote.example/ap/users/greg", "type": "Person"});
     storage
@@ -367,7 +367,10 @@ async fn actor_doc_advertises_per_actor_endpoints() {
     };
     let mut alice = seed_actor(&pool, "alice").await;
     alice.banner_path = Some("headers/test.png".into());
-    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
+        pool.clone(),
+        Arc::new(Config::default()),
+    ));
     let handler = actors::handler_for(
         storage,
         &Config::default(),
@@ -417,7 +420,10 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
     // A shortcode used only in a field *name* still needs its `Emoji`
     // tag — remote instances expand `attachment.name` from `tag`.
     alice.profile_fields = json!([{ "name": ":tools: toolbox", "value": "https://tools.example" }]);
-    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(pool.clone()));
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
+        pool.clone(),
+        Arc::new(Config::default()),
+    ));
     let handler = actors::handler_for(
         storage,
         &Config::default(),
@@ -854,7 +860,7 @@ async fn store_unhandled_records_interaction() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone());
+    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
     let raw = json!({
         "type": "Block",
         "id": "https://remote.example/activities/b9",

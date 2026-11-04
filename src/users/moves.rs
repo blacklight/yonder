@@ -240,8 +240,13 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
         let doc = sync_call(move || handler.outbox.fetch_actor(&url)).ok_or_else(|| {
             Error::Validation(format!("could not fetch target actor {target_actor_id}"))
         })?;
-        crate::activitypub::storage::upsert_remote_actor_row(&state.db, &target_actor_id, &doc)
-            .await?;
+        crate::activitypub::storage::upsert_remote_actor_row(
+            &state.db,
+            &state.config(),
+            &target_actor_id,
+            &doc,
+        )
+        .await?;
         str_list(doc.get("alsoKnownAs"))
     };
     if !aliases.iter().any(|u| u == &actor_id) {
@@ -1304,8 +1309,13 @@ async fn migrate_remote(
                         if !str_list(doc.get("alsoKnownAs")).iter().any(|u| u == origin) {
                             false
                         } else {
-                            activitypub::storage::upsert_remote_actor_row(&ctx.db, target, &doc)
-                                .await?;
+                            activitypub::storage::upsert_remote_actor_row(
+                                &ctx.db,
+                                &ctx.config,
+                                target,
+                                &doc,
+                            )
+                            .await?;
                             true
                         }
                     }
@@ -1336,7 +1346,13 @@ async fn migrate_remote(
                 sync_call(move || handler.outbox.fetch_actor(&url))
             };
             if let Some(doc) = origin_doc {
-                let _ = activitypub::storage::upsert_remote_actor_row(&ctx.db, origin, &doc).await;
+                let _ = activitypub::storage::upsert_remote_actor_row(
+                    &ctx.db,
+                    &ctx.config,
+                    origin,
+                    &doc,
+                )
+                .await;
             }
             let (origin_id, target_id) =
                 ids_for(&ctx.db, origin, target).await.inspect_err(|_| {

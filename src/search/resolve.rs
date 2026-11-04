@@ -70,6 +70,19 @@ pub(crate) async fn lookup_fqn(
     username: &str,
     domain: &str,
 ) -> Result<Option<i64>> {
+    // `user@<this-instance>` is a local account — resolve it without
+    // WebFinger (and never stub ourselves as remote).
+    if crate::activitypub::own_domain(&state.config(), domain) {
+        return sqlx::query_scalar(
+            "SELECT id FROM accounts \
+             WHERE lower(username) = lower($1) AND domain IS NULL \
+               AND suspended_at IS NULL AND deleted_at IS NULL",
+        )
+        .bind(username)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(Into::into);
+    }
     if domain_suspended(&state.db, domain).await? {
         return Ok(None);
     }
@@ -88,7 +101,8 @@ pub(crate) async fn lookup_fqn(
     // `https://{d}/@{u}` fallback, so `None` here is a genuine miss.
     match lookup::resolve_actor_url(Some(ap), username, domain).await? {
         Some(actor_url) => Ok(Some(
-            lookup::upsert_remote_stub(&state.db, &state.dispatcher, &actor_url).await?,
+            lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), &actor_url)
+                .await?,
         )),
         None => {
             remember_miss(state, &key).await?;
@@ -204,7 +218,9 @@ pub(crate) async fn materialize_remote(
             .and_then(|v| v.as_str())
             .is_some_and(|id| same_origin(url, id))
     {
-        let id = crate::activitypub::storage::upsert_remote_actor_row(db, url, doc).await?;
+        let id =
+            crate::activitypub::storage::upsert_remote_actor_row(db, &ap.core.config, url, doc)
+                .await?;
         return Ok(id.map(ResolvedHit::Account));
     }
     if let Some(hit) = materialize_object(db, ap, url, doc).await? {

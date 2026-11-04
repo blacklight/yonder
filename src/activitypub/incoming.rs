@@ -274,7 +274,8 @@ async fn handle_actor_update(core: &Arc<ApCore>, activity: &Activity, raw: &Valu
         return Ok(());
     }
     let account_id =
-        super::storage::upsert_remote_actor_row(&core.db, &activity.actor, &object).await?;
+        super::storage::upsert_remote_actor_row(&core.db, &core.config, &activity.actor, &object)
+            .await?;
     // An actor Update can change `attachment[]` — queue the `rel="me"`
     // pass so changed link fields get verified without waiting for a
     // profile read (unchanged fields keep their stamps via the upsert
@@ -333,7 +334,7 @@ pub async fn handle_flag(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -
     // The shared stub helper absorbs a (domain, username) collision
     // with a stale alias row — a bare `ON CONFLICT (actor_id)` would
     // abort the whole Flag handler.
-    super::lookup::upsert_remote_stub_row(db, &activity.actor).await?;
+    super::lookup::upsert_remote_stub_row(db, &core.config, &activity.actor).await?;
 
     for object_url in str_list(raw.get("object")) {
         let account_id: Option<i64> =
@@ -533,9 +534,13 @@ impl JobHandler for RemoteActorFetchJob {
                     .storage
                     .cache_remote_actor(&actor_url, &doc, None)
                     .map_err(crate::Error::Federation)?;
-                let account_id =
-                    super::storage::upsert_remote_actor_row(&self.ctx.core.db, &actor_url, &doc)
-                        .await?;
+                let account_id = super::storage::upsert_remote_actor_row(
+                    &self.ctx.core.db,
+                    &self.ctx.core.config,
+                    &actor_url,
+                    &doc,
+                )
+                .await?;
                 // Fields carried by the doc get a `rel="me"`
                 // verification pass — fresh stamps land on profile
                 // reads; unchanged fields keep theirs via the upsert
@@ -674,8 +679,13 @@ async fn ensure_move_target(ctx: &ApContext, actor_id: &str, doc: &Value) {
         tracing::info!(actor = %actor_id, target = %target, "movedTo target fetch failed");
         return;
     };
-    if let Err(e) =
-        super::storage::upsert_remote_actor_row(&ctx.core.db, &target, &target_doc).await
+    if let Err(e) = super::storage::upsert_remote_actor_row(
+        &ctx.core.db,
+        &ctx.core.config,
+        &target,
+        &target_doc,
+    )
+    .await
     {
         tracing::warn!(actor = %actor_id, target = %target, error = %e, "movedTo target upsert failed");
     }

@@ -206,8 +206,13 @@ async fn resolve_outbox_url(
             {
                 tracing::warn!(actor_id, error = %e, "actor cache write failed");
             }
-            if let Err(e) =
-                super::storage::upsert_remote_actor_row(&ap.core.db, actor_id, &fetched.doc).await
+            if let Err(e) = super::storage::upsert_remote_actor_row(
+                &ap.core.db,
+                &ap.core.config,
+                actor_id,
+                &fetched.doc,
+            )
+            .await
             {
                 tracing::warn!(actor_id, error = %e, "actor row upsert failed");
             }

@@ -42,12 +42,71 @@ pub(crate) async fn resolve_actor_url(
     Ok((url != fallback).then_some(url))
 }
 
+/// The `accounts.id` of the *local* account `actor_url` identifies when
+/// its origin is this instance — `/ap/users/{name}` and `/@{name}` bind
+/// that user, `/ap/actor` the instance actor. `Ok(None)` for non-local
+/// URLs. `Err` when the URL names an actor this instance does not
+/// back — a phantom or non-actor self URL must never materialize a
+/// `domain=<self>` "remote" row.
+pub(crate) async fn self_actor_account(
+    db: &PgPool,
+    config: &crate::config::Config,
+    actor_url: &str,
+) -> Result<Option<i64>> {
+    let Ok(parsed) = url::Url::parse(actor_url) else {
+        return Ok(None);
+    };
+    // Self = our exact AP origin (scheme+host+port — a remote merely
+    // sharing a hostname, e.g. a co-hosted sibling instance on another
+    // port or `localhost` for `instance.domain`, is still remote).
+    // `instance.domain` is the acct identity, not an HTTP origin, so
+    // it is deliberately not matched here.
+    if !crate::search::resolve::same_origin(actor_url, &super::federation_base_url(config)) {
+        return Ok(None);
+    }
+    let path = parsed.path().trim_end_matches('/');
+    let username = match path {
+        "/ap/actor" => Some(super::actors::INSTANCE_USERNAME),
+        _ => path
+            .strip_prefix("/ap/users/")
+            .filter(|u| !u.is_empty() && !u.contains('/'))
+            .or_else(|| {
+                path.strip_prefix("/@")
+                    .and_then(|u| u.split('@').next())
+                    .filter(|u| !u.is_empty() && !u.contains('/'))
+            }),
+    };
+    let Some(username) = username else {
+        return Err(Error::Validation(format!(
+            "self-domain URL is not an actor: {actor_url}"
+        )));
+    };
+    match sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM accounts \
+         WHERE lower(username) = lower($1) AND domain IS NULL AND deleted_at IS NULL",
+    )
+    .bind(username)
+    .fetch_optional(db)
+    .await?
+    {
+        Some(id) => Ok(Some(id)),
+        None => Err(Error::NotFound(format!("local actor {actor_url}"))),
+    }
+}
+
 /// Bare `accounts` upsert for a freshly-resolved remote actor — the
 /// `handle_flag` shape (no network I/O, no enrichment job). Returns
 /// the account id. Callers wanting the row enriched either enqueue
 /// `RemoteActorFetch` themselves ([`upsert_remote_stub`]) or rely on
 /// the lazy refresh on the next profile read.
-pub(crate) async fn upsert_remote_stub_row(db: &PgPool, actor_url: &str) -> Result<i64> {
+pub(crate) async fn upsert_remote_stub_row(
+    db: &PgPool,
+    config: &crate::config::Config,
+    actor_url: &str,
+) -> Result<i64> {
+    if let Some(id) = self_actor_account(db, config, actor_url).await? {
+        return Ok(id);
+    }
     let domain = crate::activitypub::moderation::actor_domain(actor_url)
         .unwrap_or_else(|| "unknown".to_string());
     let username = actor_url
@@ -157,9 +216,15 @@ pub(crate) async fn free_username(
 pub(crate) async fn upsert_remote_stub(
     db: &PgPool,
     dispatcher: &Dispatcher,
+    config: &crate::config::Config,
     actor_url: &str,
 ) -> Result<i64> {
-    let id = upsert_remote_stub_row(db, actor_url).await?;
+    // A self-domain URL binds the local row — never stub it and never
+    // enqueue a fetch (it would ingest our own document).
+    if let Some(id) = self_actor_account(db, config, actor_url).await? {
+        return Ok(id);
+    }
+    let id = upsert_remote_stub_row(db, config, actor_url).await?;
     if super::storage::fetch_markers_fresh(db, id).await {
         return Ok(id);
     }

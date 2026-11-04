@@ -413,6 +413,40 @@ async fn registration_validation_and_modes() {
 }
 
 #[tokio::test]
+async fn registration_lowercases_username() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let (status, body) = register_user(&env.app, "MixedCase", "mc@example.com").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The stored form — and everything derived from it (actor URI,
+    // acct) — is lowercase; lookups stay case-insensitive.
+    let (username, actor_id): (String, String) = sqlx::query_as(
+        "SELECT username, actor_id FROM accounts \
+         WHERE domain IS NULL AND lower(username) = 'mixedcase'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(username, "mixedcase");
+    assert!(actor_id.ends_with("/ap/users/mixedcase"), "{actor_id}");
+    let (status, body) = password_login(&env.app, "mc@example.com", "hunter2password").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = body["access_token"].as_str().unwrap();
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/accounts/verify_credentials", json!({})),
+            token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["acct"].as_str(), Some("mixedcase"), "{body}");
+}
+
+#[tokio::test]
 async fn create_app_accepts_mastodon_client_shapes() {
     let _permit = harness::acquire().await;
     let Some(env) = test_app(base_config()).await else {

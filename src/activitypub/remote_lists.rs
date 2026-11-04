@@ -182,7 +182,8 @@ pub(crate) async fn fill(
             if !valid_actor_uri(uri) {
                 continue;
             }
-            let Ok(account_id) = ensure_actor_account(dispatcher, db, uri).await else {
+            let Ok(account_id) = ensure_actor_account(dispatcher, db, &ap.core.config, uri).await
+            else {
                 continue;
             };
             if seen.insert(account_id) {
@@ -219,9 +220,10 @@ pub(crate) async fn fill(
 async fn ensure_actor_account(
     dispatcher: &Dispatcher,
     db: &PgPool,
+    config: &crate::config::Config,
     actor_url: &str,
 ) -> Result<i64> {
-    super::lookup::upsert_remote_stub(db, dispatcher, actor_url).await
+    super::lookup::upsert_remote_stub(db, dispatcher, config, actor_url).await
 }
 
 /// A cheap sanity check before an item URI is turned into an account

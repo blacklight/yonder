@@ -460,7 +460,8 @@
     "confirm": "Confirm",
     "cancel": "Cancel",
     "showMore": "Show more",
-    "showLess": "Show less"
+    "showLess": "Show less",
+    "save": "Save"
   },
   "auth": {
     "signInTitle": "Sign in",
@@ -603,6 +604,7 @@
     "sensitive": "Mark media sensitive",
     "addMedia": "Add media",
     "altPlaceholder": "Describe this media",
+    "altEdit": "Edit alt text",
     "poll": "Poll",
     "pollAdd": "Add poll",
     "pollRemove": "Remove poll",

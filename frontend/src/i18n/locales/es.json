@@ -460,7 +460,8 @@
     "confirm": "Confirmar",
     "cancel": "Cancelar",
     "showMore": "Mostrar más",
-    "showLess": "Mostrar menos"
+    "showLess": "Mostrar menos",
+    "save": "Guardar"
   },
   "auth": {
     "signInTitle": "Iniciar sesión",
@@ -633,6 +634,7 @@
     "sensitive": "Marcar media sensible",
     "addMedia": "Añadir media",
     "altPlaceholder": "Describe esta media",
+    "altEdit": "Editar texto alternativo",
     "poll": "Encuesta",
     "pollAdd": "Añadir encuesta",
     "pollRemove": "Quitar encuesta",

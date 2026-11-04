@@ -460,7 +460,8 @@
     "confirm": "Bestätigen",
     "cancel": "Abbrechen",
     "showMore": "Mehr anzeigen",
-    "showLess": "Weniger anzeigen"
+    "showLess": "Weniger anzeigen",
+    "save": "Speichern"
   },
   "auth": {
     "signInTitle": "Anmelden",
@@ -633,6 +634,7 @@
     "sensitive": "Medien als sensibel markieren",
     "addMedia": "Medien hinzufügen",
     "altPlaceholder": "Beschreibe diese Datei",
+    "altEdit": "Alt-Text bearbeiten",
     "poll": "Umfrage",
     "pollAdd": "Umfrage hinzufügen",
     "pollRemove": "Umfrage entfernen",

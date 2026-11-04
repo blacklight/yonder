@@ -250,6 +250,86 @@ describe("ComposeBox", () => {
     expect(useComposeStore().draft.mediaIds).toContain("m1");
   });
 
+  async function seedMedia(wrapper: {
+    get: (s: string) => {
+      element: HTMLInputElement;
+      trigger: (e: string) => Promise<void>;
+    };
+  }) {
+    const input = wrapper.get("[data-testid='media-input']");
+    Object.defineProperty(input.element, "files", {
+      value: [new File(["x"], "a.png", { type: "image/png" })],
+    });
+    await input.trigger("change");
+    await flushPromises();
+  }
+
+  it("ALT badge opens a modal that saves the description", async () => {
+    const spy = mockPost({
+      id: "m1",
+      url: "/m/1",
+      preview_url: "/m/1",
+      type: "image",
+    });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await seedMedia(wrapper);
+
+    await wrapper.get("[data-testid='alt-edit']").trigger("click");
+    await flushPromises();
+    const ta = document.body.querySelector<HTMLTextAreaElement>(
+      "[data-testid='alt-text']",
+    );
+    expect(ta).toBeTruthy();
+    ta!.value = "a cat on a keyboard";
+    ta!.dispatchEvent(new Event("input"));
+    document.querySelector<HTMLElement>("[data-testid='alt-save']")!.click();
+    await flushPromises();
+
+    const put = spy.mock.calls.find(
+      ([u, i]) =>
+        String(u).includes("/api/v1/media/m1") &&
+        (i as RequestInit)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    expect(JSON.parse(put![1]!.body as string).description).toBe(
+      "a cat on a keyboard",
+    );
+    // The modal closed and the badge shows the description is set.
+    expect(document.body.querySelector(".modal__panel")).toBeFalsy();
+  });
+
+  it("closing the alt modal without saving sends no update", async () => {
+    const spy = mockPost({
+      id: "m1",
+      url: "/m/1",
+      preview_url: "/m/1",
+      type: "image",
+    });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await seedMedia(wrapper);
+
+    await wrapper.get("[data-testid='alt-edit']").trigger("click");
+    await flushPromises();
+    const ta = document.body.querySelector<HTMLTextAreaElement>(
+      "[data-testid='alt-text']",
+    );
+    ta!.value = "typed but discarded";
+    ta!.dispatchEvent(new Event("input"));
+    document.querySelector<HTMLElement>(".modal__close")!.click();
+    await flushPromises();
+
+    expect(
+      spy.mock.calls.some(
+        ([u, i]) =>
+          String(u).includes("/api/v1/media/m1") &&
+          (i as RequestInit)?.method === "PUT",
+      ),
+    ).toBe(false);
+    expect(document.body.querySelector(".modal__panel")).toBeFalsy();
+  });
+
   it("schedule toggle reveals the picker and clears the time when toggled off", async () => {
     mockPost();
     const { wrapper } = mountWith(ComposeBox);

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
+import Modal from "@/components/ui/Modal.vue";
 import PollBuilder from "./PollBuilder.vue";
 import EmojiPicker from "./EmojiPicker.vue";
 import TextAutocomplete, { type AcItem } from "./TextAutocomplete.vue";
@@ -64,6 +65,17 @@ const emojiOpen = ref(false);
 const scheduleOpen = ref(false);
 const editId = ref<string | null>(null);
 const textarea = ref<HTMLTextAreaElement | null>(null);
+
+// ALT text is edited in a modal (an under-thumbnail input was too
+// cramped for a real description). `altEditing` is the attachment
+// being described; `altDraft` is committed only on Save — closing
+// by Escape/backdrop discards.
+const ALT_MAX = 5000; // mirrors the PUT /media description limit
+const altEditing = ref<MediaAttachment | null>(null);
+const altDraft = ref("");
+const altError = ref("");
+const altSaving = ref(false);
+const altTextarea = ref<HTMLTextAreaElement | null>(null);
 
 // One key per *submission body* — an unchanged retry reuses it so a
 // repeat POST replays; editing the draft mints a fresh key so a
@@ -276,6 +288,7 @@ watch(
     media.value = [];
     editId.value = null;
     scheduleOpen.value = false;
+    altEditing.value = null;
     idemKey.value = crypto.randomUUID();
     textarea.value?.focus();
   },
@@ -312,8 +325,35 @@ function syncMediaIds() {
 }
 
 async function setAlt(m: MediaAttachment, description: string) {
-  m.description = description;
   await updateMedia(m.id, { description });
+  m.description = description;
+}
+
+function openAlt(m: MediaAttachment) {
+  altEditing.value = m;
+  altDraft.value = m.description ?? "";
+  altError.value = "";
+  void nextTick(() => altTextarea.value?.focus());
+}
+
+function closeAlt() {
+  altEditing.value = null;
+  altError.value = "";
+}
+
+async function saveAlt() {
+  const m = altEditing.value;
+  if (!m || altSaving.value) return;
+  altSaving.value = true;
+  altError.value = "";
+  try {
+    await setAlt(m, altDraft.value.trim());
+    altEditing.value = null;
+  } catch (e) {
+    altError.value = e instanceof ApiError ? e.message : String(e);
+  } finally {
+    altSaving.value = false;
+  }
 }
 
 function removeMedia(m: MediaAttachment) {
@@ -672,6 +712,7 @@ async function submit() {
     media.value = [];
     editId.value = null;
     scheduleOpen.value = false;
+    altEditing.value = null;
     idemBody = "";
     idemKey.value = crypto.randomUUID();
     // Editing parked the previous draft — hand it back.
@@ -749,12 +790,17 @@ async function submit() {
       <div v-if="media.length" class="compose__media">
         <figure v-for="m in media" :key="m.id" class="compose__media-item">
           <img :src="m.preview_url ?? m.url" :alt="m.description ?? ''" />
-          <input
+          <button
+            type="button"
             class="compose__alt"
-            :value="m.description ?? ''"
-            :placeholder="t('compose.altPlaceholder')"
-            @change="setAlt(m, ($event.target as HTMLInputElement).value)"
-          />
+            :title="t('compose.altEdit')"
+            :aria-label="t('compose.altEdit')"
+            data-testid="alt-edit"
+            @click="openAlt(m)"
+          >
+            ALT
+            <FontAwesomeIcon v-if="m.description" icon="check" />
+          </button>
           <button
             type="button"
             class="compose__media-x"
@@ -967,6 +1013,37 @@ async function submit() {
       <p v-if="done" class="compose__done">{{ done }}</p>
       <p v-if="error" class="compose__error">{{ error }}</p>
     </div>
+
+    <Modal v-if="altEditing" :title="t('status.altText')" @close="closeAlt">
+      <div class="altmodal">
+        <img
+          :src="altEditing.preview_url ?? altEditing.url"
+          :alt="altDraft"
+          class="altmodal__img"
+        />
+        <textarea
+          ref="altTextarea"
+          v-model="altDraft"
+          class="altmodal__text"
+          rows="6"
+          :maxlength="ALT_MAX"
+          :placeholder="t('compose.altPlaceholder')"
+          data-testid="alt-text"
+        />
+        <span class="altmodal__count">
+          {{ altDraft.length }} / {{ ALT_MAX }}
+        </span>
+        <p v-if="altError" class="compose__error">{{ altError }}</p>
+      </div>
+      <template #footer>
+        <Button variant="secondary" @click="closeAlt">
+          {{ t("ui.cancel") }}
+        </Button>
+        <Button :loading="altSaving" data-testid="alt-save" @click="saveAlt">
+          {{ t("ui.save") }}
+        </Button>
+      </template>
+    </Modal>
   </div>
 </template>
 
@@ -1044,13 +1121,53 @@ async function submit() {
   border-radius: var(--radius-md);
   display: block;
 }
+/* Mastodon-style ALT badge — opens the description modal. */
 .compose__alt {
-  width: 100%;
-  margin-top: var(--space-1);
-  font-size: var(--text-xs);
-  padding: var(--space-1);
-  border: 1px solid var(--border);
+  position: absolute;
+  inset-inline-start: var(--space-1);
+  bottom: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
   border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 70%);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+.compose__alt:hover {
+  background: rgb(0 0 0 / 85%);
+}
+.altmodal__img {
+  display: block;
+  width: 100%;
+  max-height: 40vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+}
+.altmodal__text {
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+}
+.altmodal__count {
+  display: block;
+  margin-top: var(--space-1);
+  text-align: end;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
 }
 .compose__media-x {
   position: absolute;

@@ -460,7 +460,8 @@
     "confirm": "تأكيد",
     "cancel": "إلغاء",
     "showMore": "إظهار المزيد",
-    "showLess": "إظهار أقل"
+    "showLess": "إظهار أقل",
+    "save": "حفظ"
   },
   "auth": {
     "signInTitle": "تسجيل الدخول",
@@ -633,6 +634,7 @@
     "sensitive": "وضع علامة حساس على الوسائط",
     "addMedia": "إضافة وسائط",
     "altPlaceholder": "صف هذه الوسائط",
+    "altEdit": "تعديل النص البديل",
     "poll": "استطلاع",
     "pollAdd": "إضافة استطلاع",
     "pollRemove": "إزالة الاستطلاع",

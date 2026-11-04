@@ -304,7 +304,10 @@ async fn fetch(ap: &ApContext, url: &str, walk: &mut Walk) -> Result<Fetch> {
 /// Where a status's `replies` live: an inline page (`orderedItems`/
 /// `items` right on the collection object), the collection's `first`
 /// page (inline or linked), or a bare collection URL — the fetched
-/// document then yields `first`.
+/// document then yields `first`. A collection reduced to a bare ref
+/// (`{id, type, totalItems}` — Akkoma/Pleroma) resolves through its
+/// own `id`; the inline `totalItems` is advisory and can be stale, so
+/// it never skips the fetch.
 fn replies_ref(doc: &Value) -> Option<PageRef> {
     let replies = doc.get("replies")?;
     match replies {
@@ -313,7 +316,14 @@ fn replies_ref(doc: &Value) -> Option<PageRef> {
             if replies.get("orderedItems").is_some() || replies.get("items").is_some() {
                 return Some(PageRef::Inline(replies.clone()));
             }
-            outbox::link_ref(replies, "first")
+            outbox::link_ref(replies, "first").or_else(|| {
+                replies
+                    .get("id")
+                    .or_else(|| replies.get("href"))
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| PageRef::Url(s.to_string()))
+            })
         }
         _ => None,
     }

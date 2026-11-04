@@ -304,10 +304,10 @@ fn remote_docs(base: &str) -> Vec<(&'static str, Value)> {
     ]
 }
 
-/// Seed the remote account row and a `/objects/leaf` status row with
-/// a NULL `in_reply_to_id` — how a remote reply sits locally before
-/// its thread is expanded. Returns the local status id.
-async fn seed_remote_leaf(db: &PgPool, base: &str) -> i64 {
+/// Seed the remote account row and a `/objects/{name}` status row
+/// with a NULL `in_reply_to_id` — how a remote status sits locally
+/// before its thread is expanded. Returns the local status id.
+async fn seed_remote_status(db: &PgPool, base: &str, name: &str) -> i64 {
     let actor = format!("{base}/actor");
     let domain = base.trim_start_matches("http://").to_string();
     sqlx::query(
@@ -325,7 +325,7 @@ async fn seed_remote_leaf(db: &PgPool, base: &str) -> i64 {
         .fetch_one(db)
         .await
         .unwrap();
-    let uri = format!("{base}/objects/leaf");
+    let uri = format!("{base}/objects/{name}");
     sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, visibility, \
              local, uri, url, created_at) \
@@ -337,6 +337,12 @@ async fn seed_remote_leaf(db: &PgPool, base: &str) -> i64 {
     .fetch_one(db)
     .await
     .unwrap()
+}
+
+/// Seed `/objects/leaf` — the remote reply the shared `remote_docs`
+/// thread is anchored on.
+async fn seed_remote_leaf(db: &PgPool, base: &str) -> i64 {
+    seed_remote_status(db, base, "leaf").await
 }
 
 async fn status_id_by_uri(db: &PgPool, uri: &str) -> Option<i64> {
@@ -425,6 +431,87 @@ async fn fetch_remote_context_expands_thread() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["imported"].as_i64().unwrap(), 0, "{body}");
     assert!(body["complete"].as_bool().unwrap(), "{body}");
+}
+
+/// Akkoma/Pleroma shape: `replies` is a bare collection ref — an
+/// `{id, type, totalItems}` object with no `first` and no inline
+/// items (and a stale `totalItems: 0` to boot, matching the real
+/// Akkoma rendering). The collection's own `id` is the fetch URL;
+/// the served collection root yields `first`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fetch_remote_context_expands_bare_replies_ref() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let base = serve_docs(|base| {
+        vec![
+            ("/actor", actor_doc(base, "actor")),
+            (
+                "/objects/root",
+                note(
+                    base,
+                    "root",
+                    "actor",
+                    None,
+                    json!({
+                        "id": format!("{base}/replies/root"),
+                        "type": "OrderedCollection",
+                        "totalItems": 0,
+                    }),
+                ),
+            ),
+            (
+                "/objects/r1",
+                note(base, "r1", "actor", Some("root"), Value::Null),
+            ),
+            (
+                "/objects/r2",
+                note(base, "r2", "actor", Some("root"), Value::Null),
+            ),
+            (
+                "/replies/root",
+                json!({
+                    "id": format!("{base}/replies/root"),
+                    "type": "OrderedCollection",
+                    "first": {
+                        "type": "OrderedCollectionPage",
+                        "orderedItems": [
+                            format!("{base}/objects/r1"),
+                            format!("{base}/objects/r2"),
+                        ],
+                    },
+                }),
+            ),
+        ]
+    })
+    .await;
+    let root_id = seed_remote_status(&env.state.db, &base, "root").await;
+    let token = register(&env.app, "akkomareader", "akkomareader@example.com").await;
+
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{root_id}/fetch_remote_context"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["imported"].as_i64().unwrap(), 2, "{body}");
+    assert!(body["complete"].as_bool().unwrap(), "{body}");
+
+    // Both replies materialized and linked under the root.
+    for name in ["r1", "r2"] {
+        let reply_to: Option<i64> = sqlx::query_scalar(
+            "SELECT in_reply_to_id FROM statuses WHERE uri = $1 AND NOT tombstone",
+        )
+        .bind(format!("{base}/objects/{name}"))
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap_or_else(|_| panic!("{name} should materialize"));
+        assert_eq!(reply_to, Some(root_id), "{name} should link to root");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

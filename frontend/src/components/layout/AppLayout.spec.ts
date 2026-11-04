@@ -5,6 +5,7 @@ import { i18n } from "@/i18n";
 import { stubRoutes } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import { useNotificationsStore } from "@/stores/notifications";
+import { useConversationsStore } from "@/stores/conversations";
 import AppLayout from "./AppLayout.vue";
 
 function layout() {
@@ -99,6 +100,24 @@ describe("AppLayout", () => {
     names = labels(layout());
     expect(names).toContain("Administration");
     expect(names).toContain("Moderation");
+  });
+
+  it("restricted session hides feeds, nav and compose", () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("t");
+    const notifStart = vi.spyOn(useNotificationsStore(), "start");
+    const convStart = vi.spyOn(useConversationsStore(), "start");
+    const w = layout();
+    const names = labels(w);
+    expect(names).not.toContain("Home");
+    expect(names).not.toContain("Notifications");
+    expect(names).not.toContain("Explore");
+    expect(names).not.toContain("Local");
+    expect(names).not.toContain("Settings");
+    expect(notifStart).not.toHaveBeenCalled();
+    expect(convStart).not.toHaveBeenCalled();
+    expect(w.find(".layout__compose").exists()).toBe(false);
+    auth.signOut();
   });
 
   it("admin section replaces the app menu with the panel menu", async () => {

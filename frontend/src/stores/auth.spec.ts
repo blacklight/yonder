@@ -21,6 +21,7 @@ function account(role: string | undefined) {
 describe("auth store", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAuthStore().setToken(null);
     mockedVerify.mockResolvedValue(account("user") as never);
     // settings.fetch()/syncThemeFromServer hit the real client.
     vi.spyOn(globalThis, "fetch").mockImplementation(() =>
@@ -40,6 +41,41 @@ describe("auth store", () => {
     expect(auth.isLoggedIn).toBe(true);
     expect(auth.isStaff).toBe(false);
     expect(auth.isAdmin).toBe(false);
+  });
+
+  it("signInRestricted marks an export-only session and persists it", () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("tok");
+    expect(auth.token).toBe("tok");
+    expect(auth.restricted).toBe(true);
+    expect(auth.isLoggedIn).toBe(true);
+    expect(auth.isFull).toBe(false);
+    expect(localStorage.getItem("yonder.restricted")).toBe("1");
+  });
+
+  it("signInWithToken clears a leftover restricted class", async () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("tok");
+    await auth.signInWithToken("tok2");
+    expect(auth.restricted).toBe(false);
+    expect(auth.isFull).toBe(true);
+    expect(localStorage.getItem("yonder.restricted")).toBeNull();
+  });
+
+  it("signOut clears the restricted flag and its storage", () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("tok");
+    auth.signOut();
+    expect(auth.restricted).toBe(false);
+    expect(localStorage.getItem("yonder.restricted")).toBeNull();
+  });
+
+  it("restore() skips verify_credentials for restricted sessions", async () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("tok");
+    await auth.restore();
+    expect(mockedVerify).not.toHaveBeenCalled();
+    expect(auth.account).toBeNull();
   });
 
   it("exposes staff/admin getters from yonder.role", async () => {

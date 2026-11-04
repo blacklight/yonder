@@ -3,6 +3,7 @@ import type { CredentialAccount } from "@/api/entities";
 import { storageGet, storageRemove, storageSet } from "@/utils/storage";
 
 const TOKEN_KEY = "yonder.token";
+const RESTRICTED_KEY = "yonder.restricted";
 
 export type Role = "user" | "moderator" | "admin";
 
@@ -16,11 +17,18 @@ export const useAuthStore = defineStore("auth", {
     token: storageGet(TOKEN_KEY) as string | null,
     account: null as CredentialAccount | null,
     role: null as Role | null,
+    // Suspended-account export-only credential (epic 31 §5): the token
+    // works on `/yonder/exports*` + `/yonder/restricted/*` only, so the
+    // session is flagged at issue time and persisted to keep reloads
+    // inside the restricted page.
+    restricted: storageGet(RESTRICTED_KEY) === "1",
   }),
   getters: {
     isLoggedIn: (s) => s.token !== null,
     isStaff: (s) => s.role === "moderator" || s.role === "admin",
     isAdmin: (s) => s.role === "admin",
+    // A full session — everything a restricted credential forbids.
+    isFull: (s) => s.token !== null && !s.restricted,
   },
   actions: {
     setToken(token: string | null) {
@@ -30,7 +38,21 @@ export const useAuthStore = defineStore("auth", {
       if (!token) {
         this.account = null;
         this.role = null;
+        this.restricted = false;
+        storageRemove(RESTRICTED_KEY);
       }
+    },
+
+    /**
+     * Suspended-account login: the token response carried
+     * `yonder.restricted`, so `verify_credentials` would 403 — mark
+     * the restricted class and skip the settings/bootstrap fetches
+     * the ordinary session performs.
+     */
+    signInRestricted(token: string) {
+      this.setToken(token);
+      this.restricted = true;
+      storageSet(RESTRICTED_KEY, "1");
     },
 
     /**
@@ -44,6 +66,10 @@ export const useAuthStore = defineStore("auth", {
       const { verifyCredentials } = await import("@/api/accounts");
       const { useSettingsStore } = await import("./settings");
       this.setToken(token);
+      // A normal grant replaces any restricted class left over — the
+      // flag must never describe a full session.
+      this.restricted = false;
+      storageRemove(RESTRICTED_KEY);
       let account;
       try {
         account = await verifyCredentials();
@@ -72,7 +98,7 @@ export const useAuthStore = defineStore("auth", {
 
     /** Re-fetch the account/role for a persisted token (app boot). */
     async restore() {
-      if (!this.token || this.account) return;
+      if (!this.token || this.account || this.restricted) return;
       const { verifyCredentials } = await import("@/api/accounts");
       try {
         const account = await verifyCredentials();

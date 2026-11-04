@@ -12,6 +12,8 @@ session tracking, and optional two-factor authentication.
 | Bearer tokens, client secrets, auth codes | `hex(sha256(secret))` — uniformly random material doesn't need a KDF |
 | TOTP secrets | ChaCha20-Poly1305, keyed via `HKDF-SHA256(auth.secret_key, salt="yonder:2fa", info="totp-secret")` |
 | Backup codes | `hex(sha256(normalized code))` — deterministic equality is required for lookup, and sha256 of a random code is already unrecoverable |
+| Remote import OAuth tokens/client secrets | XChaCha20-Poly1305, keyed via `HKDF-SHA256(auth.secret_key, salt="yonder/oauth-connections/v1")` — remote imports fail closed while `secret_key` is unset |
+| Backup-download URL signatures | HMAC-SHA256, keyed via `HKDF-SHA256(auth.secret_key, salt="yonder/backup-downloads/v1")` |
 
 `auth.secret_key` is the HKDF master key for TOTP-secret encryption.
 **Set it via `YONDER_AUTH__SECRET_KEY`** (environment), not the TOML
@@ -35,6 +37,24 @@ logged in via the `refresh_token` grant.
 Interactive grants create a `sessions` row wrapping the access token;
 `GET /api/v1/sessions` lists them and `DELETE /api/v1/sessions/{id}`
 revokes a login (killing its token).
+
+## Restricted (suspended-account) sessions
+
+A *suspended* account can still pass the password grant (and 2FA) but
+receives an `access_class = 'restricted'` credential instead of an
+ordinary token: fixed 120-minute expiry, `read:backups` scope, no
+refresh token, and a `yonder.restricted` marker in the token entity.
+Restricted tokens resolve only while the account stays suspended
+(unsuspension kills them; pending self-deletion rejects them), and the
+ordinary `AuthContext`/`MaybeAuth` extractors refuse them — every
+normal surface, including the streaming WebSocket, answers 403. The
+only reachable routes are `GET/POST /api/v1/yonder/restricted/{session,
+logout}` and the `/api/v1/yonder/exports*` family, gated by the
+`RestrictedAuth`/`ExportAuth` extractors. Refresh, authorization-code
+and device-code exchanges can never upgrade a restricted credential.
+Disabled, deleted and pending-deletion accounts stay locked out
+entirely. The SPA flags the session and routes it to an export-only
+page with no feeds, compose or WebSocket startup.
 
 ## User-managed API tokens
 

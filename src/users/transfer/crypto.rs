@@ -10,6 +10,7 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
 };
 use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 use crate::{config::Config, Error, Result};
@@ -17,19 +18,28 @@ use crate::{config::Config, Error, Result};
 /// Application key domain — changing it invalidates stored blobs.
 const HKDF_INFO: &[u8] = b"yonder/oauth-connections/v1";
 
-fn cipher(config: &Config) -> Result<XChaCha20Poly1305> {
+/// Key domain for signed backup-download URLs — separate from stored
+/// credential encryption so the two surfaces can't cross-verify.
+const BACKUP_URL_INFO: &[u8] = b"yonder/backup-downloads/v1";
+
+fn derive_key(config: &Config, domain: &[u8], label: &[u8]) -> Result<[u8; 32]> {
     let secret = config
         .auth
         .secret_key
         .as_deref()
         .filter(|s| !s.is_empty())
         .ok_or_else(|| {
-            Error::Internal("auth.secret_key is required for remote import credentials".into())
+            Error::Internal("auth.secret_key is required for credential encryption".into())
         })?;
     let mut key = [0u8; 32];
-    Hkdf::<Sha256>::new(Some(HKDF_INFO), secret.as_bytes())
-        .expand(b"aead-key", &mut key)
-        .map_err(|_| Error::Internal("oauth key derivation failed".into()))?;
+    Hkdf::<Sha256>::new(Some(domain), secret.as_bytes())
+        .expand(label, &mut key)
+        .map_err(|_| Error::Internal("key derivation failed".into()))?;
+    Ok(key)
+}
+
+fn cipher(config: &Config) -> Result<XChaCha20Poly1305> {
+    let key = derive_key(config, HKDF_INFO, b"aead-key")?;
     Ok(XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(
         &key,
     )))
@@ -90,4 +100,31 @@ pub fn pkce_pair() -> (String, String) {
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(sha2::Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)
+}
+
+fn backup_mac(config: &Config, export_id: i64, expires: i64) -> Result<Hmac<Sha256>> {
+    let key = derive_key(config, BACKUP_URL_INFO, b"url-sign")?;
+    let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(&key)
+        .map_err(|_| Error::Internal("backup url key rejected".into()))?;
+    mac.update(format!("{export_id}.{expires}").as_bytes());
+    Ok(mac)
+}
+
+/// HMAC-SHA256 signature over `"{export_id}.{expires_unix}"` for the
+/// Akkoma-adapter backup download URL — a short-lived bearer-free
+/// credential minted only into the owner's own backup list.
+pub fn sign_backup_download(config: &Config, export_id: i64, expires: i64) -> Result<String> {
+    use base64::Engine;
+    let mac = backup_mac(config, export_id, expires)?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes()))
+}
+
+/// Constant-time check of a [`sign_backup_download`] signature. Any
+/// malformed input or missing key config fails closed.
+pub fn verify_backup_download(config: &Config, export_id: i64, expires: i64, sig: &str) -> bool {
+    use base64::Engine;
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(sig) else {
+        return false;
+    };
+    backup_mac(config, export_id, expires).is_ok_and(|mac| mac.verify_slice(&bytes).is_ok())
 }

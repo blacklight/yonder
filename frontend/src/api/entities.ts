@@ -438,11 +438,28 @@ export interface HistoryMessage {
 
 /** `GET /api/v1/yonder/move` — the account's move state. */
 export interface MoveState {
-  state: string;
-  target_acct?: string | null;
-  cooldown_until?: string | null;
-  followers_migrated?: number;
-  followers_total?: number;
+  acct: string;
+  moved: boolean;
+  target: string | null;
+  moved_at: string | null;
+  cooldown_until: string | null;
+  event: { id: string; state: string; error: string | null } | null;
+  followers: {
+    migrated: number;
+    skipped: number;
+    failed: number;
+    pending: number;
+  } | null;
+}
+
+/** `GET /api/v1/yonder/restricted/session` — suspended-account metadata. */
+export interface RestrictedSession {
+  restricted: boolean;
+  account: { username: string; acct: string };
+  email: string | null;
+  suspended_at: string | null;
+  contact_email: string | null;
+  contact_account: Account | null;
 }
 
 /** `invites::list` row. */

@@ -40,6 +40,17 @@ export const stubRoutes: RouteRecordRaw[] = [
     name: "settings-invites",
     component: stub,
   },
+  {
+    path: "/settings/data",
+    name: "settings-data",
+    component: stub,
+  },
+  {
+    path: "/settings/migration",
+    name: "settings-migration",
+    component: stub,
+  },
+  { path: "/restricted", name: "restricted", component: stub },
   { path: "/compose", name: "compose", component: stub },
   { path: "/local", name: "local", component: stub },
   { path: "/explore", name: "explore", component: stub },

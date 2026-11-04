@@ -16,6 +16,8 @@ const items = computed(() => [
   { key: "settings-security", label: t("settingsNav.security") },
   { key: "settings-tokens", label: t("settingsNav.tokens") },
   { key: "settings-invites", label: t("settingsNav.invites") },
+  { key: "settings-data", label: t("settingsNav.data") },
+  { key: "settings-migration", label: t("settingsNav.migration") },
 ]);
 
 const active = computed(() =>

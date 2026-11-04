@@ -22,7 +22,8 @@
     "searchPlaceholder": "Suchen…",
     "compose": "Schreiben",
     "messages": "Nachrichten",
-    "signUp": "Registrieren"
+    "signUp": "Registrieren",
+    "restricted": "Deine Daten"
   },
   "settingsNav": {
     "label": "Einstellungsbereiche",
@@ -31,7 +32,9 @@
     "notifications": "Mitteilungen",
     "security": "Konto & Sicherheit",
     "tokens": "API-Tokens",
-    "invites": "Einladungslinks"
+    "invites": "Einladungslinks",
+    "data": "Import & Export",
+    "migration": "Kontenumzug"
   },
   "settings": {
     "title": "Einstellungen",
@@ -436,6 +439,15 @@
     },
     "tags": {
       "title": "Hashtags"
+    },
+    "settings-data": {
+      "title": "Import & Export"
+    },
+    "settings-migration": {
+      "title": "Kontenumzug"
+    },
+    "restricted": {
+      "title": "Deine Daten"
     }
   },
   "not_found": {
@@ -655,7 +667,7 @@
     "draftDelete": "Entwurf löschen",
     "draftUntitled": "(kein Text)",
     "draftMedia": "{n} Anhang | {n} Anhänge",
-    "draftReplyTo": "Antwort an @{user}"
+    "draftReplyTo": "Antwort an {'@'}{user}"
   },
   "moderation": {
     "showResolved": "Erledigte anzeigen",
@@ -975,7 +987,8 @@
     "delete": "Löschen",
     "clear": "Löschen",
     "error": "Etwas ist schiefgelaufen.",
-    "feed": "RSS-Feed"
+    "feed": "RSS-Feed",
+    "cancel": "Abbrechen"
   },
   "search": {
     "users": "Nutzer",
@@ -1113,7 +1126,8 @@
     "viewAvatar": "Avatar ansehen",
     "viewBanner": "Header ansehen",
     "joined": "Beigetreten {date}",
-    "movedTo": "Dieses Konto ist zu @{acct} umgezogen",
+    "movedIndication": "{name} hat angegeben, dass das neue Konto nun folgendes ist:",
+    "goToProfile": "Zum Profil",
     "movedUnavailable": "Dieses Konto ist zu einem nicht mehr verfügbaren Konto umgezogen"
   },
   "register": {
@@ -1192,5 +1206,173 @@
     "usage": "{uses} Beiträge von {accounts} Personen",
     "empty": "Keine Hashtags in diesem Zeitraum.",
     "emptyFollowed": "Du folgst noch keinen Hashtags."
+  },
+  "settingsData": {
+    "title": "Import & Export",
+    "intro": "Lade deine Daten herunter oder stelle sie aus einem Archiv, einer CSV oder einem Remote-Konto wieder her.",
+    "groupCsv": "Einzelexporte",
+    "groupArchive": "Vollständiges Archiv",
+    "archiveHint": "Ein vollständiges ActivityStreams-Archiv (Beiträge, Medien, Lesezeichen, Favoriten). Eine Anfrage pro 7 Tage; Downloads laufen ab.",
+    "requestArchive": "Archiv anfordern",
+    "download": "Herunterladen",
+    "noExports": "Noch keine Archivexporte.",
+    "expires": "läuft ab {when}",
+    "groupUpload": "Archiv oder CSV hochladen",
+    "uploadKind": "Datentyp",
+    "uploadMode": "Modus",
+    "modeMerge": "Mit bestehenden zusammenführen",
+    "modeOverwrite": "Bestehende überschreiben",
+    "uploadFile": "Datei",
+    "uploadSubmit": "Import starten",
+    "federate": "Importierte Beiträge federieren",
+    "federateWarn": "Importierte öffentliche Beiträge werden mit ihrem Originaldatum an die Server deiner Follower zugestellt. Deaktiviert lassen, um den Import lokal zu halten.",
+    "groupRemote": "Von einem Remote-Konto importieren",
+    "remoteHint": "Autorisiere Lesezugriff auf deinem alten Server und wähle, was kopiert wird. Dein Passwort wird nie abgefragt.",
+    "connected": "Remote-Konto verbunden.",
+    "importError": {
+      "forbidden": "Der Remote-Server hat die Autorisierung abgelehnt.",
+      "invalid": "Die Remote-Autorisierung konnte nicht verifiziert werden.",
+      "failed": "Die Remote-Autorisierung ist fehlgeschlagen. Erneut versuchen."
+    },
+    "originLabel": "Quellserver",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "connect": "Verbinden",
+    "connState": {
+      "active": "aktiv",
+      "revoked": "widerrufen",
+      "expired": "abgelaufen",
+      "pending": "ausstehend"
+    },
+    "revoke": "Widerrufen",
+    "revokeConfirm": "Widerruf bestätigen",
+    "sessionTitle": "Remote-Import starten",
+    "connectionLabel": "Verbindung",
+    "connectionPick": "Verbindung wählen",
+    "categoriesLabel": "Zu importierende Daten (auch als Remote-Berechtigungen angefordert)",
+    "categoriesRequired": "Wähle mindestens eine Kategorie. Sie bestimmt die Berechtigungen, die beim alten Server angefragt werden.",
+    "cat": {
+      "statuses": "Beiträge & Antworten",
+      "dms": "Direktnachrichten",
+      "bookmarks": "Lesezeichen",
+      "favourites": "Favoriten",
+      "following": "Gefolgte",
+      "blocks": "Blockierungen",
+      "mutes": "Stummschaltungen",
+      "profile": "Profil",
+      "observations": "Empfangene Interaktionen"
+    },
+    "limitLabel": "Elementlimit",
+    "limitPlaceholder": "Standard",
+    "orderLabel": "Reihenfolge",
+    "orderNewest": "Neueste zuerst",
+    "orderOldest": "Älteste zuerst",
+    "sinceLabel": "Von (inklusive)",
+    "untilLabel": "Bis (exklusive)",
+    "overwriteProfile": "Profilfelder auch bei leeren Werten überschreiben",
+    "sessionSubmit": "Remote-Import starten",
+    "sessionQueued": "Remote-Import eingereiht.",
+    "groupImports": "Importe",
+    "noImports": "Noch keine Importe.",
+    "progress": "{done}/{total} · {failed} fehlgeschlagen",
+    "cancel": "Abbrechen",
+    "resume": "Fortsetzen",
+    "state": {
+      "pending": "ausstehend",
+      "running": "läuft",
+      "done": "fertig",
+      "failed": "fehlgeschlagen",
+      "cancelled": "abgebrochen",
+      "paused": "pausiert",
+      "expired": "abgelaufen"
+    },
+    "kind": {
+      "archive": "Vollständiges Archiv (Mastodon/Akkoma/Pleroma/Yonder)",
+      "following": "Gefolgte (CSV)",
+      "blocking": "Blockierte Konten (CSV)",
+      "muting": "Stummgeschaltete Konten (CSV)",
+      "domain_blocks": "Blockierte Domains (CSV)",
+      "bookmarks": "Lesezeichen (CSV)",
+      "lists": "Listen (CSV)",
+      "filters": "Filter (JSON)",
+      "api": "Remote-API"
+    },
+    "reauthorize": "Erneut autorisieren",
+    "overwriteConfirm": "Der Überschreiben-Modus ersetzt deine vorhandenen Daten durch den Dateiinhalt. Fortfahren?",
+    "catState": {
+      "done": "fertig",
+      "failed": "fehlgeschlagen",
+      "unsupported": "nicht unterstützt",
+      "running": "läuft",
+      "pending": "ausstehend"
+    },
+    "catCount": {
+      "processed": "{n} verarbeitet",
+      "skipped": "{n} übersprungen",
+      "failed": "{n} fehlgeschlagen"
+    }
+  },
+  "settingsMigration": {
+    "title": "Kontenumzug",
+    "intro": "Ziehe deine Identität auf dieses Konto oder von diesem Konto um, oder richte Aliasse zur Verifikation eines Umzugs ein.",
+    "groupMoveIn": "Auf dieses Konto umziehen",
+    "stepConnectTitle": "1. Altes Konto verbinden",
+    "stepConnectHint": "Autorisiere Lesezugriff auf dem alten Server, solange dessen API noch funktioniert, damit Daten und Gefolgte zuerst kopiert werden können.",
+    "stepConnect": "Auf altem Server autorisieren",
+    "stepSkip": "Überspringen — kein Remote-Zugriff",
+    "stepImportTitle": "2. Daten importieren",
+    "stepImportHint": "Importiere Gefolgte und optional Aktivität vom alten Konto, bevor es umzieht. Alternativ kannst du ein Archiv hochladen.",
+    "stepImportLink": "Import & Export öffnen",
+    "stepNext": "Weiter",
+    "stepReportTitle": "3. Importbericht prüfen",
+    "stepReportHint": "Prüfe, ob die gewünschten Daten angekommen sind — die letzten Importe sind hier und auf der Datenseite gelistet.",
+    "reportEmpty": "Noch keine Importe — starte einen im vorherigen Schritt und komm zurück.",
+    "stepAliasTitle": "4. Alias bestätigen",
+    "stepAliasHint": "Füge dein altes Konto unten als Alias hinzu — der alte Server verlangt das, um zu beweisen, dass beide Konten dir gehören.",
+    "stepMoveTitle": "5. Umzug auf dem alten Server starten",
+    "stepMoveHint": "Melde dich in den Einstellungen deines alten Servers an und starte den Umzug auf dieses Konto. Die Follower-Migration läuft nach der Verifikation automatisch.",
+    "originLabel": "Alter Server",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "groupAliases": "Konto-Aliasse",
+    "aliasesHint": "Aliasse deklarieren andere Konten in deinem Besitz (alsoKnownAs). Ein Umzug wird nur akzeptiert, wenn beide Seiten übereinstimmen.",
+    "aliasLabel": "Alias-Handle",
+    "aliasPlaceholder": "{'@'}you{'@'}old.example",
+    "aliasAdd": "Alias hinzufügen",
+    "aliasRemove": "Entfernen",
+    "noAliases": "Keine Aliasse konfiguriert.",
+    "groupMoveOut": "Von diesem Konto umziehen",
+    "moveHint": "Leite dieses Konto auf ein anderes um und migriere deine lokalen Follower. Erfordert dein Passwort; nach dem Start gilt eine 30-tägige Sperrfrist.",
+    "stateIdle": "Dieses Konto zieht nicht um.",
+    "followerProgress": "{done}/{total} Follower migriert",
+    "followerFailed": "{n} Follower konnten nicht migriert werden",
+    "cooldown": "Du kannst bis {abs} ({when}) keinen weiteren Umzug starten.",
+    "moveStarted": "Umzug gestartet — Follower werden migriert.",
+    "moveCancelled": "Umleitung abgebrochen.",
+    "targetLabel": "Neues Konto",
+    "targetPlaceholder": "{'@'}you{'@'}new.example",
+    "passwordLabel": "Passwort",
+    "moveSubmit": "Konto umziehen",
+    "cancelSubmit": "Umleitung abbrechen",
+    "state": {
+      "pending": "Ausstehend",
+      "publishing": "Umzug wird veröffentlicht",
+      "migrating": "Follower werden migriert",
+      "done": "Umgezogen",
+      "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
+      "idle": "Inaktiv"
+    }
+  },
+  "settingsRestricted": {
+    "title": "Deine Daten",
+    "suspended": "Dein Konto {acct} ist gesperrt.",
+    "suspendedSince": " (seit {when})",
+    "hint": "Du kannst aufbewahrte Exporte deiner Daten herunterladen. Beiträge, Follows und alle anderen Kontofunktionen bleiben deaktiviert.",
+    "contact": "Kontaktiere das Instanz-Team:",
+    "noContact": "Diese Instanz hat keinen öffentlichen Kontakt konfiguriert.",
+    "groupCsv": "Einzelexporte",
+    "groupArchive": "Vollständiges Archiv",
+    "requestArchive": "Archiv anfordern",
+    "download": "Herunterladen",
+    "logout": "Abmelden"
   }
 }

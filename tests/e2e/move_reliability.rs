@@ -922,3 +922,68 @@ async fn pleroma_follow_import_queues_an_import() {
     let kind = body["kind"].as_str().unwrap_or_default();
     assert_eq!(kind, "following", "import kind must be 'following'");
 }
+
+/// The destination can follow the source before the move (a person
+/// following their own account). Migrating that follow would violate
+/// the self-follow constraint — it is recorded `skipped`, never
+/// retried as `failed`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn destination_follow_of_source_is_skipped() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    register(&env, "origin").await;
+    register(&env, "target").await;
+    let origin = account_id(&env.state, "origin").await;
+    let target = account_id(&env.state, "target").await;
+    follow(&env.state.db, target, origin).await;
+    moves::add_alias(&env.state, target, "origin")
+        .await
+        .unwrap();
+    moves::move_to(&env.state, origin, "target", "correct-horse")
+        .await
+        .unwrap();
+    let event_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM migration_events WHERE source_account_id = $1 \
+         AND target_account_id = $2",
+    )
+    .bind(origin)
+    .bind(target)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    let ctx = job_ctx(&env.state);
+    moves::MigrateFollowersJob::new(env.state.ap.clone().unwrap())
+        .run(
+            &ctx,
+            &json!({ "direction": "local", "origin_id": origin, "target_id": target }),
+        )
+        .await
+        .unwrap();
+
+    let (state, error): (String, Option<String>) = sqlx::query_as(
+        "SELECT state, error FROM migration_follower_outcomes \
+         WHERE event_id = $1 AND follower_account_id = $2",
+    )
+    .bind(event_id)
+    .bind(target)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        state, "skipped",
+        "the destination's own follow must not migrate"
+    );
+    assert!(error.is_none(), "{error:?}");
+    let self_follow: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM follows \
+         WHERE account_id = $1 AND target_account_id = $1)",
+    )
+    .bind(target)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(!self_follow);
+}

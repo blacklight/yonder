@@ -41,6 +41,27 @@ describe("SignInPage", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
+  it("lands a suspended account on the restricted page", async () => {
+    oauth.passwordToken.mockResolvedValue({
+      access_token: "tok",
+      yonder: { restricted: true },
+    });
+    const auth = useAuthStore();
+    auth.setToken(null);
+    const signIn = vi
+      .spyOn(auth, "signInWithToken")
+      .mockResolvedValue(undefined);
+    const { wrapper, router } = mountWith(SignInPage);
+    await router.push("/sign-in");
+    await fillCredentials(wrapper);
+    await wrapper.get("form.signin__form").trigger("submit");
+    await flushPromises();
+    expect(auth.restricted).toBe(true);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(router.currentRoute.value.name).toBe("restricted");
+    auth.signOut();
+  });
+
   it("honors the redirect query param", async () => {
     oauth.passwordToken.mockResolvedValue({ access_token: "tok" });
     const auth = useAuthStore();

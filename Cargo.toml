@@ -127,6 +127,7 @@ flate2 = "1.1.10"
 # `ureq` (pubby's own transitive dep, same version).
 ureq = "3.5"
 getrandom = "0.4"
+hmac = "0.13"
 
 [dev-dependencies]
 base64 = "0.22"

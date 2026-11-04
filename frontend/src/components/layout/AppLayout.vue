@@ -44,15 +44,18 @@ const instanceTitle = computed(() => instance.entity?.title ?? null);
 
 onMounted(() => {
   void instance.ensure();
-  notifications.start();
-  conversations.start();
+  // Restricted (suspended) sessions must not start background feeds.
+  if (!auth.restricted) {
+    notifications.start();
+    conversations.start();
+  }
 });
 
 // The badge and DM feeds follow the session.
 watch(
   () => auth.isLoggedIn,
   (logged) => {
-    if (logged) {
+    if (logged && !auth.restricted) {
       notifications.start();
       conversations.start();
     } else {
@@ -81,21 +84,21 @@ const menuSource = computed<MenuEntry[]>(() => [
     label: t("nav.home"),
     to: "/home",
     icon: "house",
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "local",
     label: t("nav.local"),
     to: "/local",
     icon: "users",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     id: "explore",
     label: t("nav.explore"),
     to: "/explore",
     icon: "compass",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     id: "notifications",
@@ -103,42 +106,42 @@ const menuSource = computed<MenuEntry[]>(() => [
     to: "/notifications",
     icon: "bell",
     badge: notifications.unread || undefined,
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "messages",
     label: t("nav.messages"),
     to: "/messages",
     icon: "comments",
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "favourites",
     label: t("nav.favourites"),
     to: "/favourites",
     icon: "star",
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "bookmarks",
     label: t("nav.bookmarks"),
     to: "/bookmarks",
     icon: "bookmark",
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "lists",
     label: t("nav.lists"),
     to: "/lists",
     icon: "list-ul",
-    visible: auth.isLoggedIn,
+    visible: auth.isFull,
   },
   {
     id: "hashtags",
     label: t("nav.hashtags"),
     to: "/tags",
     icon: "hashtag",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     id: "moderation",
@@ -159,7 +162,7 @@ const menuSource = computed<MenuEntry[]>(() => [
     label: t("nav.about"),
     to: "/about",
     icon: "circle-info",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     // Backend-served Swagger UI — an anchor, not a router push.
@@ -167,14 +170,14 @@ const menuSource = computed<MenuEntry[]>(() => [
     label: t("nav.api"),
     href: "/swagger-ui/",
     icon: "code",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     id: "settings",
     label: t("nav.settings"),
     to: "/settings",
     icon: "gear",
-    visible: true,
+    visible: !auth.restricted,
   },
   {
     id: "sign-in",
@@ -353,7 +356,7 @@ const navItems = computed<NavItem[]>(() =>
 const mobileItems = computed<NavItem[]>(() =>
   inAdmin.value
     ? adminItems.value
-    : auth.isLoggedIn
+    : auth.isFull
       ? [
           {
             id: "compose",
@@ -370,6 +373,15 @@ const mobileItems = computed<NavItem[]>(() =>
 // so the primary shortcuts live at the thumb zone. Signed-out visitors
 // get the browse shortcuts (the timeline on `/`, search) plus sign-in.
 const bottomItems = computed<BottomNavItem[]>(() => {
+  if (auth.restricted)
+    return [
+      {
+        id: "restricted",
+        label: t("nav.restricted"),
+        to: "/restricted",
+        icon: "database",
+      },
+    ];
   if (!auth.isLoggedIn)
     return [
       { id: "home", label: t("nav.home"), to: "/", icon: "house" },
@@ -490,7 +502,7 @@ function clearSearch(which: "sidebar" | "aside") {
       </form>
 
       <Button
-        v-if="auth.isLoggedIn && !inAdmin"
+        v-if="auth.isFull && !inAdmin"
         class="layout__compose"
         data-testid="compose"
         @click="composeAction"

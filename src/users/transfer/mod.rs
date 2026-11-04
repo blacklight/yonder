@@ -169,7 +169,7 @@ fn normalize_acct(acct: &str, local_domain: &str) -> String {
 }
 
 pub mod archive;
-mod crypto;
+pub(crate) mod crypto;
 mod csv;
 pub mod export;
 mod import;

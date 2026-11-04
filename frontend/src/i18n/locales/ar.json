@@ -22,7 +22,8 @@
     "searchPlaceholder": "…بحث",
     "compose": "تحرير",
     "messages": "الرسائل",
-    "signUp": "إنشاء حساب"
+    "signUp": "إنشاء حساب",
+    "restricted": "بياناتك"
   },
   "settingsNav": {
     "label": "أقسام الإعدادات",
@@ -31,7 +32,9 @@
     "notifications": "التنبيهات",
     "security": "الحساب والأمان",
     "tokens": "رموز API",
-    "invites": "روابط الدعوة"
+    "invites": "روابط الدعوة",
+    "data": "الاستيراد والتصدير",
+    "migration": "ترحيل الحساب"
   },
   "settings": {
     "title": "الإعدادات",
@@ -436,6 +439,15 @@
     },
     "tags": {
       "title": "الوسوم"
+    },
+    "settings-data": {
+      "title": "الاستيراد والتصدير"
+    },
+    "settings-migration": {
+      "title": "ترحيل الحساب"
+    },
+    "restricted": {
+      "title": "بياناتك"
     }
   },
   "not_found": {
@@ -655,7 +667,7 @@
     "draftDelete": "حذف المسودة",
     "draftUntitled": "(لا نص)",
     "draftMedia": "{n} مرفق | {n} مرفقات",
-    "draftReplyTo": "رد على @{user}"
+    "draftReplyTo": "رد على {'@'}{user}"
   },
   "moderation": {
     "showResolved": "عرض المحلولة",
@@ -975,7 +987,8 @@
     "delete": "حذف",
     "clear": "مسح",
     "error": "حدث خطأ ما.",
-    "feed": "خلاصة RSS"
+    "feed": "خلاصة RSS",
+    "cancel": "إلغاء"
   },
   "search": {
     "users": "المستخدمون",
@@ -1113,7 +1126,8 @@
     "viewAvatar": "عرض الصورة الرمزية",
     "viewBanner": "عرض صورة الغلاف",
     "joined": "انضم في {date}",
-    "movedTo": "انتقل هذا الحساب إلى @{acct}",
+    "movedIndication": "أشار {name} إلى أن حسابه الجديد هو الآن:",
+    "goToProfile": "انتقل إلى الملف الشخصي",
     "movedUnavailable": "انتقل هذا الحساب إلى حساب لم يعد متاحًا"
   },
   "register": {
@@ -1192,5 +1206,173 @@
     "usage": "{uses} منشورات من {accounts} أشخاص",
     "empty": "لم تُستخدم وسوم في هذه الفترة.",
     "emptyFollowed": "لا تتابع أي وسوم بعد."
+  },
+  "settingsData": {
+    "title": "الاستيراد والتصدير",
+    "intro": "نزّل بياناتك أو استعدها من أرشيف أو ملف CSV أو حساب بعيد.",
+    "groupCsv": "تصديرات منفصلة",
+    "groupArchive": "الأرشيف الكامل",
+    "archiveHint": "أرشيف ActivityStreams كامل (المنشورات والوسائط والإشارات والمفضلة). طلب واحد كل 7 أيام؛ تنتهي صلاحية التنزيلات.",
+    "requestArchive": "طلب الأرشيف",
+    "download": "تنزيل",
+    "noExports": "لا توجد أرشيفات مُصدَّرة بعد.",
+    "expires": "تنتهي {when}",
+    "groupUpload": "رفع أرشيف أو CSV",
+    "uploadKind": "نوع البيانات",
+    "uploadMode": "الوضع",
+    "modeMerge": "دمج مع الموجود",
+    "modeOverwrite": "استبدال الموجود",
+    "uploadFile": "الملف",
+    "uploadSubmit": "بدء الاستيراد",
+    "federate": "إرسال المنشورات المستوردة عبر الاتحاد",
+    "federateWarn": "ستُسلَّم المنشورات العامة المستوردة إلى خوادم متابعيك بتواريخها الأصلية. اتركه معطلاً لإبقاء الاستيراد محلياً.",
+    "groupRemote": "الاستيراد من حساب بعيد",
+    "remoteHint": "اسمح بوصول قراءة فقط على خادمك القديم ثم اختر ما تريد نسخه. لن تُطلب كلمة المرور أبداً.",
+    "connected": "تم ربط الحساب البعيد.",
+    "importError": {
+      "forbidden": "رفض الخادم البعيد التفويض.",
+      "invalid": "تعذّر التحقق من التفويض البعيد.",
+      "failed": "فشل التفويض البعيد. حاول مجدداً."
+    },
+    "originLabel": "الخادم المصدر",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "connect": "ربط",
+    "connState": {
+      "active": "نشط",
+      "revoked": "ملغى",
+      "expired": "منتهي",
+      "pending": "معلق"
+    },
+    "revoke": "إلغاء",
+    "revokeConfirm": "تأكيد الإلغاء",
+    "sessionTitle": "بدء استيراد بعيد",
+    "connectionLabel": "الاتصال",
+    "connectionPick": "اختر اتصالاً",
+    "categoriesLabel": "البيانات المطلوب استيرادها (تُطلب أيضاً كأذونات بعيدة)",
+    "categoriesRequired": "اختر فئة واحدة على الأقل. تحدد الفئات الأذونات المطلوبة من الخادم القديم.",
+    "cat": {
+      "statuses": "المنشورات والردود",
+      "dms": "الرسائل المباشرة",
+      "bookmarks": "الإشارات",
+      "favourites": "المفضلة",
+      "following": "المتابَعون",
+      "blocks": "المحظورون",
+      "mutes": "الكتمون",
+      "profile": "الملف الشخصي",
+      "observations": "التفاعلات المستلمة"
+    },
+    "limitLabel": "حد العناصر",
+    "limitPlaceholder": "افتراضي",
+    "orderLabel": "الترتيب",
+    "orderNewest": "الأحدث أولاً",
+    "orderOldest": "الأقدم أولاً",
+    "sinceLabel": "من (شامل)",
+    "untilLabel": "إلى (حصري)",
+    "overwriteProfile": "استبدال حقول الملف حتى عندما تكون فارغة",
+    "sessionSubmit": "بدء الاستيراد البعيد",
+    "sessionQueued": "تم إدراج الاستيراد البعيد.",
+    "groupImports": "الاستيرادات",
+    "noImports": "لا استيرادات بعد.",
+    "progress": "{done}/{total} · {failed} فاشلة",
+    "cancel": "إلغاء",
+    "resume": "استئناف",
+    "state": {
+      "pending": "معلق",
+      "running": "جارٍ",
+      "done": "مكتمل",
+      "failed": "فاشل",
+      "cancelled": "ملغى",
+      "paused": "متوقف مؤقتاً",
+      "expired": "منتهي"
+    },
+    "kind": {
+      "archive": "أرشيف كامل (Mastodon/Akkoma/Pleroma/Yonder)",
+      "following": "المتابَعون (CSV)",
+      "blocking": "الحسابات المحظورة (CSV)",
+      "muting": "الحسابات المكتومة (CSV)",
+      "domain_blocks": "النطاقات المحظورة (CSV)",
+      "bookmarks": "الإشارات (CSV)",
+      "lists": "القوائم (CSV)",
+      "filters": "المرشحات (JSON)",
+      "api": "API بعيدة"
+    },
+    "reauthorize": "إعادة التفويض",
+    "overwriteConfirm": "يستبدل وضع الاستبدال بياناتك الحالية بمحتوى الملف. هل تريد المتابعة؟",
+    "catState": {
+      "done": "تم",
+      "failed": "فشل",
+      "unsupported": "غير مدعوم",
+      "running": "قيد التنفيذ",
+      "pending": "في الانتظار"
+    },
+    "catCount": {
+      "processed": "تمت معالجة {n}",
+      "skipped": "تم تخطي {n}",
+      "failed": "فشل {n}"
+    }
+  },
+  "settingsMigration": {
+    "title": "ترحيل الحساب",
+    "intro": "انقل هويتك إلى هذا الحساب أو منه، أو أعدّ الأسماء المستعارة المستخدمة للتحقق من النقل.",
+    "groupMoveIn": "الانتقال إلى هذا الحساب",
+    "stepConnectTitle": "1. اربط حسابك القديم",
+    "stepConnectHint": "اسمح بوصول قراءة فقط على الخادم القديم ما دامت واجهته تعمل، لتُنسخ بياناتك ومتابعاتك أولاً.",
+    "stepConnect": "التفويض على الخادم القديم",
+    "stepSkip": "تخطَّ — لا وصول بعيداً",
+    "stepImportTitle": "2. استورد بياناتك",
+    "stepImportHint": "استورد المتابَعين والنشاط الاختياري من الحساب القديم قبل نقله. يمكنك أيضاً رفع أرشيف.",
+    "stepImportLink": "فتح الاستيراد والتصدير",
+    "stepNext": "متابعة",
+    "stepReportTitle": "3. راجع تقرير الاستيراد",
+    "stepReportHint": "تأكد من وصول البيانات التي أردتها — تُعرض الاستيرادات الأخيرة هنا وفي صفحة البيانات.",
+    "reportEmpty": "لا استيرادات بعد — ابدأ واحداً من الخطوة السابقة ثم عد.",
+    "stepAliasTitle": "4. أكّد الاسم المستعار",
+    "stepAliasHint": "أضف حسابك القديم كاسم مستعار أدناه — يتطلب الخادم القديم ذلك لإثبات ملكيتك للحسابين.",
+    "stepMoveTitle": "5. ابدأ النقل على الخادم القديم",
+    "stepMoveHint": "سجّل الدخول إلى إعدادات خادمك القديم وابدأ النقل إلى هذا الحساب. يعمل ترحيل المتابعين تلقائياً بعد التحقق.",
+    "originLabel": "الخادم القديم",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "groupAliases": "أسماء الحساب المستعارة",
+    "aliasesHint": "تعلن الأسماء المستعارة عن حسابات أخرى تملكها (alsoKnownAs). لا يُقبل النقل إلا باتفاق الطرفين.",
+    "aliasLabel": "معرّف الاسم المستعار",
+    "aliasPlaceholder": "{'@'}you{'@'}old.example",
+    "aliasAdd": "إضافة اسم مستعار",
+    "aliasRemove": "إزالة",
+    "noAliases": "لا توجد أسماء مستعارة.",
+    "groupMoveOut": "الانتقال من هذا الحساب",
+    "moveHint": "وجّه هذا الحساب إلى حساب آخر وانقل متابعيك المحليين. يتطلب كلمة المرور؛ وتطبَّق فترة انتظار 30 يوماً بعد البدء.",
+    "stateIdle": "هذا الحساب لا يُنقل.",
+    "followerProgress": "{done}/{total} متابعاً منقولاً",
+    "followerFailed": "فشل نقل {n} من المتابعين",
+    "cooldown": "لا يمكنك بدء نقل آخر حتى {abs} ({when}).",
+    "moveStarted": "بدأ النقل — المتابعون قيد الترحيل.",
+    "moveCancelled": "أُلغيت إعادة التوجيه.",
+    "targetLabel": "الحساب الجديد",
+    "targetPlaceholder": "{'@'}you{'@'}new.example",
+    "passwordLabel": "كلمة المرور",
+    "moveSubmit": "نقل الحساب",
+    "cancelSubmit": "إلغاء إعادة التوجيه",
+    "state": {
+      "pending": "معلق",
+      "publishing": "نشر النقل",
+      "migrating": "ترحيل المتابعين",
+      "done": "منقول",
+      "failed": "فاشل",
+      "cancelled": "ملغى",
+      "idle": "خامل"
+    }
+  },
+  "settingsRestricted": {
+    "title": "بياناتك",
+    "suspended": "حسابك {acct} موقوف.",
+    "suspendedSince": " (منذ {when})",
+    "hint": "يمكنك تنزيل تصديرات محفوظة من بياناتك. يبقى النشر والمتابعة وبقية الوظائف معطلة.",
+    "contact": "تواصل مع فريق الخادم:",
+    "noContact": "لم يُهيَّأ جهة اتصال عامة لهذا الخادم.",
+    "groupCsv": "تصديرات منفصلة",
+    "groupArchive": "الأرشيف الكامل",
+    "requestArchive": "طلب الأرشيف",
+    "download": "تنزيل",
+    "logout": "تسجيل الخروج"
   }
 }

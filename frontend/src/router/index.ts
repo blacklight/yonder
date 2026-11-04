@@ -440,6 +440,25 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: "/settings/data",
+      name: "settings-data",
+      component: () => import("@/pages/settings/DataSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: "/settings/migration",
+      name: "settings-migration",
+      component: () => import("@/pages/settings/MigrationSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Suspended-account surface: export controls + logout only.
+      path: "/restricted",
+      name: "restricted",
+      component: () => import("@/pages/settings/RestrictedAccountPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Invite links land on registration with the code prefilled —
       // `POST /api/v1/accounts` consumes it server-side.
       path: "/invite/:code",
@@ -489,6 +508,14 @@ router.beforeEach(async (to) => {
       name: "sign-in",
       query: { redirect: to.fullPath },
     };
+  }
+  // A restricted (suspended-account) session reaches `/restricted`
+  // only — every other surface would 403 anyway.
+  if (auth.restricted && to.name !== "restricted") {
+    return { name: "restricted" };
+  }
+  if (!auth.restricted && to.name === "restricted") {
+    return { name: "settings" };
   }
   if (to.meta.requiresRole) {
     await auth.restore();

@@ -465,14 +465,18 @@ async fn carry_observer_state(
 
 /// Followers who block/mute the target (or are blocked by it) never
 /// migrate — record them as `skipped` outcomes so the move report
-/// distinguishes "didn't move" from "not yet tried".
+/// distinguishes "didn't move" from "not yet tried". The destination
+/// itself can follow the source (a person following their own
+/// account); migrating it would violate the self-follow constraint,
+/// so it is skipped the same way.
 async fn record_skipped(db: &PgPool, event_id: i64, origin_id: i64, target_id: i64) -> Result<()> {
     sqlx::query(
         "INSERT INTO migration_follower_outcomes (event_id, follower_account_id, state) \
          SELECT $1, f.account_id, 'skipped' FROM follows f \
          JOIN accounts a ON a.id = f.account_id \
          WHERE f.target_account_id = $2 AND a.domain IS NULL \
-         AND (EXISTS (SELECT 1 FROM blocks b \
+         AND (f.account_id = $3 \
+          OR EXISTS (SELECT 1 FROM blocks b \
              WHERE (b.account_id = f.account_id AND b.target_account_id = $3) \
                 OR (b.account_id = $3 AND b.target_account_id = f.account_id)) \
           OR EXISTS (SELECT 1 FROM mutes m \
@@ -1009,6 +1013,7 @@ async fn run_follower_batch(
          JOIN accounts a ON a.id = f.account_id \
          WHERE f.target_account_id = $1 AND a.domain IS NULL AND f.id > $3 \
          AND a.suspended_at IS NULL AND a.deleted_at IS NULL \
+         AND f.account_id <> $2 \
          AND NOT EXISTS (SELECT 1 FROM blocks b \
              WHERE b.account_id = f.account_id AND b.target_account_id = $2) \
          AND NOT EXISTS (SELECT 1 FROM mutes m \

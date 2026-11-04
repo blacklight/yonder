@@ -372,15 +372,32 @@ fn parse_link_next(v: &str) -> Option<String> {
 }
 
 /// Normalize an origin: `https` (or `http` under
-/// `allow_private_targets`), no path/query, SSRF-guarded.
+/// `allow_private_targets`), no path/query, SSRF-guarded. A bare
+/// domain (`mastodon.example`) or an acct handle (`@you@mastodon.example`)
+/// is accepted too — only the host is an origin, so it becomes
+/// `https://{host}` before the usual checks.
 fn normalize_origin(origin: &str, config: &Config) -> Result<String> {
-    let u = url::Url::parse(origin.trim())
-        .map_err(|_| Error::Validation("origin must be an absolute URL".into()))?;
+    let raw = origin.trim();
+    let raw = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        // Take the host of an acct handle (`user@host`, `@user@host`,
+        // `@host`) or the bare input as a domain.
+        format!("https://{}", raw.rsplit('@').next().unwrap_or_default())
+    };
+    let u = url::Url::parse(&raw).map_err(|_| {
+        Error::Validation("origin must be an https URL, domain or @user@host".into())
+    })?;
     let scheme_ok =
         u.scheme() == "https" || (u.scheme() == "http" && config.federation.allow_private_targets);
-    if !scheme_ok || u.path() != "/" && !u.path().is_empty() {
+    let bare = (u.path() == "/" || u.path().is_empty())
+        && u.query().is_none()
+        && u.fragment().is_none()
+        && u.username().is_empty()
+        && u.password().is_none();
+    if !scheme_ok || !bare {
         return Err(Error::Validation(
-            "origin must be an https URL without a path".into(),
+            "origin must be an https URL without a path, query or credentials".into(),
         ));
     }
     let origin = format!("{}://{}", u.scheme(), u.host_str().unwrap_or_default());
@@ -445,6 +462,28 @@ pub fn binding_from_cookie(header: Option<&str>) -> Option<String> {
         .find(|v| !v.is_empty())
 }
 
+/// A `return_to` redirect path is local-only: it must start with a
+/// single `/` (never `//` — protocol-relative URLs leave the site, and
+/// never `/\` because browsers fold `\` into `/`), and contain only
+/// printable ASCII with no `\`, `?` or `#` (the callback appends its
+/// own query). Anything else is rejected, so the value stored in the
+/// pending blob can be trusted verbatim at callback time.
+pub(crate) fn validate_return_to(path: &str) -> Result<&str> {
+    let local = path.starts_with('/')
+        && path[1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c != '/' && c != '\\')
+        && path
+            .chars()
+            .all(|c| c.is_ascii() && !c.is_ascii_control() && !matches!(c, '\\' | '?' | '#'));
+    if local {
+        Ok(path)
+    } else {
+        Err(Error::Validation("return_to must be a local path".into()))
+    }
+}
+
 /// `POST /api/v1/yonder/import_connections` — register the remote app
 /// and return the authorization URL plus the browser-binding token.
 pub async fn begin_authorization(
@@ -452,6 +491,7 @@ pub async fn begin_authorization(
     user_id: i64,
     origin: &str,
     categories: &[String],
+    return_to: Option<&str>,
 ) -> Result<(String, String)> {
     if !crypto::available(state.config().as_ref()) {
         return Err(Error::Internal(
@@ -459,6 +499,7 @@ pub async fn begin_authorization(
         ));
     }
     let origin = normalize_origin(origin, state.config().as_ref())?;
+    let return_to = return_to.map(validate_return_to).transpose()?;
     let scopes = requested_scopes(categories);
     // App registration is unauthenticated on Mastodon-compatible
     // servers — a throwaway provider with an empty token is fine.
@@ -505,6 +546,7 @@ pub async fn begin_authorization(
         "verifier_enc": crypto::encrypt(state.config().as_ref(), verifier.as_bytes())?,
         "scopes": scopes,
         "binding": binding,
+        "return_to": return_to,
     });
     let blob = crypto::encrypt(state.config().as_ref(), pending.to_string().as_bytes())?;
     let mut conn = state.redis.conn().await?;
@@ -525,12 +567,26 @@ pub async fn begin_authorization(
 
 /// `GET …/callback?code&state` — single-use state, browser binding
 /// (cookie must match the token stored with the state), code exchange,
-/// identity verification, encrypted credential persistence.
+/// identity verification, encrypted credential persistence. The
+/// pending state's `return_to` comes back with the outcome, so the
+/// callback can send a failed flow back to the page that started it.
 pub async fn complete_authorization(
     state: &AppState,
     code: &str,
     nonce: &str,
     binding: Option<&str>,
+) -> (Result<i64>, Option<String>) {
+    let mut return_to = None;
+    let result = finish_authorization(state, code, nonce, binding, &mut return_to).await;
+    (result, return_to)
+}
+
+async fn finish_authorization(
+    state: &AppState,
+    code: &str,
+    nonce: &str,
+    binding: Option<&str>,
+    return_to: &mut Option<String>,
 ) -> Result<i64> {
     let mut conn = state.redis.conn().await?;
     let blob_b64: Option<String> = conn.get(pending_key(nonce)).await?;
@@ -562,6 +618,10 @@ pub async fn complete_authorization(
             "unknown or expired authorization state".into(),
         ));
     }
+    *return_to = pending
+        .get("return_to")
+        .and_then(Value::as_str)
+        .map(String::from);
     let user_id: i64 = pending
         .get("user_id")
         .and_then(Value::as_i64)
@@ -3190,5 +3250,71 @@ mod tests {
         assert!(clear.starts_with("yonder_import_oauth=;"));
         assert!(clear.contains("Max-Age=0") && clear.contains("; Secure"));
         assert_eq!(binding_from_cookie(Some("yonder_import_oauth=")), None);
+    }
+
+    /// Private targets allowed so `http` schemes parse — the SSRF
+    /// guard itself is exercised by the e2e suite.
+    fn permissive_config() -> Config {
+        let mut config = Config::default();
+        config.federation.allow_private_targets = true;
+        config
+    }
+
+    #[test]
+    fn origin_accepts_url_domain_and_handle() {
+        let config = permissive_config();
+        for (input, want) in [
+            ("https://old.example", "https://old.example"),
+            (" https://old.example ", "https://old.example"),
+            ("old.example", "https://old.example"),
+            ("you@old.example", "https://old.example"),
+            ("@you@old.example", "https://old.example"),
+            ("@old.example", "https://old.example"),
+            ("old.example:8443", "https://old.example:8443"),
+            ("http://localhost:3000", "http://localhost:3000"),
+        ] {
+            assert_eq!(normalize_origin(input, &config).unwrap(), want, "{input}");
+        }
+    }
+
+    #[test]
+    fn origin_rejects_paths_queries_schemes_and_empty_hosts() {
+        let config = permissive_config();
+        for input in [
+            "old.example/users/me",
+            "https://old.example/users/me",
+            "https://old.example?x=1",
+            "https://old.example#frag",
+            "https://user@old.example",
+            "https://user:pw@old.example",
+            "ftp://old.example",
+            "",
+            "@",
+            "you@",
+            "not a host",
+        ] {
+            assert!(normalize_origin(input, &config).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn return_to_accepts_only_local_paths() {
+        for good in ["/settings/data", "/settings/migration", "/restricted"] {
+            assert_eq!(validate_return_to(good).unwrap(), good, "{good}");
+        }
+        for bad in [
+            "//evil.example",
+            "/\\evil.example",
+            "/\tevil.example",
+            "/path\nevil",
+            "evil.example",
+            "https://evil.example",
+            "/path?x=1",
+            "/path#frag",
+            "",
+            "/",
+        ] {
+            assert!(validate_return_to(bad).is_err(), "{bad:?}");
+        }
     }
 }

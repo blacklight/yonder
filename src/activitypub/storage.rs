@@ -447,10 +447,19 @@ async fn sync_remote_move_inner(
         Some(t) => t,
         None => {
             if actor_data.get("inbox").is_some() {
+                // Doc-sync clears only markers it established: a
+                // verified inbound `Move` (a live migration_events
+                // row) is stronger evidence — software that never
+                // emits `movedTo` (e.g. Akkoma) would otherwise undo
+                // the activity on every refresh. Cancellation goes
+                // through the Move handlers, not doc absence.
                 sqlx::query(
                     "UPDATE accounts SET moved_to_account_id = NULL, updated_at = now() \
                      WHERE actor_id = $1 AND domain IS NOT NULL \
-                     AND moved_to_account_id IS NOT NULL",
+                     AND moved_to_account_id IS NOT NULL \
+                     AND NOT EXISTS (SELECT 1 FROM migration_events e \
+                         WHERE e.source_account_id = accounts.id \
+                         AND e.state <> 'cancelled')",
                 )
                 .bind(actor_id)
                 .execute(pool)

@@ -41,6 +41,24 @@ describe("router role guards", () => {
     expect(router.currentRoute.value.name).toBe("home");
   });
 
+  it("fences a restricted session to /restricted", async () => {
+    const auth = useAuthStore();
+    auth.signInRestricted("t");
+    await router.push("/settings");
+    expect(router.currentRoute.value.name).toBe("restricted");
+    await router.push("/home");
+    expect(router.currentRoute.value.name).toBe("restricted");
+  });
+
+  it("sends a normal session away from /restricted", async () => {
+    signInAs("user");
+    // Move off /restricted first — a duplicate navigation would be
+    // a no-op and never reach the guard.
+    await router.push("/settings");
+    await router.push("/restricted");
+    expect(router.currentRoute.value.name).toBe("settings");
+  });
+
   it("admits moderators to /moderation but not /admin", async () => {
     signInAs("moderator");
     await router.push("/moderation");

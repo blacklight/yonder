@@ -8,7 +8,9 @@ import type {
   HistoryMessage,
   ImportConnection,
   Invite,
+  MoveState,
   Preferences,
+  RestrictedSession,
   SessionEntity,
   Token,
   TransferRow,
@@ -222,6 +224,28 @@ export function getExport(id: string): Promise<TransferRow> {
     path: `/yonder/exports/${encodeURIComponent(id)}`,
   });
 }
+/** `POST /api/v1/yonder/exports` `{kind: "archive"}` — queues the zip (202 row). */
+export function requestArchiveExport(): Promise<TransferRow> {
+  return request<TransferRow>({
+    path: "/yonder/exports",
+    method: "POST",
+    body: { kind: "archive" },
+  });
+}
+/** `POST /api/v1/yonder/exports` for inline CSV/JSON kinds — direct blob download. */
+export function downloadInlineExport(kind: string) {
+  return requestBlob({
+    path: "/yonder/exports",
+    method: "POST",
+    body: { kind },
+  });
+}
+/** `GET /api/v1/yonder/exports/{id}/download` — the finished archive zip. */
+export function downloadExport(id: string) {
+  return requestBlob({
+    path: `/yonder/exports/${encodeURIComponent(id)}/download`,
+  });
+}
 export function listImports(): Promise<TransferRow[]> {
   return request<TransferRow[]>({ path: "/yonder/imports" });
 }
@@ -272,11 +296,12 @@ export function listImportConnections(): Promise<ImportConnection[]> {
 export function beginImportConnection(
   origin: string,
   categories: string[],
+  returnTo?: string,
 ): Promise<{ authorization_url: string }> {
   return request<{ authorization_url: string }>({
     path: "/yonder/import_connections",
     method: "POST",
-    body: { origin, categories },
+    body: { origin, categories, return_to: returnTo },
   });
 }
 export function revokeImportConnection(id: string): Promise<unknown> {
@@ -364,6 +389,10 @@ export function removeAlias(acct: string): Promise<unknown> {
   });
 }
 
+/** `GET /api/v1/yonder/move` — redirect state, cooldown, follower progress. */
+export function moveState(): Promise<MoveState> {
+  return request<MoveState>({ path: "/yonder/move" });
+}
 /** `POST /api/v1/yonder/move` — password-gated account redirect. */
 export function moveAccount(acct: string, password: string): Promise<unknown> {
   return request<unknown>({
@@ -379,6 +408,19 @@ export function cancelMove(password: string): Promise<unknown> {
     method: "DELETE",
     body: { password },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Restricted (suspended-account) session surface — restricted tokens only.
+// ---------------------------------------------------------------------------
+
+/** `GET /api/v1/yonder/restricted/session` — suspension + contact metadata. */
+export function restrictedSession(): Promise<RestrictedSession> {
+  return request<RestrictedSession>({ path: "/yonder/restricted/session" });
+}
+/** `POST /api/v1/yonder/restricted/logout` — revoke the restricted token. */
+export function restrictedLogout(): Promise<unknown> {
+  return request<unknown>({ path: "/yonder/restricted/logout", method: "POST" });
 }
 
 /**

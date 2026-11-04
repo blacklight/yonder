@@ -189,47 +189,75 @@ pub async fn create_export(
         }
         return Ok((StatusCode::OK, headers, bytes).into_response());
     }
-    // Archive cooldown: one per 7 days per account (Mastodon).
-    // Failed exports don't count — a broken run must not lock the user
-    // out of retries for a week. The per-account advisory lock
-    // serializes the check+insert so concurrent requests can't race
-    // past the cooldown.
+    match queue_archive_export(&state, auth.0.account_id).await? {
+        ArchiveQueue::Cooldown(retry) => Ok(cooldown_response(retry)),
+        ArchiveQueue::Queued(row) => {
+            Ok((StatusCode::ACCEPTED, Json(status_json(&row))).into_response())
+        }
+    }
+}
+
+/// Outcome of [`queue_archive_export`].
+pub(crate) enum ArchiveQueue {
+    /// Seconds until the cooldown lifts (see [`cooldown_response`]).
+    Cooldown(i64),
+    /// The committed export row — already enqueued.
+    Queued(sqlx::postgres::PgRow),
+}
+
+/// The 429 for an archive request inside the cooldown, with the seconds
+/// left as `Retry-After`.
+pub(crate) fn cooldown_response(retry: i64) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::RETRY_AFTER,
+        HeaderValue::from_str(&retry.to_string()).unwrap(),
+    );
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        headers,
+        Json(json!({"error": "an archive was already requested in the last 7 days"})),
+    )
+        .into_response()
+}
+
+/// Cooldown-guarded archive-export request shared by the Yonder
+/// transfer endpoint and the Akkoma backups adapter: one archive per
+/// 7 days per account (Mastodon parity; Akkoma has the same idea as a
+/// configurable `limit_days`). Failed exports don't count — a broken
+/// run must not lock the user out of retries for a week. The
+/// per-account advisory lock serializes the check+insert so
+/// concurrent requests can't race past the cooldown.
+pub(crate) async fn queue_archive_export(
+    state: &AppState,
+    account_id: i64,
+) -> Result<ArchiveQueue> {
     let mut tx = state.db.begin().await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-        .bind(format!("export-cooldown:{}", auth.0.account_id))
+        .bind(format!("export-cooldown:{account_id}"))
         .execute(&mut *tx)
         .await?;
     let last: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
         "SELECT max(created_at) FROM archive_exports \
          WHERE account_id = $1 AND kind = 'archive' AND state <> 'failed'",
     )
-    .bind(auth.0.account_id)
+    .bind(account_id)
     .fetch_one(&mut *tx)
     .await?;
     if let Some(last) = last {
         let cooldown = chrono::Duration::days(7);
         if chrono::Utc::now() - last < cooldown {
-            tx.rollback().await?;
             let retry = (cooldown - (chrono::Utc::now() - last))
                 .num_seconds()
                 .max(60);
-            let mut headers = HeaderMap::new();
-            headers.insert(
-                header::RETRY_AFTER,
-                HeaderValue::from_str(&retry.to_string()).unwrap(),
-            );
-            return Ok((
-                StatusCode::TOO_MANY_REQUESTS,
-                headers,
-                Json(json!({"error": "an archive was already requested in the last 7 days"})),
-            )
-                .into_response());
+            tx.rollback().await?;
+            return Ok(ArchiveQueue::Cooldown(retry));
         }
     }
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO archive_exports (account_id, kind) VALUES ($1, 'archive') RETURNING id",
     )
-    .bind(auth.0.account_id)
+    .bind(account_id)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -241,7 +269,7 @@ pub async fn create_export(
         .bind(id)
         .fetch_one(&state.db)
         .await?;
-    Ok((StatusCode::ACCEPTED, Json(status_json(&row))).into_response())
+    Ok(ArchiveQueue::Queued(row))
 }
 
 /// `GET /api/v1/yonder/exports` — list own archive exports.
@@ -319,6 +347,17 @@ pub async fn download_export(
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| Error::NotFound("export".into()))?;
+    archive_download_response(&state, &row).await
+}
+
+/// Stream a `done` archive export row: expired rows are 410, anything
+/// not finished is 404, and the zip is served `no-store`. Shared by
+/// the bearer-authenticated download and the signed Akkoma-adapter
+/// backup URL (the row must already be fetched).
+pub(crate) async fn archive_download_response(
+    state: &AppState,
+    row: &sqlx::postgres::PgRow,
+) -> Result<Response> {
     let state_col: String = row.get("state");
     if state_col == "expired" {
         return Ok((
@@ -531,6 +570,11 @@ pub struct BeginConnectionForm {
     pub origin: String,
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Local path the OAuth callback redirects back to instead of
+    /// `/settings/data` (e.g. the migration wizard). Server-validated:
+    /// must be a single-segment local path, never a URL.
+    #[serde(default)]
+    pub return_to: Option<String>,
 }
 
 /// `POST /api/v1/yonder/import_connections` — begin OAuth; returns the
@@ -548,13 +592,23 @@ pub async fn begin_connection(
     axum::extract::Json(form): axum::extract::Json<BeginConnectionForm>,
 ) -> Result<([(header::HeaderName, String); 1], Json<Value>)> {
     require_scope(&state.config(), &auth, "write:accounts")?;
+    let return_to = form
+        .return_to
+        .as_deref()
+        .map(transfer::remote::validate_return_to)
+        .transpose()?;
     let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE account_id = $1")
         .bind(auth.account_id)
         .fetch_one(&state.db)
         .await?;
-    let (url, binding) =
-        transfer::remote::begin_authorization(&state, user_id, &form.origin, &form.categories)
-            .await?;
+    let (url, binding) = transfer::remote::begin_authorization(
+        &state,
+        user_id,
+        &form.origin,
+        &form.categories,
+        return_to,
+    )
+    .await?;
     let callback = format!(
         "{}/api/v1/yonder/import_connections/callback",
         crate::activitypub::federation_base_url(state.config().as_ref())
@@ -615,15 +669,11 @@ pub async fn connection_callback(
     // The flow is over either way: clear the binding cookie. Errors
     // reach the page as a fixed code — remote transport detail stays
     // in the server log.
-    let redirect = match transfer::remote::complete_authorization(
-        &state,
-        &code,
-        &st,
-        binding.as_deref(),
-    )
-    .await
-    {
-        Ok(_) => "/settings/data?connected=1".to_string(),
+    let (outcome, return_to) =
+        transfer::remote::complete_authorization(&state, &code, &st, binding.as_deref()).await;
+    let dest = return_to.unwrap_or_else(|| "/settings/data".to_string());
+    let redirect = match outcome {
+        Ok(_) => format!("{dest}?connected=1"),
         Err(e) => {
             let reason = match e {
                 Error::Forbidden(_) => "forbidden",
@@ -633,7 +683,7 @@ pub async fn connection_callback(
                     "failed"
                 }
             };
-            format!("/settings/data?import_error={reason}")
+            format!("{dest}?import_error={reason}")
         }
     };
     Ok((

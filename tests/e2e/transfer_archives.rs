@@ -2385,15 +2385,24 @@ async fn stub_provider() -> StubProvider {
 /// state token from the remote URL and the binding cookie the
 /// response set.
 async fn begin_flow(env: &Env, token: &str, origin: &str) -> (String, String) {
+    begin_flow_to(env, token, origin, None).await
+}
+
+async fn begin_flow_to(
+    env: &Env,
+    token: &str,
+    origin: &str,
+    return_to: Option<&str>,
+) -> (String, String) {
+    let mut body = json!({"origin": origin, "categories": ["statuses"]});
+    if let Some(path) = return_to {
+        body["return_to"] = json!(path);
+    }
     let res = env
         .app
         .clone()
         .oneshot(authed(
-            json_req(
-                "POST",
-                "/api/v1/yonder/import_connections",
-                json!({"origin": origin, "categories": ["statuses"]}),
-            ),
+            json_req("POST", "/api/v1/yonder/import_connections", body),
             token,
         ))
         .await
@@ -4156,4 +4165,409 @@ async fn import_claim_refuses_live_run() {
             .await
             .unwrap();
     assert!(advanced, "the claim bumps the run heartbeat");
+}
+
+// ---------------------------------------------------------------------------
+// Akkoma backups adapter (`/api/v1/pleroma/backups`)
+// ---------------------------------------------------------------------------
+
+/// The index projects `archive_exports` in Akkoma's shape and the
+/// emitted `url` is a signed, bearer-free link that streams the zip.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pleroma_backups_projection_and_signed_download() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".to_string());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "backupper").await;
+    let owner = account_id(&env.state, "backupper").await;
+
+    env.state
+        .media
+        .put(
+            "exports/backup.zip",
+            b"PK\x03\x04payload".as_slice(),
+            "application/zip",
+        )
+        .await
+        .unwrap();
+    let export_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archive_exports (account_id, kind, state, file_key, file_size, \
+         completed_at, expires_at) VALUES ($1, 'archive', 'done', $2, $3, now(), \
+         now() + interval '7 days') RETURNING id",
+    )
+    .bind(owner)
+    .bind("exports/backup.zip")
+    .bind(11i64)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    // An expired archive is not listed — its signed URL can only 410.
+    sqlx::query(
+        "INSERT INTO archive_exports (account_id, kind, state, file_key, expires_at) \
+         VALUES ($1, 'archive', 'expired', $2, now() - interval '1 day')",
+    )
+    .bind(owner)
+    .bind("exports/old.zip")
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/pleroma/backups", json!(null)),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "backups index: {body}");
+    let backups = body.as_array().unwrap();
+    assert_eq!(backups.len(), 1, "expired archives are not listed: {body}");
+    let backup = &backups[0];
+    assert_eq!(backup["id"], export_id.to_string());
+    assert_eq!(backup["content_type"], "application/zip");
+    assert_eq!(backup["file_size"], 11);
+    assert_eq!(backup["processed"], true);
+    assert!(
+        backup["inserted_at"].as_str().unwrap().contains('T'),
+        "inserted_at is ISO8601: {body}"
+    );
+
+    let url = url::Url::parse(backup["url"].as_str().unwrap()).unwrap();
+    let path = format!("{}?{}", url.path(), url.query().unwrap());
+    assert!(
+        url.path()
+            .ends_with(&format!("/api/v1/pleroma/backups/{export_id}/download")),
+        "signed url targets the download route: {url}"
+    );
+
+    // No bearer: the HMAC-bound {id, expires} pair is the credential.
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK, "signed download");
+    assert_eq!(res.headers().get("cache-control").unwrap(), "no-store");
+    let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(&bytes[..], b"PK\x03\x04payload");
+
+    // A disabled owner is refused: the signed link cannot outlive the
+    // account checks the bearer route gets from token resolution.
+    sqlx::query("UPDATE accounts SET disabled_at = now() WHERE id = $1")
+        .bind(owner)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "disabled owner cannot download"
+    );
+
+    // A pending self-deletion is refused the same way.
+    sqlx::query("UPDATE accounts SET disabled_at = NULL WHERE id = $1")
+        .bind(owner)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO account_deletions (account_id, scheduled_at) VALUES ($1, now())")
+        .bind(owner)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "pending-deletion owner cannot download"
+    );
+}
+
+/// `POST /api/v1/pleroma/backups` queues an archive and renders the
+/// refreshed index like upstream; a repeat hits the 7-day cooldown.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pleroma_backups_create_renders_index_and_cools_down() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".to_string());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "creator").await;
+
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req("POST", "/api/v1/pleroma/backups", json!({})),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create backup: {body}");
+    let backups = body.as_array().unwrap();
+    assert_eq!(backups.len(), 1, "create renders the index: {body}");
+    assert_eq!(backups[0]["processed"], false, "queued, not processed");
+
+    let res = env
+        .app
+        .clone()
+        .oneshot(authed(
+            json_req("POST", "/api/v1/pleroma/backups", json!({})),
+            &token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "7-day cooldown"
+    );
+    assert!(
+        res.headers().contains_key("retry-after"),
+        "cooldown carries a retry hint"
+    );
+}
+
+/// `read:backups` gates the index, and the signed link fails closed on
+/// tampering — it is the only credential on the download route.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pleroma_backups_scope_and_link_tampering() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".to_string());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "owner").await;
+    let owner = account_id(&env.state, "owner").await;
+
+    // A `read:accounts`-only token cannot reach the backups surface.
+    let user_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE account_id = $1")
+        .bind(owner)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO oauth_access_tokens (user_id, token_hash, scopes, expires_at) \
+         VALUES ($1, $2, 'read:accounts', now() + interval '1 hour')",
+    )
+    .bind(user_id)
+    .bind(yonder::http::middleware::auth::token_hash("narrow-token"))
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/pleroma/backups", json!(null)),
+            "narrow-token",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "read:accounts is not read:backups"
+    );
+    let (status, _) = request(
+        &env.app,
+        authed(
+            json_req("POST", "/api/v1/pleroma/backups", json!({})),
+            "narrow-token",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "create is gated too");
+
+    // Seed a finished export and mint a link through the owner list.
+    let export_id: i64 = sqlx::query_scalar(
+        "INSERT INTO archive_exports (account_id, kind, state, expires_at) \
+         VALUES ($1, 'archive', 'done', now() + interval '7 days') RETURNING id",
+    )
+    .bind(owner)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/pleroma/backups", json!(null)),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let url = url::Url::parse(body[0]["url"].as_str().unwrap()).unwrap();
+    let query = url.query().unwrap();
+
+    // A different export id with the same signature is rejected.
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/v1/pleroma/backups/{}/download?{query}",
+                    export_id + 1
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "id is HMAC-bound");
+
+    // A mangled signature is rejected.
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/v1/pleroma/backups/{export_id}/download?{}",
+                    query.replace("signature=", "signature=AAAA")
+                ))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "bad signature");
+
+    // An expired link is rejected on expiry, not on the signature:
+    // the error body distinguishes the two refusal paths.
+    let (status, body) = request(
+        &env.app,
+        Request::builder()
+            .method("GET")
+            .uri(format!(
+                "/api/v1/pleroma/backups/{export_id}/download?expires=1&signature=AAAA"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "expired link");
+    assert_eq!(body["error"], "download link has expired");
+}
+
+/// `return_to` is a local path only: anything else is refused before
+/// any remote call is made.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn begin_refuses_non_local_return_to() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".to_string());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "returnguard").await;
+    for bad in [
+        "//evil.example",
+        "/\\evil.example",
+        "https://evil.example/x",
+        "/settings?x=1",
+    ] {
+        let (status, _) = request(
+            &env.app,
+            authed(
+                json_req(
+                    "POST",
+                    "/api/v1/yonder/import_connections",
+                    json!({
+                        "origin": "https://old.example",
+                        "categories": ["following"],
+                        "return_to": bad,
+                    }),
+                ),
+                &token,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+}
+
+async fn callback_location(env: &Env, state_tok: &str, cookie: &str) -> String {
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(format!(
+                    "/api/v1/yonder/import_connections/callback?code=abc&state={state_tok}"
+                ))
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    res.headers()["location"].to_str().unwrap().to_string()
+}
+
+/// The callback returns the browser to the page that started the flow,
+/// on success and on failure alike.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn callback_returns_to_the_starting_page() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".to_string());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "returnback").await;
+
+    let stub = stub_provider().await;
+    let (state_tok, cookie) =
+        begin_flow_to(&env, &token, &stub.origin, Some("/settings/migration")).await;
+    let location = callback_location(&env, &state_tok, &cookie).await;
+    assert_eq!(location, "/settings/migration?connected=1");
+
+    let stub = stub_provider().await;
+    stub.verify_fail_after
+        .store(0, std::sync::atomic::Ordering::SeqCst);
+    let (state_tok, cookie) =
+        begin_flow_to(&env, &token, &stub.origin, Some("/settings/migration")).await;
+    let location = callback_location(&env, &state_tok, &cookie).await;
+    assert_eq!(location, "/settings/migration?import_error=invalid");
 }

@@ -13,6 +13,7 @@ import {
   twoFactorVerify,
   webauthnAssert,
   webauthnAssertBegin,
+  type TokenBody,
 } from "@/api/oauth";
 import { getAssertion, webauthnSupported } from "@/utils/webauthn";
 import { useAuthStore } from "@/stores/auth";
@@ -56,8 +57,16 @@ function redirectPath(): string {
     : "/";
 }
 
-async function finish(accessToken: string) {
-  await auth.signInWithToken(accessToken);
+async function finish(body: TokenBody) {
+  // A suspended account's login yields a restricted credential — it
+  // fails `verify_credentials`, so it gets its own entry point that
+  // lands on the export-only page instead of a full session boot.
+  if (body.yonder?.restricted) {
+    auth.signInRestricted(body.access_token);
+    await router.push({ name: "restricted" });
+    return;
+  }
+  await auth.signInWithToken(body.access_token);
   await router.push(redirectPath());
 }
 
@@ -77,7 +86,7 @@ async function useSecurityKey() {
         mfaToken: mfaToken.value,
         credential,
       });
-      await finish(res.access_token);
+      await finish(res);
     } catch (e) {
       // Keep the armed options on browser-side cancel; a failed
       // server-side finish invalidates the pending login entirely.
@@ -119,7 +128,7 @@ async function submit() {
         mfaToken: mfaToken.value,
         code: code.value.trim(),
       });
-      await finish(res.access_token);
+      await finish(res);
     } else {
       if (!username.value.trim() || !password.value) {
         error.value = t("auth.credentialsRequired");
@@ -129,7 +138,7 @@ async function submit() {
         username: username.value.trim(),
         password: password.value,
       });
-      await finish(res.access_token);
+      await finish(res);
     }
   } catch (e) {
     if (e instanceof MfaRequired) {

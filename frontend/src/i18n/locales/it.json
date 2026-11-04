@@ -22,7 +22,8 @@
     "searchPlaceholder": "Cerca…",
     "compose": "Scrivi",
     "messages": "Messaggi",
-    "signUp": "Registrati"
+    "signUp": "Registrati",
+    "restricted": "I tuoi dati"
   },
   "settingsNav": {
     "label": "Sezioni delle impostazioni",
@@ -31,7 +32,9 @@
     "notifications": "Notifiche",
     "security": "Account e sicurezza",
     "tokens": "Token API",
-    "invites": "Link d'invito"
+    "invites": "Link d'invito",
+    "data": "Importa ed esporta",
+    "migration": "Migrazione account"
   },
   "settings": {
     "title": "Impostazioni",
@@ -436,6 +439,15 @@
     },
     "tags": {
       "title": "Hashtag"
+    },
+    "settings-data": {
+      "title": "Importa ed esporta"
+    },
+    "settings-migration": {
+      "title": "Migrazione account"
+    },
+    "restricted": {
+      "title": "I tuoi dati"
     }
   },
   "not_found": {
@@ -655,7 +667,7 @@
     "draftDelete": "Elimina bozza",
     "draftUntitled": "(nessun testo)",
     "draftMedia": "{n} allegato | {n} allegati",
-    "draftReplyTo": "Rispondi a @{user}"
+    "draftReplyTo": "Rispondi a {'@'}{user}"
   },
   "moderation": {
     "showResolved": "Mostra risolte",
@@ -975,7 +987,8 @@
     "delete": "Elimina",
     "clear": "Cancella",
     "error": "Si è verificato un errore.",
-    "feed": "Feed RSS"
+    "feed": "Feed RSS",
+    "cancel": "Annulla"
   },
   "search": {
     "users": "Utenti",
@@ -1113,7 +1126,8 @@
     "viewAvatar": "Mostra avatar",
     "viewBanner": "Mostra intestazione",
     "joined": "Iscritto da {date}",
-    "movedTo": "Questo account è stato spostato su @{acct}",
+    "movedIndication": "{name} ha indicato che il suo nuovo account è ora:",
+    "goToProfile": "Vai al profilo",
     "movedUnavailable": "Questo account è stato spostato su un account non più disponibile"
   },
   "register": {
@@ -1192,5 +1206,173 @@
     "usage": "{uses} post di {accounts} persone",
     "empty": "Nessun hashtag usato in questo periodo.",
     "emptyFollowed": "Non segui ancora nessun hashtag."
+  },
+  "settingsData": {
+    "title": "Importa ed esporta",
+    "intro": "Scarica i tuoi dati o ripristinali da un archivio, CSV o un account remoto.",
+    "groupCsv": "Esportazioni singole",
+    "groupArchive": "Archivio completo",
+    "archiveHint": "Un archivio ActivityStreams completo (post, media, segnalibri, preferiti). Una richiesta ogni 7 giorni; i download scadono.",
+    "requestArchive": "Richiedi archivio",
+    "download": "Scarica",
+    "noExports": "Nessun archivio esportato.",
+    "expires": "scade {when}",
+    "groupUpload": "Carica un archivio o CSV",
+    "uploadKind": "Tipo di dati",
+    "uploadMode": "Modalità",
+    "modeMerge": "Unisci con l'esistente",
+    "modeOverwrite": "Sovrascrivi l'esistente",
+    "uploadFile": "File",
+    "uploadSubmit": "Avvia importazione",
+    "federate": "Federa i post importati",
+    "federateWarn": "I post pubblici importati saranno consegnati ai server dei tuoi follower con le date originali. Lascia disattivato per mantenere l'importazione locale.",
+    "groupRemote": "Importa da un account remoto",
+    "remoteHint": "Autorizza l'accesso in sola lettura sul tuo vecchio server e scegli cosa copiare. La password non viene mai richiesta.",
+    "connected": "Account remoto connesso.",
+    "importError": {
+      "forbidden": "Il server remoto ha rifiutato l'autorizzazione.",
+      "invalid": "Impossibile verificare l'autorizzazione remota.",
+      "failed": "Autorizzazione remota non riuscita. Riprova."
+    },
+    "originLabel": "Server di origine",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "connect": "Connetti",
+    "connState": {
+      "active": "attiva",
+      "revoked": "revocata",
+      "expired": "scaduta",
+      "pending": "in attesa"
+    },
+    "revoke": "Revoca",
+    "revokeConfirm": "Conferma revoca",
+    "sessionTitle": "Avvia un'importazione remota",
+    "connectionLabel": "Connessione",
+    "connectionPick": "Scegli una connessione",
+    "categoriesLabel": "Dati da importare (richiesti anche come permessi remoti)",
+    "categoriesRequired": "Seleziona almeno una categoria. Determina i permessi richiesti al server di origine.",
+    "cat": {
+      "statuses": "Post e risposte",
+      "dms": "Messaggi diretti",
+      "bookmarks": "Segnalibri",
+      "favourites": "Preferiti",
+      "following": "Seguiti",
+      "blocks": "Bloccati",
+      "mutes": "Silenziati",
+      "profile": "Profilo",
+      "observations": "Interazioni ricevute"
+    },
+    "limitLabel": "Limite elementi",
+    "limitPlaceholder": "predefinito",
+    "orderLabel": "Ordine",
+    "orderNewest": "Prima i più recenti",
+    "orderOldest": "Prima i più vecchi",
+    "sinceLabel": "Dal (incluso)",
+    "untilLabel": "Al (escluso)",
+    "overwriteProfile": "Sovrascrivi i campi del profilo anche se vuoti",
+    "sessionSubmit": "Avvia importazione remota",
+    "sessionQueued": "Importazione remota in coda.",
+    "groupImports": "Importazioni",
+    "noImports": "Nessuna importazione.",
+    "progress": "{done}/{total} · {failed} falliti",
+    "cancel": "Annulla",
+    "resume": "Riprendi",
+    "state": {
+      "pending": "in attesa",
+      "running": "in corso",
+      "done": "completata",
+      "failed": "fallita",
+      "cancelled": "annullata",
+      "paused": "in pausa",
+      "expired": "scaduta"
+    },
+    "kind": {
+      "archive": "Archivio completo (Mastodon/Akkoma/Pleroma/Yonder)",
+      "following": "Seguiti (CSV)",
+      "blocking": "Account bloccati (CSV)",
+      "muting": "Account silenziati (CSV)",
+      "domain_blocks": "Domini bloccati (CSV)",
+      "bookmarks": "Segnalibri (CSV)",
+      "lists": "Liste (CSV)",
+      "filters": "Filtri (JSON)",
+      "api": "API remota"
+    },
+    "reauthorize": "Autorizza di nuovo",
+    "overwriteConfirm": "La modalità sovrascrittura sostituisce i dati esistenti con il contenuto del file. Continuare?",
+    "catState": {
+      "done": "completato",
+      "failed": "non riuscito",
+      "unsupported": "non supportato",
+      "running": "in corso",
+      "pending": "in attesa"
+    },
+    "catCount": {
+      "processed": "{n} elaborati",
+      "skipped": "{n} saltati",
+      "failed": "{n} non riusciti"
+    }
+  },
+  "settingsMigration": {
+    "title": "Migrazione account",
+    "intro": "Sposta la tua identità verso o da questo account, oppure configura gli alias usati per verificare uno spostamento.",
+    "groupMoveIn": "Spostarsi su questo account",
+    "stepConnectTitle": "1. Collega il tuo vecchio account",
+    "stepConnectHint": "Autorizza l'accesso in sola lettura sul vecchio server mentre la sua API funziona ancora, per copiare prima dati e seguiti.",
+    "stepConnect": "Autorizza sul vecchio server",
+    "stepSkip": "Salta — nessun accesso remoto",
+    "stepImportTitle": "2. Importa i tuoi dati",
+    "stepImportHint": "Importa seguiti e attività opzionale dal vecchio account prima dello spostamento. Puoi anche caricare un archivio.",
+    "stepImportLink": "Apri importa ed esporta",
+    "stepNext": "Continua",
+    "stepReportTitle": "3. Controlla il report di importazione",
+    "stepReportHint": "Verifica che siano arrivati i dati che volevi — le importazioni recenti sono elencate qui e nella pagina dati.",
+    "reportEmpty": "Nessuna importazione — avviane una dal passo precedente e torna qui.",
+    "stepAliasTitle": "4. Conferma l'alias",
+    "stepAliasHint": "Aggiungi il tuo vecchio account come alias qui sotto — il vecchio server lo richiede per provare che entrambi gli account sono tuoi.",
+    "stepMoveTitle": "5. Avvia lo spostamento sul vecchio server",
+    "stepMoveHint": "Accedi alle impostazioni del tuo vecchio server e avvia lo spostamento verso questo account. La migrazione dei follower parte automaticamente dopo la verifica.",
+    "originLabel": "Vecchio server",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "groupAliases": "Alias account",
+    "aliasesHint": "Gli alias dichiarano altri account di tua proprietà (alsoKnownAs). Uno spostamento è accettato solo se entrambe le parti concordano.",
+    "aliasLabel": "Handle dell'alias",
+    "aliasPlaceholder": "{'@'}you{'@'}old.example",
+    "aliasAdd": "Aggiungi alias",
+    "aliasRemove": "Rimuovi",
+    "noAliases": "Nessun alias configurato.",
+    "groupMoveOut": "Spostarsi da questo account",
+    "moveHint": "Reindirizza questo account verso un altro e migra i tuoi follower locali. Richiede la password; dopo l'avvio vale un'attesa di 30 giorni.",
+    "stateIdle": "Questo account non è in fase di spostamento.",
+    "followerProgress": "{done}/{total} follower migrati",
+    "followerFailed": "{n} follower non sono stati migrati",
+    "cooldown": "Non puoi avviare un altro spostamento fino al {abs} ({when}).",
+    "moveStarted": "Spostamento avviato — i follower sono in migrazione.",
+    "moveCancelled": "Reindirizzamento annullato.",
+    "targetLabel": "Nuovo account",
+    "targetPlaceholder": "{'@'}you{'@'}new.example",
+    "passwordLabel": "Password",
+    "moveSubmit": "Sposta account",
+    "cancelSubmit": "Annulla reindirizzamento",
+    "state": {
+      "pending": "In attesa",
+      "publishing": "Pubblicazione spostamento",
+      "migrating": "Migrazione follower",
+      "done": "Spostato",
+      "failed": "Fallito",
+      "cancelled": "Annullato",
+      "idle": "Inattivo"
+    }
+  },
+  "settingsRestricted": {
+    "title": "I tuoi dati",
+    "suspended": "Il tuo account {acct} è sospeso.",
+    "suspendedSince": " (dal {when})",
+    "hint": "Puoi scaricare le esportazioni conservate dei tuoi dati. Pubblicare, seguire e le altre funzioni restano disabilitate.",
+    "contact": "Contatta lo staff dell'istanza:",
+    "noContact": "Questa istanza non ha configurato un contatto pubblico.",
+    "groupCsv": "Esportazioni singole",
+    "groupArchive": "Archivio completo",
+    "requestArchive": "Richiedi archivio",
+    "download": "Scarica",
+    "logout": "Esci"
   }
 }

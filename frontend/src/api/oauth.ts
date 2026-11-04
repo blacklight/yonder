@@ -19,6 +19,8 @@ export interface TokenBody {
   created_at: number;
   expires_in?: number;
   refresh_token?: string;
+  /** Suspended-account login: an export-only restricted credential. */
+  yonder?: { restricted?: boolean };
 }
 
 /** The password grant verified credentials but the account has 2FA. */

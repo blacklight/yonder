@@ -22,7 +22,8 @@
     "searchPlaceholder": "Search…",
     "compose": "Compose",
     "messages": "Messages",
-    "signUp": "Sign up"
+    "signUp": "Sign up",
+    "restricted": "Your data"
   },
   "settingsNav": {
     "label": "Settings sections",
@@ -31,7 +32,9 @@
     "notifications": "Notifications",
     "security": "Account & security",
     "tokens": "API tokens",
-    "invites": "Invite links"
+    "invites": "Invite links",
+    "data": "Import & export",
+    "migration": "Account migration"
   },
   "settings": {
     "title": "Settings",
@@ -436,6 +439,15 @@
     },
     "tags": {
       "title": "Hashtags"
+    },
+    "settings-data": {
+      "title": "Import & export"
+    },
+    "settings-migration": {
+      "title": "Account migration"
+    },
+    "restricted": {
+      "title": "Your data"
     }
   },
   "not_found": {
@@ -625,7 +637,7 @@
     "draftDelete": "Delete draft",
     "draftUntitled": "(no text)",
     "draftMedia": "{n} attachment | {n} attachments",
-    "draftReplyTo": "Reply to @{user}"
+    "draftReplyTo": "Reply to {'@'}{user}"
   },
   "moderation": {
     "showResolved": "Show resolved",
@@ -945,7 +957,8 @@
     "delete": "Delete",
     "clear": "Clear",
     "error": "Something went wrong.",
-    "feed": "RSS feed"
+    "feed": "RSS feed",
+    "cancel": "Cancel"
   },
   "search": {
     "users": "Users",
@@ -1083,7 +1096,8 @@
     "viewAvatar": "View avatar",
     "viewBanner": "View banner",
     "joined": "Joined {date}",
-    "movedTo": "This account has moved to @{acct}",
+    "movedIndication": "{name} has indicated that their new account is now:",
+    "goToProfile": "Go to profile",
     "movedUnavailable": "This account has moved to an account that is no longer available"
   },
   "register": {
@@ -1192,5 +1206,173 @@
     "usage": "{uses} posts by {accounts} people",
     "empty": "No hashtags used in this window.",
     "emptyFollowed": "You are not following any hashtags yet."
+  },
+  "settingsData": {
+    "title": "Import & export",
+    "intro": "Download your data or restore it from an archive, CSV or a remote account.",
+    "groupCsv": "Standalone exports",
+    "groupArchive": "Full archive",
+    "archiveHint": "A complete ActivityStreams archive (posts, media, bookmarks, likes). One request per 7 days; downloads expire.",
+    "requestArchive": "Request archive",
+    "download": "Download",
+    "noExports": "No archive exports yet.",
+    "expires": "expires {when}",
+    "groupUpload": "Upload an archive or CSV",
+    "uploadKind": "Data type",
+    "uploadMode": "Mode",
+    "modeMerge": "Merge with existing",
+    "modeOverwrite": "Overwrite existing",
+    "uploadFile": "File",
+    "uploadSubmit": "Start import",
+    "federate": "Federate imported posts",
+    "federateWarn": "Imported public posts will be delivered to your followers' servers with their original dates. Leave off to keep the import local.",
+    "groupRemote": "Import from a remote account",
+    "remoteHint": "Authorize read-only access on your old server, then choose what to copy. Your password is never asked for.",
+    "connected": "Remote account connected.",
+    "importError": {
+      "forbidden": "The remote server refused the authorization.",
+      "invalid": "The remote authorization could not be verified.",
+      "failed": "The remote authorization failed. Try again."
+    },
+    "originLabel": "Source server",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "connect": "Connect",
+    "connState": {
+      "active": "active",
+      "revoked": "revoked",
+      "expired": "expired",
+      "pending": "pending"
+    },
+    "revoke": "Revoke",
+    "revokeConfirm": "Confirm revoke",
+    "sessionTitle": "Start a remote import",
+    "connectionLabel": "Connection",
+    "connectionPick": "Choose a connection",
+    "categoriesLabel": "Data to import (also requested as remote permissions)",
+    "categoriesRequired": "Select at least one category. It sets the permissions requested from the old server.",
+    "cat": {
+      "statuses": "Posts & replies",
+      "dms": "Direct messages",
+      "bookmarks": "Bookmarks",
+      "favourites": "Favourites",
+      "following": "Following",
+      "blocks": "Blocks",
+      "mutes": "Mutes",
+      "profile": "Profile",
+      "observations": "Received interactions"
+    },
+    "limitLabel": "Item limit",
+    "limitPlaceholder": "default",
+    "orderLabel": "Order",
+    "orderNewest": "Newest first",
+    "orderOldest": "Oldest first",
+    "sinceLabel": "From (inclusive)",
+    "untilLabel": "To (exclusive)",
+    "overwriteProfile": "Overwrite profile fields even when empty",
+    "sessionSubmit": "Start remote import",
+    "sessionQueued": "Remote import queued.",
+    "groupImports": "Imports",
+    "noImports": "No imports yet.",
+    "progress": "{done}/{total} · {failed} failed",
+    "cancel": "Cancel",
+    "resume": "Resume",
+    "state": {
+      "pending": "pending",
+      "running": "running",
+      "done": "done",
+      "failed": "failed",
+      "cancelled": "cancelled",
+      "paused": "paused",
+      "expired": "expired"
+    },
+    "kind": {
+      "archive": "Full archive (Mastodon/Akkoma/Pleroma/Yonder)",
+      "following": "Following (CSV)",
+      "blocking": "Blocked accounts (CSV)",
+      "muting": "Muted accounts (CSV)",
+      "domain_blocks": "Blocked domains (CSV)",
+      "bookmarks": "Bookmarks (CSV)",
+      "lists": "Lists (CSV)",
+      "filters": "Filters (JSON)",
+      "api": "Remote API"
+    },
+    "reauthorize": "Reauthorize",
+    "overwriteConfirm": "Overwrite mode replaces your existing data with the file's contents. Continue?",
+    "catState": {
+      "done": "done",
+      "failed": "failed",
+      "unsupported": "unsupported",
+      "running": "running",
+      "pending": "pending"
+    },
+    "catCount": {
+      "processed": "{n} processed",
+      "skipped": "{n} skipped",
+      "failed": "{n} failed"
+    }
+  },
+  "settingsMigration": {
+    "title": "Account migration",
+    "intro": "Move your identity to or from this account, or set up aliases used to verify a move.",
+    "groupMoveIn": "Moving to this account",
+    "stepConnectTitle": "1. Connect your old account",
+    "stepConnectHint": "Authorize read-only access on the old server while its API still works, so your data and follows can be copied first.",
+    "stepConnect": "Authorize on old server",
+    "stepSkip": "Skip — no remote access",
+    "stepImportTitle": "2. Import your data",
+    "stepImportHint": "Import following and optional activity from the old account before it moves. You can also upload an archive instead.",
+    "stepImportLink": "Open import & export",
+    "stepNext": "Continue",
+    "stepReportTitle": "3. Review the import report",
+    "stepReportHint": "Check that the data you wanted arrived — recent imports are listed here and on the data page.",
+    "reportEmpty": "No imports yet — start one from the previous step, then come back.",
+    "stepAliasTitle": "4. Confirm the alias",
+    "stepAliasHint": "Add your old account as an alias below — the old server requires it to prove both accounts are yours.",
+    "stepMoveTitle": "5. Initiate the move on the old server",
+    "stepMoveHint": "Sign in to your old server's settings and start the move to this account. Follower migration runs automatically once it verifies.",
+    "originLabel": "Old server",
+    "originPlaceholder": "mastodon.example or {'@'}you{'@'}mastodon.example",
+    "groupAliases": "Account aliases",
+    "aliasesHint": "Aliases declare other accounts you own (alsoKnownAs). A move is only accepted when both sides agree.",
+    "aliasLabel": "Alias handle",
+    "aliasPlaceholder": "{'@'}you{'@'}old.example",
+    "aliasAdd": "Add alias",
+    "aliasRemove": "Remove",
+    "noAliases": "No aliases configured.",
+    "groupMoveOut": "Moving away from this account",
+    "moveHint": "Redirect this account to another one and migrate your local followers. Requires your password; a 30-day cooldown applies after starting.",
+    "stateIdle": "This account is not being moved.",
+    "followerProgress": "{done}/{total} followers migrated",
+    "followerFailed": "{n} followers failed to migrate",
+    "cooldown": "You cannot start another move until {abs} ({when}).",
+    "moveStarted": "Move initiated — followers are being migrated.",
+    "moveCancelled": "Redirect cancelled.",
+    "targetLabel": "New account",
+    "targetPlaceholder": "{'@'}you{'@'}new.example",
+    "passwordLabel": "Password",
+    "moveSubmit": "Move account",
+    "cancelSubmit": "Cancel redirect",
+    "state": {
+      "pending": "Pending",
+      "publishing": "Publishing move",
+      "migrating": "Migrating followers",
+      "done": "Moved",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "idle": "Idle"
+    }
+  },
+  "settingsRestricted": {
+    "title": "Your data",
+    "suspended": "Your account {acct} is suspended.",
+    "suspendedSince": " (since {when})",
+    "hint": "You can download retained exports of your data. Posting, follows and all other account functions stay disabled.",
+    "contact": "Contact the instance staff:",
+    "noContact": "This instance has not configured a public contact.",
+    "groupCsv": "Standalone exports",
+    "groupArchive": "Full archive",
+    "requestArchive": "Request archive",
+    "download": "Download",
+    "logout": "Sign out"
   }
 }

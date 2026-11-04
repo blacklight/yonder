@@ -1798,3 +1798,97 @@ async fn remote_profile_fields_backfill_and_refresh_sweep() {
         .collect();
     assert_eq!(urls, [actor_url.to_string()], "{urls:?}");
 }
+
+/// A verified inbound `Move` leaves a `migration_events` row; a
+/// refreshed document without `movedTo` must not clear the marker it
+/// backed — software that never emits `movedTo` (e.g. Akkoma) must
+/// not undo the activity on every refresh. A marker with no event
+/// behind it is still cleared by doc absence.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn doc_without_moved_to_preserves_verified_move() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let (base, _hits) = mock_remote().await;
+    let job =
+        activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
+
+    // `dest` is fetched so its id can back the marker and the event.
+    job.run(
+        &job_ctx(&env.state),
+        &json!({"actor_url": format!("{base}/users/dest")}),
+    )
+    .await
+    .unwrap();
+    let dest_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NOT NULL")
+            .bind(format!("{base}/users/dest"))
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+
+    // `keeper`: marker backed by a live migration event — preserved
+    // when its doc arrives without `movedTo`.
+    let keeper = format!("{base}/users/keeper");
+    let keeper_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'keeper', $1, $1, '') RETURNING id",
+    )
+    .bind(&keeper)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE accounts SET moved_to_account_id = $2 WHERE id = $1")
+        .bind(keeper_id)
+        .bind(dest_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO migration_events (source_account_id, target_account_id, state) \
+         VALUES ($1, $2, 'migrating')",
+    )
+    .bind(keeper_id)
+    .bind(dest_id)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    job.run(&job_ctx(&env.state), &json!({"actor_url": keeper}))
+        .await
+        .unwrap();
+    let kept: Option<i64> =
+        sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE id = $1")
+            .bind(keeper_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(kept, Some(dest_id));
+
+    // `nobody`: same doc shape but no event — the old clear works.
+    let nobody = format!("{base}/users/nobody");
+    let nobody_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost', 'nobody', $1, $1, '') RETURNING id",
+    )
+    .bind(&nobody)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE accounts SET moved_to_account_id = $2 WHERE id = $1")
+        .bind(nobody_id)
+        .bind(dest_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    job.run(&job_ctx(&env.state), &json!({"actor_url": nobody}))
+        .await
+        .unwrap();
+    let cleared: Option<i64> =
+        sqlx::query_scalar("SELECT moved_to_account_id FROM accounts WHERE id = $1")
+            .bind(nobody_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(cleared, None);
+}

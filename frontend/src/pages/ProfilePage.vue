@@ -213,6 +213,20 @@ const avatarGrayscale = computed(
     Boolean(account.value?.suspended) ||
     Boolean(account.value?.moved),
 );
+/** Move target for the Mastodon-style banner — a suspended
+ * destination falls back to the plain "no longer available" card. */
+const movedTarget = computed(() => {
+  const m = account.value?.moved;
+  return m && !m.suspended ? m : null;
+});
+const movedAvatar = computed(() => movedTarget.value?.avatar || undefined);
+const movedHandle = computed(() => {
+  const m = movedTarget.value;
+  if (!m) return "";
+  return m.acct.includes("@")
+    ? `@${m.acct}`
+    : `@${m.acct}@${localDomain.value}`;
+});
 const limitedReveal = ref(false);
 /**
  * A limited profile still serves its posts to everyone (the API is
@@ -790,6 +804,40 @@ watch([tab, showReplies, showBoosts], () => {
     </div>
     <template v-else-if="account">
       <header class="profile__header">
+        <div v-if="movedTarget" class="profile__moved">
+          <p class="profile__moved-lead">
+            {{
+              t("profile.movedIndication", {
+                name: account.display_name || account.username,
+              })
+            }}
+          </p>
+          <div class="profile__moved-target">
+            <Avatar
+              :src="movedAvatar"
+              :name="movedTarget.display_name || movedTarget.username"
+            />
+            <div class="profile__moved-id">
+              <EmojiText
+                class="profile__moved-name"
+                :text="movedTarget.display_name || movedTarget.username"
+                :emojis="movedTarget.emojis"
+              />
+              <span class="profile__moved-acct">{{ movedHandle }}</span>
+            </div>
+            <router-link
+              :to="`/@${movedTarget.acct}`"
+              class="profile__moved-go"
+              >{{ t("profile.goToProfile") }}</router-link
+            >
+          </div>
+        </div>
+        <p
+          v-else-if="account.moved || account.yonder?.moved_unavailable"
+          class="profile__moved profile__moved--unavailable"
+        >
+          {{ t("profile.movedUnavailable") }}
+        </p>
         <button
           v-if="headerUrl"
           type="button"
@@ -871,19 +919,6 @@ watch([tab, showReplies, showBoosts], () => {
             />
           </div>
         </div>
-        <router-link
-          v-if="account.moved && !account.moved.suspended"
-          class="profile__moved"
-          :to="`/@${account.moved.acct}`"
-        >
-          {{ t("profile.movedTo", { acct: account.moved.acct }) }}
-        </router-link>
-        <p
-          v-else-if="account.moved || account.yonder?.moved_unavailable"
-          class="profile__moved"
-        >
-          {{ t("profile.movedUnavailable") }}
-        </p>
         <h1 class="profile__name">
           <EmojiText
             :text="account.display_name || account.username"
@@ -1240,17 +1275,56 @@ watch([tab, showReplies, showBoosts], () => {
 }
 .profile__moved {
   display: block;
-  margin: var(--space-2) var(--space-4) 0;
+  margin: var(--space-2) var(--space-4);
   padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  text-decoration: none;
-  font-weight: 600;
+  background: var(--accent-soft);
 }
-.profile__moved:hover {
-  border-color: var(--accent);
-  color: var(--accent);
+.profile__moved-lead {
+  margin: 0 0 var(--space-3);
+  font-weight: 600;
+  text-align: center;
+}
+.profile__moved-target {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.profile__moved-id {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.profile__moved-name {
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile__moved-acct {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile__moved-go {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.profile__moved-go:hover {
+  filter: brightness(1.08);
+}
+.profile__moved--unavailable {
+  color: var(--text-secondary);
+  font-weight: 600;
 }
 .profile__actions {
   display: flex;

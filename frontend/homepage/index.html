@@ -1,0 +1,1575 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>
+      Yonder — a self-hosted, federated social network in a single binary
+    </title>
+    <meta
+      name="description"
+      content="Yonder is a self-hosted, Mastodon-compatible ActivityPub server written in Rust. Your community, your rules, your data — and your apps already work with it."
+    />
+
+    <meta property="og:title" content="Yonder" />
+    <meta
+      property="og:description"
+      content="A self-hosted, Mastodon-compatible ActivityPub server written in Rust — federation, migration and data portability included."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png" />
+
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#f9f8f7"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#1f2927"
+    />
+
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cg stroke='%230d9488' stroke-linecap='round' fill='none' stroke-width='20'%3E%3Cpath d='M256 320 L256 120'/%3E%3Cpath d='M256 320 L140 190'/%3E%3Cpath d='M256 320 L372 190'/%3E%3C/g%3E%3Cg fill='%232dd4bf'%3E%3Ccircle cx='256' cy='120' r='34'/%3E%3Ccircle cx='140' cy='190' r='34'/%3E%3Ccircle cx='372' cy='190' r='34'/%3E%3C/g%3E%3Cpath d='M96 356 Q256 428 416 356' stroke='%230d9488' stroke-width='26' stroke-linecap='round' fill='none'/%3E%3Ccircle cx='256' cy='320' r='70' fill='%230d9488'/%3E%3C/svg%3E"
+    />
+
+    <style>
+      /* ---------- Theme tokens ---------- */
+      :root {
+        --bg: #f9f8f7;
+        --bg-trans: rgba(249, 248, 247, 0.82);
+        --surface: #ffffff;
+        --surface-2: #eef0ee;
+        --text: #1a2321;
+        --muted: #55655f;
+        --border: #dde4e0;
+        --accent: #24a8a0;
+        --accent-strong: #1b7f79;
+        --accent-ink: #ffffff;
+        --accent-soft: rgba(36, 168, 160, 0.14);
+        --code-bg: #12201d;
+        --code-text: #d4ece8;
+        --code-border: #243b36;
+        --shadow-lg: 0 24px 60px -18px rgba(26, 35, 33, 0.28);
+        --shadow-sm: 0 8px 24px -10px rgba(26, 35, 33, 0.25);
+        --radius: 14px;
+        color-scheme: light;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1f2927;
+          --bg-trans: rgba(31, 41, 39, 0.82);
+          --surface: #26312e;
+          --surface-2: #1a2422;
+          --text: #e6efec;
+          --muted: #9fb0ab;
+          --border: #35443f;
+          --accent: #2dd4bf;
+          --accent-strong: #5eead4;
+          --accent-ink: #14332e;
+          --accent-soft: rgba(45, 212, 191, 0.14);
+          --code-bg: #0e1715;
+          --code-text: #d4ece8;
+          --code-border: #2c423c;
+          --shadow-lg: 0 24px 60px -18px rgba(0, 0, 0, 0.65);
+          --shadow-sm: 0 8px 24px -10px rgba(0, 0, 0, 0.55);
+          color-scheme: dark;
+        }
+      }
+
+      /* ---------- Base ---------- */
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      img {
+        max-width: 100%;
+        display: block;
+      }
+      a {
+        color: inherit;
+      }
+
+      .container {
+        width: min(1120px, 100% - 3rem);
+        margin-inline: auto;
+      }
+
+      /* ---------- Header ---------- */
+      .site-header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--bg-trans);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .site-header .container {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        min-height: 4rem;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-weight: 800;
+        font-size: 1.15rem;
+        letter-spacing: -0.01em;
+        text-decoration: none;
+        margin-right: auto;
+      }
+
+      .brand svg {
+        width: 30px;
+        height: 30px;
+        flex: none;
+      }
+
+      .nav {
+        display: flex;
+        gap: 1.4rem;
+        font-size: 0.95rem;
+        color: var(--muted);
+      }
+
+      .nav a {
+        text-decoration: none;
+      }
+      .nav a:hover {
+        color: var(--text);
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 0.6rem;
+      }
+
+      /* ---------- Buttons ---------- */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.55rem 1.15rem;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        font-weight: 650;
+        font-size: 0.95rem;
+        text-decoration: none;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease,
+          background 0.15s ease, border-color 0.15s ease;
+        white-space: nowrap;
+      }
+
+      .btn--primary {
+        background: var(--accent);
+        color: var(--accent-ink);
+        box-shadow: var(--shadow-sm);
+      }
+      .btn--primary:hover {
+        background: var(--accent-strong);
+        transform: translateY(-1px);
+      }
+
+      .btn--ghost {
+        background: transparent;
+        color: var(--text);
+        border-color: var(--border);
+      }
+      .btn--ghost:hover {
+        border-color: var(--muted);
+        transform: translateY(-1px);
+      }
+
+      .btn svg {
+        width: 1em;
+        height: 1em;
+      }
+
+      /* ---------- Hero ---------- */
+      .hero {
+        padding: 5.5rem 0 4rem;
+        text-align: center;
+        background: radial-gradient(
+          52rem 22rem at 50% -8rem,
+          var(--accent-soft),
+          transparent 70%
+        );
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding: 0.3rem 0.9rem;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .badge .dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .hero h1 {
+        margin: 1.4rem auto 1rem;
+        max-width: 18ch;
+        font-size: clamp(2.5rem, 6.5vw, 4.2rem);
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        font-weight: 850;
+      }
+
+      .hero .lede {
+        margin: 0 auto 2.2rem;
+        max-width: 58ch;
+        font-size: 1.15rem;
+        color: var(--muted);
+      }
+
+      .hero .cta {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 0.8rem;
+      }
+
+      .hero .meta {
+        margin-top: 1.4rem;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .hero-figure {
+        margin: 3.5rem auto 0;
+        max-width: 980px;
+      }
+
+      /* Browser frame around screenshots */
+      .browser {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: var(--shadow-lg);
+      }
+
+      .browser__bar {
+        display: flex;
+        align-items: center;
+        gap: 0.8rem;
+        padding: 0.65rem 0.9rem;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .browser__dots {
+        display: flex;
+        gap: 0.4rem;
+      }
+      .browser__dots span {
+        width: 0.65rem;
+        height: 0.65rem;
+        border-radius: 50%;
+        background: var(--border);
+      }
+
+      .browser__url {
+        flex: 1;
+        padding: 0.2rem 0.8rem;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-align: left;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .browser img {
+        width: 100%;
+        height: auto;
+        /* Crop the mostly-empty tail of the full-page shot — the
+           frame shouldn't look taller than the content deserves. */
+        max-height: 34rem;
+        object-fit: cover;
+        object-position: top;
+      }
+
+      /* ---------- Sections ---------- */
+      section {
+        padding: 5rem 0;
+      }
+
+      .band {
+        background: var(--surface-2);
+        border-block: 1px solid var(--border);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+        gap: clamp(2rem, 5vw, 4.5rem);
+        align-items: center;
+      }
+
+      .split--rev .split__media {
+        order: -1;
+      }
+
+      .eyebrow {
+        display: inline-block;
+        margin-bottom: 0.9rem;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--accent-strong);
+      }
+
+      .split h2,
+      .center h2 {
+        margin: 0 0 1rem;
+        font-size: clamp(1.7rem, 3.5vw, 2.4rem);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+      }
+
+      .split p,
+      .center p {
+        color: var(--muted);
+        margin: 0 0 1.4rem;
+      }
+
+      .features {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      .features li {
+        position: relative;
+        padding-left: 2rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .features li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 0.22em;
+        width: 1.25rem;
+        height: 1.25rem;
+        border-radius: 50%;
+        background: var(--accent-soft) center / 0.72rem no-repeat
+          url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M13.2 4.3 6.5 11 2.8 7.3' fill='none' stroke='%231b7f79' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        border: 1px solid var(--accent);
+      }
+
+      .features strong {
+        font-weight: 700;
+      }
+
+      .shot {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .shot img {
+        width: 100%;
+        height: auto;
+      }
+
+      /* Tall phone screenshots */
+      .device {
+        max-width: 340px;
+        margin-inline: auto;
+        border: 1px solid var(--border);
+        border-radius: 28px;
+        overflow: hidden;
+        background: var(--surface);
+        box-shadow: var(--shadow-lg);
+      }
+
+      .device img {
+        width: 100%;
+        height: auto;
+      }
+
+      /* Desktop screenshot at readable size, with the phone peeking
+         from its corner — not two thumbnails side by side. */
+      .shots {
+        display: grid;
+        gap: 1rem;
+        align-items: start;
+      }
+      .shots--duo {
+        position: relative;
+        display: block;
+      }
+      .shots--duo .shot {
+        width: 100%;
+      }
+      .shots--duo .device {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        width: 35%;
+        max-width: 13rem;
+        margin: 0;
+      }
+
+      /* On small viewports only the mobile screenshots stay visible —
+       desktop screenshots and frames drop out entirely. */
+      .only-desktop {
+        display: block;
+      }
+      .only-mobile {
+        display: none;
+      }
+      @media (max-width: 767px) {
+        .only-desktop {
+          display: none !important;
+        }
+        .only-mobile {
+          display: block;
+        }
+        .shots--duo .device {
+          position: static;
+          width: auto;
+          max-width: 21rem;
+          margin-inline: auto;
+        }
+        .hero-figure .device {
+          max-width: 340px;
+        }
+      }
+
+      /* ---------- "More" grid ---------- */
+      .center {
+        text-align: center;
+        max-width: 46rem;
+        margin-inline: auto;
+      }
+
+      .grid {
+        margin-top: 3rem;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+        gap: 1rem;
+        text-align: left;
+      }
+
+      .card {
+        padding: 1.4rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .card:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.4rem;
+        height: 2.4rem;
+        border-radius: 10px;
+        background: var(--accent-soft);
+        border: 1px solid var(--accent);
+        font-size: 1.15rem;
+        margin-bottom: 0.8rem;
+      }
+
+      .card h3 {
+        margin: 0 0 0.35rem;
+        font-size: 1.02rem;
+      }
+      .card p {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      /* ---------- Comparison ---------- */
+      .compare {
+        margin-top: 2.5rem;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+      }
+
+      .compare table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.92rem;
+        min-width: 34rem;
+      }
+
+      .compare th,
+      .compare td {
+        padding: 0.85rem 1.1rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .compare tr:last-child td {
+        border-bottom: 0;
+      }
+      .compare thead th {
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+        border-bottom: 1px solid var(--border);
+      }
+      .compare thead th:first-child {
+        color: var(--accent-strong);
+      }
+      .compare td {
+        color: var(--muted);
+      }
+      .compare td:first-child {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      /* ---------- Self-host ---------- */
+      .install {
+        margin-top: 2.6rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.2rem;
+        text-align: left;
+      }
+
+      .install figure {
+        margin: 0;
+        border: 1px solid var(--code-border);
+        border-radius: var(--radius);
+        background: var(--code-bg);
+        overflow: hidden;
+      }
+
+      .install figcaption {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        padding: 0.75rem 1.1rem;
+        color: var(--accent);
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--code-border);
+      }
+
+      .install pre {
+        margin: 0;
+        padding: 1.1rem 1.2rem;
+        overflow-x: auto;
+        color: var(--code-text);
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 0.82rem;
+        line-height: 1.7;
+      }
+
+      .install .comment {
+        color: #7c93a0;
+      }
+
+      /* ---------- Footer ---------- */
+      footer {
+        border-top: 1px solid var(--border);
+        padding: 3.5rem 0 2.5rem;
+        background: var(--surface-2);
+      }
+
+      .footer-grid {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr 1fr;
+        gap: 2.5rem;
+      }
+
+      .footer-brand {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        font-weight: 800;
+      }
+      .footer-brand svg {
+        width: 26px;
+        height: 26px;
+      }
+      footer p {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin: 0.8rem 0 0;
+      }
+
+      footer h4 {
+        margin: 0 0 0.8rem;
+        font-size: 0.8rem;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      footer ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      footer li {
+        margin-bottom: 0.5rem;
+        font-size: 0.92rem;
+      }
+      footer a {
+        color: var(--text);
+        text-decoration: none;
+      }
+      footer a:hover {
+        color: var(--accent-strong);
+      }
+
+      .license {
+        margin-top: 3rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid var(--border);
+        font-size: 0.82rem;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.8rem;
+      }
+
+      /* ---------- Responsive ---------- */
+      @media (max-width: 880px) {
+        .nav {
+          display: none;
+        }
+        .split {
+          grid-template-columns: 1fr;
+        }
+        .split--rev .split__media {
+          order: 0;
+        }
+        .split__media {
+          order: -1;
+        }
+        .install {
+          grid-template-columns: 1fr;
+        }
+        .footer-grid {
+          grid-template-columns: 1fr;
+          gap: 1.8rem;
+        }
+        section {
+          padding: 3.5rem 0;
+        }
+        .hero {
+          padding-top: 4rem;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .header-actions .btn span.label {
+          display: none;
+        }
+        .header-actions .btn {
+          padding: 0.55rem 0.8rem;
+        }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- ===== Header ===== -->
+    <header class="site-header">
+      <div class="container">
+        <a class="brand" href="#top" aria-label="Yonder home">
+          <svg viewBox="0 0 512 512" aria-hidden="true">
+            <g
+              stroke="#0d9488"
+              stroke-linecap="round"
+              fill="none"
+              stroke-width="20"
+            >
+              <path d="M256 320 L256 120" />
+              <path d="M256 320 L140 190" />
+              <path d="M256 320 L372 190" />
+            </g>
+            <g fill="#2dd4bf">
+              <circle cx="256" cy="120" r="34" />
+              <circle cx="140" cy="190" r="34" />
+              <circle cx="372" cy="190" r="34" />
+            </g>
+            <path
+              d="M96 356 Q256 428 416 356"
+              stroke="#0d9488"
+              stroke-width="26"
+              stroke-linecap="round"
+              fill="none"
+            />
+            <circle cx="256" cy="320" r="70" fill="#0d9488" />
+          </svg>
+          Yonder
+        </a>
+
+        <nav class="nav" aria-label="Sections">
+          <a href="#features">Features</a>
+          <a href="#federation">Federation</a>
+          <a href="#migration">Migration</a>
+          <a href="#compare">Compare</a>
+          <a href="#self-host">Self-host</a>
+        </nav>
+
+        <div class="header-actions">
+          <a
+            class="btn btn--ghost"
+            href="https://github.com/blacklight/yonder"
+            rel="noopener"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+              <path
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+              />
+            </svg>
+            <span class="label">GitHub</span>
+          </a>
+          <a
+            class="btn btn--primary"
+            href="https://git.fabiomanganiello.com/yonder"
+            rel="noopener"
+          >
+            <span class="label">Source code</span>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- ===== Hero ===== -->
+      <section class="hero">
+        <div class="container">
+          <span class="badge"
+            ><span class="dot"></span> Self-hosted · ActivityPub ·
+            AGPL-3.0</span
+          >
+          <h1>A social network in a single binary</h1>
+          <p class="lede">
+            Yonder is a Mastodon-compatible ActivityPub server written in Rust.<br />
+            Your community, your rules, your data — and the Mastodon apps you
+            already use just work.
+          </p>
+          <div class="cta">
+            <a class="btn btn--primary" href="#self-host">Get started</a>
+            <a
+              class="btn btn--ghost"
+              href="https://git.fabiomanganiello.com/yonder"
+              rel="noopener"
+              >Source code</a
+            >
+            <a
+              class="btn btn--ghost"
+              href="https://github.com/blacklight/yonder"
+              rel="noopener"
+              >GitHub mirror</a
+            >
+          </div>
+          <p class="meta">
+            Free and open source · PostgreSQL · Docker or cargo
+          </p>
+
+          <figure class="hero-figure">
+            <div class="browser only-desktop">
+              <div class="browser__bar" aria-hidden="true">
+                <span class="browser__dots"
+                  ><span></span><span></span><span></span
+                ></span>
+                <span class="browser__url">https://social.example.com</span>
+              </div>
+              <picture>
+                <source
+                  media="(prefers-color-scheme: dark)"
+                  srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png"
+                />
+                <img
+                  src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-home.png"
+                  width="2880"
+                  height="1800"
+                  fetchpriority="high"
+                  decoding="async"
+                  alt="The Yonder home timeline on desktop: a composer box on top, posts with media, polls and interaction counts, and a sidebar with search and navigation"
+                />
+              </picture>
+            </div>
+            <div class="device only-mobile">
+              <picture>
+                <source
+                  media="(prefers-color-scheme: dark)"
+                  srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-home.png"
+                />
+                <img
+                  src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-home.png"
+                  width="780"
+                  height="1688"
+                  fetchpriority="high"
+                  decoding="async"
+                  alt="The Yonder home timeline on mobile: posts in a single column with the tab bar pinned to the bottom"
+                />
+              </picture>
+            </div>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ===== Timelines ===== -->
+      <section id="features">
+        <div class="container split">
+          <div>
+            <span class="eyebrow">Timelines &amp; posts</span>
+            <h2>Everything a microblog should do — and more</h2>
+            <p>
+              Home, local and federated timelines update in real time over
+              WebSocket streaming, while posts get the full Mastodon toolkit
+              plus a few extras.
+            </p>
+            <ul class="features">
+              <li>
+                <strong>Rich posts</strong> — plain text or Markdown, content
+                warnings, media with editable alt text, and multi-line image
+                descriptions
+              </li>
+              <li>
+                <strong>Polls, quotes and emoji reactions</strong> — quote posts
+                with author authorization, and reactions that federate to Akkoma
+                and Misskey
+              </li>
+              <li>
+                <strong>Scheduled posts, edits and drafts</strong> — write now,
+                publish later, fix typos after the fact, keep drafts across
+                devices
+              </li>
+              <li>
+                <strong>Followed hashtags, trends and lists</strong> — plus
+                server-side filters
+                (<code>warn</code>/<code>hide</code>/<code>blur</code>) that
+                apply everywhere
+              </li>
+            </ul>
+          </div>
+          <div class="split__media">
+            <div class="shots shots--duo">
+              <div class="shot only-desktop">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-local-timeline.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-local-timeline.png"
+                    width="2880"
+                    height="1800"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The local timeline on desktop: posts from the instance's own community in a three-column layout"
+                  />
+                </picture>
+              </div>
+              <div class="device">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-notifications.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-notifications.png"
+                    width="780"
+                    height="1688"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The notifications view on mobile: mentions, likes, boosts and follows in one feed"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Threads & conversations ===== -->
+      <section class="band">
+        <div class="container split split--rev">
+          <div>
+            <span class="eyebrow">Threads &amp; conversations</span>
+            <h2>Discussions that don't fall apart</h2>
+            <p>
+              Opening a post fetches its whole reply tree from the origin
+              server, and remote like/boost counts come along when the origin
+              publishes them — no half-empty conversations.
+            </p>
+            <ul class="features">
+              <li>
+                <strong>Remote thread expansion</strong> — replies discovered on
+                demand. You always see the full picture, not only what your instance
+                has cached
+              </li>
+              <li>
+                <strong>Direct messages as conversations</strong> — grouped
+                threads, unread badges. Direct messages are conversations with people,
+                not just a scrollable timeline of private posts
+              </li>
+              <li>
+                <strong>Remote interaction lists</strong> — see who liked or
+                boosted a remote post, proxied from its home server. Get the full picture
+                even if your server doesn't have many peers
+              </li>
+              <li>
+                <strong>Webmentions</strong> — public posts send and receive
+                Webmentions, so blogs are part of the conversation too. Mention a blog article,
+                and the author will be notified. And mentions of your social posts on
+                Webmentions-compatible websites get rendered as normal comments in your
+                conversation
+              </li>
+            </ul>
+          </div>
+          <div class="split__media">
+            <div class="shots shots--duo">
+              <div class="shot only-desktop">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-thread-poll.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-thread-poll.png"
+                    width="2880"
+                    height="1800"
+                    loading="lazy"
+                    decoding="async"
+                    alt="A thread view on desktop: a post with a poll, reply tree and interaction counts"
+                  />
+                </picture>
+              </div>
+              <div class="device">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-messages-thread.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-messages-thread.png"
+                    width="780"
+                    height="1688"
+                    loading="lazy"
+                    decoding="async"
+                    alt="A direct-message conversation on mobile: a private thread with its own composer"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Federation ===== -->
+      <section id="federation">
+        <div class="container split">
+          <div>
+            <span class="eyebrow">Federation &amp; clients</span>
+            <h2>Your apps already speak Yonder</h2>
+            <p>
+              The Mastodon client API — v1 and v2 — is implemented end to end,
+              so the ecosystem around Mastodon works against a Yonder instance
+              out of the box.
+            </p>
+            <ul class="features">
+              <li>
+                <strong>Mastodon-compatible API</strong> — Tusky, Ivory, Elk,
+                Phanpy and friends just need your instance URL
+              </li>
+              <li>
+                <strong>Full ActivityPub</strong> via
+                <a href="https://crates.io/crates/pubby-sdk" rel="noopener"
+                  >pubby-sdk</a
+                >
+                — interoperates with Mastodon, Akkoma, Pleroma, Misskey and
+                other Yonder instances
+              </li>
+              <li>
+                <strong>Real-time streaming</strong> — Mastodon's WebSocket
+                protocol for user, public, hashtag and list streams
+              </li>
+              <li>
+                <strong>Feeds &amp; embeds</strong> — RSS 2.0 and Atom for
+                profiles, tags and lists, plus embeddable status cards and
+                oEmbed
+              </li>
+            </ul>
+          </div>
+          <div class="split__media">
+            <div class="shots shots--duo">
+              <div class="shot only-desktop">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-messages.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-messages.png"
+                    width="2880"
+                    height="1800"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The conversations list on desktop: direct messages grouped by thread with unread badges"
+                  />
+                </picture>
+              </div>
+              <div class="device">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-compose.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-compose.png"
+                    width="780"
+                    height="1688"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The composer on mobile: text area, media previews with ALT badges, and the toolbar"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Migration ===== -->
+      <section id="migration" class="band">
+        <div class="container split split--rev">
+          <div>
+            <span class="eyebrow">Migration &amp; portability</span>
+            <h2>Your identity isn't a hostage</h2>
+            <p>
+              Moving accounts is a first-class feature, not an emergency
+              procedure — in both directions, with your history intact.
+            </p>
+            <ul class="features">
+              <li>
+                <strong>Moves in either direction</strong> — signed ActivityPub
+                <code>Move</code> handling, follower migration with retries and
+                progress, and moved-account banners — compatible with Mastodon
+                and Pleroma/Akkoma
+              </li>
+              <li>
+                <strong>Mastodon-compatible archives</strong> — export posts,
+                media, follows, bookmarks and lists, with signed downloads —
+                even for suspended accounts, which get export-only access
+              </li>
+              <li>
+                <strong>Import from anywhere</strong> — upload an archive or
+                connect a remote account over OAuth and import posts,
+                favourites, bookmarks and follows, preserving timestamps and
+                provenance
+              </li>
+              <li>
+                <strong>Move your data in a couple of clicks</strong> — move your
+                whole social story, not only your followers. Yonder allows you to
+                connect over OAuth to your old instance and decide what you want
+                to import. No need to download and upload CSV files. No more
+                posts and interactions left behind upon migration
+              </li>
+              <li>
+                <strong>Remote historical context</strong> — imported posts keep
+                their original date and like/boost counts where available
+              </li>
+            </ul>
+          </div>
+          <div class="split__media">
+            <div class="shots shots--duo">
+              <div class="shot only-desktop">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-settings.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-settings.png"
+                    width="2880"
+                    height="1800"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The settings area on desktop: data import and export controls with archive downloads and remote connections"
+                  />
+                </picture>
+              </div>
+              <div class="device">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-settings.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-settings.png"
+                    width="780"
+                    height="1688"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The settings area on mobile: profile, security, tokens and data sections"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Your instance ===== -->
+      <section>
+        <div class="container split">
+          <div>
+            <span class="eyebrow">Your instance, your rules</span>
+            <h2>A community you actually run</h2>
+            <p>
+              Every registration policy, every moderation action, every setting
+              — through the admin panel or straight from the
+              <code>yonder</code> CLI.
+            </p>
+            <ul class="features">
+              <li>
+                <strong>Moderation toolbox</strong> — user mutes/blocks/reports
+                (forwarded via <code>Flag</code>), actor limits and suspension,
+                domain blocks, relay management
+              </li>
+              <li>
+                <strong>Registration your way</strong> — open, invite-only,
+                approval-required or closed, with managed invites
+              </li>
+              <li>
+                <strong>Custom emoji &amp; packs</strong> — upload, import and
+                organize instance emoji that render consistently everywhere
+              </li>
+              <li>
+                <strong>Full customizable experience</strong> — multi-language
+                by design, accent and theme customization, and support for custom
+                frontends (Pleroma/Akkoma compatible)
+              </li>
+            </ul>
+          </div>
+          <div class="split__media">
+            <div class="shots shots--duo">
+              <div class="shot only-desktop">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-admin.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-admin.png"
+                    width="2880"
+                    height="1800"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The admin panel on desktop: instance settings, user management and federation controls"
+                  />
+                </picture>
+              </div>
+              <div class="device">
+                <picture>
+                  <source
+                    media="(prefers-color-scheme: dark)"
+                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-profile.png"
+                  />
+                  <img
+                    src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-profile.png"
+                    width="780"
+                    height="1688"
+                    loading="lazy"
+                    decoding="async"
+                    alt="A profile page on mobile: header image, avatar, bio, follow button and pinned posts"
+                  />
+                </picture>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== More ===== -->
+      <section class="band">
+        <div class="container">
+          <div class="center">
+            <span class="eyebrow">And there's more</span>
+            <h2>Built like a scalable social platform, not a pet project</h2>
+            <p>
+              A single Rust binary, PostgreSQL and Redis — the unglamorous
+              pieces are already where they should be.
+            </p>
+          </div>
+
+          <div class="grid">
+            <div class="card">
+              <span class="icon" aria-hidden="true">🦀</span>
+              <h3>One binary</h3>
+              <p>
+                No Ruby, no Elixir, no sidekiq fleet — a single Rust process
+                plus PostgreSQL and Redis runs the whole instance.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🔑</span>
+              <h3>OAuth2 provider</h3>
+              <p>
+                Authorization-code + PKCE, device flow, password and
+                client-credentials grants, plus scoped revocable API tokens.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🖥️</span>
+              <h3>Pluggable frontends</h3>
+              <p>
+                The bundled Vue SPA is the default — alternative frontends
+                install from the CLI and serve side by side. The bundle PWA
+                provides a curated mobile experience even without the need
+                for an native mobile app.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">📖</span>
+              <h3>Open API</h3>
+              <p>
+                OpenAPI 3 at <code>/openapi.json</code> and a bundled Swagger UI
+                at <code>/swagger-ui</code> — Mastodon-shaped contracts
+                throughout.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🔒</span>
+              <h3>Safety by default</h3>
+              <p>
+                Argon2id passwords, SSRF-guarded remote fetches, Redis-backed
+                rate limits and durable at-least-once federation delivery.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🔔</span>
+              <h3>Notifications your way</h3>
+              <p>
+                Real-time in-app, Web Push and email — with per-type preferences
+                and daily digests where you want them.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🛜</span>
+              <h3>Feeds &amp; Webmentions</h3>
+              <p>
+                RSS 2.0 and Atom for profiles, tags and lists — and
+                bidirectional Webmentions for public posts.
+              </p>
+            </div>
+            <div class="card">
+              <span class="icon" aria-hidden="true">🧭</span>
+              <h3>Remote discovery</h3>
+              <p>
+                Look up remote actors, posts and interactions by handle or URL —
+                SSRF-guarded, moderated, cached.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Compare ===== -->
+      <section id="compare">
+        <div class="container">
+          <div class="center">
+            <span class="eyebrow">How it compares</span>
+            <h2>Lighter to run, heavier on portability</h2>
+            <p>
+              Yonder implements the same Mastodon client API your apps expect —
+              on a runtime that's a fraction of the size — and goes further than
+              either on migration and data portability.
+            </p>
+          </div>
+
+          <div class="compare">
+            <table>
+              <thead>
+                <tr>
+                  <th>Feature</th>
+                  <th>Yonder</th>
+                  <th>Mastodon</th>
+                  <th>Akkoma</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>⚙️ Runtime Stack</td>
+                  <td>Single Rust binary + PostgreSQL + Redis</td>
+                  <td>
+                    Ruby on Rails + Node + PostgreSQL + Redis (+ Elasticsearch)
+                  </td>
+                  <td>Elixir/OTP + PostgreSQL</td>
+                </tr>
+                <tr>
+                  <td>🔌 Client API</td>
+                  <td>Mastodon client API v1 + v2</td>
+                  <td>Reference implementation</td>
+                  <td>Mastodon client API + MastoFE/PleromaFE</td>
+                </tr>
+                <tr>
+                  <td>🔁 Account Migrations</td>
+                  <td>
+                    Moves in and out, follower migration with retries,
+                    Mastodon-compatible archives or remote OAuth-based
+                    of posts, favourites, bookmarks and follows from the
+                    remote instance — with original timestamps respected
+                  </td>
+                  <td>Moves in and out, CSV/archive import/export</td>
+                  <td>Moves in and out, CSV/archive import/export</td>
+                </tr>
+                <tr>
+                  <td>🔓 Right to access your data</td>
+                  <td>Export access even while suspended</td>
+                  <td>No export while suspended</td>
+                  <td>No export while suspended</td>
+                </tr>
+                <tr>
+                  <td>👥 Webmentions</td>
+                  <td>Webmentions in both directions</td>
+                  <td>—</td>
+                  <td>—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== Self-host ===== -->
+      <section id="self-host" class="band">
+        <div class="container">
+          <div class="center">
+            <span class="eyebrow">Self-host</span>
+            <h2>Your own corner of the Fediverse in minutes</h2>
+            <p>
+              A single Docker Compose stack — or a <code>cargo install</code> —
+              brings up the web UI, the API, the job workers and federation.
+            </p>
+          </div>
+
+          <div class="install">
+            <figure>
+              <figcaption>🐳 &nbsp;Docker</figcaption>
+              <pre><code><span class="comment"># Required before first `up` —
+# the bind mount fails loudly without it</span>
+cp config.toml.example config.toml
+cp .env.example .env
+
+<span class="comment"># Start app + worker + postgres + redis + nginx</span>
+docker compose up -d
+
+<span class="comment"># Create your admin user</span>
+docker compose run --rm yonder user create --username you --admin</code></pre>
+            </figure>
+
+            <figure>
+              <figcaption>🦀 &nbsp;Cargo</figcaption>
+              <pre><code><span class="comment"># Published as `yonder-server`
+# (`yonder` is taken on crates.io)</span>
+cargo install yonder-server --locked
+
+<span class="comment"># PostgreSQL + Redis required</span>
+cp config.toml.example config.toml
+yonder migrate
+yonder serve</code></pre>
+            </figure>
+          </div>
+
+          <div class="center" style="margin-top: 3rem">
+            <p>
+              Yonder is free software, released under the
+              <a
+                href="https://git.fabiomanganiello.com/yonder/src/branch/main/LICENSE"
+                rel="noopener"
+                ><strong>AGPL-3.0 license</strong></a
+              >. Hack on it, run it, federate it.
+            </p>
+            <div
+              class="cta"
+              style="
+                display: flex;
+                justify-content: center;
+                gap: 0.8rem;
+                flex-wrap: wrap;
+              "
+            >
+              <a
+                class="btn btn--primary"
+                href="https://git.fabiomanganiello.com/yonder"
+                rel="noopener"
+                >Get the code</a
+              >
+              <a
+                class="btn btn--ghost"
+                href="https://github.com/blacklight/yonder"
+                rel="noopener"
+                >Star it on GitHub</a
+              >
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===== Footer ===== -->
+    <footer>
+      <div class="container">
+        <div class="footer-grid">
+          <div>
+            <div class="footer-brand">
+              <svg viewBox="0 0 512 512" aria-hidden="true">
+                <g
+                  stroke="#0d9488"
+                  stroke-linecap="round"
+                  fill="none"
+                  stroke-width="20"
+                >
+                  <path d="M256 320 L256 120" />
+                  <path d="M256 320 L140 190" />
+                  <path d="M256 320 L372 190" />
+                </g>
+                <g fill="#2dd4bf">
+                  <circle cx="256" cy="120" r="34" />
+                  <circle cx="140" cy="190" r="34" />
+                  <circle cx="372" cy="190" r="34" />
+                </g>
+                <path
+                  d="M96 356 Q256 428 416 356"
+                  stroke="#0d9488"
+                  stroke-width="26"
+                  stroke-linecap="round"
+                  fill="none"
+                />
+                <circle cx="256" cy="320" r="70" fill="#0d9488" />
+              </svg>
+              Yonder
+            </div>
+            <p>
+              A self-hosted, Mastodon-compatible ActivityPub server written in
+              Rust. Your community, your rules, your data.
+            </p>
+          </div>
+
+          <div>
+            <h4>Source</h4>
+            <ul>
+              <li>
+                <a href="https://git.fabiomanganiello.com/yonder" rel="noopener"
+                  >Main repository</a
+                >
+              </li>
+              <li>
+                <a href="https://github.com/blacklight/yonder" rel="noopener"
+                  >GitHub mirror</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://git.fabiomanganiello.com/yonder/src/branch/main/docs"
+                  rel="noopener"
+                  >Documentation</a
+                >
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <h4>Ecosystem</h4>
+            <ul>
+              <li>
+                <a href="https://crates.io/crates/pubby-sdk" rel="noopener"
+                  >pubby-sdk — ActivityPub toolkit</a
+                >
+              </li>
+              <li>
+                <a href="https://crates.io/crates/yonder-server" rel="noopener"
+                  >yonder-server on crates.io</a
+                >
+              </li>
+              <li>
+                <a
+                  href="https://quay.io/repository/yonder/yonder"
+                  rel="noopener"
+                  >Container image on quay.io</a
+                >
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="license">
+          <span
+            >Yonder is free software under the
+            <a
+              href="https://git.fabiomanganiello.com/yonder/src/branch/main/LICENSE"
+              rel="noopener"
+              >AGPL-3.0 license</a
+            >.</span
+          >
+          <span>No JavaScript required to read this page. Naturally.</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>

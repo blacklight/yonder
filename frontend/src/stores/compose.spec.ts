@@ -22,6 +22,56 @@ describe("compose store", () => {
     expect(c.quoteTarget).toBeNull();
   });
 
+  it("openReply seeds the author plus the parent's mentions", () => {
+    const c = useComposeStore();
+    const parent = {
+      id: "7",
+      account: { acct: "alice@x.test" },
+      mentions: [
+        { id: "1", acct: "bob@y.test" },
+        { id: "2", acct: "carol@z.test" },
+        // A repeat of the author is deduped.
+        { id: "3", acct: "alice@x.test" },
+      ],
+    } as Status;
+    c.openReply(parent);
+    expect(c.draft.text).toBe("@alice@x.test @bob@y.test @carol@z.test ");
+    expect(c.draft.visibility).toBe("public");
+    expect(c.draft.inReplyToId).toBe("7");
+  });
+
+  it("openReply drops the viewer from the seeded recipients", () => {
+    useAuthStore().account = { acct: "me@home.test" } as never;
+    const c = useComposeStore();
+    const parent = {
+      id: "7",
+      account: { acct: "alice@x.test" },
+      mentions: [
+        { id: "1", acct: "me@home.test" },
+        { id: "2", acct: "bob@y.test" },
+      ],
+    } as Status;
+    c.openReply(parent);
+    expect(c.draft.text).toBe("@alice@x.test @bob@y.test ");
+  });
+
+  it("openReply on the viewer's own post seeds only the others", () => {
+    useAuthStore().account = { acct: "me" } as never;
+    const c = useComposeStore();
+    const own = { id: "8", account: { acct: "me" } } as Status;
+    c.openReply(own);
+    // Self-reply with no other participants: nothing to prefill.
+    expect(c.draft.text).toBe("");
+    expect(c.draft.inReplyToId).toBe("8");
+    const parent = {
+      id: "9",
+      account: { acct: "me" },
+      mentions: [{ id: "1", acct: "bob@y.test" }],
+    } as Status;
+    c.openReply(parent);
+    expect(c.draft.text).toBe("@bob@y.test ");
+  });
+
   it("openReply unwraps a boost", () => {
     const c = useComposeStore();
     const boosted = status("5", "carol");

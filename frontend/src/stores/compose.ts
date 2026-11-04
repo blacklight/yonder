@@ -80,6 +80,23 @@ function loadDraft(): ComposeDraft {
   }
 }
 
+/** Author + mentioned participants of `status`, deduped and minus
+ *  the viewer — the seeded `@… @… ` recipient line a reply opens
+ *  with (Mastodon's reply prefill). */
+function replySeed(target: Status, self: string | undefined): string {
+  const seen = new Set<string>();
+  const recipients = [target.account, ...(target.mentions ?? [])]
+    .map((a) => a.acct)
+    .filter((acct) => {
+      if (acct === self || seen.has(acct)) return false;
+      seen.add(acct);
+      return true;
+    });
+  return recipients.length
+    ? `${recipients.map((a) => `@${a}`).join(" ")} `
+    : "";
+}
+
 function loadDrafts(): DraftEntry[] {
   try {
     const raw = storageGet(DRAFTS_KEY);
@@ -190,18 +207,20 @@ export const useComposeStore = defineStore("compose", {
       this.contextIsLive = false;
     },
 
-    /** Reply — the server carries over the parent's mentions; the
-     * client only seeds the `@author` prefix for context. The form
-     * unwraps inline under the card (`replyTargetId`). */
+    /** Reply — seeds the full participant line (`@author` plus the
+     * parent's mentions, minus the viewer), the same set the server
+     * carries into the reply's mentions; seeding them keeps the
+     * recipients visible and editable. The form unwraps inline under
+     * the card (`replyTargetId`). */
     openReply(status: Status) {
       const target = status.reblog ?? status;
-      const acct = target.account.acct;
+      const seed = replySeed(target, useAuthStore().account?.acct);
       this.reset();
       this.update({
         inReplyToId: target.id,
-        replyToAcct: acct,
-        text: `@${acct} `,
-        seededText: `@${acct} `,
+        replyToAcct: target.account.acct,
+        text: seed,
+        seededText: seed,
       });
       this.replyTargetId = target.id;
       this.contextIsLive = true;
@@ -257,18 +276,7 @@ export const useComposeStore = defineStore("compose", {
      */
     openDirectReply(status: Status) {
       const target = status.reblog ?? status;
-      const self = useAuthStore().account?.acct;
-      const seen = new Set<string>();
-      const recipients = [target.account, ...(target.mentions ?? [])]
-        .map((a) => a.acct)
-        .filter((acct) => {
-          if (acct === self || seen.has(acct)) return false;
-          seen.add(acct);
-          return true;
-        });
-      const seed = recipients.length
-        ? `${recipients.map((a) => `@${a}`).join(" ")} `
-        : "";
+      const seed = replySeed(target, useAuthStore().account?.acct);
       this.reset();
       this.update({
         inReplyToId: target.id,

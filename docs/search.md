@@ -59,11 +59,16 @@ does Yonder.
   to their canonical AP domain (e.g. a blog domain 302ing to the
   fediverse domain) resolve on first lookup. A fetched document is
   only trusted when it provably belongs to the host it came from:
-  actor documents must have `id == <the serving URL>`; notes must
-  have `id` on the serving origin and an `attributedTo` on that same
-  origin. A redirect landing back on this instance resolves locally
-  instead of materializing our own objects as remote. Trusted actors
-  go through
+  actor documents must have `id` on the serving origin (a redirected
+  alias like a renamed profile's old `/@user` URL qualifies); notes
+  must have `id` on the serving origin and an `attributedTo` on that
+  same origin. A redirect landing back on this instance resolves
+  locally instead of materializing our own objects as remote. Actor
+  rows key on the document's claimed `id` — a row stored under a stale
+  or fabricated URI is rekeyed onto the canonical `id` (or releases
+  the claimed username when the canonical row already exists), so a
+  later fetch of the real actor URI can't collide with a phantom
+  alias. Trusted actors go through
   `upsert_remote_actor_row`; trusted objects (the same set the
   inbound pipeline materializes: `Note`/`Question`/`Article`/`Page`
   plus `Audio`/`Video`/`Event`) are wrapped in a synthetic `Create`

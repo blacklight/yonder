@@ -1057,9 +1057,12 @@ async fn import_post(
                     };
                     // Mentioned accounts resolve best-effort; a bare
                     // upsert on the URI keeps the row without a fetch.
+                    // Targetless DO NOTHING also swallows a
+                    // (domain, username) collision — the mention is
+                    // dropped rather than aborting the import tx.
                     sqlx::query(
                         "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-                         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
+                         VALUES ($1,$2,$3,$3,'') ON CONFLICT DO NOTHING",
                     )
                     .bind(activitypub::moderation::actor_domain(&href))
                     .bind(

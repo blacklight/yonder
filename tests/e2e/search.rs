@@ -190,6 +190,7 @@ async fn mock_remote() -> String {
     let base = format!("http://localhost:{port}");
     let note_base = base.clone();
     let actor_base = base.clone();
+    let alias_base = base.clone();
     let audio_base = base.clone();
     let listen_base = base.clone();
     let app = axum::Router::new()
@@ -234,6 +235,26 @@ async fn mock_remote() -> String {
                         "type": "Person",
                         "preferredUsername": "mallory",
                         "inbox": format!("{b}/users/mallory/inbox"),
+                    }))
+                }
+            }),
+        )
+        // A renamed actor's stale profile URL serving the canonical
+        // document (WriteFreely: `/@old` redirects to the renamed
+        // collection's actor). The doc `id` is `/users/eve` — NOT the
+        // requested path — the shape that poisons a bare `accounts`
+        // row keyed on the fetched URI.
+        .route(
+            "/@oldname",
+            axum::routing::get(move || {
+                let b = alias_base.clone();
+                async move {
+                    axum::Json(json!({
+                        "@context": PUBLIC,
+                        "id": format!("{b}/users/eve"),
+                        "type": "Person",
+                        "preferredUsername": "eve",
+                        "inbox": format!("{b}/users/eve/inbox"),
                     }))
                 }
             }),
@@ -1195,6 +1216,103 @@ async fn remote_fetch_materializes_trusted_objects() {
         .await
         .unwrap();
     assert!(cached.is_some(), "spoofed fetch was not negatively cached");
+}
+
+/// WriteFreely shape: a stale profile URL and the canonical actor URI
+/// serve the same document, whose `id` is the canonical URI. A stale
+/// `accounts` row keyed on the alias used to poison ingest: the bare
+/// stub INSERT collided on `uix_accounts_username_domain` and aborted
+/// the whole materialization — remote posts unresolvable by URL,
+/// quote targets parked forever. The stub must disambiguate, and a
+/// later fetch of the alias must rekey it onto the document `id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_fetch_survives_stale_actor_alias() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice").await;
+    let base = mock_remote().await;
+
+    // The stale alias row: keyed on the fetched URI `/@oldname`, but
+    // already renamed to the document's claimed `preferredUsername` —
+    // it owns `eve@localhost`, so the real actor's stub can't claim it.
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('localhost','eve',$1,$1,'')",
+    )
+    .bind(format!("{base}/@oldname"))
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    // The post materializes — the author's stub insert disambiguates
+    // the username instead of dying on the unique index.
+    let url = format!("{base}/objects/m1");
+    let encoded = url::form_urlencoded::byte_serialize(url.as_bytes()).collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}&resolve=true"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["statuses"].as_array().unwrap().len(), 1, "{body}");
+    let stub_name: String = sqlx::query_scalar("SELECT username FROM accounts WHERE actor_id = $1")
+        .bind(format!("{base}/users/eve"))
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(stub_name, "eve.2");
+
+    // Fetching the stale alias rekeys nothing while the canonical row
+    // exists — but it releases the claimed `eve` name so the canonical
+    // row wins the guarded rename, and the alias URL resolves to the
+    // canonical account.
+    let ap = env.state.ap.clone().unwrap();
+    let job = yonder::activitypub::incoming::RemoteActorFetchJob::new(ap);
+    let ctx = yonder::jobs::JobContext {
+        db: env.state.db.clone(),
+        redis: env.state.redis.clone(),
+        config: env.state.config().clone(),
+        media: env.state.media.clone(),
+    };
+    yonder::jobs::JobHandler::run(
+        &job,
+        &ctx,
+        &json!({"actor_url": format!("{base}/@oldname")}),
+    )
+    .await
+    .unwrap();
+    let canonical_name: String =
+        sqlx::query_scalar("SELECT username FROM accounts WHERE actor_id = $1")
+            .bind(format!("{base}/users/eve"))
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(canonical_name, "eve");
+    let alias_name: String =
+        sqlx::query_scalar("SELECT username FROM accounts WHERE actor_id = $1")
+            .bind(format!("{base}/@oldname"))
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(alias_name, "eve.alias");
+
+    // The alias URL resolves from the DB to its (now clearly-named)
+    // stale row — an account result, not a crash or a miss.
+    let encoded = url::form_urlencoded::byte_serialize(format!("{base}/@oldname").as_bytes())
+        .collect::<String>();
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v2/search?q={encoded}&resolve=true"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["accounts"][0]["username"], "eve.alias", "{body}");
 }
 
 /// Songhive/Funkwhale `/activities/…` URLs resolve: the doc can be a

@@ -330,15 +330,10 @@ pub async fn handle_flag(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -
             crate::moderation::reports::COMMENT_MAX_CHARS,
         ))
         .collect();
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(super::moderation::actor_domain(&activity.actor))
-    .bind(last_segment(&activity.actor))
-    .bind(&activity.actor)
-    .execute(db)
-    .await?;
+    // The shared stub helper absorbs a (domain, username) collision
+    // with a stale alias row — a bare `ON CONFLICT (actor_id)` would
+    // abort the whole Flag handler.
+    super::lookup::upsert_remote_stub_row(db, &activity.actor).await?;
 
     for object_url in str_list(raw.get("object")) {
         let account_id: Option<i64> =
@@ -566,7 +561,7 @@ impl JobHandler for RemoteActorFetchJob {
                 if let Some(id) = account_id {
                     refresh_remote_featured(&self.ctx, id, &doc).await;
                 }
-                clear_fetch_markers(&self.ctx.core.db, &actor_url).await;
+                clear_fetch_markers(&self.ctx.core.db, &actor_url, account_id).await;
                 Ok(())
             }
             super::lookup::RemoteFetch::Gone => {
@@ -575,13 +570,19 @@ impl JobHandler for RemoteActorFetchJob {
                 // markers so reads and the sweep stop re-enqueueing,
                 // and ack the job instead of dead-lettering it.
                 tracing::info!(actor = %actor_url, "remote actor gone; marking");
-                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor", "actor_gone"]).await;
+                stamp_fetch_markers(
+                    &self.ctx.core.db,
+                    &actor_url,
+                    None,
+                    &["actor", "actor_gone"],
+                )
+                .await;
                 Ok(())
             }
             super::lookup::RemoteFetch::RateLimited | super::lookup::RemoteFetch::Failed => {
                 // Stamp the attempt so reads can't pile fresh jobs on
                 // top of this one's retry cycle.
-                stamp_fetch_markers(&self.ctx.core.db, &actor_url, &["actor"]).await;
+                stamp_fetch_markers(&self.ctx.core.db, &actor_url, None, &["actor"]).await;
                 Err(crate::Error::Internal(format!(
                     "remote actor fetch failed: {actor_url}"
                 )))
@@ -595,14 +596,23 @@ impl JobHandler for RemoteActorFetchJob {
 /// record profile reads and the stale-actor sweep consult before
 /// re-enqueueing this job. Best-effort: a failed stamp just means the
 /// next read may enqueue again.
-async fn stamp_fetch_markers(db: &sqlx::PgPool, actor_id: &str, directions: &[&str]) {
+/// `account_id` is the resolved row when known — the upsert may have
+/// rekeyed it onto the document's canonical `id`, leaving `actor_id`
+/// (the fetched URL) pointing at no row.
+async fn stamp_fetch_markers(
+    db: &sqlx::PgPool,
+    actor_id: &str,
+    account_id: Option<i64>,
+    directions: &[&str],
+) {
     for direction in directions {
         if let Err(e) = sqlx::query(
             "INSERT INTO remote_network_syncs (account_id, direction, synced_at) \
-             SELECT id, $2, now() FROM accounts WHERE actor_id = $1 \
+             SELECT id, $3, now() FROM accounts WHERE actor_id = $1 OR id = $2 \
              ON CONFLICT (account_id, direction) DO UPDATE SET synced_at = now()",
         )
         .bind(actor_id)
+        .bind(account_id)
         .bind(direction)
         .execute(db)
         .await
@@ -613,14 +623,17 @@ async fn stamp_fetch_markers(db: &sqlx::PgPool, actor_id: &str, directions: &[&s
 }
 
 /// Drop the failure/gone markers after a successful fetch — a
-/// resurrected actor resumes the normal refresh cadence.
-async fn clear_fetch_markers(db: &sqlx::PgPool, actor_id: &str) {
+/// resurrected actor resumes the normal refresh cadence. `account_id`
+/// covers the row rekeyed onto the document's canonical `id` (the
+/// fetched `actor_id` no longer resolves then).
+async fn clear_fetch_markers(db: &sqlx::PgPool, actor_id: &str, account_id: Option<i64>) {
     if let Err(e) = sqlx::query(
         "DELETE FROM remote_network_syncs \
          WHERE direction IN ('actor', 'actor_gone') \
-         AND account_id = (SELECT id FROM accounts WHERE actor_id = $1)",
+         AND account_id IN (SELECT id FROM accounts WHERE actor_id = $1 OR id = $2)",
     )
     .bind(actor_id)
+    .bind(account_id)
     .execute(db)
     .await
     {
@@ -842,11 +855,6 @@ async fn refresh_remote_featured(ctx: &ApContext, account_id: i64, doc: &Value) 
             tracing::warn!(account_id, uri, error = %e, "pin resolve enqueue failed");
         }
     }
-}
-
-/// Last URL segment — the username guess used for bare remote rows.
-fn last_segment(url: &str) -> &str {
-    url.trim_end_matches('/').rsplit('/').next().unwrap_or(url)
 }
 
 /// JSON string-list field → `Vec<String>` (single strings wrap).

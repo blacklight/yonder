@@ -194,7 +194,16 @@ pub(crate) async fn materialize_remote(
     doc: &Value,
 ) -> Result<Option<ResolvedHit>> {
     let doc_type = doc.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    if ACTOR_TYPES.contains(&doc_type) && doc.get("id").and_then(|v| v.as_str()) == Some(url) {
+    // An actor doc whose `id` is on the fetch origin — `id == url` or
+    // a redirected alias (`/@old` serving the renamed actor's
+    // document, WriteFreely-style). The upsert keys the row on the
+    // claimed `id` under the same same-origin trust rule.
+    if ACTOR_TYPES.contains(&doc_type)
+        && doc
+            .get("id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| same_origin(url, id))
+    {
         let id = crate::activitypub::storage::upsert_remote_actor_row(db, url, doc).await?;
         return Ok(id.map(ResolvedHit::Account));
     }
@@ -240,8 +249,10 @@ pub(crate) fn trusted_note(doc: &Value, url: &str) -> bool {
 }
 
 /// `scheme://host:port` equality — the trust boundary for fetched
-/// objects. Unparseable URLs are never the same origin.
-fn same_origin(a: &str, b: &str) -> bool {
+/// objects. Unparseable URLs are never the same origin. `pub(crate)` —
+/// the actor upsert applies the same boundary to a document's `id`
+/// claim before keying a row on it.
+pub(crate) fn same_origin(a: &str, b: &str) -> bool {
     fn origin(u: &str) -> Option<(String, Option<String>, Option<u16>)> {
         let u = url::Url::parse(u).ok()?;
         Some((

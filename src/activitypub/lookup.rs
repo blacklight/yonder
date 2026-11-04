@@ -57,12 +57,37 @@ pub(crate) async fn upsert_remote_stub_row(db: &PgPool, actor_url: &str) -> Resu
         .unwrap_or(actor_url)
         .trim_start_matches('@')
         .to_string();
+    // `ON CONFLICT DO NOTHING` without a target covers every unique
+    // index — a plain `ON CONFLICT (actor_id)` still aborts when the
+    // (domain, username) pair is owned by a *different* actor row
+    // (a stale alias holding the name this actor claims), which kills
+    // the caller's whole ingest transaction.
     sqlx::query(
         "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1,$2,$3,$3,'') ON CONFLICT (actor_id) DO NOTHING",
+         VALUES ($1,$2,$3,$3,'') ON CONFLICT DO NOTHING",
     )
-    .bind(domain)
-    .bind(username)
+    .bind(&domain)
+    .bind(&username)
+    .bind(actor_url)
+    .execute(db)
+    .await?;
+    if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM accounts WHERE actor_id = $1")
+        .bind(actor_url)
+        .fetch_optional(db)
+        .await?
+    {
+        return Ok(id);
+    }
+    // The actor_id is free — the username was the blocker. Retry under
+    // a disambiguated name; enrichment's guarded rename lands the
+    // claimed name if it frees up.
+    let username = free_username(db, &domain, &username, actor_url).await?;
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ($1,$2,$3,$3,'') ON CONFLICT DO NOTHING",
+    )
+    .bind(&domain)
+    .bind(&username)
     .bind(actor_url)
     .execute(db)
     .await?;
@@ -71,6 +96,58 @@ pub(crate) async fn upsert_remote_stub_row(db: &PgPool, actor_url: &str) -> Resu
         .fetch_optional(db)
         .await?
         .ok_or_else(|| Error::Internal("account upsert failed".to_string()))
+}
+
+/// Whether `username` is claimed on `domain` by a row other than
+/// `exclude_actor` — the `uix_accounts_username_domain` predicate.
+pub(crate) async fn username_taken(
+    db: &PgPool,
+    domain: &str,
+    username: &str,
+    exclude_actor: &str,
+) -> Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM accounts \
+         WHERE lower(username) = lower($1) \
+           AND lower(COALESCE(domain, '')) = lower(COALESCE($2, '')) \
+           AND actor_id <> $3)",
+    )
+    .bind(username)
+    .bind(domain)
+    .bind(exclude_actor)
+    .fetch_one(db)
+    .await
+    .map_err(Into::into)
+}
+
+/// A `(domain, username)` pair no other actor row claims — `base`
+/// when free, then `base.2` … `base.9`, finally `base.{hash}`. Used
+/// when a stub or enrichment INSERT would hit
+/// `uix_accounts_username_domain` through a *different* `actor_id` —
+/// e.g. a stale alias row (a renamed remote profile, pubby's
+/// fabricated `https://{d}/@{u}` URI) holding the name this actor's
+/// document claims.
+pub(crate) async fn free_username(
+    db: &PgPool,
+    domain: &str,
+    base: &str,
+    exclude_actor: &str,
+) -> Result<String> {
+    if !username_taken(db, domain, base, exclude_actor).await? {
+        return Ok(base.to_string());
+    }
+    for n in 2..=9u32 {
+        let candidate = format!("{base}.{n}");
+        if !username_taken(db, domain, &candidate, exclude_actor).await? {
+            return Ok(candidate);
+        }
+    }
+    use sha2::{Digest, Sha256};
+    let suffix: String = Sha256::digest(exclude_actor.as_bytes())[..4]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Ok(format!("{base}.{suffix}"))
 }
 
 /// `upsert_remote_stub_row` + a `RemoteActorFetch` job to enrich it —

@@ -64,22 +64,10 @@ pub fn on_follow_response_fn(
 /// outbound follow.
 async fn accept_outbound(pool: &PgPool, local_actor_id: &str, target_actor_id: &str) -> Result<()> {
     // Make sure the remote target exists as an accounts row — the
-    // follow target URL is all we may have at this point.
-    sqlx::query(
-        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
-         VALUES ($1, $2, $3, $3, '') ON CONFLICT (actor_id) DO NOTHING",
-    )
-    .bind(super::moderation::actor_domain(target_actor_id))
-    .bind(
-        target_actor_id
-            .trim_end_matches('/')
-            .rsplit('/')
-            .next()
-            .unwrap_or(target_actor_id),
-    )
-    .bind(target_actor_id)
-    .execute(pool)
-    .await?;
+    // follow target URL is all we may have at this point. The shared
+    // stub helper disambiguates a (domain, username) collision with a
+    // stale alias row instead of aborting the follow.
+    super::lookup::upsert_remote_stub_row(pool, target_actor_id).await?;
 
     sqlx::query(
         r#"

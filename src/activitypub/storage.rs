@@ -216,8 +216,66 @@ async fn upsert_remote_account(
     actor_id: &str,
     actor_data: &Value,
 ) -> Result<Option<i64>> {
+    // The document's own `id` is the canonical actor identity — a
+    // stale permalink or fabricated URI (pubby's `https://{d}/@{u}`
+    // guess, a renamed profile's old handle) can still serve the doc
+    // through a redirect, but the row must key on the claimed id or a
+    // later fetch of the *canonical* URI collides with a phantom
+    // alias row. Same-origin only: the origin's document is
+    // authoritative for itself (the `trusted_note` boundary).
+    let canonical_id = actor_data
+        .get("id")
+        .and_then(|v| v.as_str())
+        .filter(|id| *id != actor_id && crate::search::resolve::same_origin(actor_id, id))
+        .unwrap_or(actor_id);
+    if canonical_id != actor_id {
+        // Rekey a row already stored under the fetched URI — it IS
+        // this actor (its URL served the document), so every
+        // follows/statuses/mentions edge bound to its account id
+        // stays attached. Skipped when the canonical id already has
+        // its own row: then the alias row is proven redundant and
+        // only releases the claimed username, letting the guarded
+        // rename below land it on the canonical row.
+        let rekeyed = sqlx::query(
+            "UPDATE accounts SET actor_id = $2, updated_at = now() \
+             WHERE actor_id = $1 \
+               AND NOT EXISTS (SELECT 1 FROM accounts WHERE actor_id = $2)",
+        )
+        .bind(actor_id)
+        .bind(canonical_id)
+        .execute(pool)
+        .await
+        .map_err(db_err)?
+        .rows_affected()
+            > 0;
+        if !rekeyed {
+            if let Some(name) = doc_str(actor_data, "preferredUsername") {
+                if let Some(domain) = url_domain(canonical_id) {
+                    let spare = super::lookup::free_username(
+                        pool,
+                        &domain,
+                        &format!("{name}.alias"),
+                        actor_id,
+                    )
+                    .await
+                    .unwrap_or_else(|_| format!("{name}.alias"));
+                    sqlx::query(
+                        "UPDATE accounts SET username = $2, updated_at = now() \
+                         WHERE actor_id = $1 AND lower(username) = lower($3)",
+                    )
+                    .bind(actor_id)
+                    .bind(&spare)
+                    .bind(name)
+                    .execute(pool)
+                    .await
+                    .map_err(db_err)?;
+                }
+            }
+        }
+    }
+    let actor_id = canonical_id;
     let domain = url_domain(actor_id);
-    let username = doc_str(actor_data, "preferredUsername")
+    let mut username = doc_str(actor_data, "preferredUsername")
         .or_else(|| {
             actor_id
                 .trim_end_matches('/')
@@ -226,6 +284,22 @@ async fn upsert_remote_account(
                 .map(String::from)
         })
         .unwrap_or_else(|| actor_id.to_string());
+    // A fresh INSERT still can't collide on `uix_accounts_username_domain`
+    // — `ON CONFLICT (actor_id)` doesn't cover it and a different
+    // actor row may hold the claimed name (a stale alias the canonical
+    // doc hasn't displaced yet, or a genuinely shared
+    // `preferredUsername`). Disambiguate up front; the guarded rename
+    // lands the real name if it frees up.
+    if let Some(domain) = &domain {
+        if super::lookup::username_taken(pool, domain, &username, actor_id)
+            .await
+            .map_err(db_err)?
+        {
+            username = super::lookup::free_username(pool, domain, &username, actor_id)
+                .await
+                .map_err(db_err)?;
+        }
+    }
     let url = doc_str(actor_data, "url").unwrap_or_else(|| actor_id.to_string());
     let inbox = doc_str(actor_data, "inbox").unwrap_or_default();
     let shared_inbox = actor_data

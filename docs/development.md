@@ -1,0 +1,214 @@
+# Development
+
+Developer-facing documentation for working on Yonder itself — the
+development environment, tests, internals and the release pipeline.
+For operating an instance see the [README](../README.md) and the
+topical documents in this directory.
+
+## Development setup
+
+Prerequisites: a Rust toolchain (`cargo`, `rustfmt`, `clippy` — see
+`rust-toolchain.toml`), PostgreSQL and Redis for runtime services, Python 3
+for the Markdown TOC hook, and [`pre-commit`](https://pre-commit.com) for the
+git hooks.
+
+```bash
+cp config.toml.example config.toml   # adjust for your environment
+cp .env.example .env                 # secrets and env overrides
+pre-commit install
+
+cargo build
+cargo test
+```
+
+Configuration resolves in this order (highest wins): database overlays
+(`config_overlays` table) → `YONDER_*` environment variables → `config.toml`
+→ built-in defaults. Environment variables use `__` as the nesting
+separator, e.g. `YONDER_INSTANCE__NAME` for `instance.name`. Run
+`yonder config list` to see every key in both forms.
+
+## Database
+
+The PostgreSQL schema is embedded in the binary as reversible sqlx
+migrations (`migrations/*.up.sql` + `*.down.sql`). Migrations run
+automatically on `yonder serve` (disable with `server.migrate_on_start =
+false`), or can be applied explicitly:
+
+```bash
+yonder migrate              # apply all pending migrations (idempotent)
+yonder migrate --revert     # roll back the most recent migration
+yonder migrate --revert 3   # roll back to version 3 (exclusive)
+yonder migrate status       # applied/pending per migration (exit 1 if pending)
+```
+
+The `yonder` binary also administers the instance offline — config
+overlays, users, domain blocks, relays, emoji and frontend installs,
+plus `run-job` for ad-hoc job execution. `docs/cli.md` has the full
+command reference, the `--json` output contract and exit codes.
+
+Migrations are additive and forward-only; destructive changes live in
+clearly-named migrations.
+
+## Tests
+
+The DB/Redis-backed integration tests live in `tests/e2e/` — a single
+`e2e` target so libtest runs every suite in parallel against one shared
+Postgres+Redis container pair. Each test gets its own
+`yonder_t_<test>` database and `yonder_t:<test>` `key_prefix` (see
+`tests/e2e/harness.rs`), so `cargo test --test e2e` is all that's
+needed; tests are skipped when no container runtime is reachable.
+
+- Concurrency is capped at 3/4 of available cores to leave headroom —
+  override with `YONDER_TEST_WORKERS` (or `-- --test-threads`).
+- The `yonder-test-pg17`/`yonder-test-redis7` containers are *reused*
+  across runs (created once, re-attached after). `docker rm -f` them
+  to start clean; a config-hash label auto-recreates them when the
+  harness options change.
+- `YONDER_TEST_PG_URL` / `YONDER_TEST_REDIS_URL` point at externally
+  provisioned services instead (CI service containers, docker-compose).
+
+## Redis & background jobs
+
+Redis provides the cache layer, the durable job queue and the cron
+scheduler. Everything is namespaced under `redis.key_prefix` (`yonder:`
+by default).
+
+- **Cache** — `cache::RedisCache` (`{prefix}:cache:` keys): `get`/`set`
+  with TTL, `delete`/`delete_pattern` (SCAN-based), and single-flight
+  `get_or_load` request coalescing. `cache::Redis` also exposes the raw
+  `redis::Client` so Pubby's `RedisDocumentStore` can share the
+  connection for ActivityPub document caching (epic 06).
+- **Queue** — one Redis stream per queue: `default` (interactive work),
+  `federation` (latency-sensitive delivery) and `bulk` (high-volume
+  fan-out). Jobs persist across restarts; delivery is at-least-once, so
+  **handlers must be idempotent**. Failures retry with exponential
+  backoff (`jobs.backoff_*`) up to `jobs.max_attempts`, then land on
+  `{prefix}:queue:{name}:dead`. Delayed jobs are parked in a sorted set
+  until due; `XAUTOCLAIM` reclaims work abandoned by dead workers.
+- **Cron** — cleanup schedules are read from
+  `federation.remote_activity_prune_schedule` and
+  `media.remote_cleanup_schedule` (5-field crontab syntax) and fire by
+  enqueuing the matching cleanup job kind.
+
+Run the worker standalone (`yonder worker`, the production deployment)
+or in-process with `serve` (`jobs.enabled = true`, the dev default).
+`docker-compose.yml` wires a dedicated `worker` service while the app
+runs with `jobs.enabled = false` (see *Docker deployment* in the README).
+
+### Adding a job kind
+
+1. Add the variant to `jobs::JobKind` and route it to a `Queue` in
+   `JobKind::queue()` — pick `federation` only for latency-sensitive
+   delivery, `bulk` for high-volume fan-out.
+2. Implement `jobs::JobHandler` (`async fn run(&self, ctx, payload)`)
+   and `registry.register(kind, handler)` at startup, replacing the
+   stub registered by `jobs::stub::register_all`.
+3. Enqueue with `dispatcher.enqueue(kind, payload)` or
+   `enqueue_delayed(kind, payload, delay)`. Payloads are `serde_json`
+   values; keep them small and self-contained.
+
+## HTTP API internals
+
+`yonder serve` binds `server.host`/`server.port` and, when
+`jobs.enabled` is set, runs the job worker in-process alongside it.
+The router (`http::build_router`) is modular: feature epics merge
+their subrouters under `http::api::v1`/`v2` and register an OpenAPI
+fragment in their module's `ApiDoc` — no changes to core wiring.
+
+- **Endpoints** — `GET /healthz`, `GET /openapi.json` (OpenAPI 3 via
+  utoipa), Swagger-UI at `/swagger-ui`, and the streaming WebSocket at
+  `/api/v1/streaming`.
+- **Middleware** — request ids (`x-request-id`, generated when absent
+  and propagated to the response), per-request tracing spans, CORS
+  (`http.cors_enabled` + `http.cors_origins`, off by default), and
+  Redis-backed rate limits.
+- **Auth** — handlers take `AuthContext` (401 on missing/invalid
+  token) or `MaybeAuth` (optional). Tokens resolve from
+  `Authorization: Bearer` or `?access_token=` against
+  `oauth_access_tokens` (`token_hash = hex(sha256(token))`; epic 07
+  owns issuance). The streaming endpoint shares the same resolution.
+- **Rate limiting** — `ratelimit::layer(&state, "<bucket>")` applied
+  with `.route_layer()`. Buckets are the `rate_limit.*` config keys
+  (`search`, `feed`, `timeline`, `account_creation`, `relation`, `status`,
+  `authentication`, `federation_inbox`); authenticated requests use
+  `authenticated_limit` when set and a separate `u:{id}` identity.
+  Rejects with 429 + `Retry-After`.
+- **Errors** — `Error` implements `IntoResponse` with Mastodon's
+  `{"error": "…"}` shape; 5xx responses return a generic message
+  (internals are logged, never leaked).
+- **Streaming** — Mastodon's protocol: `{"type":"subscribe",
+  "stream":"<name>"}` / `unsubscribe` frames, server→client
+  `{"stream":[…],"event":…,"payload":…}` frames, 30 s server pings
+  and echoed client pings. Producers publish via
+  `state.bus.publish(stream, event, payload)` (epic 16).
+
+### Adding a route module
+
+1. Create `src/http/api/{v1,v2}/<feature>.rs` (or a dedicated module);
+   handlers take `State<Arc<AppState>>` plus extractors.
+2. Merge its `Router<Arc<AppState>>` in `api::v1::router()` /
+   `api::v2::router()`.
+3. Annotate handlers with `#[utoipa::path]` and list them in the
+   module's `ApiDoc` `paths(...)` — `openapi::document()` merges it.
+4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
+   maps to a configured bucket.
+
+### Feature contracts
+
+The Mastodon-compatible surface is documented per feature in this
+directory — see `posting.md`, `timelines.md`, `interactions.md`,
+`social-graph.md`, `profile.md`, `search.md`, `settings.md`,
+`media.md`, `filters.md`, `emoji.md`, `feeds.md`, `instance.md`,
+`account-management.md`, `moderation.md`, `admin.md`,
+`authentication.md`, `webmentions.md` and `cli.md`.
+
+## Federation internals
+
+Federation runs on [`pubby-sdk`](https://crates.io/crates/pubby-sdk)
+(`src/activitypub/`). When `federation.enabled`, `serve` builds an
+`ApContext` (a `MultiActorHandler` over the Postgres
+`ActivityPubStorage` adapter + Redis document cache) and merges the AP
+router: POST inboxes (`/ap/inbox`, `/ap/users/{u}/inbox`) validate,
+dedupe and enqueue behind the `federation_inbox` rate limit, while
+every AP GET is dispatched through `dispatch_multi` (actor docs,
+WebFinger, NodeInfo, host-meta, outbox/followers/following, quote
+authorizations). Outbound delivery is durable: a `deliveries` ledger
+row per inbox plus `FederationDelivery` jobs on the `federation`
+queue. `federation.base_url`/`allow_private_targets` support dev/test
+setups; `docs/activitypub.md` has the routing map and pipeline detail.
+
+## Authentication internals
+
+Mastodon-compatible auth: registration under `auth.registration_mode`
+(open / approval-required / closed), argon2id passwords, OAuth2 grants
+(password, client_credentials, authorization-code + PKCE, refresh,
+device flow), scoped and revocable tokens, authorized-app management,
+and session tracking. Bearer material is random 32-byte secrets stored
+sha256-hex; only passwords use the KDF. See `docs/authentication.md`.
+
+## CI/CD
+
+`.drone.yml` mirrors the Songhive pipeline: lint + tests on push,
+image publish to quay.io and `cargo publish` of the `yonder-server`
+crate on tag (`yonder` is taken on crates.io by an unrelated project;
+the binary is still `yonder`). `backend-tests` runs the suite through
+`cargo llvm-cov` and emits `lcov.info`, uploaded to Codacy on pushes
+to `main`. Required Drone secrets: `ssh_pubkey`/`ssh_privkey` (GitHub
+mirror), `docker_user`/`docker_pass` (registry), `crates_io_token`,
+`codacy_project_token` (coverage upload). The `cargo_cache` volume
+expects a writable `/home/drone/.cargo/drone` on the Drone host.
+
+### Cutting a release
+
+Bump the version with `scripts/bump-version.sh` — the Rust equivalent
+of bumpversion, backed by cargo-edit's `cargo set-version`
+(`cargo install cargo-edit --locked`):
+
+```bash
+scripts/bump-version.sh minor   # or patch|major, or an explicit 1.2.3
+```
+
+It updates `Cargo.toml` and `Cargo.lock`. Commit both, then push a
+`v<version>` tag — the tag pipeline publishes
+`quay.io/yonder/yonder:<version>` (+ `:latest`) and the
+`yonder-server` crate.

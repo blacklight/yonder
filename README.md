@@ -10,240 +10,133 @@
 [![Last Commit](https://img.shields.io/github/last-commit/BlackLight/yonder.svg)](https://git.platypush.tech/yonder/yonder/commits/branch/main)
 [![License](https://img.shields.io/github/license/blacklight/yonder.svg)](https://git.platypush.tech/blacklight/yonder/src/branch/main/LICENSE)
 
-A Mastodon-compatible ActivityPub server written in Rust.
+<!-- toc -->
 
-## Development setup
+- [🌟 Overview](#overview)
+- [⚡ Features](#features)
+  * [📣 Posting & timelines](#posting-timelines)
+  * [📢 Social & federated](#social-federated)
+  * [🧳 Migration & portability](#migration-portability)
+  * [⚖️ Moderation & administration](#moderation-administration)
+  * [🛠️ Platform](#platform)
+- [📦 Installation](#installation)
+  * [🐳 Docker](#docker)
+  * [🦀 Cargo](#cargo)
+- [⚙️ Configuration](#configuration)
+- [⚡ Running the service](#running-the-service)
+  * [Creating a user](#creating-a-user)
+  * [Web push notifications](#web-push-notifications)
+- [▶️ Testing the installation](#testing-the-installation)
+- [🧩 Integrations](#integrations)
+- [API](#api)
+- [🛠️ Development](#development)
+- [📜 License](#license)
 
-Prerequisites: a Rust toolchain (`cargo`, `rustfmt`, `clippy` — see
-`rust-toolchain.toml`), PostgreSQL and Redis for runtime services, Python 3
-for the Markdown TOC hook, and [`pre-commit`](https://pre-commit.com) for the
-git hooks.
+<!-- tocstop -->
 
-```bash
-cp config.toml.example config.toml   # adjust for your environment
-cp .env.example .env                 # secrets and env overrides
-pre-commit install
+## 🌟 Overview
 
-cargo build
-cargo test
-```
+Yonder is a self-hosted, Mastodon-compatible
+[ActivityPub](https://activitypub.rocks/) server written in Rust — a whole
+social network in a single binary.
 
-Configuration resolves in this order (highest wins): database overlays
-(`config_overlays` table) → `YONDER_*` environment variables → `config.toml`
-→ built-in defaults. Environment variables use `__` as the nesting
-separator, e.g. `YONDER_INSTANCE__NAME` for `instance.name`. Run
-`yonder config list` to see every key in both forms.
+It speaks the Mastodon client API, so the apps you already use on your phone
+and desktop just work when pointed at your instance. It speaks ActivityPub,
+so your community federates with Mastodon, Akkoma, Pleroma and the rest of
+the Fediverse. And it speaks migration: moving an account *to* or *from*
+another server — followers, posts, media and all — is a first-class feature,
+not an afterthought.
 
-## Database
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png">
+  <img src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-home.png" alt="The Yonder home timeline on desktop">
+</picture>
 
-The PostgreSQL schema is embedded in the binary as reversible sqlx
-migrations (`migrations/*.up.sql` + `*.down.sql`). Migrations run
-automatically on `yonder serve` (disable with `server.migrate_on_start =
-false`), or can be applied explicitly:
+## ⚡ Features
 
-```bash
-yonder migrate              # apply all pending migrations (idempotent)
-yonder migrate --revert     # roll back the most recent migration
-yonder migrate --revert 3   # roll back to version 3 (exclusive)
-yonder migrate status       # applied/pending per migration (exit 1 if pending)
-```
+### 📣 Posting & timelines
 
-The `yonder` binary also administers the instance offline — config
-overlays, users, domain blocks, relays, emoji and frontend installs,
-plus `run-job` for ad-hoc job execution. `docs/cli.md` has the full
-command reference, the `--json` output contract and exit codes.
+- 📝 **Rich posts** — plain text or Markdown, content warnings, polls,
+  media attachments with editable alt text, scheduled posts, post editing
+  and saved drafts
+- 💬 **Quotes & reactions** — quote posts with author authorization and
+  custom emoji reactions, on top of the usual replies, boosts and likes
+- 🏠 **Every timeline Mastodon has** — home, local and federated feeds,
+  hashtag timelines, and user-defined lists — with real-time updates over
+  WebSocket streaming
+- #️⃣ **Hashtags that work for you** — follow tags into your home feed,
+  trending tags, and server-side filters (`warn`/`hide`/`blur`) that work
+  across every timeline
+- 🧵 **Threads that complete themselves** — reply contexts are fetched on
+  demand, and remote like/boost counts are resolved where the origin
+  exposes them
 
-Migrations are additive and forward-only; destructive changes live in
-clearly-named migrations.
+### 📢 Social & federated
 
-## Tests
+- 🌐 **Full ActivityPub federation** via
+  [pubby-sdk](https://crates.io/crates/pubby-sdk) — interoperates with
+  Mastodon, Akkoma, Pleroma, Misskey and other Yonder instances
+- 🔌 **Mastodon-compatible API** (v1 and v2) — point Tusky, Ivory,
+  Elk, Phanpy or any Mastodon client at your instance and log in
+- ✉️ **Private conversations** — direct messages as conversations, not
+  just posts with a lock icon
+- 🔔 **Notifications your way** — real-time in-app notifications, Web
+  Push, and email, with per-type preferences
+- 😀 **Custom emoji** — per-instance emoji and emoji packs, rendered
+  consistently in posts, profiles and reactions
+- 🛜 **Feeds & embeds** — RSS 2.0 and Atom feeds for profiles, tags and
+  lists; oEmbed/embeddable status cards; Webmentions in both directions
 
-The DB/Redis-backed integration tests live in `tests/e2e/` — a single
-`e2e` target so libtest runs every suite in parallel against one shared
-Postgres+Redis container pair. Each test gets its own
-`yonder_t_<test>` database and `yonder_t:<test>` `key_prefix` (see
-`tests/e2e/harness.rs`), so `cargo test --test e2e` is all that's
-needed; tests are skipped when no container runtime is reachable.
+### 🧳 Migration & portability
 
-- Concurrency is capped at 3/4 of available cores to leave headroom —
-  override with `YONDER_TEST_WORKERS` (or `-- --test-threads`).
-- The `yonder-test-pg17`/`yonder-test-redis7` containers are *reused*
-  across runs (created once, re-attached after). `docker rm -f` them
-  to start clean; a config-hash label auto-recreates them when the
-  harness options change.
-- `YONDER_TEST_PG_URL` / `YONDER_TEST_REDIS_URL` point at externally
-  provisioned services instead (CI service containers, docker-compose).
+- 🚚 **Move in either direction** — signed ActivityPub `Move` handling,
+  follower migration with retries and progress tracking, and moved-account
+  banners, compatible with Mastodon and Akkoma
+- 📦 **Your data is yours** — Mastodon-compatible export archives
+  (posts, media, lists, bookmarks, follows, blocks…) with signed download
+  links — and suspended accounts still get export-only access
+- 📥 **Import from anywhere** — pull your archive, or connect a remote
+  Mastodon/Akkoma account over OAuth and import posts, bookmarks,
+  favourites, follows and more — preserving timestamps and provenance
+- 🔐 **Identity that survives** — profile fields, link verification and
+  moved-account markers all travel with you
 
-## Redis & background jobs
+### ⚖️ Moderation & administration
 
-Redis provides the cache layer, the durable job queue and the cron
-scheduler. Everything is namespaced under `redis.key_prefix` (`yonder:`
-by default).
+- 🛡️ **User-side tools** — mutes, blocks, reports (optionally forwarded
+  to the remote instance via `Flag`), and server-side content filters
+- 🏛️ **Instance-side tools** — user limiting and suspension, domain
+  blocks, federation relays, and an admin panel for users, emoji, settings
+  and audit logs
+- 🚪 **Every registration policy** — open, invite-only, approval-required
+  or closed, plus invite management
+- 🌍 **Truly international** — the bundled web UI ships in five languages
+  including full RTL support, with light and dark themes
 
-- **Cache** — `cache::RedisCache` (`{prefix}:cache:` keys): `get`/`set`
-  with TTL, `delete`/`delete_pattern` (SCAN-based), and single-flight
-  `get_or_load` request coalescing. `cache::Redis` also exposes the raw
-  `redis::Client` so Pubby's `RedisDocumentStore` can share the
-  connection for ActivityPub document caching (epic 06).
-- **Queue** — one Redis stream per queue: `default` (interactive work),
-  `federation` (latency-sensitive delivery) and `bulk` (high-volume
-  fan-out). Jobs persist across restarts; delivery is at-least-once, so
-  **handlers must be idempotent**. Failures retry with exponential
-  backoff (`jobs.backoff_*`) up to `jobs.max_attempts`, then land on
-  `{prefix}:queue:{name}:dead`. Delayed jobs are parked in a sorted set
-  until due; `XAUTOCLAIM` reclaims work abandoned by dead workers.
-- **Cron** — cleanup schedules are read from
-  `federation.remote_activity_prune_schedule` and
-  `media.remote_cleanup_schedule` (5-field crontab syntax) and fire by
-  enqueuing the matching cleanup job kind.
+### 🛠️ Platform
 
-Run the worker standalone (`yonder worker`, the production deployment)
-or in-process with `serve` (`jobs.enabled = true`, the dev default).
-`docker-compose.yml` wires a dedicated `worker` service while the app
-runs with `jobs.enabled = false` (see *Docker deployment* below).
+- 🦀 **One Rust binary** — no Ruby, no Elixir, no sprawling dependency
+  tree; PostgreSQL + Redis are the only services
+- 🔑 **OAuth2 provider** — authorization-code + PKCE, device flow,
+  password and client-credentials grants, plus scoped, revocable API
+  tokens for your own scripts
+- 🖥️ **Pluggable frontends** — the bundled web UI is just the default;
+  alternative frontends can be installed alongside it
+- 📖 **Open API** — OpenAPI 3 spec at `/openapi.json` with bundled
+  Swagger UI at `/swagger-ui`
+- 🔒 **Safety by default** — argon2id passwords, SSRF-guarded remote
+  fetches, Redis-backed rate limits, and durable at-least-once
+  federation delivery
 
-### Adding a job kind
+## 📦 Installation
 
-1. Add the variant to `jobs::JobKind` and route it to a `Queue` in
-   `JobKind::queue()` — pick `federation` only for latency-sensitive
-   delivery, `bulk` for high-volume fan-out.
-2. Implement `jobs::JobHandler` (`async fn run(&self, ctx, payload)`)
-   and `registry.register(kind, handler)` at startup, replacing the
-   stub registered by `jobs::stub::register_all`.
-3. Enqueue with `dispatcher.enqueue(kind, payload)` or
-   `enqueue_delayed(kind, payload, delay)`. Payloads are `serde_json`
-   values; keep them small and self-contained.
+### 🐳 Docker
 
-## HTTP API
-
-`yonder serve` binds `server.host`/`server.port` and, when
-`jobs.enabled` is set, runs the job worker in-process alongside it.
-The router (`http::build_router`) is modular: feature epics merge
-their subrouters under `http::api::v1`/`v2` and register an OpenAPI
-fragment in their module's `ApiDoc` — no changes to core wiring.
-
-- **Endpoints** — `GET /healthz`, `GET /openapi.json` (OpenAPI 3 via
-  utoipa), Swagger-UI at `/swagger-ui`, and the streaming WebSocket at
-  `/api/v1/streaming`.
-- **Middleware** — request ids (`x-request-id`, generated when absent
-  and propagated to the response), per-request tracing spans, CORS
-  (`http.cors_enabled` + `http.cors_origins`, off by default), and
-  Redis-backed rate limits.
-- **Auth** — handlers take `AuthContext` (401 on missing/invalid
-  token) or `MaybeAuth` (optional). Tokens resolve from
-  `Authorization: Bearer` or `?access_token=` against
-  `oauth_access_tokens` (`token_hash = hex(sha256(token))`; epic 07
-  owns issuance). The streaming endpoint shares the same resolution.
-- **Rate limiting** — `ratelimit::layer(&state, "<bucket>")` applied
-  with `.route_layer()`. Buckets are the `rate_limit.*` config keys
-  (`search`, `feed`, `timeline`, `account_creation`, `relation`, `status`,
-  `authentication`, `federation_inbox`); authenticated requests use
-  `authenticated_limit` when set and a separate `u:{id}` identity.
-  Rejects with 429 + `Retry-After`.
-- **Errors** — `Error` implements `IntoResponse` with Mastodon's
-  `{"error": "…"}` shape; 5xx responses return a generic message
-  (internals are logged, never leaked).
-- **Streaming** — Mastodon's protocol: `{"type":"subscribe",
-  "stream":"<name>"}` / `unsubscribe` frames, server→client
-  `{"stream":[…],"event":…,"payload":…}` frames, 30 s server pings
-  and echoed client pings. `user*` streams require auth and only
-  receive the owner's events (`user:{id}`). Producers publish via
-  `state.bus.publish(stream, event, payload)` (epic 16).
-
-### Adding a route module
-
-1. Create `src/http/api/{v1,v2}/<feature>.rs` (or a dedicated module);
-   handlers take `State<Arc<AppState>>` plus extractors.
-2. Merge its `Router<Arc<AppState>>` in `api::v1::router()` /
-   `api::v2::router()`.
-3. Annotate handlers with `#[utoipa::path]` and list them in the
-   module's `ApiDoc` `paths(...)` — `openapi::document()` merges it.
-4. Attach `ratelimit::layer(&state, "<bucket>")` where the endpoint
-   maps to a configured bucket.
-
-### Content filters
-
-Mastodon **v2** server-side filters: `GET/POST /api/v2/filters` with
-`keywords` and `statuses` sub-resources, owner-scoped (foreign ids
-404). `context[]` ⊆ `home notifications public thread account`;
-`filter_action` ∈ `warn hide blur`. `hide` rules splice a `NOT (…)`
-clause into the shared timeline predicate (home/list, public/tag,
-account statuses, search, notification embeds); `warn`/`blur` attach
-the `filtered` attribute instead. Expired filters never apply. See
-`docs/filters.md`.
-
-### Hashtags & trends
-
-`GET /api/v1/tags/{name}` (case-insensitive, 7-day `history`),
-`POST /api/v1/tags/{name}/follow|unfollow`, `GET
-/api/v1/followed_tags` — followed tags land posts in the home feed
-(SQL clause + Redis fan-out to tag followers). `GET
-/api/v1/trends/tags?period=day|week|month` ranks recent usage with a
-distinct-author floor and a Redis TTL cache (`timelines.trends_*`
-config; `period` is a Yonder extension).
-
-### Custom emoji
-
-`GET /api/v1/custom_emojis` (anonymous) plus an admin surface under
-`/api/v1/admin/emojis*` + `/api/v1/admin/emoji_packs*` (upload, patch,
-delete, zip/filesystem import, packs) — admin role + `admin` scope.
-`:shortcode:` renders at read time in status content/spoilers and
-account `note`/`fields`/`display_name`, domain-scoped for remote
-content; inbound `Emoji` AP tags are recorded, outbound posts emit
-them. See `docs/emoji.md`.
-
-### RSS & Atom feeds
-
-Outside `/api`: `/users/{username}.atom|.rss` (local accounts, public
-posts only), `/tags/{tag}.atom|.rss` (public tagged posts) and
-`/lists/{id}.atom|.rss` (list owner only, `read:lists`, Bearer or
-`?access_token=`). Generated server-side with quick-xml, capped at
-`content.max_feed_items` (default 50, max 200), rate-limited on the
-`feed` bucket. `feeds::discovery_links()` emits the `<link
-rel="alternate">` tags the frontend will inject into pages.
-`docs/feeds.md` has the full contract.
-
-### Instance metadata & `/about`
-
-`GET /api/v1/instance` and `GET /api/v2/instance` expose the
-Mastodon-shaped entities (stats, `usage`, `rules` as `{id,text}`
-objects, resolved `contact.account`), `extended_description`,
-`peers` and public `domain_blocks` round out the surface, and
-`instance.logo_path`/`banner_path` serve at
-`/api/v1/instance/logo|banner` for the `icon`/`thumbnail` fields and
-the SPA's `/about` page. `docs/instance.md` has the full contract.
-
-## Federation (ActivityPub)
-
-Federation runs on [`pubby-sdk`](https://crates.io/crates/pubby-sdk)
-0.6 (`src/activitypub/`). When `federation.enabled`, `serve` builds an
-`ApContext` (a `MultiActorHandler` over the Postgres
-`ActivityPubStorage` adapter + Redis document cache) and merges the AP
-router: POST inboxes (`/ap/inbox`, `/ap/users/{u}/inbox`) validate,
-dedupe and enqueue behind the `federation_inbox` rate limit, while
-every AP GET is dispatched through `dispatch_multi` (actor docs,
-WebFinger, NodeInfo, host-meta, outbox/followers/following, quote
-authorizations). Outbound delivery is durable: a `deliveries` ledger
-row per inbox plus `FederationDelivery` jobs on the `federation`
-queue. `federation.base_url`/`allow_private_targets` support dev/test
-setups; `docs/activitypub.md` has the routing map and pipeline detail.
-
-## Authentication
-
-Mastodon-compatible auth: registration under `auth.registration_mode`
-(open / approval-required / closed), argon2id passwords, OAuth2 grants
-(password, client_credentials, authorization-code + PKCE, refresh,
-device flow), scoped and revocable tokens, authorized-app management,
-and session tracking. Bearer material is random 32-byte secrets stored
-sha256-hex; only passwords use the KDF. See `docs/authentication.md`.
-
-## Docker deployment
-
-`docker-compose.yml` runs the full stack — `yonder` (HTTP),
-`worker` (job queues), `postgres`, `redis` and an `nginx` reverse
-proxy that fronts everything on `YONDER_HTTP_PORT` (default 80). The
-image is published at `quay.io/yonder/yonder`; uncomment the
-`build:` blocks to build it locally instead.
+`docker-compose.yml` runs the full stack — `yonder` (HTTP), `worker`
+(job queues), `postgres`, `redis` and an `nginx` reverse proxy that
+fronts everything on `YONDER_HTTP_PORT` (default 80). The image is
+published at `quay.io/yonder/yonder`; uncomment the `build:` blocks to
+build it locally instead.
 
 ```bash
 cp config.toml.example config.toml   # REQUIRED before first `up` —
@@ -251,13 +144,6 @@ cp config.toml.example config.toml   # REQUIRED before first `up` —
                                      # without it
 cp .env.example .env                 # PUID/PGID, domain, secrets
 docker compose up -d
-```
-
-Before exposing the instance to browsers, generate the Web Push VAPID
-keys once and add them to `.env` (or `config.toml`):
-
-```bash
-docker compose run --rm yonder webpush generate-keys
 ```
 
 Layout and conventions:
@@ -285,29 +171,116 @@ Layout and conventions:
   `Cache-Control`, private/credentialed answers get `X-Accel-Expires:
   0` + `no-store`, and signed fetches bypass the cache entirely.
 
-## CI/CD
+### 🦀 Cargo
 
-`.drone.yml` mirrors the Songhive pipeline: lint + tests on push,
-image publish to quay.io and `cargo publish` of the `yonder-server`
-crate on tag (`yonder` is taken on crates.io by an unrelated project;
-the binary is still `yonder`). `backend-tests` runs the suite through
-`cargo llvm-cov` and emits `lcov.info`, uploaded to Codacy on pushes
-to `main`. Required Drone secrets: `ssh_pubkey`/`ssh_privkey` (GitHub
-mirror), `docker_user`/`docker_pass` (registry), `crates_io_token`,
-`codacy_project_token` (coverage upload). The `cargo_cache` volume
-expects a writable `/home/drone/.cargo/drone` on the Drone host.
-
-### Cutting a release
-
-Bump the version with `scripts/bump-version.sh` — the Rust equivalent
-of bumpversion, backed by cargo-edit's `cargo set-version`
-(`cargo install cargo-edit --locked`):
+The server is published on crates.io as `yonder-server` (`yonder` is
+taken by an unrelated project; the binary is still `yonder`):
 
 ```bash
-scripts/bump-version.sh minor   # or patch|major, or an explicit 1.2.3
+cargo install yonder-server --locked
+
+# PostgreSQL and Redis are required — then configure and run
+cp config.toml.example config.toml
+yonder migrate
+yonder serve
 ```
 
-It updates `Cargo.toml` and `Cargo.lock`. Commit both, then push a
-`v<version>` tag — the tag pipeline publishes
-`quay.io/yonder/yonder:<version>` (+ `:latest`) and the
-`yonder-server` crate.
+## ⚙️ Configuration
+
+A single `config.toml` controls the instance — see
+[`config.toml.example`](config.toml.example) for every documented key.
+Configuration resolves in this order (highest wins):
+
+1. **Database overlays** (`config_overlays` table, editable from the
+   admin panel)
+2. **`YONDER_*` environment variables** — `__` is the nesting
+   separator, e.g. `YONDER_INSTANCE__NAME` for `instance.name`
+3. **`config.toml`**
+4. **Built-in defaults**
+
+Run `yonder config list` to see every key in both `config.toml` and
+environment-variable form.
+
+## ⚡ Running the service
+
+```bash
+yonder serve     # HTTP API + web UI (+ in-process jobs when jobs.enabled)
+yonder worker    # the background job queues (production deployment)
+```
+
+### Creating a user
+
+```bash
+# Docker
+docker compose run --rm yonder user create --username alice --admin
+
+# Cargo/binary install
+yonder user create --username alice --admin
+```
+
+See [`docs/cli.md`](docs/cli.md) for the full command reference —
+users, domain blocks, relays, emoji, frontend installs, config
+overlays, migrations and ad-hoc job execution.
+
+### Web push notifications
+
+Before exposing the instance to browsers, generate the Web Push VAPID
+keys once and add them to `.env` (or `config.toml`):
+
+```bash
+docker compose run --rm yonder webpush generate-keys
+# or: yonder webpush generate-keys
+```
+
+## ▶️ Testing the installation
+
+```bash
+curl https://your.instance/healthz
+curl https://your.instance/api/v1/instance
+```
+
+Then open the instance in a browser, sign in, and check that your
+profile resolves remotely:
+
+```bash
+curl 'https://mastodon.social/.well-known/webfinger?resource=acct:you@your.instance'
+```
+
+## 🧩 Integrations
+
+- **Mastodon clients** — any app that speaks the Mastodon API
+  (Tusky, Ivory, Elk, Phanpy, Mona, …) works against `/api/v1` and
+  `/api/v2`
+- **Feed readers** — profiles, tags and lists expose RSS 2.0 and Atom
+  feeds with `<link rel="alternate">` discovery
+- **OAuth2 apps** — register third-party applications via the standard
+  `/api/v1/apps` + `/oauth` flow, or issue scoped API tokens from the
+  settings UI
+- **Blog & web** — public posts emit Webmentions and answer incoming
+  ones; statuses can be embedded on external pages via `embed.js`
+
+## API
+
+A documented REST API under `/api/v1` and `/api/v2` — Mastodon-shaped
+where Mastodon defines a contract, namespaced under `yonder.*` where it
+doesn't. The OpenAPI 3 spec is served at `/openapi.json` and a bundled
+Swagger UI lives at `/swagger-ui`.
+
+The streaming WebSocket at `/api/v1/streaming` implements Mastodon's
+`subscribe`/`unsubscribe` protocol — `user`, `public`, `public:local`,
+`hashtag` and `list` streams.
+
+## 🛠️ Development
+
+Yonder is a Rust workspace (`axum`, `sqlx`, `tokio`) plus a Vue 3 +
+TypeScript SPA in `frontend/`.
+
+Developer documentation lives in [`docs/development.md`](docs/development.md)
+— environment setup, migrations, the test harness, job-queue and HTTP
+internals, and the release pipeline. Feature-by-feature API contracts
+live alongside it in [`docs/`](docs/).
+
+## 📜 License
+
+Yonder is free software, released under the
+[AGPL-3.0 license](LICENSE).

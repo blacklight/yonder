@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -17,7 +17,10 @@
       content="A self-hosted, Mastodon-compatible ActivityPub server written in Rust — federation, migration and data portability included."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png" />
+    <meta
+      property="og:image"
+      content="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png"
+    />
 
     <meta
       name="theme-color"
@@ -98,8 +101,15 @@
 
       body {
         margin: 0;
-        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-          "Helvetica Neue", Arial, sans-serif;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          "Helvetica Neue",
+          Arial,
+          sans-serif;
         background: var(--bg);
         color: var(--text);
         line-height: 1.6;
@@ -185,8 +195,11 @@
         font-size: 0.95rem;
         text-decoration: none;
         cursor: pointer;
-        transition: transform 0.15s ease, box-shadow 0.15s ease,
-          background 0.15s ease, border-color 0.15s ease;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.15s ease,
+          background 0.15s ease,
+          border-color 0.15s ease;
         white-space: nowrap;
       }
 
@@ -504,7 +517,9 @@
         border: 1px solid var(--border);
         border-radius: var(--radius);
         background: var(--surface);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        transition:
+          transform 0.15s ease,
+          box-shadow 0.15s ease;
       }
 
       .card:hover {
@@ -614,7 +629,8 @@
         padding: 1.1rem 1.2rem;
         overflow-x: auto;
         color: var(--code-text);
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+        font-family:
+          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
           "Liberation Mono", monospace;
         font-size: 0.82rem;
         line-height: 1.7;
@@ -805,7 +821,8 @@
           >
           <h1>A social network in a single binary</h1>
           <p class="lede">
-            Yonder is a Mastodon-compatible ActivityPub server written in Rust.<br />
+            Yonder is a Mastodon-compatible ActivityPub server written in
+            Rust.<br />
             Your community, your rules, your data — and the Mastodon apps you
             already use just work.
           </p>
@@ -839,7 +856,9 @@
               <picture>
                 <source
                   media="(prefers-color-scheme: dark)"
-                  srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png"
+                  srcset="
+                    https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-home.png
+                  "
                 />
                 <img
                   src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-home.png"
@@ -855,7 +874,9 @@
               <picture>
                 <source
                   media="(prefers-color-scheme: dark)"
-                  srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-home.png"
+                  srcset="
+                    https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-home.png
+                  "
                 />
                 <img
                   src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-home.png"
@@ -912,7 +933,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-local-timeline.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-local-timeline.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-local-timeline.png"
@@ -928,7 +951,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-notifications.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-notifications.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-notifications.png"
@@ -959,25 +984,25 @@
             <ul class="features">
               <li>
                 <strong>Remote thread expansion</strong> — replies discovered on
-                demand. You always see the full picture, not only what your instance
-                has cached
+                demand. You always see the full picture, not only what your
+                instance has cached
               </li>
               <li>
                 <strong>Direct messages as conversations</strong> — grouped
-                threads, unread badges. Direct messages are conversations with people,
-                not just a scrollable timeline of private posts
+                threads, unread badges. Direct messages are conversations with
+                people, not just a scrollable timeline of private posts
               </li>
               <li>
                 <strong>Remote interaction lists</strong> — see who liked or
-                boosted a remote post, proxied from its home server. Get the full picture
-                even if your server doesn't have many peers
+                boosted a remote post, proxied from its home server. Get the
+                full picture even if your server doesn't have many peers
               </li>
               <li>
                 <strong>Webmentions</strong> — public posts send and receive
-                Webmentions, so blogs are part of the conversation too. Mention a blog article,
-                and the author will be notified. And mentions of your social posts on
-                Webmentions-compatible websites get rendered as normal comments in your
-                conversation
+                Webmentions, so blogs are part of the conversation too. Mention
+                a blog article, and the author will be notified. And mentions of
+                your social posts on Webmentions-compatible websites get
+                rendered as normal comments in your conversation
               </li>
             </ul>
           </div>
@@ -987,7 +1012,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-thread-poll.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-thread-poll.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-thread-poll.png"
@@ -1003,7 +1030,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-messages-thread.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-messages-thread.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-messages-thread.png"
@@ -1061,7 +1090,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-messages.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-messages.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-messages.png"
@@ -1077,7 +1108,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-compose.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-compose.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-compose.png"
@@ -1123,11 +1156,11 @@
                 provenance
               </li>
               <li>
-                <strong>Move your data in a couple of clicks</strong> — move your
-                whole social story, not only your followers. Yonder allows you to
-                connect over OAuth to your old instance and decide what you want
-                to import. No need to download and upload CSV files. No more
-                posts and interactions left behind upon migration
+                <strong>Move your data in a couple of clicks</strong> — move
+                your whole social story, not only your followers. Yonder allows
+                you to connect over OAuth to your old instance and decide what
+                you want to import. No need to download and upload CSV files. No
+                more posts and interactions left behind upon migration
               </li>
               <li>
                 <strong>Remote historical context</strong> — imported posts keep
@@ -1141,7 +1174,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-settings.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-settings.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-settings.png"
@@ -1157,7 +1192,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-settings.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-settings.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-settings.png"
@@ -1201,8 +1238,8 @@
               </li>
               <li>
                 <strong>Full customizable experience</strong> — multi-language
-                by design, accent and theme customization, and support for custom
-                frontends (Pleroma/Akkoma compatible)
+                by design, accent and theme customization, and support for
+                custom frontends (Pleroma/Akkoma compatible)
               </li>
             </ul>
           </div>
@@ -1212,7 +1249,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-admin.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/desktop-admin.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-desktop-admin.png"
@@ -1228,7 +1267,9 @@
                 <picture>
                   <source
                     media="(prefers-color-scheme: dark)"
-                    srcset="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-profile.png"
+                    srcset="
+                      https://s3.fabiomanganiello.com/fabio/screenshots/yonder/mobile-profile.png
+                    "
                   />
                   <img
                     src="https://s3.fabiomanganiello.com/fabio/screenshots/yonder/light-mobile-profile.png"
@@ -1280,8 +1321,8 @@
               <p>
                 The bundled Vue SPA is the default — alternative frontends
                 install from the CLI and serve side by side. The bundle PWA
-                provides a curated mobile experience even without the need
-                for an native mobile app.
+                provides a curated mobile experience even without the need for
+                an native mobile app.
               </p>
             </div>
             <div class="card">
@@ -1371,9 +1412,9 @@
                   <td>🔁 Account Migrations</td>
                   <td>
                     Moves in and out, follower migration with retries,
-                    Mastodon-compatible archives or remote OAuth-based
-                    of posts, favourites, bookmarks and follows from the
-                    remote instance — with original timestamps respected
+                    Mastodon-compatible archives or remote OAuth-based of posts,
+                    favourites, bookmarks and follows from the remote instance —
+                    with original timestamps respected
                   </td>
                   <td>Moves in and out, CSV/archive import/export</td>
                   <td>Moves in and out, CSV/archive import/export</td>

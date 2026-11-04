@@ -412,6 +412,73 @@ async fn spa_entry_carries_feed_discovery_links() {
     }
 }
 
+/// Local profile pages carry `<link rel="me">` tags for every
+/// link-valued profile field, so crawlers verifying `rel="me"`
+/// backlinks find the claims in the raw HTML — the SPA renders fields
+/// client-side. Anchor-valued fields contribute their href, non-link
+/// fields and duplicates nothing; remote handles and unknown users
+/// get no tags.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spa_entry_carries_rel_me_links() {
+    let _permit = harness::acquire().await;
+    let (config, dir) = base_config();
+    std::fs::create_dir_all(dir.join("builtin")).unwrap();
+    std::fs::write(
+        dir.join("builtin/index.html"),
+        "<html><head><title>t</title></head><body>SHELL</body></html>",
+    )
+    .unwrap();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env.app, "alice", "alice@x.test").await;
+    let (status, _, body) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/accounts/update_credentials",
+        Some(&token),
+        Some(json!({
+            "fields_attributes": [
+                {"name": "site", "value": "https://alice.example.com"},
+                {"name": "blog", "value": "https://alice.example.com?a=1&b=2"},
+                {"name": "again", "value": "https://alice.example.com"},
+                {"name": "link", "value": "<a href=\"https://labeled.example.com\">a label</a>"},
+                {"name": "pronouns", "value": "she/her"},
+            ],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+    let (status, _, body) = request(&env.app, "GET", "/@alice", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8_lossy(&body);
+    for href in [
+        "https://alice.example.com",
+        // Query ampersands are attribute-escaped.
+        "https://alice.example.com?a=1&amp;b=2",
+        "https://labeled.example.com",
+    ] {
+        assert!(
+            html.contains(&format!("<link rel=\"me\" href=\"{href}\" />")),
+            "{href} missing: {html}"
+        );
+    }
+    // The duplicated URL is emitted once; the non-link field never.
+    assert_eq!(html.matches("rel=\"me\"").count(), 3, "{html}");
+    assert!(!html.contains("she/her"));
+
+    // A local-domain-qualified handle resolves the same account;
+    // remote handles, unknown users and non-profile paths don't.
+    let (_, _, body) = request(&env.app, "GET", "/@alice@localhost", None, None).await;
+    assert!(String::from_utf8_lossy(&body).contains("rel=\"me\""));
+    for path in ["/@alice@remote.tld", "/@nobody", "/tags/rust", "/"] {
+        let (_, _, body) = request(&env.app, "GET", path, None, None).await;
+        let html = String::from_utf8_lossy(&body);
+        assert!(!html.contains("rel=\"me\""), "{path}: {html}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn malicious_zips_are_rejected() {
     let _permit = harness::acquire().await;

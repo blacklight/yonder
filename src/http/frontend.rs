@@ -98,8 +98,19 @@ pub async fn fallback(
     // `/` and every unmatched path fall through to the SPA entry —
     // feed-backed pages get their `<link rel="alternate">` discovery
     // tags injected into `<head>` so scrapers and feed readers can
-    // find the RSS/Atom endpoints on the raw HTML too.
-    let head_extra = feed_discovery(&config.instance.domain, uri.path());
+    // find the RSS/Atom endpoints on the raw HTML too; profile pages
+    // also carry `<link rel="me">` for each link-valued field.
+    let mut head_extra = feed_discovery(&config.instance.domain, uri.path());
+    if let Some(links) = rel_me_links(&state, uri.path()).await {
+        head_extra = Some(match head_extra {
+            Some(mut extra) => {
+                extra.push('\n');
+                extra.push_str(&links);
+                extra
+            }
+            None => links,
+        });
+    }
     let response = if rel.as_os_str().is_empty() {
         serve_entry(&frontend, head_extra.as_deref())
     } else {
@@ -219,25 +230,7 @@ pub fn spa_entry(state: &AppState, path: &str) -> Response {
 /// raw request path — still percent-encoded, which is exactly what the
 /// feed `href`s want.
 fn feed_discovery(local_domain: &str, path: &str) -> Option<String> {
-    if let Some(rest) = path.strip_prefix("/@") {
-        if rest.is_empty() || rest.contains('/') {
-            return None;
-        }
-        // `user@domain` handles only have a feed when the domain is
-        // this instance — remote profiles are served by their origin.
-        // The raw path is percent-encoded; decode for the acct parse
-        // and re-encode the username for the href.
-        let decoded = percent_encoding::percent_decode_str(rest)
-            .decode_utf8()
-            .ok()?;
-        let username = match decoded.split_once('@') {
-            Some((user, domain)) if domain.eq_ignore_ascii_case(local_domain) => user,
-            Some(_) => return None,
-            None => decoded.as_ref(),
-        };
-        if username.is_empty() {
-            return None;
-        }
+    if let Some(username) = local_profile_username(local_domain, path) {
         let encoded: String = url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
         return Some(crate::feeds::discovery_links(
             &format!("/users/{}", encoded.replace('+', "%20")),
@@ -257,6 +250,67 @@ fn feed_discovery(local_domain: &str, path: &str) -> Option<String> {
         ));
     }
     None
+}
+
+/// The decoded local username for a `/@{user}` profile path (also
+/// `/@{user}@this-domain`), or `None` for remote handles, sub-paths
+/// and non-profile routes. The raw path is percent-encoded; decode
+/// for the acct parse.
+fn local_profile_username(local_domain: &str, path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/@")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    let decoded = percent_encoding::percent_decode_str(rest)
+        .decode_utf8()
+        .ok()?;
+    // `user@domain` handles are only local when the domain is this
+    // instance — remote profiles are served by their origin.
+    let username = match decoded.split_once('@') {
+        Some((user, domain)) if domain.eq_ignore_ascii_case(local_domain) => user,
+        Some(_) => return None,
+        None => decoded.as_ref(),
+    };
+    (!username.is_empty()).then(|| username.to_string())
+}
+
+/// `<link rel="me">` tags for a local profile page — one per
+/// link-valued profile field so crawlers can verify the claims from
+/// the raw HTML (the SPA renders fields client-side). URL selection
+/// matches the `rel="me"` verifier itself
+/// ([`crate::users::profile::field_verify_url`]): the raw value when
+/// it is a linkable URL, otherwise the first anchor's href. Remote
+/// handles, unknown/suspended accounts and DB errors inject nothing —
+/// the page is still served.
+async fn rel_me_links(state: &AppState, path: &str) -> Option<String> {
+    let config = state.config();
+    let username = local_profile_username(&config.instance.domain, path)?;
+    let account = match crate::users::account::load_local_by_username(&state.db, &username).await {
+        Ok(account) => account?,
+        Err(e) => {
+            tracing::warn!(error = %e, "rel=\"me\" profile lookup failed; serving without links");
+            return None;
+        }
+    };
+    let mut seen = Vec::new();
+    let mut links = String::new();
+    for entry in account.profile_fields.as_array()? {
+        let Some(url) = crate::users::profile::field_verify_url(&config, entry) else {
+            continue;
+        };
+        if seen.contains(&url) {
+            continue;
+        }
+        if !links.is_empty() {
+            links.push('\n');
+        }
+        links.push_str(&format!(
+            "<link rel=\"me\" href=\"{}\" />",
+            quick_xml::escape::escape(crate::feeds::render::xml_safe(&url))
+        ));
+        seen.push(url);
+    }
+    (!links.is_empty()).then_some(links)
 }
 
 /// Splice `extra` markup just before `</head>`. `None` for non-UTF-8

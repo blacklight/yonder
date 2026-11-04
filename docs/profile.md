@@ -94,6 +94,15 @@ throttled to one attempt per account per 15 minutes via a Redis flag.
 Verification flips never emit
 an `Update` — `verified_at` doesn't reach the AP document.
 
+The profile page itself also publishes the claims: the SPA fallback
+(`http::frontend::rel_me_links`) splices a `<link rel="me" href="…">`
+into the served `index.html`'s `<head>` for every link-valued field
+of a `/@{user}` page (same `field_verify_url` selection as the
+verifier — raw URL values and first-anchor hrefs), so crawlers can
+read them without running the app — the SPA renders fields
+client-side. Remote handles, unknown/suspended accounts and lookup
+errors inject nothing; the page is still served.
+
 For **remote** accounts the same column is populated at ingest: the
 actor document's `attachment[]` `PropertyValue` entries (any spelling —
 plain, `schema:`-prefixed, or the schema.org IRI; a missing `type` also

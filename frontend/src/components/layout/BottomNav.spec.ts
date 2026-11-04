@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import BottomNav, { type BottomNavItem } from "./BottomNav.vue";
 
@@ -30,6 +31,8 @@ const items: BottomNavItem[] = [
 ];
 
 describe("BottomNav", () => {
+  beforeEach(() => vi.restoreAllMocks());
+
   it("renders one link per item with accessible labels", () => {
     const { wrapper } = mountWith(BottomNav, { props: { items } });
     const links = wrapper.findAll<HTMLAnchorElement>(".bottomnav__link");
@@ -70,5 +73,41 @@ describe("BottomNav", () => {
     const { wrapper } = mountWith(BottomNav, { props: { items } });
     const profile = wrapper.get(".bottomnav__item:last-child .bottomnav__link");
     expect(profile.classes()).toContain("bottomnav__link--active");
+  });
+
+  it("re-tapping the current route's tab scrolls to top instead of navigating", async () => {
+    const spy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const { wrapper, router } = mountWith(BottomNav, { props: { items } });
+    await router.isReady();
+    await router.push("/home");
+    await wrapper.findAll(".bottomnav__link")[0].trigger("click");
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ top: 0 }));
+    expect(router.currentRoute.value.path).toBe("/home");
+  });
+
+  it("a forced-active alias (home on `/`) scrolls to top too", async () => {
+    const spy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const home: BottomNavItem[] = [
+      { id: "home", label: "Home", to: "/home", icon: "house", active: true },
+    ];
+    const { wrapper, router } = mountWith(BottomNav, {
+      props: { items: home },
+    });
+    await router.isReady();
+    expect(router.currentRoute.value.path).toBe("/");
+    await wrapper.get(".bottomnav__link").trigger("click");
+    expect(spy).toHaveBeenCalled();
+    expect(router.currentRoute.value.path).toBe("/");
+  });
+
+  it("tapping a different tab navigates without scrolling", async () => {
+    const spy = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    const { wrapper, router } = mountWith(BottomNav, { props: { items } });
+    await router.isReady();
+    await router.push("/home");
+    await wrapper.findAll(".bottomnav__link")[1].trigger("click");
+    await flushPromises();
+    expect(spy).not.toHaveBeenCalled();
+    expect(router.currentRoute.value.path).toBe("/search");
   });
 });

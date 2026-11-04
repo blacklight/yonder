@@ -11,6 +11,7 @@ const stub = { template: "<div />" };
 
 export const stubRoutes: RouteRecordRaw[] = [
   { path: "/", name: "home", component: stub },
+  { path: "/home", name: "home-timeline", component: stub },
   { path: "/login", name: "sign-in", component: stub },
   { path: "/register", name: "register", component: stub },
   { path: "/verify-email/:token", name: "verify-email", component: stub },

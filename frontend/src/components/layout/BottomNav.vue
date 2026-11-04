@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRoute } from "vue-router";
 import Avatar from "@/components/ui/Avatar.vue";
 import { FontAwesomeIcon } from "@/icons";
 import type { NavItem } from "./NavMenu.vue";
@@ -20,6 +21,19 @@ export interface BottomNavItem extends Omit<NavItem, "badge"> {
 }
 
 defineProps<{ items: BottomNavItem[] }>();
+
+const route = useRoute();
+
+/** Mastodon-style: tapping the tab for the page you're already on
+ * scrolls back to the top instead of navigating (the router would
+ * dedupe it anyway). `item.active` covers aliases route matching
+ * can't see — `/` rendering the home timeline, `/@me` the profile. */
+function onItemClick(item: BottomNavItem, e: MouseEvent) {
+  if (route.path !== item.to && !item.active) return;
+  e.preventDefault();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+}
 </script>
 
 <template>
@@ -32,6 +46,7 @@ defineProps<{ items: BottomNavItem[] }>();
           :class="{ 'bottomnav__link--active': item.active }"
           :aria-label="item.label"
           :title="item.label"
+          @click="onItemClick(item, $event)"
         >
           <span class="bottomnav__iconwrap">
             <Avatar

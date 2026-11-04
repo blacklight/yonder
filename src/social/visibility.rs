@@ -25,6 +25,28 @@ pub const MUTES_EXCLUSION: &str = "NOT EXISTS (SELECT 1 FROM mutes m \
 pub const DOMAIN_BLOCKS_EXCLUSION: &str = "NOT EXISTS (SELECT 1 FROM account_domain_blocks d \
     WHERE d.account_id = $1 AND d.domain = a.domain)";
 
+// ---------------------------------------------------------------------------
+// `ANY(<uncorrelated subquery>)` variants of the viewer exclusions —
+// evaluated once into a hash probe instead of a per-row index dive.
+// Semantically identical to the `NOT EXISTS` forms above; use these in
+// bulk scans (timeline scopes) where the outer row count is large.
+// ---------------------------------------------------------------------------
+
+/// [`BLOCKS_EXCLUSION`] as a hashed `ANY` — the blocked pair set is
+/// materialized once. Expects alias `a`.
+pub const BLOCKS_EXCLUSION_ANY: &str = "NOT (a.id = ANY( \
+    SELECT target_account_id FROM blocks WHERE account_id = $1 \
+    UNION SELECT account_id FROM blocks WHERE target_account_id = $1))";
+
+/// [`MUTES_EXCLUSION`] as a hashed `ANY`. Expects alias `a`.
+pub const MUTES_EXCLUSION_ANY: &str = "NOT (a.id = ANY( \
+    SELECT target_account_id FROM mutes WHERE account_id = $1 \
+      AND (expires_at IS NULL OR expires_at > now())))";
+
+/// [`DOMAIN_BLOCKS_EXCLUSION`] as a hashed `ANY`. Expects alias `a`.
+pub const DOMAIN_BLOCKS_EXCLUSION_ANY: &str = "NOT (a.domain = ANY( \
+    SELECT domain FROM account_domain_blocks WHERE account_id = $1))";
+
 /// The joined account is live — not suspended and not deleted.
 /// Expects alias `a`.
 pub const VISIBLE: &str = "a.suspended_at IS NULL AND a.deleted_at IS NULL";

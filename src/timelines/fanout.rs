@@ -26,7 +26,11 @@ use crate::{
     Result,
 };
 
-use super::{filter::Filters, query, scope::TimelineScope};
+use super::{
+    filter::{Bind, Filters},
+    query,
+    scope::TimelineScope,
+};
 
 /// `{prefix}:timeline:home:v2:{account_id}`.
 pub fn home_key(redis: &Redis, account_id: i64) -> String {
@@ -314,17 +318,22 @@ pub async fn read_home(
             let (max, min) = score_window(db, page).await?;
             let mut conn = redis.conn().await?;
             let key = home_key(redis, viewer);
+            // Over-read the window: members that fail SQL re-validation
+            // (unfollows, blocks, tombstones) would otherwise force the
+            // expensive fallback on every sparse page. 3x the page is a
+            // bounded slack — excess candidates are dropped below.
+            let read_n = page.limit.saturating_mul(3) as isize;
             let ids: Vec<i64> = if page.since_id.is_some() {
                 // Newest-N-above-cursor, like the SQL ASC path.
                 // `ZRANGEBYSCORE` takes (min, max) — the window
                 // tuple returns (max, min), so the order flips.
                 let mut asc: Vec<i64> = conn
-                    .zrangebyscore_limit(&key, &min[..], &max[..], 0, page.limit as isize)
+                    .zrangebyscore_limit(&key, &min[..], &max[..], 0, read_n)
                     .await?;
                 asc.reverse();
                 asc
             } else {
-                conn.zrevrangebyscore_limit(&key, &max[..], &min[..], 0, page.limit as isize)
+                conn.zrevrangebyscore_limit(&key, &max[..], &min[..], 0, read_n)
                     .await?
             };
             // Only bother with EXISTS on a miss — a hit implies it.
@@ -356,9 +365,86 @@ pub async fn read_home(
     }
     let rows = query::fetch_by_ids(db, &scope, filters, &ids).await?;
     if rows.len() as i64 >= page.limit {
-        return Ok(rows);
+        return Ok(rows.into_iter().take(page.limit as usize).collect());
     }
     query::fetch(db, &scope, filters, page).await
+}
+
+/// Remove `viewer`'s home-index members matching `pred` — a
+/// `statuses s` WHERE fragment bound at `$2` (e.g.
+/// `"s.account_id = $2"`, `"s.account_id = ANY($2)"`). Only index
+/// members are probed (bounded by `home_max_entries`), so the
+/// intersect is cheap. Best-effort hygiene like [`remove`]: the
+/// read-time predicate stays the guarantee — unmerge just keeps the
+/// window full enough to skip the SQL fallback.
+/// `pred` is trusted input (never user text).
+async fn unmerge(
+    db: &PgPool,
+    redis: &Redis,
+    viewer: i64,
+    pred_sql: &str,
+    binds: &[Bind],
+) -> Result<()> {
+    let key = home_key(redis, viewer);
+    let mut conn = redis.conn().await?;
+    let members: Vec<i64> = conn.zrange(&key, 0, -1).await?;
+    if members.is_empty() {
+        return Ok(());
+    }
+    let sql = format!("SELECT s.id FROM statuses s WHERE s.id = ANY($1) AND {pred_sql}");
+    let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(&members);
+    for b in binds {
+        q = match b {
+            Bind::I64(v) => q.bind(*v),
+            Bind::I64s(v) => q.bind(v.clone()),
+            Bind::Text(v) => q.bind(v.clone()),
+            Bind::Texts(v) => q.bind(v.clone()),
+        };
+    }
+    let ids: Vec<i64> = q.fetch_all(db).await?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    pipe().zrem(key, ids).query_async::<()>(&mut *conn).await?;
+    Ok(())
+}
+
+/// `viewer` no longer sees `author`'s statuses — unfollow, block or
+/// mute. Best-effort; failures log and move on.
+pub async fn unmerge_author(db: &PgPool, redis: &Redis, viewer: i64, author: i64) {
+    if let Err(e) = unmerge(db, redis, viewer, "s.account_id = $2", &[Bind::I64(author)]).await {
+        tracing::warn!(viewer, author, error = %e, "home index unmerge failed");
+    }
+}
+
+/// `author`'s boosts only — `follows.show_reblogs` turned off.
+pub async fn unmerge_author_boosts(db: &PgPool, redis: &Redis, viewer: i64, author: i64) {
+    if let Err(e) = unmerge(
+        db,
+        redis,
+        viewer,
+        "s.account_id = $2 AND s.reblog_of_id IS NOT NULL",
+        &[Bind::I64(author)],
+    )
+    .await
+    {
+        tracing::warn!(viewer, author, error = %e, "home index boost unmerge failed");
+    }
+}
+
+/// Every author on `domain` — viewer-level `account_domain_blocks`.
+pub async fn unmerge_domain(db: &PgPool, redis: &Redis, viewer: i64, domain: &str) {
+    if let Err(e) = unmerge(
+        db,
+        redis,
+        viewer,
+        "s.account_id = ANY(SELECT id FROM accounts WHERE domain = $2)",
+        &[Bind::Text(domain.to_string())],
+    )
+    .await
+    {
+        tracing::warn!(viewer, domain, error = %e, "home index domain unmerge failed");
+    }
 }
 
 /// Rebuild `viewer`'s index from the newest `rebuild_page_size`

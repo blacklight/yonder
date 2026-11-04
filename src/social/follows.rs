@@ -58,6 +58,17 @@ pub async fn follow(
 
 /// Unfollow `target_id`; returns whether a row was removed.
 pub async fn unfollow(state: &AppState, follower_id: i64, target_id: i64) -> Result<bool> {
+    let done = unfollow_inner(state, follower_id, target_id).await?;
+    if done {
+        // Keep the home index tight — stale members shrink windows
+        // below the page limit and force the SQL fallback.
+        crate::timelines::fanout::unmerge_author(&state.db, &state.redis, follower_id, target_id)
+            .await;
+    }
+    Ok(done)
+}
+
+async fn unfollow_inner(state: &AppState, follower_id: i64, target_id: i64) -> Result<bool> {
     let cfg = state.config();
     let ctx = Ctx::for_parts(&state.db, &cfg, state.ap.as_ref());
     relationships::unfollow(ctx, follower_id, target_id).await

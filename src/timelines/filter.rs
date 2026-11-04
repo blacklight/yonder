@@ -141,9 +141,13 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     b.clause("NOT s.tombstone");
     b.clause(format!("({})", visibility::VISIBLE));
     if filters.viewer.is_some() {
-        b.clause(visibility::BLOCKS_EXCLUSION);
-        b.clause(visibility::MUTES_EXCLUSION);
-        b.clause(visibility::DOMAIN_BLOCKS_EXCLUSION);
+        // `ANY(<uncorrelated subquery>)` forms: each viewer exclusion
+        // materializes once into a hash probe rather than re-probing
+        // indexes per candidate row — on a bulk statuses scan the
+        // correlated `NOT EXISTS` shape dominated the read.
+        b.clause(visibility::BLOCKS_EXCLUSION_ANY);
+        b.clause(visibility::MUTES_EXCLUSION_ANY);
+        b.clause(visibility::DOMAIN_BLOCKS_EXCLUSION_ANY);
     }
 
     // Instance moderation: suspended domains vanish everywhere;
@@ -155,16 +159,16 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     // timeline, and non-followers get a "limited" notice with an
     // opt-in reveal — the hiding is client-side, like Mastodon's.
     b.clause(
-        "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-         WHERE idb.domain = a.domain AND idb.severity = 'suspend')",
+        "NOT (a.domain = ANY(SELECT domain FROM domain_blocks \
+         WHERE severity = 'suspend'))",
     );
     if matches!(
         scope,
         TimelineScope::Local | TimelineScope::Federated { .. } | TimelineScope::Tag { .. }
     ) {
         b.clause(
-            "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
-             WHERE idb.domain = a.domain AND idb.severity = 'silence')",
+            "NOT (a.domain = ANY(SELECT domain FROM domain_blocks \
+             WHERE severity = 'silence'))",
         );
         b.clause("a.limited_at IS NULL");
     }
@@ -224,8 +228,8 @@ fn scope_clauses(b: &mut Builder, scope: &TimelineScope, filters: &Filters) {
         TimelineScope::Tag { name, local_only } => {
             let p = b.param(Bind::Text(name.clone()));
             b.clause(format!(
-                "EXISTS (SELECT 1 FROM status_tags st JOIN tags t ON t.id = st.tag_id \
-                 WHERE st.status_id = s.id AND lower(t.name) = lower({p}))"
+                "s.id = ANY(SELECT st.status_id FROM status_tags st \
+                 JOIN tags t ON t.id = st.tag_id WHERE lower(t.name) = lower({p}))"
             ));
             b.clause("s.visibility = 'public'");
             if *local_only {
@@ -253,9 +257,8 @@ fn account_clauses(b: &mut Builder, account_id: i64, filters: &Filters) {
             "(s.visibility IN ('public', 'unlisted') \
              OR (s.account_id = $1 AND s.visibility <> 'direct') \
              OR (s.visibility IN ('followers_only', 'private') \
-                 AND EXISTS (SELECT 1 FROM follows f \
-                             WHERE f.account_id = $1 \
-                               AND f.target_account_id = s.account_id)))",
+                 AND s.account_id = ANY(SELECT target_account_id FROM follows \
+                                        WHERE account_id = $1)))",
         );
     } else {
         b.clause("s.visibility IN ('public', 'unlisted')");
@@ -263,35 +266,40 @@ fn account_clauses(b: &mut Builder, account_id: i64, filters: &Filters) {
 }
 
 fn home_clauses(b: &mut Builder) {
+    // Every audience/relation check is an uncorrelated `ANY(subquery)`
+    // — materialized once into a hash probe. The correlated `EXISTS`
+    // forms re-probed an index per scanned status, which dominated
+    // this fallback query once the feed carried enough remote posts.
     // Audience: own statuses plus followed authors' (the join doubles
     // as the followers_only gate) plus public posts carrying a tag the
     // viewer follows (epic 20 — followed hashtags land in home).
     b.clause(
-        "(s.account_id = $1 OR EXISTS (SELECT 1 FROM follows f \
-         WHERE f.account_id = $1 AND f.target_account_id = s.account_id) \
-         OR EXISTS (SELECT 1 FROM status_tags st \
-                    JOIN tag_follows tf ON tf.tag_id = st.tag_id \
-                    WHERE st.status_id = s.id AND tf.account_id = $1 \
-                      AND s.visibility = 'public'))",
+        "(s.account_id = $1 \
+         OR s.account_id = ANY(SELECT target_account_id FROM follows \
+                               WHERE account_id = $1) \
+         OR (s.visibility = 'public' \
+             AND s.id = ANY(SELECT st.status_id FROM status_tags st \
+                            JOIN tag_follows tf ON tf.tag_id = st.tag_id \
+                            WHERE tf.account_id = $1)))",
     );
     // `direct` needs a mention; the rest pass through the author gate.
     b.clause(
         "(s.account_id = $1 OR s.visibility <> 'direct' \
-         OR EXISTS (SELECT 1 FROM status_mentions sm \
-                    WHERE sm.status_id = s.id AND sm.account_id = $1))",
+         OR s.id = ANY(SELECT status_id FROM status_mentions \
+                      WHERE account_id = $1))",
     );
     // Hide-boosts: a followee's boosts disappear when
     // `follows.show_reblogs` is off. Own boosts always show.
     b.clause(
         "NOT (s.reblog_of_id IS NOT NULL AND s.account_id <> $1 \
-         AND EXISTS (SELECT 1 FROM follows fh \
-                     WHERE fh.account_id = $1 AND fh.target_account_id = s.account_id \
-                       AND NOT fh.show_reblogs))",
+         AND s.account_id = ANY(SELECT target_account_id FROM follows \
+                              WHERE account_id = $1 AND NOT show_reblogs))",
     );
     // Exclusive lists remove their members from home.
     b.clause(
-        "NOT EXISTS (SELECT 1 FROM list_accounts la JOIN lists l ON l.id = la.list_id \
-         WHERE l.account_id = $1 AND l.exclusive AND la.account_id = s.account_id)",
+        "NOT (s.account_id = ANY(SELECT la.account_id FROM list_accounts la \
+             JOIN lists l ON l.id = la.list_id \
+             WHERE l.account_id = $1 AND l.exclusive))",
     );
     // Replies land in home when addressed to the viewer, to the
     // author itself, or to someone the viewer follows.
@@ -299,9 +307,8 @@ fn home_clauses(b: &mut Builder) {
         "(s.in_reply_to_account_id IS NULL \
          OR s.in_reply_to_account_id = $1 \
          OR s.in_reply_to_account_id = s.account_id \
-         OR EXISTS (SELECT 1 FROM follows fr \
-                    WHERE fr.account_id = $1 \
-                      AND fr.target_account_id = s.in_reply_to_account_id))",
+         OR s.in_reply_to_account_id = ANY(SELECT target_account_id FROM follows \
+                                         WHERE account_id = $1))",
     );
 }
 
@@ -325,9 +332,8 @@ fn list_clauses(b: &mut Builder, list_id: i64, replies_policy: RepliesPolicy) {
         RepliesPolicy::Followed => b.clause(
             "(s.in_reply_to_id IS NULL OR s.in_reply_to_account_id = s.account_id \
              OR s.in_reply_to_account_id = $1 \
-             OR EXISTS (SELECT 1 FROM follows fr \
-                        WHERE fr.account_id = $1 \
-                          AND fr.target_account_id = s.in_reply_to_account_id))",
+             OR s.in_reply_to_account_id = ANY(SELECT target_account_id FROM follows \
+                                             WHERE account_id = $1))",
         ),
     }
 }
@@ -372,19 +378,19 @@ mod tests {
         assert!(matches!(w.binds.first(), Some(Bind::I64(7))));
         assert_eq!(w.binds.len(), 1);
         // The epic-14 fragments expect alias `a` and the `$1` viewer.
-        assert!(w.sql.contains("NOT EXISTS (SELECT 1 FROM blocks b"));
-        assert!(w.sql.contains(visibility::MUTES_EXCLUSION));
-        assert!(w.sql.contains(visibility::DOMAIN_BLOCKS_EXCLUSION));
+        assert!(w.sql.contains("target_account_id FROM blocks"));
+        assert!(w.sql.contains(visibility::MUTES_EXCLUSION_ANY));
+        assert!(w.sql.contains(visibility::DOMAIN_BLOCKS_EXCLUSION_ANY));
     }
 
     #[test]
     fn home_predicates() {
         let w = where_for(&TimelineScope::Home, Some(1));
-        assert!(w.sql.contains("NOT fh.show_reblogs"));
-        assert!(w.sql.contains("status_mentions sm"));
+        assert!(w.sql.contains("NOT show_reblogs"));
+        assert!(w.sql.contains("status_mentions"));
         assert!(w.sql.contains("l.exclusive"));
         assert!(w.sql.contains("in_reply_to_account_id"));
-        assert!(w.sql.contains("idb.severity = 'suspend'"));
+        assert!(w.sql.contains("severity = 'suspend'"));
         assert!(!w.sql.contains("'remove_from_timeline'"));
     }
 
@@ -400,7 +406,7 @@ mod tests {
         ] {
             let w = where_for(&scope, None);
             assert!(w.sql.contains("s.visibility = 'public'"), "{scope:?}");
-            assert!(w.sql.contains("idb.severity = 'silence'"), "{scope:?}");
+            assert!(w.sql.contains("severity = 'silence'"), "{scope:?}");
             assert!(w.sql.contains("a.limited_at IS NULL"), "{scope:?}");
             // No viewer → no block/mute fragments and no binds.
             assert!(w.binds.is_empty() || matches!(scope, TimelineScope::Tag { .. }));
@@ -463,7 +469,7 @@ mod tests {
             },
             Some(1),
         );
-        assert!(followed.sql.contains("fr.account_id = $1"));
+        assert!(followed.sql.contains("target_account_id FROM follows"));
     }
 
     #[test]

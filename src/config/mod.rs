@@ -522,7 +522,7 @@ impl Default for FederationConfig {
             user_agent: format!("Yonder/{}", env!("CARGO_PKG_VERSION")),
             max_collection_objects: 50,
             remote_activity_retention_days: 30,
-            remote_activity_prune_schedule: None,
+            remote_activity_prune_schedule: Some("15 4 * * *".to_string()),
             delivery_sweep_schedule: Some("*/15 * * * *".to_string()),
             profile_link_verification_schedule: Some("0 4 * * *".to_string()),
             remote_actor_refresh_schedule: None,

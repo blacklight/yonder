@@ -19,6 +19,22 @@ async fn test_pool() -> Option<PgPool> {
     Some(harness::provision_db(infra, &harness::test_slug()).await)
 }
 
+/// Versions declared by `migrations/*.up.sql` — the expectation tracks
+/// the files on disk so a new migration never needs a test edit.
+fn expected_versions() -> Vec<i64> {
+    let mut versions: Vec<i64> =
+        std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+            .unwrap()
+            .filter_map(|entry| {
+                let name = entry.unwrap().file_name().into_string().unwrap();
+                name.strip_suffix(".up.sql")
+                    .and_then(|stem| stem.split('_').next()?.parse().ok())
+            })
+            .collect();
+    versions.sort_unstable();
+    versions
+}
+
 #[tokio::test]
 async fn migrations_apply_idempotently() {
     let _permit = harness::acquire().await;
@@ -28,7 +44,7 @@ async fn migrations_apply_idempotently() {
 
     db::migrate::run(&pool).await.unwrap();
     let after_first = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(after_first, (1..=49).collect::<Vec<i64>>());
+    assert_eq!(after_first, expected_versions());
 
     db::migrate::run(&pool).await.unwrap();
     let after_second = db::migrate::applied_versions(&pool).await.unwrap();
@@ -44,10 +60,11 @@ async fn down_migrations_revert_cleanly() {
 
     db::migrate::run(&pool).await.unwrap();
 
-    // Single-step revert: 49 applied -> 48 applied.
+    // Single-step revert: N applied -> N-1 applied.
+    let all = expected_versions();
     db::migrate::revert(&pool, None).await.unwrap();
     let versions = db::migrate::applied_versions(&pool).await.unwrap();
-    assert_eq!(versions, (1..=48).collect::<Vec<i64>>());
+    assert_eq!(versions, &all[..all.len() - 1]);
 
     // Full revert: only the migrations bookkeeping table remains.
     db::migrate::revert(&pool, Some(0)).await.unwrap();
@@ -66,7 +83,7 @@ async fn down_migrations_revert_cleanly() {
     db::migrate::run(&pool).await.unwrap();
     assert_eq!(
         db::migrate::applied_versions(&pool).await.unwrap(),
-        (1..=49).collect::<Vec<i64>>()
+        expected_versions()
     );
 }
 

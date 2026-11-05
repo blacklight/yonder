@@ -1467,6 +1467,18 @@ watch([tab, showReplies, showBoosts], () => {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+@media (max-width: 767px) {
+  .profile__fields {
+    display: flex;
+    flex-direction: column;
+  }
+  .profile__fields dd {
+    margin-bottom: var(--space-2);
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+    flex: 1;
+  }
+}
 .profile__toggles {
   display: flex;
   flex-wrap: wrap;

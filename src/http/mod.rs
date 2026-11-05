@@ -22,10 +22,6 @@ use std::time::Duration;
 
 use axum::{
     extract::{MatchedPath, Request},
-    http::{
-        header::{self, HeaderName, HeaderValue},
-        Method,
-    },
     response::Response,
     routing::get,
     Json, Router,
@@ -36,7 +32,6 @@ use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{
     classify::ServerErrorsFailureClass,
-    cors::CorsLayer,
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::TraceLayer,
 };
@@ -44,7 +39,7 @@ use tracing::Span;
 
 use crate::{
     cache::{Redis, RedisCache},
-    config::{Config, HttpConfig},
+    config::Config,
     jobs::Dispatcher,
     Result,
 };
@@ -199,10 +194,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
     }
 
-    let router = match cors_layer(&state.config().http) {
-        Some(cors) => router.layer(cors),
-        None => router,
-    };
+    // CORS: `*` on the anonymous-safe read surface, the configured
+    // origin allow-list everywhere else — see `middleware::cors`.
+    let router = router.layer(axum::middleware::from_fn_with_state(
+        state.clone(),
+        middleware::cors::handle,
+    ));
 
     router
         .layer(
@@ -256,40 +253,6 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .layer(PropagateRequestIdLayer::x_request_id()),
         )
         .with_state(state)
-}
-
-/// CORS per `http.cors_enabled`/`http.cors_origins` — `None` when
-/// disabled (preflights then get no CORS headers).
-fn cors_layer(http: &HttpConfig) -> Option<CorsLayer> {
-    if !http.cors_enabled || http.cors_origins.is_empty() {
-        return None;
-    }
-    let origins: Vec<HeaderValue> = http
-        .cors_origins
-        .iter()
-        .filter_map(|o| o.parse().ok())
-        .collect();
-    if origins.is_empty() {
-        return None;
-    }
-    Some(
-        CorsLayer::new()
-            .allow_origin(origins)
-            .allow_methods([
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::PATCH,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
-            .allow_headers([
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                HeaderName::from_static("idempotency-key"),
-            ])
-            .expose_headers([header::LINK, HeaderName::from_static("x-request-id")]),
-    )
 }
 
 /// Bind `server.host`/`server.port` and serve until `shutdown`

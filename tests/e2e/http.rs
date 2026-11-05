@@ -220,6 +220,140 @@ async fn cors_preflight_obeys_origin_policy() {
         .is_none());
 }
 
+/// Public read endpoints answer `Access-Control-Allow-Origin: *` even
+/// with CORS disabled — browser-based fediverse clients depend on it.
+#[tokio::test]
+async fn public_reads_allow_any_origin() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|_| {}).await else {
+        return;
+    };
+    let app = http::build_router(state);
+
+    // Simple GET on a public path.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/instance")
+                .header(header::ORIGIN, "https://columnly.social")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
+
+    // Preflight on the same path.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/.well-known/nodeinfo")
+                .header(header::ORIGIN, "https://columnly.social")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "accept")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .unwrap(),
+        "accept"
+    );
+
+    // Auth-required paths stay clean even for allowed-looking origins.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/accounts/verify_credentials")
+                .header(header::ORIGIN, "https://columnly.social")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp
+        .headers()
+        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+        .is_none());
+}
+
+/// With an origin allow-list configured, public paths still answer `*`
+/// while private paths reflect only listed origins.
+#[tokio::test]
+async fn public_star_wins_over_configured_origins() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
+        c.http.cors_enabled = true;
+        c.http.cors_origins = vec!["https://app.example.com".to_string()];
+    })
+    .await
+    else {
+        return;
+    };
+    let app = http::build_router(state);
+
+    // Public path: `*` regardless of the configured list.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/instance")
+                .header(header::ORIGIN, "https://columnly.social")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
+
+    // Private path: only the configured origin is reflected.
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/accounts/verify_credentials")
+                .header(header::ORIGIN, "https://app.example.com")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "https://app.example.com"
+    );
+}
+
 #[tokio::test]
 async fn cors_disabled_by_default() {
     let _permit = harness::acquire().await;

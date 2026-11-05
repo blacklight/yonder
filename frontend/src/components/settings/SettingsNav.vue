@@ -14,6 +14,7 @@ const items = computed(() => [
   { key: "settings-profile", label: t("settingsNav.profile") },
   { key: "settings-notifications", label: t("settingsNav.notifications") },
   { key: "settings-security", label: t("settingsNav.security") },
+  { key: "settings-moderation", label: t("settingsNav.moderation") },
   { key: "settings-tokens", label: t("settingsNav.tokens") },
   { key: "settings-invites", label: t("settingsNav.invites") },
   { key: "settings-data", label: t("settingsNav.data") },

@@ -110,3 +110,8 @@ fanout reads both.
 
 Writes carry the `relation` rate-limit bucket; list endpoints are
 `max_id`/`since_id`/`limit` + `Link`-header paginated.
+
+The SPA exposes the three per-user lists under **Settings →
+Moderation** (`/settings/moderation`) — muted users, blocked users
+and blocked instances, with unmute/unblock actions and a "block an
+instance" form.

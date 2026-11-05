@@ -31,6 +31,7 @@
     "profile": "Profile",
     "notifications": "Notifications",
     "security": "Account & security",
+    "moderation": "Moderation",
     "tokens": "API tokens",
     "invites": "Invite links",
     "data": "Import & export",
@@ -283,6 +284,22 @@
       }
     }
   },
+  "settingsModeration": {
+    "title": "Moderation",
+    "intro": "People and servers you've muted or blocked. Removing an entry lets their posts and notifications through again.",
+    "groupMuted": "Muted users",
+    "groupBlocked": "Blocked users",
+    "groupDomains": "Blocked instances",
+    "mutedEmpty": "You aren't muting anyone.",
+    "blockedEmpty": "You haven't blocked anyone.",
+    "domainsEmpty": "You haven't blocked any instances.",
+    "unmute": "Unmute",
+    "unblock": "Unblock",
+    "addDomainLabel": "Block an instance",
+    "addDomainPlaceholder": "example.social",
+    "addDomain": "Block",
+    "addDomainInvalid": "Enter a domain like example.social."
+  },
   "route": {
     "moderation-report": {
       "title": "Report"
@@ -445,6 +462,9 @@
     },
     "settings-migration": {
       "title": "Account migration"
+    },
+    "settings-moderation": {
+      "title": "Moderation"
     },
     "restricted": {
       "title": "Your data"

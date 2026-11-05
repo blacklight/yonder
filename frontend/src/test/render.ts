@@ -51,6 +51,11 @@ export const stubRoutes: RouteRecordRaw[] = [
     name: "settings-migration",
     component: stub,
   },
+  {
+    path: "/settings/moderation",
+    name: "settings-moderation",
+    component: stub,
+  },
   { path: "/restricted", name: "restricted", component: stub },
   { path: "/compose", name: "compose", component: stub },
   { path: "/local", name: "local", component: stub },

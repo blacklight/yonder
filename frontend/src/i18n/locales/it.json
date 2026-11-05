@@ -31,6 +31,7 @@
     "profile": "Profilo",
     "notifications": "Notifiche",
     "security": "Account e sicurezza",
+    "moderation": "Moderazione",
     "tokens": "Token API",
     "invites": "Link d'invito",
     "data": "Importa ed esporta",
@@ -283,6 +284,22 @@
       }
     }
   },
+  "settingsModeration": {
+    "title": "Moderazione",
+    "intro": "Persone e server che hai silenziato o bloccato. Rimuovendo una voce, i loro post e le loro notifiche torneranno visibili.",
+    "groupMuted": "Utenti silenziati",
+    "groupBlocked": "Utenti bloccati",
+    "groupDomains": "Istanze bloccate",
+    "mutedEmpty": "Non stai silenziando nessuno.",
+    "blockedEmpty": "Non hai bloccato nessuno.",
+    "domainsEmpty": "Non hai bloccato nessuna istanza.",
+    "unmute": "Non silenziare più",
+    "unblock": "Sblocca",
+    "addDomainLabel": "Blocca un'istanza",
+    "addDomainPlaceholder": "example.social",
+    "addDomain": "Blocca",
+    "addDomainInvalid": "Inserisci un dominio come example.social."
+  },
   "route": {
     "moderation-report": {
       "title": "Segnalazione"
@@ -445,6 +462,9 @@
     },
     "settings-migration": {
       "title": "Migrazione account"
+    },
+    "settings-moderation": {
+      "title": "Moderazione"
     },
     "restricted": {
       "title": "I tuoi dati"

@@ -452,6 +452,12 @@ export const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: "/settings/moderation",
+      name: "settings-moderation",
+      component: () => import("@/pages/settings/ModerationSettingsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       // Suspended-account surface: export controls + logout only.
       path: "/restricted",
       name: "restricted",

@@ -31,6 +31,7 @@
     "profile": "Profil",
     "notifications": "Mitteilungen",
     "security": "Konto & Sicherheit",
+    "moderation": "Moderation",
     "tokens": "API-Tokens",
     "invites": "Einladungslinks",
     "data": "Import & Export",
@@ -283,6 +284,22 @@
       }
     }
   },
+  "settingsModeration": {
+    "title": "Moderation",
+    "intro": "Personen und Server, die du stummgeschaltet oder blockiert hast. Wenn du einen Eintrag entfernst, werden deren Beiträge und Mitteilungen wieder angezeigt.",
+    "groupMuted": "Stummgeschaltete Nutzer",
+    "groupBlocked": "Blockierte Nutzer",
+    "groupDomains": "Blockierte Instanzen",
+    "mutedEmpty": "Du schaltest niemanden stumm.",
+    "blockedEmpty": "Du hast niemanden blockiert.",
+    "domainsEmpty": "Du hast keine Instanzen blockiert.",
+    "unmute": "Entstummen",
+    "unblock": "Entblocken",
+    "addDomainLabel": "Eine Instanz blockieren",
+    "addDomainPlaceholder": "example.social",
+    "addDomain": "Blockieren",
+    "addDomainInvalid": "Gib eine Domain wie example.social ein."
+  },
   "route": {
     "moderation-report": {
       "title": "Meldung"
@@ -445,6 +462,9 @@
     },
     "settings-migration": {
       "title": "Kontenumzug"
+    },
+    "settings-moderation": {
+      "title": "Moderation"
     },
     "restricted": {
       "title": "Deine Daten"

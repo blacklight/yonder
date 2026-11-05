@@ -31,6 +31,7 @@
     "profile": "الملف الشخصي",
     "notifications": "التنبيهات",
     "security": "الحساب والأمان",
+    "moderation": "الإشراف",
     "tokens": "رموز API",
     "invites": "روابط الدعوة",
     "data": "الاستيراد والتصدير",
@@ -283,6 +284,22 @@
       }
     }
   },
+  "settingsModeration": {
+    "title": "الإشراف",
+    "intro": "الأشخاص والخوادم التي كتمتها أو حظرتها. تؤدي إزالة أي إدخال إلى السماح بمنشوراتهم وتنبيهاتهم مجدداً.",
+    "groupMuted": "المستخدمون المكتومون",
+    "groupBlocked": "المستخدمون المحظورون",
+    "groupDomains": "الخوادم المحظورة",
+    "mutedEmpty": "لا تكتم أحداً.",
+    "blockedEmpty": "لم تحظر أحداً.",
+    "domainsEmpty": "لم تحظر أي خادم.",
+    "unmute": "إلغاء الكتم",
+    "unblock": "إلغاء الحظر",
+    "addDomainLabel": "حظر خادم",
+    "addDomainPlaceholder": "example.social",
+    "addDomain": "حظر",
+    "addDomainInvalid": "أدخل نطاقاً مثل example.social."
+  },
   "route": {
     "moderation-report": {
       "title": "بلاغ"
@@ -445,6 +462,9 @@
     },
     "settings-migration": {
       "title": "ترحيل الحساب"
+    },
+    "settings-moderation": {
+      "title": "الإشراف"
     },
     "restricted": {
       "title": "بياناتك"

@@ -147,37 +147,47 @@ export function unsubscribe(id: string): Promise<Relationship> {
   return accountAction(id, "unsubscribe");
 }
 
-/** `GET /api/v1/accounts/{id}/followers` — paginated accounts. */
-export async function followers(
-  id: string,
-  query?: {
-    max_id?: string;
-    min_id?: string;
-    since_id?: string;
-    limit?: number;
-  },
+type EdgeListQuery = {
+  max_id?: string;
+  min_id?: string;
+  since_id?: string;
+  limit?: number;
+};
+
+async function edgeList(
+  path: string,
+  query?: EdgeListQuery,
 ): Promise<Page<Account>> {
   const { data, response } = await requestWithResponse<Account[]>({
-    path: `/accounts/${encodeURIComponent(id)}/followers`,
+    path,
     query,
   });
   return paginated(response, data);
 }
-/** `GET /api/v1/accounts/{id}/following` — paginated accounts. */
-export async function following(
+
+/** `GET /api/v1/accounts/{id}/followers` — paginated accounts. */
+export function followers(
   id: string,
-  query?: {
-    max_id?: string;
-    min_id?: string;
-    since_id?: string;
-    limit?: number;
-  },
+  query?: EdgeListQuery,
 ): Promise<Page<Account>> {
-  const { data, response } = await requestWithResponse<Account[]>({
-    path: `/accounts/${encodeURIComponent(id)}/following`,
-    query,
-  });
-  return paginated(response, data);
+  return edgeList(`/accounts/${encodeURIComponent(id)}/followers`, query);
+}
+/** `GET /api/v1/accounts/{id}/following` — paginated accounts. */
+export function following(
+  id: string,
+  query?: EdgeListQuery,
+): Promise<Page<Account>> {
+  return edgeList(`/accounts/${encodeURIComponent(id)}/following`, query);
+}
+
+/** `GET /api/v1/mutes` — accounts the caller mutes (paginated). */
+export function mutedAccounts(query?: EdgeListQuery): Promise<Page<Account>> {
+  return edgeList("/mutes", query);
+}
+
+/** `GET /api/v1/blocks` — accounts the caller blocks (paginated). */
+export function blockedAccounts(query?: EdgeListQuery): Promise<Page<Account>> {
+  return edgeList("/blocks", query);
 }
 
 /** `GET /api/v1/accounts/{id}/lists` — lists this account is a member of. */

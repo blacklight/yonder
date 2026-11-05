@@ -1026,7 +1026,7 @@ async function onReact(emoji: string) {
   position: absolute;
   width: 2px;
   height: 100%;
-  margin-left: calc(-1 * var(--space-3));
+  margin-inline-start: calc(-1 * var(--space-3));
   background: var(--bg-sunken);
   content: "";
 }

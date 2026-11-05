@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    extract::{Path, Query, Request, State},
+    extract::{FromRequest, Multipart, Path, Query, Request, State},
     http::header,
     response::Json,
 };
@@ -59,7 +59,7 @@ pub async fn create(
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string);
-    let params = parse_body(request).await?;
+    let params = parse_body(request, &state).await?;
     let ctx = PostContext::new(&state);
     match posts::create::create_status(&ctx, &auth, &params, key.as_deref()).await? {
         CreateOutcome::Published(entity) | CreateOutcome::Scheduled(entity) => Ok(Json(entity)),
@@ -325,7 +325,7 @@ pub async fn update(
     request: Request,
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:statuses")?;
-    let params = parse_body(request).await?;
+    let params = parse_body(request, &state).await?;
     let ctx = PostContext::new(&state);
     let status = posts::create::edit_status(&ctx, &auth, id, &params).await?;
     Ok(Json(
@@ -1018,13 +1018,40 @@ fn params_from_pairs(pairs: &[(String, String)]) -> Result<StatusParams> {
 }
 
 /// Normalize the request body per its content type.
-async fn parse_body(request: Request) -> Result<StatusParams> {
+async fn parse_body(request: Request, state: &Arc<AppState>) -> Result<StatusParams> {
     let content_type = request
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    // Multipart is how several Mastodon clients (Mona among them)
+    // post statuses; field names mirror the urlencoded form keys, so
+    // collect them into the same (name, value) pairs and reuse
+    // `params_from_pairs`. File parts are irrelevant here — status
+    // attachments reference `media_ids`, not inline uploads.
+    if content_type.starts_with("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, state)
+            .await
+            .map_err(|e| Error::BadRequest(format!("malformed multipart body: {e}")))?;
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        while let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(|e| Error::BadRequest(format!("malformed multipart body: {e}")))?
+        {
+            if field.file_name().is_some() {
+                continue;
+            }
+            let name = field.name().unwrap_or_default().to_string();
+            let value = field
+                .text()
+                .await
+                .map_err(|e| Error::BadRequest(format!("malformed multipart field {name}: {e}")))?;
+            pairs.push((name, value));
+        }
+        return params_from_pairs(&pairs);
+    }
     let bytes = axum::body::to_bytes(request.into_body(), 2 * 1024 * 1024)
         .await
         .map_err(|e| Error::Validation(format!("failed to read body: {e}")))?;
@@ -1034,7 +1061,11 @@ async fn parse_body(request: Request) -> Result<StatusParams> {
             .collect();
         params_from_pairs(&pairs)
     } else {
-        let body: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| json!({}));
+        // A body that isn't valid JSON used to parse as `{}` and
+        // surface the misleading "status cannot be empty" — reject it
+        // explicitly so the real problem reaches the client.
+        let body: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::BadRequest(format!("malformed {content_type} body: {e}")))?;
         params_from_json(&body)
     }
 }

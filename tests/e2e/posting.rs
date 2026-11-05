@@ -202,6 +202,53 @@ async fn create_and_show_plain_status() {
     assert_eq!(count, 1);
 }
 
+/// Mona and several other mobile clients post statuses as
+/// `multipart/form-data`; field names mirror the urlencoded form
+/// keys, so a multipart `status` must land in the same param shape.
+/// (Regression: multipart fell through to the JSON branch, parsed as
+/// `{}`, and the post was rejected with "status cannot be empty".)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_status_multipart_form_data() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "mpart", "mpart@example.com").await;
+
+    let boundary = "yonder-test-boundary";
+    let body = concat!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"status\"\r\n\r\n",
+        "hello from multipart #multipart\r\n",
+        "--{b}\r\nContent-Disposition: form-data; name=\"visibility\"\r\n\r\n",
+        "unlisted\r\n",
+        "--{b}--\r\n",
+    )
+    .replace("{b}", boundary);
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/statuses")
+                .header(
+                    "content-type",
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["visibility"], "unlisted");
+    assert_eq!(body["tags"][0]["name"], "multipart");
+    assert!(body["content"].as_str().unwrap().contains("multipart"));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn markdown_renders_and_sanitizes() {
     let _permit = harness::acquire().await;

@@ -1028,7 +1028,7 @@ async function onReact(emoji: string) {
   height: 100%;
   left: calc(-1 * var(--space-3));
   background: var(--bg-sunken);
-  content: '';
+  content: "";
 }
 .status-card__preview {
   display: flex;

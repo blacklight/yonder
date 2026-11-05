@@ -1005,6 +1005,10 @@ async function onReact(emoji: string) {
   background: var(--bg);
   border-radius: var(--radius-md);
 }
+:deep(.status-card__content) pre
+:deep(.status-card__content) code {
+  font-size: 0.87em;
+}
 :deep(.status-card__content) pre {
   max-height: 30rem;
   overflow: auto;

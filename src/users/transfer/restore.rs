@@ -412,8 +412,8 @@ pub(crate) async fn apply_collection_item(
     .bind(uri)
     .fetch_optional(&mut *tx)
     .await?;
-    let status_id = match status_id {
-        Some(id) => id,
+    let (status_id, stubbed) = match status_id {
+        Some(id) => (id, false),
         None => ensure_remote_status(&mut tx, uri).await?,
     };
     let n = sqlx::query(&format!(
@@ -439,6 +439,9 @@ pub(crate) async fn apply_collection_item(
     )
     .await?;
     tx.commit().await?;
+    if stubbed {
+        hydrate_stub(ctx, uri).await;
+    }
     Ok(if n > 0 {
         ItemOutcome::Applied
     } else {
@@ -515,16 +518,31 @@ async fn queue_publication(
     Ok(())
 }
 
+/// Enqueue a `RemoteStatusFetch` for a freshly created stub — deduped
+/// by the shared marker, best-effort (a failed enqueue only means the
+/// stub stays unhydrated until something else resolves it).
+async fn hydrate_stub(ctx: &JobContext, uri: &str) {
+    let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+    if let Err(e) =
+        crate::posts::remote::enqueue_status_fetch_deduped(&ctx.redis, &dispatcher, uri).await
+    {
+        tracing::warn!(uri, error = %e, "stub hydration enqueue failed");
+    }
+}
+
 /// Find or stub a remote status row by URI (boost/like/bookmark
 /// targets the archive references but does not embed). Stubs stay
 /// `direct` — they are placeholders, not listable public content.
-async fn ensure_remote_status(db: &mut PgConnection, uri: &str) -> Result<i64> {
+/// Returns the id and whether a *stub* was created — the caller
+/// enqueues a `RemoteStatusFetch` for stubs so their content is
+/// hydrated instead of rendering as an empty card.
+async fn ensure_remote_status(db: &mut PgConnection, uri: &str) -> Result<(i64, bool)> {
     if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM statuses WHERE uri = $1")
         .bind(uri)
         .fetch_optional(&mut *db)
         .await?
     {
-        return Ok(id);
+        return Ok((id, false));
     }
     let domain = url::Url::parse(uri)
         .ok()
@@ -540,7 +558,7 @@ async fn ensure_remote_status(db: &mut PgConnection, uri: &str) -> Result<i64> {
     .bind(&actor_uri)
     .fetch_one(&mut *db)
     .await?;
-    sqlx::query_scalar(
+    let id = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, uri, url, visibility, local) \
          VALUES ($1, '', $2, $2, 'direct', false) \
          ON CONFLICT (uri) DO UPDATE SET id = statuses.id RETURNING id",
@@ -548,8 +566,8 @@ async fn ensure_remote_status(db: &mut PgConnection, uri: &str) -> Result<i64> {
     .bind(account_id)
     .bind(uri)
     .fetch_one(&mut *db)
-    .await
-    .map_err(Into::into)
+    .await?;
+    Ok((id, true))
 }
 
 /// Map an AP audience to `(to, cc)` — the inverse of
@@ -643,7 +661,7 @@ async fn import_boost(
     let visibility = visibility_from_audience(item);
 
     let mut tx = db.begin().await?;
-    let target_id = ensure_remote_status(&mut tx, &object_uri).await?;
+    let (target_id, stubbed) = ensure_remote_status(&mut tx, &object_uri).await?;
     // A boost that already reached us over federation carries no
     // `original_id`, so the dedupe arbiter below never matches it —
     // `uix_statuses_reblog` fires instead, and the raw 23505 would
@@ -723,6 +741,9 @@ async fn import_boost(
         .await?;
     }
     tx.commit().await?;
+    if stubbed {
+        hydrate_stub(ctx, &object_uri).await;
+    }
     Ok(ItemOutcome::Applied)
 }
 

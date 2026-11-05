@@ -446,17 +446,23 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     let existing = super::load_by_uri(&core.db, &object_id).await?;
     let is_new = existing.is_none();
     if let Some(existing) = &existing {
+        // An import stub is an empty shell anchored on a URI — its
+        // `_unknown` owner is a placeholder, so the fetched doc's
+        // same-origin author claims it instead of being dropped as a
+        // spoofer. It also carries no real stored state, so the
+        // staleness gate is meaningless against it.
+        let stub = existing.content.is_empty() && existing.object_type.is_none();
         // Update only: stored owner must match, and the incoming
         // `updated` must be newer (idempotent redeliveries).
         let owner_actor: String = sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
             .bind(existing.account_id)
             .fetch_one(&core.db)
             .await?;
-        if owner_actor != activity.actor {
+        if !stub && owner_actor != activity.actor {
             tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
             return Ok(Upsert::Ignored);
         }
-        if activity.activity_type == "Update" {
+        if !stub && activity.activity_type == "Update" {
             let incoming = object.get("updated").and_then(pubby_sdk::model::parse_dt);
             let stored_newest = existing.edited_at.unwrap_or(existing.updated_at);
             if let Some(incoming) = incoming {
@@ -646,6 +652,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
              language = EXCLUDED.language, visibility = EXCLUDED.visibility, \
+             account_id = EXCLUDED.account_id, \
              spoiler_text = EXCLUDED.spoiler_text, sensitive = EXCLUDED.sensitive, \
              in_reply_to_id = EXCLUDED.in_reply_to_id, \
              in_reply_to_account_id = EXCLUDED.in_reply_to_account_id, \
@@ -1418,12 +1425,23 @@ pub async fn enqueue_pin_resolve(core: &ApCore, uri: &str) -> Result<()> {
 /// Shared dedup + enqueue for `RemoteStatusFetch` — the marker keeps
 /// repeat ingest/read triggers from piling up jobs for one URI.
 async fn enqueue_status_fetch(core: &ApCore, uri: &str) -> Result<()> {
-    let cache = RedisCache::new(core.redis.clone());
+    enqueue_status_fetch_deduped(&core.redis, &core.dispatcher, uri).await
+}
+
+/// [`enqueue_status_fetch`] without an [`ApCore`] — for paths that
+/// only carry the job context (archive/API imports stubbing remote
+/// objects).
+pub(crate) async fn enqueue_status_fetch_deduped(
+    redis: &crate::cache::Redis,
+    dispatcher: &crate::jobs::Dispatcher,
+    uri: &str,
+) -> Result<()> {
+    let cache = RedisCache::new(redis.clone());
     let key = fetch_marker_key(uri);
     if cache.get(&key).await.ok().flatten().is_some() {
         return Ok(());
     }
-    core.dispatcher
+    dispatcher
         .enqueue(JobKind::RemoteStatusFetch, json!({"uri": uri}))
         .await?;
     let _ = cache
@@ -1474,12 +1492,16 @@ impl JobHandler for RemoteStatusFetchJob {
         if !refresh {
             // Already materialized — link pending quoters without a
             // fetch (covers the ingest-race and a sibling job that got
-            // here first).
+            // here first). An empty import stub is *not* materialized —
+            // it exists only to anchor references, so fall through and
+            // fetch the real object.
             if let Some(target) = super::load_by_uri(&ctx.db, uri).await? {
-                backfill_pending_quotes(&ctx.db, target.id, uri).await?;
-                backfill_pending_pins(&ctx.db, target.id, uri).await?;
-                let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
-                return Ok(());
+                if !target.content.is_empty() || target.object_type.is_some() {
+                    backfill_pending_quotes(&ctx.db, target.id, uri).await?;
+                    backfill_pending_pins(&ctx.db, target.id, uri).await?;
+                    let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
+                    return Ok(());
+                }
             }
             if let Some(marker) = cache.get(&key).await.ok().flatten() {
                 // A previous run already settled this URI.

@@ -3402,7 +3402,10 @@ mod tests {
             cats(&["statuses", "dms", "bookmarks", "favourites", "observations"])
         );
         // Unknown categories conservatively require `read`.
-        assert_eq!(scope_uncovered("read:accounts", &cats(&["bogus"])), cats(&["bogus"]));
+        assert_eq!(
+            scope_uncovered("read:accounts", &cats(&["bogus"])),
+            cats(&["bogus"])
+        );
         assert!(scope_uncovered("read", &cats(&["bogus"])).is_empty());
     }
 

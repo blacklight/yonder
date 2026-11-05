@@ -644,6 +644,24 @@ async fn import_boost(
 
     let mut tx = db.begin().await?;
     let target_id = ensure_remote_status(&mut tx, &object_uri).await?;
+    // A boost that already reached us over federation carries no
+    // `original_id`, so the dedupe arbiter below never matches it —
+    // `uix_statuses_reblog` fires instead, and the raw 23505 would
+    // retry the page forever. Presence on either key means the
+    // Announce is already represented.
+    let already: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM statuses WHERE account_id = $1 AND NOT tombstone \
+         AND (reblog_of_id = $2 OR original_id = $3))",
+    )
+    .bind(account_id)
+    .bind(target_id)
+    .bind(&announce_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if already {
+        tx.rollback().await?;
+        return Ok(ItemOutcome::Present);
+    }
     let boost_id: Option<i64> = sqlx::query_scalar(
         "INSERT INTO statuses (id, account_id, content, visibility, local, reblog_of_id, \
                                original_id, original_created_at, created_at) \
@@ -1036,18 +1054,19 @@ async fn import_post(
                     if name.is_empty() {
                         continue;
                     }
-                    sqlx::query(
-                        "INSERT INTO tags (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+                    let tag_id: i64 = sqlx::query_scalar(
+                        "INSERT INTO tags (name) VALUES ($1) ON CONFLICT (lower(name)) \
+                         DO UPDATE SET name = EXCLUDED.name RETURNING id",
                     )
                     .bind(&name)
-                    .execute(&mut *tx)
+                    .fetch_one(&mut *tx)
                     .await?;
                     sqlx::query(
                         "INSERT INTO status_tags (status_id, tag_id) \
-                         SELECT $1, id FROM tags WHERE name = $2 ON CONFLICT DO NOTHING",
+                         VALUES ($1, $2) ON CONFLICT DO NOTHING",
                     )
                     .bind(status_id)
-                    .bind(&name)
+                    .bind(tag_id)
                     .execute(&mut *tx)
                     .await?;
                 }

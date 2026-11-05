@@ -2235,7 +2235,8 @@ async fn stub_provider() -> StubProvider {
                     "account": {"id": "src1", "acct": "olduser",
                                 "url": format!("{o}/@olduser")},
                     "favourites_count": 7, "reblogs_count": 3,
-                    "media_attachments": [], "mentions": [], "tags": [],
+                    "media_attachments": [], "mentions": [],
+                    "tags": [{"name": "regress-tag"}],
                 },
                 {
                     "id": "102",
@@ -3626,6 +3627,72 @@ async fn cancellation_wins_when_an_inflight_category_returns_unauthorized() {
     *stub.cancel_on_statuses.lock().await = Some((env.state.db.clone(), id));
     run_import(&env, id).await;
     assert_eq!(import_state(&env, id).await.0, "cancelled");
+}
+
+/// A boost that already reached the account over federation has no
+/// `original_id` — the imported Announce must dedupe on the reblog
+/// index instead of retrying the page on `uix_statuses_reblog`
+/// forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn api_import_dedupes_boosts_received_over_federation() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".into());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "boostdup").await;
+    let importer = account_id(&env.state, "boostdup").await;
+    let stub = stub_provider().await;
+    let connection = connect(&env, &token, &stub.origin).await;
+
+    // The boost the stub's outbox announces (reblog target
+    // `https://remote.example/statuses/9`) already exists — created
+    // by live federation, so `original_id` is NULL.
+    let remote_account = seed_remote(&env.state, "https://remote.example/users/other").await;
+    let remote_status: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (account_id, content, uri, url, visibility, local) \
+         VALUES ($1, '<p>remote post</p>', 'https://remote.example/statuses/9', \
+                'https://remote.example/statuses/9', 'public', false) RETURNING id",
+    )
+    .bind(remote_account)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO statuses (account_id, content, uri, visibility, reblog_of_id) \
+         VALUES ($1, '', $2, 'public', $3)",
+    )
+    .bind(importer)
+    .bind(format!("{BASE}/ap/users/boostdup/statuses/boost9"))
+    .bind(remote_status)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let id = remote_session(
+        &env,
+        &token,
+        json!({"connection_id": connection, "categories": ["statuses"]}),
+    )
+    .await;
+    run_import(&env, id).await;
+    let (state, error) = import_state(&env, id).await;
+    assert_eq!(state.as_str(), "done", "import failed: {error:?}");
+
+    let boosts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM statuses WHERE account_id = $1 AND reblog_of_id = $2 \
+         AND NOT tombstone",
+    )
+    .bind(importer)
+    .bind(remote_status)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(boosts, 1, "the existing boost stands — no duplicate");
+    let st = category_state(&env, id).await;
+    assert_eq!(st["statuses"]["present"], json!(1));
+    assert_eq!(st["statuses"]["applied"], json!(1));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

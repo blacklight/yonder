@@ -777,6 +777,47 @@ fn requested_scopes(categories: &[String]) -> String {
     scopes.join(" ")
 }
 
+/// The scopes that can serve a category — the umbrella `read` or a
+/// provider's granular equivalent (`read:statuses` covers the
+/// conversations walk as well as the statuses one).
+fn required_scopes(cat: &str) -> &'static [&'static str] {
+    match cat {
+        "following" => &["read", "read:follows", "read:accounts"],
+        "blocks" => &["read", "read:blocks"],
+        "mutes" => &["read", "read:mutes"],
+        "bookmarks" => &["read", "read:bookmarks"],
+        "favourites" => &["read", "read:favourites"],
+        "dms" | "statuses" | "observations" => &["read", "read:statuses"],
+        "profile" => &["read", "read:accounts"],
+        _ => &["read"],
+    }
+}
+
+/// Categories a connection's granted scopes cannot serve. A session
+/// bound to an under-scoped connection can only pause mid-run once
+/// the provider 403s the first gated endpoint — surface that at
+/// bind time instead.
+fn scope_uncovered(granted: &str, categories: &[String]) -> Vec<String> {
+    let granted: std::collections::HashSet<&str> = granted.split_whitespace().collect();
+    categories
+        .iter()
+        .filter(|c| !required_scopes(c).iter().any(|s| granted.contains(s)))
+        .cloned()
+        .collect()
+}
+
+fn assert_scope_coverage(granted: &str, categories: &[String]) -> Result<()> {
+    let missing = scope_uncovered(granted, categories);
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(Error::Validation(format!(
+        "the connection's granted scopes ({granted}) do not cover: {} — \
+         reconnect granting those categories and retry",
+        missing.join(", ")
+    )))
+}
+
 /// `GET /api/v1/yonder/import_connections` — projections, never secrets.
 pub async fn list_connections(state: &AppState, user_id: i64) -> Result<Value> {
     let rows = sqlx::query(
@@ -1019,7 +1060,7 @@ pub async fn create_session(
         overwrite_profile,
     } = spec;
     let conn = sqlx::query(
-        "SELECT id, origin, source_actor_uri FROM oauth_connections \
+        "SELECT id, origin, source_actor_uri, scopes FROM oauth_connections \
          WHERE id = $1 AND user_id = (SELECT u.id FROM users u JOIN accounts a \
                ON a.id = u.account_id WHERE a.id = $2) AND state = 'active'",
     )
@@ -1038,6 +1079,7 @@ pub async fn create_session(
             return Err(Error::Validation(format!("unknown category {c:?}")));
         }
     }
+    assert_scope_coverage(&conn.get::<String, _>("scopes"), &categories)?;
     // Observation subjects are the statuses this same session imported;
     // without the statuses walk there is nothing to observe.
     if categories.iter().any(|c| c == "observations") && !categories.iter().any(|c| c == "statuses")
@@ -1129,6 +1171,41 @@ pub async fn resume_import(
     id: i64,
     connection_id: Option<i64>,
 ) -> Result<()> {
+    // A rebind must also cover the frozen categories — resuming onto
+    // an under-scoped connection just pauses again on the next gated
+    // endpoint.
+    if let Some(conn_id) = connection_id {
+        let scopes: Option<(String, Value, Value)> = sqlx::query_as(
+            "SELECT c.scopes, i.options, i.category_state FROM oauth_connections c \
+             JOIN users u ON u.id = c.user_id, archive_imports i \
+             WHERE c.id = $1 AND u.account_id = $2 AND i.id = $3 \
+               AND i.account_id = $2 AND c.state = 'active' \
+               AND c.origin = i.source_origin \
+               AND c.source_actor_uri = i.source_actor_uri",
+        )
+        .bind(conn_id)
+        .bind(account_id)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some((granted, options, cats)) = scopes {
+            // Only incomplete categories are checked — a `done` one
+            // never touches the provider again.
+            let categories: Vec<String> = options
+                .get("categories")
+                .and_then(|c| serde_json::from_value::<Vec<String>>(c.clone()).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|c| {
+                    cats.get(c.as_str())
+                        .and_then(|s| s.get("done"))
+                        .and_then(Value::as_bool)
+                        != Some(true)
+                })
+                .collect();
+            assert_scope_coverage(&granted, &categories)?;
+        }
+    }
     // One owner-scoped statement: a rebind must also match the frozen
     // source (origin + verified actor) so a session can never be
     // retargeted at a different remote account — and a foreign import
@@ -3295,6 +3372,38 @@ mod tests {
         ] {
             assert!(normalize_origin(input, &config).is_err(), "{input}");
         }
+    }
+
+    #[test]
+    fn scope_coverage_flags_only_what_grant_lacks() {
+        let cats = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // The umbrella read covers everything.
+        assert!(scope_uncovered("read", &cats(&["statuses", "dms", "bookmarks"])).is_empty());
+        // Granular equivalents satisfy their categories without `read`.
+        assert!(scope_uncovered(
+            "read:statuses read:bookmarks read:accounts",
+            &cats(&["statuses", "dms", "bookmarks", "profile"])
+        )
+        .is_empty());
+        // The paused-session shape: relationship scopes alone leave
+        // the content categories uncovered.
+        assert_eq!(
+            scope_uncovered(
+                "read:accounts read:blocks read:mutes",
+                &cats(&[
+                    "statuses",
+                    "dms",
+                    "bookmarks",
+                    "favourites",
+                    "following",
+                    "observations",
+                ])
+            ),
+            cats(&["statuses", "dms", "bookmarks", "favourites", "observations"])
+        );
+        // Unknown categories conservatively require `read`.
+        assert_eq!(scope_uncovered("read:accounts", &cats(&["bogus"])), cats(&["bogus"]));
+        assert!(scope_uncovered("read", &cats(&["bogus"])).is_empty());
     }
 
     #[test]

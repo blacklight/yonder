@@ -819,6 +819,66 @@ async fn fanout_populates_index_and_trims() {
     assert_eq!(ids, posted[2..].iter().rev().cloned().collect::<Vec<_>>());
 }
 
+/// Remote authors head no home index: fan-out writes only their local
+/// followers' feeds. A `home:v2:{remote_id}` index is pure garbage —
+/// nobody can ever read it, and on a well-connected instance remote
+/// authors outnumber locals by orders of magnitude.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_author_gets_no_home_index() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let alice_id = account_id(&env.state.db, "alice").await;
+    let remote = insert_remote_account(&env.state.db, "eve", "remote.example").await;
+    sqlx::query("INSERT INTO follows (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(alice_id)
+        .bind(remote)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let s = insert_remote_status(&env.state.db, remote, "hi from eve", "public").await;
+    run_fanout(&env.state, s).await;
+
+    assert_eq!(
+        fanout::index_ids(&env.state.redis, alice_id).await.unwrap(),
+        vec![s]
+    );
+    assert!(
+        fanout::index_ids(&env.state.redis, remote)
+            .await
+            .unwrap()
+            .is_empty(),
+        "remote author must not own a home index"
+    );
+
+    // Backfill is guarded the same way — a remote "follower" (e.g.
+    // Accept processing for a remote follow) owns no index either.
+    let local = post(&env.app, &alice, json!({"status": "alice post"}))
+        .await
+        .parse::<i64>()
+        .unwrap();
+    fanout::backfill(
+        &env.state.db,
+        &env.state.redis,
+        &env.state.config().timelines,
+        remote,
+        alice_id,
+    )
+    .await
+    .unwrap();
+    assert!(
+        fanout::index_ids(&env.state.redis, remote)
+            .await
+            .unwrap()
+            .is_empty(),
+        "backfill must not index a remote follower's feed"
+    );
+    let _ = local;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cold_index_falls_back_to_sql_and_repopulates() {
     let _permit = harness::acquire().await;

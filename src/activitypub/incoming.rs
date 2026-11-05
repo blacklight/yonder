@@ -88,13 +88,14 @@ impl JobHandler for FederationIncomingJob {
             )
         });
         match result {
-            Err(e) if e.is_signature_verification() => {
-                // Signature failures never heal on retry — audit and
-                // drop. The dedupe row is also released: it was written
-                // before verification, so keeping it would permanently
-                // shadow a correctly-signed redelivery of the same id
-                // (e.g. after the remote rotates keys).
-                tracing::warn!(error = %e, "inbound activity failed signature verification");
+            Err(e) if permanent_inbound_error(&e) => {
+                // Signature and other permanent verification failures
+                // never heal on retry — audit and drop. The dedupe row
+                // is also released: it was written before verification,
+                // so keeping it would permanently shadow a
+                // correctly-signed redelivery of the same id (e.g.
+                // after the remote rotates keys).
+                tracing::warn!(error = %e, "inbound activity failed verification");
                 let activity_id = activity_id_of(payload);
                 if !activity_id.is_empty() {
                     sqlx::query(
@@ -122,6 +123,26 @@ impl JobHandler for FederationIncomingJob {
                 Ok(())
             }
         }
+    }
+}
+
+/// Inbound failures a retry can never fix: bad signatures, untrusted
+/// attribution, malformed payloads and unparseable actor keys. These
+/// drop (with the dedupe row released) instead of burning the
+/// envelope's retry budget — a redelivery fails the same way.
+fn permanent_inbound_error(e: &pubby_sdk::ActivityPubError) -> bool {
+    use pubby_sdk::ActivityPubError::*;
+    match e {
+        SignatureVerification(_)
+        | AttributionMismatch(_)
+        | InvalidValue(_)
+        | Json(_)
+        | Unsupported(_) => true,
+        // Pubby surfaces unparseable `publicKeyPem` material as a
+        // `General` wrap of the pkcs#8 error — permanent until the
+        // remote fixes its key document.
+        General(m) => m.contains("invalid public key"),
+        _ => false,
     }
 }
 

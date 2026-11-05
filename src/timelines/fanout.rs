@@ -94,10 +94,21 @@ async fn enqueue_backfill_inner(
     }
 }
 
-/// The author's local followers, batched. The author leads the list —
-/// their own home feed includes their own posts.
+/// The author's local followers, batched. A *local* author leads the
+/// list — their own home feed includes their own posts. Remote authors
+/// head no home index (nobody reads `timeline:home` for a remote
+/// account), so they only contribute their local followers' indexes.
 async fn local_follower_ids(db: &PgPool, author_id: i64, batch_size: i64) -> Result<Vec<i64>> {
-    let mut ids = vec![author_id];
+    let mut ids = Vec::new();
+    if sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1 AND domain IS NULL)",
+    )
+    .bind(author_id)
+    .fetch_one(db)
+    .await?
+    {
+        ids.push(author_id);
+    }
     let mut after = 0i64;
     loop {
         let batch: Vec<i64> = sqlx::query_scalar(
@@ -222,6 +233,18 @@ pub async fn backfill(
     follower_id: i64,
     followee_id: i64,
 ) -> Result<()> {
+    // Only local accounts own a home index — guard here too so a
+    // call site that forgets the locality check can't create indexes
+    // for remote accounts.
+    if !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1 AND domain IS NULL)",
+    )
+    .bind(follower_id)
+    .fetch_one(db)
+    .await?
+    {
+        return Ok(());
+    }
     let show_reblogs: bool = sqlx::query_scalar(
         "SELECT COALESCE((SELECT show_reblogs FROM follows \
          WHERE account_id = $1 AND target_account_id = $2), true)",

@@ -75,6 +75,11 @@ lettre = { version = "0.11", default-features = false, features = [
     "aws-lc-rs",
     "rustls-native-certs",
 ] }
+# Global allocator for the `yonder` binary — glibc malloc's per-thread
+# arenas retain freed pages from JSON/delivery churn indefinitely
+# (hundreds of MB of idle RSS on busy federation). mimalloc returns
+# memory to the OS far more aggressively.
+mimalloc = "0.1.52"
 # VAPID keypair generation (admin "generate keys", epic 22) and Web
 # Push delivery — `ecdh` for the RFC 8291 shared secret, `ecdsa` for
 # VAPID JWT signing.

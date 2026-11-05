@@ -244,13 +244,7 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
                 .await
                 .unwrap_or(false)
             {
-                sqlx::query(
-                    "UPDATE deliveries SET state = 'failed', attempts = attempts + 1, \
-                     last_error = 'domain is suspended', updated_at = now() WHERE id = $1",
-                )
-                .bind(delivery_id)
-                .execute(&ctx.db)
-                .await?;
+                Self::mark_failed(&ctx.db, delivery_id, "domain is suspended").await?;
                 tracing::info!(domain, inbox = %inbox_url, "delivery skipped: domain suspended");
                 return Ok(());
             }
@@ -284,13 +278,11 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
         let Some(pem) = pem else {
             // The instance actor signs its own deliveries; a missing key
             // is unrecoverable — mark failed rather than retry forever.
-            sqlx::query(
-                "UPDATE deliveries SET state = 'failed', last_error = $2, \
-                 attempts = attempts + 1, updated_at = now() WHERE id = $1",
+            Self::mark_failed(
+                &ctx.db,
+                delivery_id,
+                "signer account or private key missing",
             )
-            .bind(delivery_id)
-            .bind("signer account or private key missing")
-            .execute(&ctx.db)
             .await?;
             return Ok(());
         };
@@ -321,20 +313,19 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
                 .await?;
                 Ok(())
             }
+            // Permanent rejections (gone, unauthorized, malformed
+            // routes) never heal on retry — mark the ledger row
+            // `failed` on the first attempt instead of burning the
+            // whole retry budget against a dead inbox.
+            Ok(status) if permanent_delivery_status(status) => {
+                Self::mark_failed(&ctx.db, delivery_id, &format!("HTTP {status}")).await
+            }
             Ok(status) => {
                 self.mark_retry(&ctx.db, delivery_id, attempts, &format!("HTTP {status}"))
                     .await
             }
             Err(e) if permanent_delivery_error(&e) => {
-                sqlx::query(
-                    "UPDATE deliveries SET state = 'failed', attempts = attempts + 1, \
-                     last_error = $2, updated_at = now() WHERE id = $1",
-                )
-                .bind(delivery_id)
-                .bind(e.to_string())
-                .execute(&ctx.db)
-                .await?;
-                Ok(())
+                Self::mark_failed(&ctx.db, delivery_id, &e.to_string()).await
             }
             Err(e) => {
                 self.mark_retry(&ctx.db, delivery_id, attempts, &e.to_string())
@@ -345,6 +336,20 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
 }
 
 impl FederationDeliveryJob {
+    /// Mark the ledger row `failed` — terminal outcomes (suspension,
+    /// permanent HTTP rejections, missing keys) skip the retry budget.
+    async fn mark_failed(db: &sqlx::PgPool, delivery_id: i64, error: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE deliveries SET state = 'failed', attempts = attempts + 1, \
+             last_error = $2, updated_at = now() WHERE id = $1",
+        )
+        .bind(delivery_id)
+        .bind(error)
+        .execute(db)
+        .await?;
+        Ok(())
+    }
+
     /// Record the failed attempt; the last budgeted attempt flips the
     /// row to `failed` instead of returning `Err` (which would
     /// dead-letter an already-marked delivery).
@@ -459,5 +464,27 @@ pub(crate) fn permanent_delivery_error(e: &ActivityPubError) -> bool {
         ActivityPubError::InvalidValue(_) | ActivityPubError::SignatureVerification(_) => true,
         ActivityPubError::General(m) => m.contains("unsafe") || m.contains("private"),
         _ => false,
+    }
+}
+
+/// HTTP responses that mean "don't come back": every 4xx except
+/// `408 Request Timeout` and `429 Too Many Requests` (both
+/// transient-shaped). 5xx and network errors keep the retry path.
+pub(crate) fn permanent_delivery_status(status: u16) -> bool {
+    (400..500).contains(&status) && status != 408 && status != 429
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permanent_delivery_status;
+
+    #[test]
+    fn permanent_delivery_status_classification() {
+        for permanent in [400, 401, 403, 404, 405, 410, 422] {
+            assert!(permanent_delivery_status(permanent), "{permanent}");
+        }
+        for transient in [200, 202, 301, 408, 429, 500, 502, 503] {
+            assert!(!permanent_delivery_status(transient), "{transient}");
+        }
     }
 }

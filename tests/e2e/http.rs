@@ -175,49 +175,55 @@ async fn invalid_bearer_rejected_with_mastodon_shape() {
     // covers it over TCP (oneshot can't perform upgrades).
 }
 
+/// Every OPTIONS is answered as a permissive preflight — `*` origin,
+/// the requested method reflected, requested headers echoed — on any
+/// path, including authenticated ones like verify_credentials.
 #[tokio::test]
-async fn cors_preflight_obeys_origin_policy() {
+async fn cors_preflight_is_universal() {
     let _permit = harness::acquire().await;
-    let Some(state) = test_state(|c| {
-        c.http.cors_enabled = true;
-        c.http.cors_origins = vec!["https://app.example.com".to_string()];
-    })
-    .await
-    else {
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = http::build_router(state);
 
-    let preflight = |origin: &str| {
-        Request::builder()
-            .method("OPTIONS")
-            .uri("/healthz")
-            .header(header::ORIGIN, origin)
-            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-            .body(Body::empty())
-            .unwrap()
-    };
-
-    let resp = app
-        .clone()
-        .oneshot(preflight("https://app.example.com"))
-        .await
-        .unwrap();
-    assert_eq!(
-        resp.headers()
-            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-            .unwrap(),
-        "https://app.example.com"
-    );
-
-    let resp = app
-        .oneshot(preflight("https://evil.example"))
-        .await
-        .unwrap();
-    assert!(resp
-        .headers()
-        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-        .is_none());
+    for path in ["/healthz", "/api/v1/accounts/verify_credentials"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri(path)
+                    .header(header::ORIGIN, "https://columnly.social")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT, "{path}");
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*",
+            "{path}"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+                .unwrap(),
+            "GET",
+            "{path}"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+                .unwrap(),
+            "authorization",
+            "{path}"
+        );
+    }
 }
 
 /// Public read endpoints answer `Access-Control-Allow-Origin: *` even
@@ -279,7 +285,8 @@ async fn public_reads_allow_any_origin() {
         "accept"
     );
 
-    // Auth-required paths stay clean even for allowed-looking origins.
+    // Authenticated paths carry `*` too — the Bearer token is the
+    // security boundary, not the origin. The 401 still gets headers.
     let resp = app
         .oneshot(
             Request::builder()
@@ -291,37 +298,65 @@ async fn public_reads_allow_any_origin() {
         )
         .await
         .unwrap();
-    assert!(resp
-        .headers()
-        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-        .is_none());
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
 }
 
-/// With an origin allow-list configured, public paths still answer `*`
-/// while private paths reflect only listed origins.
+/// Browser clients register an app and exchange the OAuth code
+/// cross-origin — both calls are unauthenticated by design.
 #[tokio::test]
-async fn public_star_wins_over_configured_origins() {
+async fn public_app_registration_and_token_exchange() {
     let _permit = harness::acquire().await;
-    let Some(state) = test_state(|c| {
-        c.http.cors_enabled = true;
-        c.http.cors_origins = vec!["https://app.example.com".to_string()];
-    })
-    .await
-    else {
+    let Some(state) = test_state(|_| {}).await else {
         return;
     };
     let app = http::build_router(state);
 
-    // Public path: `*` regardless of the configured list.
+    // Preflight for the app-registration POST.
     let resp = app
         .clone()
         .oneshot(
             Request::builder()
                 .method("OPTIONS")
-                .uri("/api/v1/instance")
+                .uri("/api/v1/apps")
                 .header(header::ORIGIN, "https://columnly.social")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "POST")
+                .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "content-type")
                 .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+            .unwrap(),
+        "POST"
+    );
+
+    // The POST itself carries `*` — the handler's own validation
+    // decides the status, CORS decorates regardless.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/apps")
+                .header(header::ORIGIN, "https://columnly.social")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
                 .unwrap(),
         )
         .await
@@ -333,14 +368,34 @@ async fn public_star_wins_over_configured_origins() {
         "*"
     );
 
-    // Private path: only the configured origin is reflected.
+    // Token exchange likewise; other oauth writes stay gated.
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth/token")
+                .header(header::ORIGIN, "https://columnly.social")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("grant_type=authorization_code"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
+
+    // Other oauth writes are `*` too — universal policy.
     let resp = app
         .oneshot(
             Request::builder()
-                .method("OPTIONS")
-                .uri("/api/v1/accounts/verify_credentials")
-                .header(header::ORIGIN, "https://app.example.com")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .method("POST")
+                .uri("/oauth/device_code")
+                .header(header::ORIGIN, "https://columnly.social")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -350,33 +405,44 @@ async fn public_star_wins_over_configured_origins() {
         resp.headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .unwrap(),
-        "https://app.example.com"
+        "*"
     );
 }
 
+/// `http.cors_enabled`/`cors_origins` are deprecated — every response
+/// answers `*` regardless of configuration.
 #[tokio::test]
-async fn cors_disabled_by_default() {
+async fn cors_is_unconditional() {
     let _permit = harness::acquire().await;
-    let Some(state) = test_state(|_| {}).await else {
+    let Some(state) = test_state(|c| {
+        c.http.cors_enabled = true;
+        c.http.cors_origins = vec!["https://app.example.com".to_string()];
+    })
+    .await
+    else {
         return;
     };
     let app = http::build_router(state);
+
+    // Even a configured-list path that used to reflect the origin now
+    // answers `*` — the allow-list is ignored entirely.
     let resp = app
         .oneshot(
             Request::builder()
-                .method("OPTIONS")
-                .uri("/healthz")
-                .header(header::ORIGIN, "https://app.example.com")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                .method("GET")
+                .uri("/api/v1/accounts/verify_credentials")
+                .header(header::ORIGIN, "https://unlisted.example")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert!(resp
-        .headers()
-        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
-        .is_none());
+    assert_eq!(
+        resp.headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "*"
+    );
 }
 
 #[tokio::test]

@@ -194,12 +194,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         ));
     }
 
-    // CORS: `*` on the anonymous-safe read surface, the configured
-    // origin allow-list everywhere else — see `middleware::cors`.
-    let router = router.layer(axum::middleware::from_fn_with_state(
-        state.clone(),
-        middleware::cors::handle,
-    ));
+    // CORS: `*` everywhere — Bearer-only auth means no path needs
+    // gating; see `middleware::cors`.
+    let router = router.layer(axum::middleware::from_fn(middleware::cors::handle));
 
     router
         .layer(

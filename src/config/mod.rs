@@ -743,10 +743,11 @@ impl Default for SearchConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HttpConfig {
-    /// Enable CORS. Disabled by default — enable only with an explicit
-    /// origin allow-list.
+    /// Deprecated — CORS is now `Access-Control-Allow-Origin: *` on
+    /// every response (Bearer-only auth needs no origin gating).
+    /// Kept for config compatibility; no effect.
     pub cors_enabled: bool,
-    /// Allowed CORS origins (comma-separated via env).
+    /// Deprecated — see `cors_enabled`.
     #[serde(deserialize_with = "de::string_or_seq")]
     pub cors_origins: Vec<String>,
     /// `mailto:` contact embedded in WebPush requests.

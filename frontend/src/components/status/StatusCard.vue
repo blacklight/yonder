@@ -17,6 +17,7 @@ import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
 import ComposeBox from "@/components/compose/ComposeBox.vue";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
 import { FontAwesomeIcon } from "@/icons";
@@ -176,12 +177,14 @@ const translatedFromName = computed(() => {
 // text — the card's other props (media, footer actions) stay on the
 // original entity.
 const displayedContent = computed(() =>
-  sanitizeHtml(translation.value?.content ?? shownContent.value, {
-    mentions: shown.value.mentions,
-    tags: shown.value.tags,
-    // Translated HTML keeps literal `:code:` — `emojis` expands it.
-    emojis: shown.value.emojis,
-  }),
+  highlightCodeBlocks(
+    sanitizeHtml(translation.value?.content ?? shownContent.value, {
+      mentions: shown.value.mentions,
+      tags: shown.value.tags,
+      // Translated HTML keeps literal `:code:` — `emojis` expands it.
+      emojis: shown.value.emojis,
+    }),
+  ),
 );
 const displayedSpoiler = computed(
   () => translation.value?.spoiler_text || shown.value.spoiler_text,

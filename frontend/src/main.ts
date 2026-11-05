@@ -6,6 +6,7 @@ import { i18n, loadInitialLocale } from "./i18n";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/rtl.css";
+import "./styles/hljs.css";
 import { usePwa } from "./composables/usePwa";
 
 async function bootstrap() {

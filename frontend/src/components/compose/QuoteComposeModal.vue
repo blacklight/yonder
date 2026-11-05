@@ -8,6 +8,7 @@ import CwBlock from "@/components/status/CwBlock.vue";
 import StatusMedia from "@/components/status/StatusMedia.vue";
 import ComposeBox from "./ComposeBox.vue";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { useComposeStore } from "@/stores/compose";
 import type { Status } from "@/api/entities";
 
@@ -17,11 +18,13 @@ const props = defineProps<{ status: Status }>();
 const { t } = useI18n();
 const compose = useComposeStore();
 const html = computed(() =>
-  sanitizeHtml(props.status.content, {
-    mentions: props.status.mentions,
-    tags: props.status.tags,
-    emojis: props.status.emojis,
-  }),
+  highlightCodeBlocks(
+    sanitizeHtml(props.status.content, {
+      mentions: props.status.mentions,
+      tags: props.status.tags,
+      emojis: props.status.emojis,
+    }),
+  ),
 );
 </script>
 

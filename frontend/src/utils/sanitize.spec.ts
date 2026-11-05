@@ -146,10 +146,28 @@ describe("sanitizeHtml", () => {
     expect(out).toContain('target="_blank"');
   });
 
-  it("keeps emoji imgs styled — class restored after FORBID_ATTR", () => {
+  it("keeps language-* class on code/pre, strips it elsewhere", () => {
+    const out = sanitizeHtml(
+      `<pre class="language-rust"><code class="language-rust">fn x() {}</code></pre>` +
+        `<p class="evil">x</p><code class="language-python">y</code>` +
+        `<code class="prettyprint lang-js">z</code>` +
+        `<pre><code class="language-go extra">w</code></pre>`,
+    );
+    // pulldown-cmark's fenced-block marker survives for highlighting.
+    expect(out).toContain('class="language-rust"');
+    expect(out).toContain('class="language-python"');
+    // Non-language tokens and non-code elements lose class entirely.
+    expect(out).not.toContain("prettyprint");
+    expect(out).not.toContain("lang-js");
+    expect(out).not.toContain("extra");
+    expect(out).not.toContain('class="evil"');
+    expect(out).toContain("<p>x</p>");
+  });
+
+  it("keeps emoji imgs styled — class restored after sanitizing", () => {
     // The backend emits `<img class="emoji" alt=":code:" …>` for
-    // substituted shortcodes; `class`/`title` are forbidden attrs, so
-    // the hook re-adds the fixed `emoji` class.
+    // substituted shortcodes; `class` is stripped for non-code tags,
+    // so the hook re-adds the fixed `emoji` class.
     const out = sanitizeHtml(
       `<p>x <img class="emoji" alt=":blobcat:" title=":blobcat:" ` +
         `src="https://remote.test/emoji/blobcat.png" width="20" height="20"></p>`,

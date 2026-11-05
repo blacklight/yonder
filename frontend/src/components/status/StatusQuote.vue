@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import type { Status } from "@/api/entities";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatRelativeDate } from "@/utils/relativeDate";
 import { react, unreact } from "@/api/statuses";
 import { useAuthStore } from "@/stores/auth";
@@ -35,11 +36,13 @@ const actionError = ref("");
 
 const contentHtml = computed(() =>
   quoted
-    ? sanitizeHtml(quoted.content, {
-        mentions: quoted.mentions,
-        tags: quoted.tags,
-        emojis: quoted.emojis,
-      })
+    ? highlightCodeBlocks(
+        sanitizeHtml(quoted.content, {
+          mentions: quoted.mentions,
+          tags: quoted.tags,
+          emojis: quoted.emojis,
+        }),
+      )
     : "",
 );
 

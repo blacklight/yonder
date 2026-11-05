@@ -8,6 +8,7 @@ import StatusMedia from "./StatusMedia.vue";
 import StatusEmbedCard from "./StatusEmbedCard.vue";
 import { getStatus } from "@/api/statuses";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
 import type { Status } from "@/api/entities";
 
@@ -72,11 +73,13 @@ const contentHtml = computed(() => {
   const raw = nestedQuoteRenders(t_)
     ? t_.content.replace(RE_PARAGRAPH, "")
     : t_.content;
-  return sanitizeHtml(raw, {
-    mentions: t_.mentions,
-    tags: t_.tags,
-    emojis: t_.emojis,
-  });
+  return highlightCodeBlocks(
+    sanitizeHtml(raw, {
+      mentions: t_.mentions,
+      tags: t_.tags,
+      emojis: t_.emojis,
+    }),
+  );
 });
 
 // Whole card is a link to the quoted post (new top-level tab — the

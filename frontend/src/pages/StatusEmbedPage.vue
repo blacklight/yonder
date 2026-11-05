@@ -9,6 +9,7 @@ import StatusEmbedQuote from "@/components/status/StatusEmbedQuote.vue";
 import StatusEmbedCard from "@/components/status/StatusEmbedCard.vue";
 import { getStatus } from "@/api/statuses";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
 import { FontAwesomeIcon } from "@/icons";
 import type { Status } from "@/api/entities";
@@ -52,11 +53,13 @@ const content = computed(() => {
   const raw = quoteRenders.value
     ? s.content.replace(RE_PARAGRAPH, "")
     : s.content;
-  return sanitizeHtml(raw, {
-    mentions: s.mentions,
-    tags: s.tags,
-    emojis: s.emojis,
-  });
+  return highlightCodeBlocks(
+    sanitizeHtml(raw, {
+      mentions: s.mentions,
+      tags: s.tags,
+      emojis: s.emojis,
+    }),
+  );
 });
 
 const permalink = computed(() => shown.value?.url ?? shown.value?.uri ?? "");

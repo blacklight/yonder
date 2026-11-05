@@ -209,8 +209,15 @@ pub fn sanitize_html(html: &str, config: &Config) -> String {
         .tags(tags)
         .link_rel(Some("nofollow noopener"))
         .url_schemes(schemes);
+    // `class` survives only on `code`/`pre` — pulldown-cmark emits
+    // `language-*` on fenced blocks and clients use it for syntax
+    // highlighting. Everywhere else class is still stripped (mention/
+    // hashtag markers must not reach the client).
+    let code_attrs: HashSet<&'static str> = ["class"].into_iter().collect();
     let mut tag_attrs = std::collections::HashMap::new();
     tag_attrs.insert("a", std::mem::take(&mut a_attrs));
+    tag_attrs.insert("code", code_attrs.clone());
+    tag_attrs.insert("pre", code_attrs);
     builder.tag_attributes(tag_attrs);
     builder.clean(html).to_string()
 }
@@ -660,6 +667,21 @@ mod tests {
         assert!(r.html.contains("<code>"));
         assert_eq!(r.hashtags.len(), 0);
         assert!(!r.html.contains("not.a/link\""));
+    }
+
+    #[test]
+    fn markdown_fence_keeps_language_class() {
+        let r = render(
+            "```python\ndef f():\n    pass\n```\n\n```\nplain\n```",
+            "text/markdown",
+            &[],
+            "https://y.test",
+            &cfg(),
+        );
+        // The language class is what clients highlight on; it must
+        // survive the allowlist (class is otherwise stripped).
+        assert!(r.html.contains("language-python"), "{}", r.html);
+        assert!(r.html.contains("<pre><code"), "{}", r.html);
     }
 
     #[test]

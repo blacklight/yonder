@@ -13,6 +13,7 @@ import Modal from "@/components/ui/Modal.vue";
 import Tooltip from "@/components/ui/Tooltip.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { sanitizeHtml } from "@/utils/sanitize";
+import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 
 const { t } = useI18n();
@@ -115,11 +116,13 @@ onMounted(() => {
           v-if="c.last_status"
           class="preview"
           v-html="
-            sanitizeHtml(c.last_status.content, {
-              mentions: c.last_status.mentions,
-              tags: c.last_status.tags,
-              emojis: c.last_status.emojis,
-            })
+            highlightCodeBlocks(
+              sanitizeHtml(c.last_status.content, {
+                mentions: c.last_status.mentions,
+                tags: c.last_status.tags,
+                emojis: c.last_status.emojis,
+              }),
+            )
           "
         />
       </li>

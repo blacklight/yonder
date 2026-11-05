@@ -1,0 +1,53 @@
+/* highlight.js token palette — mapped onto the app's design tokens so
+   code blocks follow the active light/dark theme instead of shipping
+   a foreign fixed-color theme. */
+.hljs {
+  font-family: var(--font-mono);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst,
+.hljs-doctag,
+.hljs-meta .hljs-keyword {
+  color: var(--accent-link);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attr,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link,
+.hljs-meta,
+.hljs-selector-attr,
+.hljs-selector-pseudo,
+.hljs-type {
+  color: var(--success);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-built_in,
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-params,
+.hljs-formula {
+  color: var(--warning);
+}
+.hljs-title.function_,
+.hljs-deletion,
+.hljs-emphasis .hljs-keyword {
+  color: var(--danger);
+}
+.hljs-strong {
+  font-weight: 700;
+}

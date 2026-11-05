@@ -4,10 +4,29 @@ import { emojifyHtml } from "@/utils/emoji";
 
 let hooked = false;
 
+/** `class` tokens allowed to survive on `code`/`pre` — the
+ * `language-*` marker pulldown-cmark and other fediverse software
+ * emit for fenced blocks (syntax highlighting), plus the fixed
+ * markers highlight.js/clients use. Anything else is stripped so
+ * remote markup can't smuggle styling hooks. */
+const CODE_CLASS_TOKEN = /^(?:language-[\w+#.-]*|hljs|no-highlight)$/;
+
 /** Anchors get a fixed rel/target — `target="_self"` et al. are overwritten. */
 function ensureHook() {
   if (hooked) return;
   hooked = true;
+  DOMPurify.addHook("uponSanitizeAttribute", (node, data) => {
+    if (data.attrName !== "class") return;
+    const tag = node.tagName.toUpperCase();
+    const tokens = data.attrValue.trim().split(/\s+/).filter(Boolean);
+    if (
+      (tag !== "CODE" && tag !== "PRE") ||
+      !tokens.length ||
+      !tokens.every((t) => CODE_CLASS_TOKEN.test(t))
+    ) {
+      data.keepAttr = false;
+    }
+  });
   DOMPurify.addHook("afterSanitizeAttributes", (node) => {
     if (node.tagName === "A") {
       // Internal links stay in-app and same-tab; everything else is
@@ -255,7 +274,9 @@ export function sanitizeHtml(html: string, links?: RichLinkEntities): string {
   return DOMPurify.sanitize(localizeAnchors(emojified, links), {
     FORBID_TAGS: ["style", "form", "input", "button", "select", "textarea"],
     FORBID_CONTENTS: ["style"],
-    FORBID_ATTR: ["class", "title"],
+    // `class` is handled per-tag by the uponSanitizeAttribute hook
+    // (language markers on code/pre survive); `title` stays banned.
+    FORBID_ATTR: ["title"],
   });
 }
 

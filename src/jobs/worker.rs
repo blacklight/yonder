@@ -70,7 +70,16 @@ impl Worker {
         let reclaimer = self.clone();
         set.spawn(async move { reclaimer.reclaim_loop().await });
         self.cancel.cancelled().await;
-        set.shutdown().await;
+        // Drain instead of aborting: each task observes the token at
+        // its loop boundary, so a dispatch in flight runs to
+        // completion and acks. Aborting could cut a job between
+        // handler completion and `XACK`, orphaning the entry in the
+        // pending list until the reclaimer re-runs it.
+        while let Some(result) = set.join_next().await {
+            if let Err(e) = result {
+                tracing::warn!(error = %e, "worker task terminated with error");
+            }
+        }
         Ok(())
     }
 
@@ -85,6 +94,9 @@ impl Worker {
             {
                 Ok(entries) => {
                     for (stream_id, body) in entries {
+                        if self.cancel.is_cancelled() {
+                            return;
+                        }
                         self.dispatch(queue_name, &stream_id, &body).await;
                     }
                 }
@@ -213,6 +225,9 @@ impl Worker {
                 {
                     Ok(entries) => {
                         for (stream_id, body) in entries {
+                            if self.cancel.is_cancelled() {
+                                return;
+                            }
                             tracing::info!(stream_id, "reclaimed abandoned job");
                             self.dispatch(*queue_name, &stream_id, &body).await;
                         }

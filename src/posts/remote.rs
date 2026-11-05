@@ -1007,6 +1007,18 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     backfill_pending_quotes(&core.db, status_id, &object_id).await?;
     backfill_pending_pins(&core.db, status_id, &object_id).await?;
     backfill_pending_replies(core, status_id, account_id, &object_id).await?;
+    // Imported boosts parked on this URI materialize now — best-effort:
+    // a drain failure must not fail the ingest itself.
+    if let Err(e) = crate::users::transfer::restore::backfill_pending_boosts(
+        &core.db,
+        &core.dispatcher,
+        status_id,
+        &object_id,
+    )
+    .await
+    {
+        tracing::warn!(status_id, uri = %object_id, error = %e, "pending boost drain failed");
+    }
 
     // A still-pending quote target gets an active fetch — passive
     // backfill alone never resolves quotes whose target's server
@@ -1499,6 +1511,17 @@ impl JobHandler for RemoteStatusFetchJob {
                 if !target.content.is_empty() || target.object_type.is_some() {
                     backfill_pending_quotes(&ctx.db, target.id, uri).await?;
                     backfill_pending_pins(&ctx.db, target.id, uri).await?;
+                    let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+                    if let Err(e) = crate::users::transfer::restore::backfill_pending_boosts(
+                        &ctx.db,
+                        &dispatcher,
+                        target.id,
+                        uri,
+                    )
+                    .await
+                    {
+                        tracing::warn!(uri, error = %e, "pending boost drain failed");
+                    }
                     let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
                     return Ok(());
                 }
@@ -1515,6 +1538,7 @@ impl JobHandler for RemoteStatusFetchJob {
             let _ = cache
                 .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
                 .await;
+            fail_pending_boost_import(&ctx.db, uri).await;
             return Ok(());
         }
         match lookup::fetch_remote_object_detailed(ap, uri).await? {
@@ -1522,6 +1546,7 @@ impl JobHandler for RemoteStatusFetchJob {
                 let _ = cache
                     .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
                     .await;
+                fail_pending_boost_import(&ctx.db, uri).await;
                 Ok(())
             }
             // Transport-level failure or remote throttling — retry
@@ -1545,6 +1570,17 @@ impl JobHandler for RemoteStatusFetchJob {
                     Some(crate::search::resolve::ResolvedHit::Status(id)) => {
                         backfill_pending_quotes(&ctx.db, id, uri).await?;
                         backfill_pending_pins(&ctx.db, id, uri).await?;
+                        let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+                        if let Err(e) = crate::users::transfer::restore::backfill_pending_boosts(
+                            &ctx.db,
+                            &dispatcher,
+                            id,
+                            uri,
+                        )
+                        .await
+                        {
+                            tracing::warn!(uri, error = %e, "pending boost drain failed");
+                        }
                         // Refresh re-materializes an existing row, so
                         // the ingest-side `is_new`/Update gate skipped
                         // the preview enqueue — run it here or
@@ -1571,11 +1607,20 @@ impl JobHandler for RemoteStatusFetchJob {
                         let _ = cache
                             .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
                             .await;
+                        fail_pending_boost_import(&ctx.db, uri).await;
                         Ok(())
                     }
                 }
             }
         }
+    }
+}
+
+/// Best-effort bookkeeping for parked import boosts whose target
+/// fetch settled permanently — never fails the job over it.
+async fn fail_pending_boost_import(db: &sqlx::PgPool, uri: &str) {
+    if let Err(e) = crate::users::transfer::restore::fail_pending_boosts(db, uri).await {
+        tracing::warn!(uri, error = %e, "pending boost fail-mark failed");
     }
 }
 

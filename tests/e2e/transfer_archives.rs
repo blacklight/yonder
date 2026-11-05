@@ -502,6 +502,20 @@ async fn mastodon_zip_restores_full_outbox() {
     register(&env, "importer").await;
     let importer = account_id(&env.state, "importer").await;
 
+    // The Announce's target must be materialized for the boost to
+    // write synchronously — unmaterialized targets park in
+    // `pending_boosts` instead of wrapping an empty stub.
+    let remote_account = seed_remote(&env.state, "https://remote.example/users/other").await;
+    sqlx::query(
+        "INSERT INTO statuses (account_id, content, uri, url, visibility, local) \
+         VALUES ($1, '<p>remote</p>', 'https://remote.example/statuses/42', \
+                'https://remote.example/statuses/42', 'public', false)",
+    )
+    .bind(remote_account)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
     let import_id = run_archive_import(&env, importer, &mastodon42_zip(), "archive.zip").await;
     let (state, error) = import_state(&env, import_id).await;
     assert_eq!(state.as_str(), "done", "import failed: {error:?}");
@@ -2582,6 +2596,20 @@ async fn remote_oauth_import_end_to_end() {
             .unwrap();
     assert!(!enc.windows(3).any(|w| w == b"tok"), "token is encrypted");
 
+    // The outbox's reblog target must be materialized for the boost
+    // to write synchronously — unmaterialized targets park in
+    // `pending_boosts` instead of wrapping an empty stub.
+    let remote_account = seed_remote(&env.state, "https://remote.example/users/other").await;
+    sqlx::query(
+        "INSERT INTO statuses (account_id, content, uri, url, visibility, local) \
+         VALUES ($1, '<p>remote</p>', 'https://remote.example/statuses/9', \
+                'https://remote.example/statuses/9', 'public', false)",
+    )
+    .bind(remote_account)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
     // Session: statuses + dms + observations + profile.
     let (status, body) = request(
         &env.app,
@@ -3693,6 +3721,137 @@ async fn api_import_dedupes_boosts_received_over_federation() {
     let st = category_state(&env, id).await;
     assert_eq!(st["statuses"]["present"], json!(1));
     assert_eq!(st["statuses"]["applied"], json!(1));
+}
+
+/// A boost whose target isn't materialized parks in `pending_boosts`
+/// — no empty boost card — and materializes (with its historical
+/// timestamp) when the remote object lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn api_import_defers_boost_until_target_lands() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".into());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "deferboost").await;
+    let importer = account_id(&env.state, "deferboost").await;
+    let stub = stub_provider().await;
+    let connection = connect(&env, &token, &stub.origin).await;
+
+    let id = remote_session(
+        &env,
+        &token,
+        json!({"connection_id": connection, "categories": ["statuses"]}),
+    )
+    .await;
+    run_import(&env, id).await;
+    let (state, error) = import_state(&env, id).await;
+    assert_eq!(state.as_str(), "done", "import failed: {error:?}");
+
+    // No boost row and no stub — the intent is parked, not rendered.
+    let boosts: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM statuses WHERE account_id = $1 AND reblog_of_id IS NOT NULL",
+    )
+    .bind(importer)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(boosts, 0, "no boost row before its target lands");
+    let stubs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM statuses s JOIN accounts a ON a.id = s.account_id \
+         WHERE a.username = '_unknown' AND s.uri = 'https://remote.example/statuses/9'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(stubs, 0, "no placeholder stub for the boost target");
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM pending_boosts WHERE account_id = $1 \
+         AND target_uri = 'https://remote.example/statuses/9'",
+    )
+    .bind(importer)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 1, "the boost intent is parked");
+    let item_state: String = sqlx::query_scalar(
+        "SELECT state FROM import_items WHERE account_id = $1 AND kind = 'boost'",
+    )
+    .bind(importer)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(item_state, "pending");
+
+    // The target materializes — the drain writes the boost with the
+    // Announce's historical timestamp, not import time.
+    let remote_account = seed_remote(&env.state, "https://remote.example/users/other").await;
+    let target: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (account_id, content, uri, url, visibility, local) \
+         VALUES ($1, '<p>remote post</p>', 'https://remote.example/statuses/9', \
+                'https://remote.example/statuses/9', 'public', false) RETURNING id",
+    )
+    .bind(remote_account)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let dispatcher = yonder::jobs::Dispatcher::new(&env.state.redis, &env.state.config().jobs);
+    yonder::users::transfer::restore::backfill_pending_boosts(
+        &env.state.db,
+        &dispatcher,
+        target,
+        "https://remote.example/statuses/9",
+    )
+    .await
+    .unwrap();
+
+    let (boost_id, boost_created, boost_original): (
+        i64,
+        chrono::DateTime<chrono::Utc>,
+        chrono::DateTime<chrono::Utc>,
+    ) = sqlx::query_as(
+        "SELECT id, created_at, original_created_at FROM statuses \
+             WHERE account_id = $1 AND reblog_of_id = $2",
+    )
+    .bind(importer)
+    .bind(target)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        boost_created, boost_original,
+        "historical timestamp preserved"
+    );
+    let cutoff = chrono::DateTime::parse_from_rfc3339("2021-01-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(
+        boost_created < cutoff,
+        "the boost keeps the Announce's 2020 date, got {boost_created}"
+    );
+    let (item_state, mapped): (String, Option<i64>) = sqlx::query_as(
+        "SELECT state, target_status_id FROM import_items \
+         WHERE account_id = $1 AND kind = 'boost'",
+    )
+    .bind(importer)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!((item_state.as_str(), mapped), ("done", Some(boost_id)));
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pending_boosts WHERE account_id = $1")
+            .bind(importer)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(pending, 0, "the parked intent is consumed");
+    let reblogs: i32 = sqlx::query_scalar("SELECT reblogs_count FROM statuses WHERE id = $1")
+        .bind(target)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(reblogs, 1, "the target's counter moved at materialization");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

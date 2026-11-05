@@ -440,7 +440,7 @@ pub(crate) async fn apply_collection_item(
     .await?;
     tx.commit().await?;
     if stubbed {
-        hydrate_stub(ctx, uri).await;
+        request_status_fetch(ctx, uri).await;
     }
     Ok(if n > 0 {
         ItemOutcome::Applied
@@ -518,24 +518,25 @@ async fn queue_publication(
     Ok(())
 }
 
-/// Enqueue a `RemoteStatusFetch` for a freshly created stub — deduped
-/// by the shared marker, best-effort (a failed enqueue only means the
-/// stub stays unhydrated until something else resolves it).
-async fn hydrate_stub(ctx: &JobContext, uri: &str) {
+/// Enqueue a `RemoteStatusFetch` for a remote URI an import only
+/// references — deduped by the shared marker, best-effort (a failed
+/// enqueue only means the object stays unresolved until something
+/// else fetches it).
+async fn request_status_fetch(ctx: &JobContext, uri: &str) {
     let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
     if let Err(e) =
         crate::posts::remote::enqueue_status_fetch_deduped(&ctx.redis, &dispatcher, uri).await
     {
-        tracing::warn!(uri, error = %e, "stub hydration enqueue failed");
+        tracing::warn!(uri, error = %e, "remote status fetch enqueue failed");
     }
 }
 
-/// Find or stub a remote status row by URI (boost/like/bookmark
-/// targets the archive references but does not embed). Stubs stay
-/// `direct` — they are placeholders, not listable public content.
-/// Returns the id and whether a *stub* was created — the caller
-/// enqueues a `RemoteStatusFetch` for stubs so their content is
-/// hydrated instead of rendering as an empty card.
+/// Find or stub a remote status row by URI (like/bookmark targets the
+/// archive references but does not embed). Stubs stay `direct` — they
+/// are placeholders, not listable public content. Returns the id and
+/// whether a *stub* was created — the caller enqueues a
+/// `RemoteStatusFetch` for stubs so their content is hydrated instead
+/// of rendering as an empty card.
 async fn ensure_remote_status(db: &mut PgConnection, uri: &str) -> Result<(i64, bool)> {
     if let Some(id) = sqlx::query_scalar::<_, i64>("SELECT id FROM statuses WHERE uri = $1")
         .bind(uri)
@@ -661,7 +662,36 @@ async fn import_boost(
     let visibility = visibility_from_audience(item);
 
     let mut tx = db.begin().await?;
-    let (target_id, stubbed) = ensure_remote_status(&mut tx, &object_uri).await?;
+    // The importer's own copy wins through `original_id`, then the
+    // canonical remote `uri` — the same precedence collection items
+    // use. Only a *materialized* hit boosts synchronously; a stub or
+    // unknown target parks in `pending_boosts` until the remote object
+    // lands, so unreachable targets never render as empty boost cards.
+    let target: Option<(i64, bool)> = sqlx::query_as(
+        "SELECT id, (COALESCE(content, '') <> '' OR object_type IS NOT NULL) \
+         FROM statuses \
+         WHERE NOT tombstone \
+           AND ((account_id = $1 AND original_id = $2) OR uri = $2) \
+         ORDER BY (account_id = $1 AND original_id = $2) DESC LIMIT 1",
+    )
+    .bind(account_id)
+    .bind(&object_uri)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((target_id, true)) = target else {
+        return defer_boost(
+            ctx,
+            tx,
+            import_id,
+            account_id,
+            &object_uri,
+            &announce_id,
+            published,
+            visibility,
+            federate,
+        )
+        .await;
+    };
     // A boost that already reached us over federation carries no
     // `original_id`, so the dedupe arbiter below never matches it —
     // `uix_statuses_reblog` fires instead, and the raw 23505 would
@@ -741,10 +771,246 @@ async fn import_boost(
         .await?;
     }
     tx.commit().await?;
-    if stubbed {
-        hydrate_stub(ctx, &object_uri).await;
-    }
     Ok(ItemOutcome::Applied)
+}
+
+/// Park an Announce whose target isn't materialized: the boost row is
+/// written by [`backfill_pending_boosts`] when the remote object lands
+/// (fetch job, inbound `Create`, outbox sync). The `original_id` half
+/// of the dedupe still applies now; the `reblog_of_id` half waits for
+/// the resolved target id.
+#[allow(clippy::too_many_arguments)]
+async fn defer_boost(
+    ctx: &JobContext,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    import_id: i64,
+    account_id: i64,
+    object_uri: &str,
+    announce_id: &str,
+    published: DateTime<Utc>,
+    visibility: &str,
+    federate: bool,
+) -> Result<ItemOutcome> {
+    let already: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM statuses WHERE account_id = $1 AND NOT tombstone \
+         AND original_id = $2)",
+    )
+    .bind(account_id)
+    .bind(announce_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if already {
+        tx.rollback().await?;
+        return Ok(ItemOutcome::Present);
+    }
+    sqlx::query(
+        "INSERT INTO pending_boosts (account_id, target_uri, announce_id, published, \
+                                     visibility, import_id, federate) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT DO NOTHING",
+    )
+    .bind(account_id)
+    .bind(object_uri)
+    .bind(announce_id)
+    .bind(published)
+    .bind(visibility)
+    .bind(import_id)
+    .bind(federate)
+    .execute(&mut *tx)
+    .await?;
+    record_item(
+        &mut tx,
+        import_id,
+        account_id,
+        "boost",
+        announce_id,
+        None,
+        "pending",
+        None,
+        None,
+        Some(object_uri),
+    )
+    .await?;
+    tx.commit().await?;
+    request_status_fetch(ctx, object_uri).await;
+    Ok(ItemOutcome::Applied)
+}
+
+/// Materialize parked boost intents for a just-landed remote status —
+/// the boost counterpart of `posts::remote::backfill_pending_quotes`.
+/// Runs on every path that resolves a remote URI to a status row
+/// (inbound federation, `RemoteStatusFetch`, outbox sync), so a
+/// deferred import boost appears whether hydration came from our own
+/// fetch or a delivered `Create`. `uri` is the *requested* URI — the
+/// fetched doc's canonical `id` may differ, which is why `status_id`
+/// (the resolved row) is passed separately.
+pub async fn backfill_pending_boosts(
+    db: &PgPool,
+    dispatcher: &crate::jobs::Dispatcher,
+    status_id: i64,
+    uri: &str,
+) -> Result<()> {
+    /// `(id, account_id, announce_id, published, visibility, import_id, federate)`
+    type PendingBoostRow = (i64, i64, String, DateTime<Utc>, String, i64, bool);
+    let pending: Vec<PendingBoostRow> = sqlx::query_as(
+        "SELECT id, account_id, announce_id, published, visibility, import_id, federate \
+             FROM pending_boosts WHERE target_uri = $1",
+    )
+    .bind(uri)
+    .fetch_all(db)
+    .await?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut publish_imports: Vec<i64> = Vec::new();
+    for (pending_id, account_id, announce_id, published, visibility, import_id, federate) in pending
+    {
+        let mut tx = db.begin().await?;
+        // The target id is known now — re-run the full dedupe: a
+        // boost may have landed via another path while parked.
+        let existing: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM statuses WHERE account_id = $1 AND NOT tombstone \
+             AND (reblog_of_id = $2 OR original_id = $3) LIMIT 1",
+        )
+        .bind(account_id)
+        .bind(status_id)
+        .bind(&announce_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let mut created = false;
+        let boost_id: Option<i64> = match existing {
+            Some(id) => Some(id),
+            None => {
+                let id: Option<i64> = sqlx::query_scalar(
+                    "INSERT INTO statuses (id, account_id, content, visibility, local, \
+                                           reblog_of_id, original_id, original_created_at, \
+                                           created_at) \
+                     VALUES (timestamp_id('statuses', COALESCE($5, now())), \
+                             $1, '', $6, true, $2, $3, $4, $4) \
+                     ON CONFLICT (account_id, original_id) WHERE original_id IS NOT NULL \
+                     DO NOTHING RETURNING id",
+                )
+                .bind(account_id)
+                .bind(status_id)
+                .bind(&announce_id)
+                .bind(published)
+                .bind(published)
+                .bind(&visibility)
+                .fetch_optional(&mut *tx)
+                .await?;
+                match id {
+                    Some(id) => {
+                        created = true;
+                        Some(id)
+                    }
+                    // A concurrent writer won the `original_id` slot —
+                    // adopt its row.
+                    None => {
+                        sqlx::query_scalar(
+                            "SELECT id FROM statuses WHERE account_id = $1 AND NOT tombstone \
+                         AND original_id = $2 LIMIT 1",
+                        )
+                        .bind(account_id)
+                        .bind(&announce_id)
+                        .fetch_optional(&mut *tx)
+                        .await?
+                    }
+                }
+            }
+        };
+        let Some(boost_id) = boost_id else {
+            tx.rollback().await?;
+            continue;
+        };
+        // URI, counters and publication bookkeeping only move for the
+        // row this drain actually inserted — an adopted/existing boost
+        // was already accounted for when it landed.
+        let mut publication: Option<(String, String)> = None;
+        if created {
+            let (actor_id, username): (String, String) =
+                sqlx::query_as("SELECT actor_id, username FROM accounts WHERE id = $1")
+                    .bind(account_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            let boost_uri = format!("{actor_id}/statuses/{boost_id}");
+            sqlx::query("UPDATE statuses SET uri = $2 WHERE id = $1")
+                .bind(boost_id)
+                .bind(&boost_uri)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1")
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE statuses SET reblogs_count = reblogs_count + 1 WHERE id = $1")
+                .bind(status_id)
+                .execute(&mut *tx)
+                .await?;
+            publication = Some((boost_uri, username));
+        }
+        let item_id = record_item(
+            &mut tx,
+            import_id,
+            account_id,
+            "boost",
+            &announce_id,
+            Some(boost_id),
+            "done",
+            None,
+            None,
+            Some(uri),
+        )
+        .await?;
+        // `federate` never bulk re-sends non-public audiences (contract
+        // §8.3): only public/unlisted boosts get durable work.
+        if let Some((boost_uri, username)) = publication {
+            if federate && matches!(visibility.as_str(), "public" | "unlisted") {
+                queue_publication(
+                    &mut tx, import_id, item_id, boost_id, &boost_uri, "Announce", &username,
+                )
+                .await?;
+                if !publish_imports.contains(&import_id) {
+                    publish_imports.push(import_id);
+                }
+            }
+        }
+        sqlx::query("DELETE FROM pending_boosts WHERE id = $1")
+            .bind(pending_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
+    // A drain can land after the import's own `ImportPublish` run —
+    // enqueue a fresh drain so late publication_work isn't stranded.
+    for import_id in publish_imports {
+        if let Err(e) = dispatcher
+            .enqueue(
+                crate::jobs::JobKind::ImportPublish,
+                json!({ "import_id": import_id }),
+            )
+            .await
+        {
+            tracing::warn!(import_id, error = %e, "deferred boost publication enqueue failed");
+        }
+    }
+    Ok(())
+}
+
+/// Mark `import_items` bookkeeping failed for parked boosts whose
+/// target fetch settled permanently. The `pending_boosts` row stays —
+/// a later materialization (marker TTL expiry, an inbound `Create`)
+/// can still land the boost and flip the item back to `done`.
+pub(crate) async fn fail_pending_boosts(db: &PgPool, uri: &str) -> Result<()> {
+    sqlx::query(
+        "UPDATE import_items i SET state = 'failed', updated_at = now() \
+         FROM pending_boosts p \
+         WHERE p.target_uri = $1 AND i.account_id = p.account_id \
+           AND i.kind = 'boost' AND i.source_uri = p.announce_id \
+           AND i.state = 'pending'",
+    )
+    .bind(uri)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// Validate embedded attachment bytes against their magic signature

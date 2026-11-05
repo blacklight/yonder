@@ -175,7 +175,7 @@ pub mod export;
 mod import;
 mod publish;
 pub mod remote;
-mod restore;
+pub mod restore;
 
 pub use csv::export_kind;
 pub use export::{ExportCleanupJob, ExportJob};

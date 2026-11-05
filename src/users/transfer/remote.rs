@@ -1609,6 +1609,7 @@ pub(crate) async fn import_api(ctx: &JobContext, run: ImportRun<'_>) -> Result<(
     }
 
     restore::fix_up_graph(&ctx.db, account_id).await?;
+    restore::fetch_reply_parents(ctx, account_id).await?;
     // Enqueue the drain before committing `done` (see restore.rs) —
     // a retry of a still-`running` import re-enqueues it.
     if federate {
@@ -2113,6 +2114,37 @@ async fn statuses_cat(
                 if let Some(sn) = session.since {
                     if c < sn {
                         continue;
+                    }
+                }
+            }
+            // A reply's parent may sit outside the walked set — a
+            // different author's post, or the importer's own post on
+            // a later page. Resolve its URI through the provider once
+            // and fold it into `idmap` so `synthesize` can link it;
+            // a miss degrades to an unlinked import, never a failure.
+            if s.get("reblog").is_none_or(Value::is_null) {
+                if let Some(pid) = s.get("in_reply_to_id").and_then(|i| {
+                    i.as_str()
+                        .map(String::from)
+                        .or_else(|| i.as_i64().map(|n| n.to_string()))
+                }) {
+                    if !idmap.contains_key(&pid) && idmap.len() < 20_000 {
+                        match get_json(client, &format!("/api/v1/statuses/{pid}")).await {
+                            Ok(parent) => {
+                                if let Some(uri) = parent.get("uri").and_then(Value::as_str) {
+                                    if !uri.is_empty() {
+                                        idmap.insert(pid, uri.to_string());
+                                    }
+                                }
+                            }
+                            // A revoked grant pauses the category like
+                            // any other gated endpoint; everything else
+                            // is a per-item miss.
+                            Err(Error::Forbidden(_)) => return Err(CatError::Auth),
+                            Err(e) => {
+                                tracing::debug!(error = %e, "reply parent lookup failed");
+                            }
+                        }
                     }
                 }
             }

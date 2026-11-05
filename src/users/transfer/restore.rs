@@ -325,6 +325,7 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
     // mapping regardless of archive order (imported self-copies win,
     // original remote URIs still match for other authors).
     fix_up_graph(&ctx.db, account_id).await?;
+    fetch_reply_parents(ctx, account_id).await?;
     // §8: enqueue the drain *before* committing `done` — a crash or
     // enqueue failure here keeps the import `running` so the retry
     // re-enqueues it; work rows can never be stranded.
@@ -352,36 +353,81 @@ fn record(tally: &mut Tally, outcome: ItemOutcome) {
     }
 }
 
+/// Enqueue `RemoteStatusFetch` for reply parents still unresolved —
+/// parked `in_reply_to_uri` references materialize through the normal
+/// remote-ingest path, which links the reply via
+/// `backfill_pending_replies` and lets context/reply filters see it.
+/// Runs after `fix_up_graph`, so parents that are imported copies are
+/// already linked and only genuinely remote URIs get fetched.
+pub(crate) async fn fetch_reply_parents(ctx: &JobContext, account_id: i64) -> Result<()> {
+    let uris: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT in_reply_to_uri FROM statuses \
+         WHERE account_id = $1 AND in_reply_to_id IS NULL \
+           AND in_reply_to_uri IS NOT NULL AND NOT tombstone",
+    )
+    .bind(account_id)
+    .fetch_all(&ctx.db)
+    .await?;
+    for uri in uris {
+        if remote_reference(&uri).is_some() {
+            request_status_fetch(ctx, &uri).await;
+        }
+    }
+    Ok(())
+}
+
 /// Resolve self-replies and quotes after all items landed. Self-copies
 /// win through the per-account `original_id`; other authors match the
 /// canonical remote `uri` only — never another importer's copy.
 pub(crate) async fn fix_up_graph(db: &PgPool, account_id: i64) -> Result<()> {
-    for (col, link, extra) in [
+    for (col, link, extra, counter) in [
         (
             "in_reply_to_id",
             "in_reply_to_uri",
             ", in_reply_to_account_id = p.account_id",
+            "replies_count",
         ),
-        ("quote_of_id", "quote_uri", ""),
+        ("quote_of_id", "quote_uri", "", "quotes_count"),
     ] {
-        sqlx::query(&format!(
-            "UPDATE statuses c SET {col} = p.id{extra} \
-             FROM statuses p \
-             WHERE c.account_id = $1 AND c.{col} IS NULL AND c.{link} IS NOT NULL \
-               AND p.account_id = c.account_id AND p.original_id = c.{link}",
-        ))
-        .bind(account_id)
-        .execute(db)
-        .await?;
-        sqlx::query(&format!(
-            "UPDATE statuses c SET {col} = p.id{extra} \
-             FROM statuses p \
-             WHERE c.account_id = $1 AND c.{col} IS NULL AND c.{link} IS NOT NULL \
-               AND p.uri = c.{link}",
-        ))
-        .bind(account_id)
-        .execute(db)
-        .await?;
+        // Only rows this statement actually links come back — a
+        // re-run finds the column already set and bumps nothing, so
+        // the counter move is exactly-once per link.
+        let mut bumps: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for pass in [true, false] {
+            let sql = if pass {
+                format!(
+                    "UPDATE statuses c SET {col} = p.id{extra} \
+                     FROM statuses p \
+                     WHERE c.account_id = $1 AND c.{col} IS NULL AND c.{link} IS NOT NULL \
+                       AND p.account_id = c.account_id AND p.original_id = c.{link} \
+                     RETURNING c.{col}"
+                )
+            } else {
+                format!(
+                    "UPDATE statuses c SET {col} = p.id{extra} \
+                     FROM statuses p \
+                     WHERE c.account_id = $1 AND c.{col} IS NULL AND c.{link} IS NOT NULL \
+                       AND p.uri = c.{link} \
+                     RETURNING c.{col}"
+                )
+            };
+            for parent in sqlx::query_scalar::<_, i64>(&sql)
+                .bind(account_id)
+                .fetch_all(db)
+                .await?
+            {
+                *bumps.entry(parent).or_default() += 1;
+            }
+        }
+        for (parent, n) in bumps {
+            sqlx::query(&format!(
+                "UPDATE statuses SET {counter} = {counter} + $2 WHERE id = $1"
+            ))
+            .bind(parent)
+            .bind(n)
+            .execute(db)
+            .await?;
+        }
     }
     Ok(())
 }
@@ -1190,6 +1236,38 @@ async fn import_post(
     .fetch_one(db)
     .await?;
     if already {
+        // Self-heal: an earlier run may have imported this item before
+        // its parent URI resolved (the id→uri map is built during the
+        // walk, and parents outside it resolve lazily). Backfill the
+        // parked reference so retries/re-runs repair linkage instead
+        // of leaving the reply standalone forever.
+        if visibility != "direct" {
+            if let Some(uri) = in_reply_to_uri.as_deref() {
+                let patched = sqlx::query(
+                    "UPDATE statuses SET in_reply_to_uri = $3, updated_at = now() \
+                     WHERE account_id = $1 AND original_id = $2 \
+                       AND in_reply_to_uri IS NULL AND NOT tombstone",
+                )
+                .bind(account_id)
+                .bind(&original_id)
+                .bind(uri)
+                .execute(db)
+                .await?
+                .rows_affected();
+                if patched > 0 {
+                    sqlx::query(
+                        "UPDATE import_items SET kind = 'reply', in_reply_to_uri = $3, \
+                         updated_at = now() \
+                         WHERE account_id = $1 AND source_uri = $2 AND kind = 'post'",
+                    )
+                    .bind(account_id)
+                    .bind(&original_id)
+                    .bind(uri)
+                    .execute(db)
+                    .await?;
+                }
+            }
+        }
         return Ok(ItemOutcome::Present);
     }
 

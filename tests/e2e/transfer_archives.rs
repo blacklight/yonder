@@ -2098,6 +2098,10 @@ struct StubProvider {
     takeover: Arc<tokio::sync::Mutex<Option<(sqlx::PgPool, i64)>>>,
     cancel_on_statuses: Arc<tokio::sync::Mutex<Option<(sqlx::PgPool, i64)>>>,
     profile_fields: Arc<tokio::sync::Mutex<Option<Value>>>,
+    /// When set, the first statuses item replies to a parent outside
+    /// the walked set (`in_reply_to_id` is not among the page ids), so
+    /// the importer must resolve its URI via `/api/v1/statuses/{id}`.
+    reply_parent: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Start the stub; returns its origin (`http://127.0.0.1:{port}`).
@@ -2127,6 +2131,7 @@ async fn stub_provider() -> StubProvider {
     let cancel_on_statuses: Arc<tokio::sync::Mutex<Option<(sqlx::PgPool, i64)>>> =
         Arc::new(tokio::sync::Mutex::new(None));
     let profile_fields = Arc::new(tokio::sync::Mutex::new(None));
+    let reply_parent = Arc::new(AtomicBool::new(false));
 
     let o = origin.clone();
     let flip = flip_identity.clone();
@@ -2212,11 +2217,13 @@ async fn stub_provider() -> StubProvider {
     let malformed = malformed_statuses.clone();
     let takeover_slot = takeover.clone();
     let cancel_slot = cancel_on_statuses.clone();
+    let rp = reply_parent.clone();
     let statuses = move |Path(_id): Path<String>| {
         let o = o.clone();
         let malformed = malformed.clone();
         let takeover_slot = takeover_slot.clone();
         let cancel_slot = cancel_slot.clone();
+        let rp = rp.clone();
         async move {
             if let Some((pool, import_id)) = cancel_slot.lock().await.take() {
                 sqlx::query("UPDATE archive_imports SET cancel_requested = true WHERE id = $1")
@@ -2239,21 +2246,24 @@ async fn stub_provider() -> StubProvider {
                 return axum::response::Html("<html>proxy error page</html>").into_response();
             }
             // One public Note + one self-boost; numeric ids exercise
-            // the idmap reply linkage.
-            AJson(json!([
-                {
-                    "id": "101",
-                    "uri": format!("{o}/users/olduser/statuses/101"),
-                    "created_at": "2020-06-01T10:00:00Z",
-                    "content": "<p>first</p>", "visibility": "public",
-                    "account": {"id": "src1", "acct": "olduser",
-                                "url": format!("{o}/@olduser")},
-                    "favourites_count": 7, "reblogs_count": 3,
-                    "media_attachments": [], "mentions": [],
-                    "tags": [{"name": "regress-tag"}],
-                },
-                {
-                    "id": "102",
+            // the idmap reply linkage. `reply_parent` turns the Note
+            // into a reply whose parent sits outside the walked set.
+            let mut first = json!({
+                "id": "101",
+                "uri": format!("{o}/users/olduser/statuses/101"),
+                "created_at": "2020-06-01T10:00:00Z",
+                "content": "<p>first</p>", "visibility": "public",
+                "account": {"id": "src1", "acct": "olduser",
+                            "url": format!("{o}/@olduser")},
+                "favourites_count": 7, "reblogs_count": 3,
+                "media_attachments": [], "mentions": [],
+                "tags": [{"name": "regress-tag"}],
+            });
+            if rp.load(Ordering::SeqCst) {
+                first["in_reply_to_id"] = json!("9");
+            }
+            let second = json!({
+                "id": "102",
                     "uri": format!("{o}/users/olduser/statuses/102"),
                     "created_at": "2020-06-02T10:00:00Z",
                     "content": "", "visibility": "public",
@@ -2266,9 +2276,8 @@ async fn stub_provider() -> StubProvider {
                         "account": {"id": "x", "acct": "other@remote.example",
                                     "url": "https://remote.example/@other"},
                     },
-                },
-            ]))
-            .into_response()
+            });
+            AJson(json!([first, second])).into_response()
         }
     };
 
@@ -2286,6 +2295,27 @@ async fn stub_provider() -> StubProvider {
         .route("/api/v1/accounts/verify_credentials", get(verify))
         .route("/.well-known/webfinger", get(webfinger))
         .route("/api/v1/accounts/{id}/statuses", get(statuses))
+        // Single-status doc: the reply-parent lookup resolves a source
+        // `in_reply_to_id` outside the walked set to its AP `uri`.
+        .route(
+            "/api/v1/statuses/{id}",
+            get({
+                let o = origin.clone();
+                move |Path(id): Path<String>| {
+                    let o = o.clone();
+                    async move {
+                        AJson(json!({
+                            "id": id,
+                            "uri": format!("{o}/statuses/{id}"),
+                            "created_at": "2020-05-01T10:00:00Z",
+                            "content": "<p>parent</p>", "visibility": "public",
+                            "account": {"id": "src2", "acct": "other",
+                                        "url": format!("{o}/@other")},
+                        }))
+                    }
+                }
+            }),
+        )
         .route(
             "/api/v1/accounts/{id}/following",
             get(|| async { AJson(json!([])) }),
@@ -2393,6 +2423,7 @@ async fn stub_provider() -> StubProvider {
         takeover,
         cancel_on_statuses,
         profile_fields,
+        reply_parent,
     }
 }
 
@@ -3852,6 +3883,103 @@ async fn api_import_defers_boost_until_target_lands() {
         .await
         .unwrap();
     assert_eq!(reblogs, 1, "the target's counter moved at materialization");
+}
+
+/// A reply whose parent sits outside the walked set resolves its URI
+/// through `/api/v1/statuses/{id}` during the walk; a re-import then
+/// repairs the already-landed row through the dedupe-hit self-heal,
+/// and the unresolved parent gets a `RemoteStatusFetch` so it can
+/// materialize and link the reply for real.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn api_import_links_reply_to_remote_parent() {
+    use sha2::Digest;
+    use std::sync::atomic::Ordering;
+
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.auth.secret_key = Some("e2e-secret-key-material".into());
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env, "replylink").await;
+    let importer = account_id(&env.state, "replylink").await;
+    let stub = stub_provider().await;
+    let connection = connect(&env, &token, &stub.origin).await;
+
+    let note_row = |db: &sqlx::PgPool| {
+        let db = db.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>, Option<i64>)>(
+                "SELECT in_reply_to_uri, in_reply_to_id FROM statuses \
+                 WHERE account_id = $1 AND original_id LIKE '%/statuses/101'",
+            )
+            .bind(importer)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Phase 1 — no `in_reply_to_id` on the wire: the Note lands as a
+    // plain post with no parent reference at all.
+    let id1 = remote_session(
+        &env,
+        &token,
+        json!({"connection_id": connection, "categories": ["statuses"]}),
+    )
+    .await;
+    run_import(&env, id1).await;
+    let (state, error) = import_state(&env, id1).await;
+    assert_eq!(state.as_str(), "done", "import failed: {error:?}");
+    assert_eq!(
+        note_row(&env.state.db).await,
+        (None, None),
+        "no parent reference before resolution"
+    );
+
+    // Phase 2 — the provider now reports a parent outside the walked
+    // set. The re-import hits the dedupe path, but the walk still
+    // resolves the parent URI and the self-heal backfills it.
+    stub.reply_parent.store(true, Ordering::SeqCst);
+    let id2 = remote_session(
+        &env,
+        &token,
+        json!({"connection_id": connection, "categories": ["statuses"]}),
+    )
+    .await;
+    run_import(&env, id2).await;
+    let (state, error) = import_state(&env, id2).await;
+    assert_eq!(state.as_str(), "done", "re-import failed: {error:?}");
+
+    let parent_uri = format!("{}/statuses/9", stub.origin);
+    let (reply_uri, reply_id) = note_row(&env.state.db).await;
+    assert_eq!(
+        reply_uri.as_deref(),
+        Some(parent_uri.as_str()),
+        "the parked parent URI was backfilled"
+    );
+    assert_eq!(reply_id, None, "remote parent not materialized yet");
+
+    let kind: String = sqlx::query_scalar(
+        "SELECT kind FROM import_items WHERE account_id = $1 \
+         AND source_uri LIKE '%/statuses/101'",
+    )
+    .bind(importer)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(kind, "reply", "the item reclassified as a reply");
+
+    // The unresolved parent got a fetch so it can materialize and
+    // link the reply through `backfill_pending_replies`.
+    let hash = hex::encode(sha2::Sha256::digest(parent_uri.as_bytes()));
+    let marker = env
+        .state
+        .redis
+        .key(&format!("cache:statusfetch:{}", &hash[..32]));
+    let mut conn = env.state.redis.conn().await.unwrap();
+    let hit: Option<String> = conn.get(marker).await.unwrap();
+    assert!(hit.is_some(), "parent fetch enqueued");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

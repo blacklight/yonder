@@ -1014,6 +1014,20 @@ async function onReact(emoji: string) {
   overflow: auto;
   padding: var(--space-3);
 }
+:deep(.status-card__content) blockquote {
+  position: relative;
+}
+:deep(.status-card__content) blockquote p {
+  color: var(--text-faint);
+}
+:deep(.status-card__content) blockquote p::before {
+  position: absolute;
+  width: 2px;
+  height: 100%;
+  left: calc(-1 * var(--space-3));
+  background: var(--bg-sunken);
+  content: '';
+}
 .status-card__preview {
   display: flex;
   gap: var(--space-3);

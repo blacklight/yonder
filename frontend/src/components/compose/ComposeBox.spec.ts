@@ -4,6 +4,7 @@ import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
+import { useToastsStore } from "@/stores/toasts";
 import ComposeBox from "./ComposeBox.vue";
 
 vi.mock("@/api/emojis", () => ({
@@ -86,6 +87,7 @@ describe("ComposeBox", () => {
     localStorage.clear();
     useAuthStore().setToken("t");
     useComposeStore().reset();
+    useToastsStore().items = [];
   });
 
   it("posts with Idempotency-Key and resets", async () => {
@@ -99,6 +101,33 @@ describe("ComposeBox", () => {
     expect((init!.headers as Headers).get("Idempotency-Key")).toBeTruthy();
     expect(JSON.parse(init!.body as string).status).toBe("hello world");
     expect(useComposeStore().draft.text).toBe("");
+  });
+
+  it("shows an Open toast linking to the new post", async () => {
+    mockPost({ id: "42" });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue("hello world");
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    expect(useToastsStore().items).toHaveLength(1);
+    expect(useToastsStore().items[0]).toMatchObject({
+      text: "Posted",
+      kind: "success",
+      action: "Open",
+      to: "/statuses/42",
+    });
+  });
+
+  it("scheduled posts get no Open toast", async () => {
+    mockPost({ id: "s1", scheduled_at: "2030-01-01T00:00:00.000Z" });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='compose-text']").setValue("later");
+    useComposeStore().update({ scheduledAt: "2030-01-01T00:00:00.000Z" });
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    expect(useToastsStore().items).toHaveLength(0);
   });
 
   it("Ctrl+Enter submits from the textarea, plain Enter does not", async () => {

@@ -62,6 +62,14 @@ function open(toast: Toast) {
         <span v-if="toast.body" class="toast__sub">{{ toast.body }}</span>
       </button>
       <button
+        v-if="toast.action"
+        type="button"
+        class="toast__action"
+        @click="open(toast)"
+      >
+        {{ toast.action }}
+      </button>
+      <button
         type="button"
         class="toast__close"
         :aria-label="t('ui.close')"
@@ -152,6 +160,24 @@ function open(toast: Toast) {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+}
+.toast__action {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--accent-link);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.toast__action:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.toast--success .toast__action,
+.toast--error .toast__action {
+  color: #fff;
 }
 .toast__close {
   flex: none;

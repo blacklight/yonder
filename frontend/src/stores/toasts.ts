@@ -12,6 +12,10 @@ export interface Toast {
   body?: string;
   /** Route pushed when the toast body is activated. */
   to?: string;
+  /** Explicit action label (e.g. "Open") rendered as a button that
+   * activates `to` — for toasts where the link deserves its own
+   * affordance rather than hiding behind the whole body. */
+  action?: string;
   /** Semantic variant — drives the preset background. */
   kind?: ToastKind;
   /** FontAwesome icon shown left when no `image` is set. */

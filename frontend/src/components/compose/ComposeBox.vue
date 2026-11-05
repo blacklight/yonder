@@ -22,6 +22,7 @@ import { composeLimits } from "@/api/instance";
 import { getInstance } from "@/api/instance";
 import { search } from "@/api/search";
 import { useComposeStore } from "@/stores/compose";
+import { useToastsStore } from "@/stores/toasts";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
 import {
@@ -52,6 +53,7 @@ const props = defineProps<{
 const { t, locale } = useI18n();
 const route = useRoute();
 const compose = useComposeStore();
+const toasts = useToastsStore();
 const settings = useSettingsStore();
 const timelines = useTimelineStore();
 
@@ -700,7 +702,14 @@ async function submit() {
             }
           }
         }
-        done.value = t("compose.posted");
+        // Mastodon-style confirmation: a transient toast whose "Open"
+        // action jumps straight to the new post.
+        toasts.push({
+          text: t("compose.posted"),
+          kind: "success",
+          action: t("ui.open"),
+          to: `/statuses/${s.id}`,
+        });
       } else {
         done.value = t("compose.scheduled");
       }

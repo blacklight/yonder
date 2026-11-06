@@ -1,11 +1,17 @@
 import { computed } from "vue";
+import { useSettingsStore } from "@/stores/settings";
 import { useThemeStore } from "@/stores/theme";
 
 export function useTheme() {
   const store = useThemeStore();
+  const settings = useSettingsStore();
 
   function toggle() {
-    store.setMode(store.resolvedMode === "dark" ? "light" : "dark");
+    const next = store.resolvedMode === "dark" ? "light" : "dark";
+    // Route through the settings store so the choice is PATCHed to
+    // `/yonder/settings` — a localStorage-only flip is reverted by
+    // `syncThemeFromServer` on the next session restore.
+    void settings.setTheme(next, store.accent);
   }
 
   return {

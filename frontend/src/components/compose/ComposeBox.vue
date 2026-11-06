@@ -692,6 +692,14 @@ async function submit() {
       // The edited row is replaced in place wherever it is displayed —
       // an edit must not reorder it to the top of a feed.
       timelines.replace(created as Status);
+      // Same confirmation as a fresh post — the "Open" action jumps
+      // straight to the edited status.
+      toasts.push({
+        text: t("compose.updated"),
+        kind: "success",
+        action: t("ui.open"),
+        to: `/statuses/${created.id}`,
+      });
     } else {
       created = await createStatus(body, idemKey.value);
       if (!d.value.scheduledAt) {

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { flushPromises } from "@vue/test-utils";
+import { flushPromises, mount } from "@vue/test-utils";
+import { createMemoryHistory, createRouter } from "vue-router";
+import { i18n } from "@/i18n";
 import { mountWith } from "@/test/render";
 import { useAuthStore } from "@/stores/auth";
 import { useComposeStore } from "@/stores/compose";
@@ -128,6 +130,50 @@ describe("ComposeBox", () => {
     await wrapper.get("[data-testid='post']").trigger("click");
     await flushPromises();
     expect(useToastsStore().items).toHaveLength(0);
+  });
+
+  it("editing a post shows an Open toast linking to it", async () => {
+    const status = {
+      id: "7",
+      content: "<p>edited body</p>",
+      media_attachments: [],
+      spoiler_text: "",
+      sensitive: false,
+      language: "en",
+      visibility: "public",
+      tags: [],
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(status), { status: 200 })),
+      );
+    // `?edit=<id>` is read from the route on mount, so navigate before
+    // mounting rather than going through mountWith's default "/".
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/compose", component: ComposeBox }],
+    });
+    await router.push("/compose?edit=7");
+    await router.isReady();
+    const wrapper = mount(ComposeBox, {
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    expect(
+      spy.mock.calls.some(
+        ([, i]) => (i as RequestInit | undefined)?.method === "PUT",
+      ),
+    ).toBe(true);
+    expect(useToastsStore().items).toHaveLength(1);
+    expect(useToastsStore().items[0]).toMatchObject({
+      text: "Updated",
+      kind: "success",
+      action: "Open",
+      to: "/statuses/7",
+    });
   });
 
   it("Ctrl+Enter submits from the textarea, plain Enter does not", async () => {

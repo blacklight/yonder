@@ -275,8 +275,10 @@ The streaming WebSocket at `/api/v1/streaming` implements Mastodon's
 Yonder is a Rust workspace (`axum`, `sqlx`, `tokio`) plus a Vue 3 +
 TypeScript SPA in `frontend/`.
 
-Developer documentation lives in [`docs/development.md`](docs/development.md)
-— environment setup, migrations, the test harness, job-queue and HTTP
+The code structure and the main components of the service are described
+in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Developer
+documentation lives in [`docs/development.md`](docs/development.md) —
+environment setup, migrations, the test harness, job-queue and HTTP
 internals, and the release pipeline. Feature-by-feature API contracts
 live alongside it in [`docs/`](docs/).
 

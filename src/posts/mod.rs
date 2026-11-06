@@ -226,6 +226,9 @@ pub struct StatusRow {
     /// Remote quote target not (yet) materialized — `quote_of_id`
     /// back-fills when the quoted Create arrives (epic 13).
     pub quote_uri: Option<String>,
+    /// FEP-044f approval stamp — the quoted author's `QuoteAuthorization`
+    /// URI, emitted as `quoteAuthorization` once their `Accept` lands.
+    pub quote_authorization_uri: Option<String>,
     /// Imported-copy provenance: the source platform's object URI —
     /// dedupe key and the `yonder.imported` marker (epic 31).
     pub original_id: Option<String>,
@@ -265,7 +268,7 @@ pub(crate) const STATUS_COLS: &str =
     "id, account_id, content, content_html, content_type, language, \
      visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
      in_reply_to_account_id, in_reply_to_uri, reblog_of_id, quote_of_id, quote_uri, \
-     original_id, original_created_at, object_type, poll_id, replies_count, \
+     quote_authorization_uri, original_id, original_created_at, object_type, poll_id, replies_count, \
      reblogs_count, favourites_count, quotes_count, edited_at, \
      remote_likes_count, remote_shares_count, remote_quotes_count, \
      remote_counts_fetched_at, last_selected_at, fetched_at, tombstone, \
@@ -292,6 +295,7 @@ pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
         reblog_of_id: r.get("reblog_of_id"),
         quote_of_id: r.get("quote_of_id"),
         quote_uri: r.get("quote_uri"),
+        quote_authorization_uri: r.get("quote_authorization_uri"),
         original_id: r.get("original_id"),
         original_created_at: r.get("original_created_at"),
         object_type: r.get("object_type"),
@@ -364,6 +368,22 @@ pub async fn load_by_uri(db: &PgPool, uri: &str) -> Result<Option<StatusRow>> {
     .fetch_optional(db)
     .await?;
     Ok(row.as_ref().map(row_to_status))
+}
+
+/// The AP URI this status quotes — `quote_of_id` resolves through the
+/// target row; `quote_uri` covers remote targets not materialized yet.
+pub async fn quote_target_uri(db: &PgPool, status: &StatusRow) -> Result<Option<String>> {
+    match status.quote_of_id {
+        Some(qid) => {
+            sqlx::query_scalar::<_, Option<String>>("SELECT uri FROM statuses WHERE id = $1")
+                .bind(qid)
+                .fetch_optional(db)
+                .await
+                .map(|row| row.flatten())
+                .map_err(Into::into)
+        }
+        None => Ok(status.quote_uri.clone()),
+    }
 }
 
 /// The minimal read-side visibility primitive epic 15's timelines

@@ -284,6 +284,7 @@ mod tests {
             reblog_of_id: None,
             quote_of_id: None,
             quote_uri: None,
+            quote_authorization_uri: None,
             original_id: None,
             original_created_at: None,
             object_type: None,

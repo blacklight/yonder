@@ -247,18 +247,13 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
     // Quotes (epic 13): stamp every FEP-0449 spelling. `quote_of_id`
     // resolves through the target row; `quote_uri` covers remote
     // targets not materialized yet.
-    let quote_uri: Option<String> = match status.quote_of_id {
-        Some(qid) => {
-            sqlx::query_scalar::<_, Option<String>>("SELECT uri FROM statuses WHERE id = $1")
-                .bind(qid)
-                .fetch_optional(&ctx.db)
-                .await?
-                .flatten()
-        }
-        None => status.quote_uri.clone(),
-    };
-    if let Some(uri) = quote_uri {
+    if let Some(uri) = posts::quote_target_uri(&ctx.db, status).await? {
         pubby_sdk::quotes::set_quote_target(&mut doc, &uri);
+    }
+    // FEP-044f approval — Mastodon leaves the quote pending until this
+    // stamp verifies against the quoted author's QuoteAuthorization.
+    if let Some(uri) = &status.quote_authorization_uri {
+        doc["quoteAuthorization"] = json!(uri);
     }
     Ok(doc)
 }
@@ -351,6 +346,7 @@ pub(crate) fn merge_object_extras(target: &mut Value, doc: &Value) {
         "quoteUri",
         "quoteUrl",
         "_misskey_quote",
+        "quoteAuthorization",
         "interactionPolicy",
     ] {
         if let Some(v) = doc.get(key) {

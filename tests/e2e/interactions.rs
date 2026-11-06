@@ -1214,6 +1214,124 @@ async fn inbound_quote_materializes() {
     assert_eq!(q1_count, 0);
 }
 
+/// FEP-044f approval round-trip: an `Accept(QuoteRequest)` carrying a
+/// `QuoteAuthorization` result stamps the local quoting status and the
+/// queued job publishes an `Update` with `quoteAuthorization` — the
+/// field Mastodon needs to leave the quote pending.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quote_authorization_accept_stamps_and_publishes_update() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let remote_actor = "https://remote.test/users/eve";
+    let quoted_uri = "https://remote.test/objects/quoted";
+
+    // Materialize the remote quoted post, then quote it locally.
+    let (act, raw) = activity(
+        "Create",
+        remote_actor,
+        json!({
+            "id": quoted_uri,
+            "type": "Note",
+            "attributedTo": remote_actor,
+            "content": "<p>quoted</p>",
+            "to": [PUBLIC],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    );
+    remote::handle(&core, &act, &raw).await;
+    let quoted_id: i64 = sqlx::query_scalar("SELECT id FROM statuses WHERE uri = $1")
+        .bind(quoted_uri)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({
+            "status": "quoting",
+            "visibility": "public",
+            "quote_id": quoted_id,
+        })),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let quote_uri = body["uri"].as_str().unwrap().to_string();
+
+    // The quoted author's Accept answers our QuoteRequest.
+    let local_actor: String = sqlx::query_scalar(
+        "SELECT actor_id FROM accounts WHERE username = 'alice' AND domain IS NULL",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let authorization_uri = "https://remote.test/users/eve/quote_authorizations/1";
+    let (act, mut raw) = activity(
+        "Accept",
+        remote_actor,
+        json!({
+            "id": format!("{remote_actor}#accepts/quote_requests/1"),
+            "type": "QuoteRequest",
+            "actor": local_actor,
+            "object": quoted_uri,
+            "instrument": quote_uri,
+        }),
+    );
+    raw["result"] = json!(authorization_uri);
+    let disp = interactions::inbound::handle(&core, &act, &raw).unwrap();
+    assert!(matches!(disp, pubby_sdk::ActivityDisposition::Handled));
+
+    // The Accept only queues the stamp+Update job — nothing is stamped
+    // until the federation worker runs it.
+    let jobs: Vec<JobEnvelope> = queued_jobs_on(&env, "federation")
+        .await
+        .into_iter()
+        .filter(|j| j.kind == JobKind::QuoteAuthorization)
+        .collect();
+    assert_eq!(jobs.len(), 1, "one approval job, got {jobs:?}");
+    assert_eq!(
+        jobs[0].payload["status_id"],
+        json!(body["id"].as_str().unwrap().parse::<i64>().unwrap())
+    );
+    assert_eq!(
+        jobs[0].payload["authorization_uri"],
+        json!(authorization_uri)
+    );
+    assert_eq!(jobs[0].payload["quoted_uri"], json!(quoted_uri));
+
+    interactions::quote::QuoteAuthorizationJob::new(env.state.ap.as_ref().unwrap().clone())
+        .run(&job_ctx(&env.state), &jobs[0].payload)
+        .await
+        .unwrap();
+
+    let stamped: Option<String> =
+        sqlx::query_scalar("SELECT quote_authorization_uri FROM statuses WHERE uri = $1")
+            .bind(&quote_uri)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(stamped.as_deref(), Some(authorization_uri));
+
+    let update: Value = sqlx::query_scalar(
+        "SELECT object FROM activities WHERE local AND object->>'type' = 'Update' \
+         ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(update["object"]["id"], json!(quote_uri));
+    assert_eq!(update["object"]["quoteUri"], json!(quoted_uri));
+    assert_eq!(
+        update["object"]["quoteAuthorization"],
+        json!(authorization_uri)
+    );
+}
+
 /// A ⇄ B quote cycle (remote posts quoting each other — the second
 /// back-fills the first's pending `quote_uri`) must render with one
 /// nesting level, not recurse without bound.
@@ -1498,9 +1616,9 @@ fn job_ctx(state: &AppState) -> JobContext {
     }
 }
 
-/// Every pending envelope on the `default` queue (non-draining).
-async fn queued_jobs(env: &Env) -> Vec<JobEnvelope> {
-    let key = env.state.redis.key("queue:default");
+/// Every pending envelope on a queue (non-draining).
+async fn queued_jobs_on(env: &Env, queue: &str) -> Vec<JobEnvelope> {
+    let key = env.state.redis.key(&format!("queue:{queue}"));
     let mut conn = env.state.redis.conn().await.unwrap();
     let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
     reply
@@ -1512,6 +1630,11 @@ async fn queued_jobs(env: &Env) -> Vec<JobEnvelope> {
             queue::decode(&body).ok()
         })
         .collect()
+}
+
+/// Every pending envelope on the `default` queue (non-draining).
+async fn queued_jobs(env: &Env) -> Vec<JobEnvelope> {
+    queued_jobs_on(env, "default").await
 }
 
 /// A loopback AP origin serving one Note at `/objects/n1` — `id` and

@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::activitypub::{actors::sync_block, ApCore};
+use crate::jobs::JobKind;
 use crate::Result;
 
 use super::{is_blocked, object_uri};
@@ -432,14 +433,46 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
     else {
         return Ok(ActivityDisposition::Handled);
     };
-    let doc = json!({
+    let instrument_uri = object_uri(object.get("instrument"));
+    let quoted_uri = object_uri(object.get("object"));
+    let mut doc = json!({
         "id": result_id,
         "type": "QuoteAuthorization",
         "seen_in_accept": raw.get("id").and_then(|v| v.as_str()),
     });
+    if let Some(uri) = &instrument_uri {
+        doc["interactingObject"] = json!(uri);
+    }
+    if let Some(uri) = &quoted_uri {
+        doc["interactionTarget"] = json!(uri);
+    }
     core.storage
         .store_quote_authorization(&result_id, &doc)
         .map_err(crate::Error::Federation)?;
+
+    // The reply to our outbound QuoteRequest: match the instrument back
+    // to the local quoting status and queue the approval stamp + Update.
+    if let (Some(instrument), Some(quoted)) = (instrument_uri, quoted_uri) {
+        if let Some(status) = local_target(core, &instrument).await? {
+            let target = crate::posts::quote_target_uri(&core.db, &status).await?;
+            if target.as_deref() == Some(quoted.as_str()) {
+                if let Err(e) = core
+                    .dispatcher
+                    .enqueue(
+                        JobKind::QuoteAuthorization,
+                        json!({
+                            "status_id": status.id,
+                            "authorization_uri": result_id,
+                            "quoted_uri": quoted,
+                        }),
+                    )
+                    .await
+                {
+                    tracing::warn!(status_id = status.id, error = %e, "quote authorization enqueue failed");
+                }
+            }
+        }
+    }
     Ok(ActivityDisposition::Handled)
 }
 

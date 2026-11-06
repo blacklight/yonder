@@ -231,6 +231,13 @@ pub enum JobCommand {
     /// Payload: `{}` — scheduled by `admin.import_sweep_schedule`.
     #[command(name = "import_sweep")]
     ImportSweep(JobArgs),
+    /// Stamp a local quote status with its `QuoteAuthorization` and
+    /// publish the `Update` carrying `quoteAuthorization`.
+    ///
+    /// Payload: `{"status_id": <id>, "authorization_uri": "<uri>",
+    /// "quoted_uri": "<uri>"}` — enqueued by inbound `Accept`s.
+    #[command(name = "quote_authorization")]
+    QuoteAuthorization(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -274,6 +281,7 @@ impl JobCommand {
             Self::PublishMove(a) => (JobKind::PublishMove, a),
             Self::ImportPublish(a) => (JobKind::ImportPublish, a),
             Self::ImportSweep(a) => (JobKind::ImportSweep, a),
+            Self::QuoteAuthorization(a) => (JobKind::QuoteAuthorization, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

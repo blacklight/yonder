@@ -175,6 +175,9 @@ pub enum JobKind {
     /// the state write (`{}` — the `admin.import_sweep_schedule`
     /// fan-out).
     ImportSweep,
+    /// Stamp a local quote's FEP-044f `QuoteAuthorization` and publish
+    /// the status `Update` (`{"status_id": …, "authorization_uri": …}`).
+    QuoteAuthorization,
 }
 
 impl JobKind {
@@ -212,6 +215,7 @@ impl JobKind {
         JobKind::PublishMove,
         JobKind::ImportPublish,
         JobKind::ImportSweep,
+        JobKind::QuoteAuthorization,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -249,6 +253,7 @@ impl JobKind {
             JobKind::PublishMove => "publish_move",
             JobKind::ImportPublish => "import_publish",
             JobKind::ImportSweep => "import_sweep",
+            JobKind::QuoteAuthorization => "quote_authorization",
         }
     }
 
@@ -258,7 +263,8 @@ impl JobKind {
             JobKind::FederationDelivery
             | JobKind::FederationIncoming
             | JobKind::FederationDeliverySweep
-            | JobKind::PublishMove => Queue::Federation,
+            | JobKind::PublishMove
+            | JobKind::QuoteAuthorization => Queue::Federation,
             JobKind::Import
             | JobKind::Export
             | JobKind::VerifyProfileLinks

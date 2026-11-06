@@ -304,6 +304,11 @@ pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
     // Epic-12 posting jobs (scheduled publish, link previews,
     // scheduled deletion, orphan-media cleanup).
     crate::posts::register_jobs(&mut registry, ap);
+    // Epic-13 quote approvals — AP-gated: the handler publishes the
+    // status Update carrying `quoteAuthorization`.
+    if let Some(ap) = ap {
+        crate::interactions::quote::register(&mut registry, ap);
+    }
     // Epic-14 social jobs (FollowEvent settle — local work regardless
     // of the federation gate).
     crate::social::register_jobs(&mut registry);

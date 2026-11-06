@@ -9,10 +9,13 @@
 //! *also* send `QuoteRequest` to the remote quoted author —
 //! consent-aware without blocking on the answer.
 
+use serde_json::Value;
+
 use crate::{
     activitypub::{delivery, posts as ap_posts, ApContext},
+    jobs::{JobContext, JobHandler, JobKind, Registry},
     posts::{self, PostContext, StatusRow},
-    Result,
+    Error, Result,
 };
 
 use super::{account_parts, emit_notification_event, new_activity_id};
@@ -89,6 +92,76 @@ pub async fn send_quote_request(
     });
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
+}
+
+/// `JobKind::QuoteAuthorization` — stamp the accepted `QuoteAuthorization`
+/// on the quoting status and fan out an `Update` carrying
+/// `quoteAuthorization`. Mastodon-family instances keep a remote quote
+/// pending until they see that stamp (or a valid approval on the object).
+pub struct QuoteAuthorizationJob {
+    ap: ApContext,
+}
+
+impl QuoteAuthorizationJob {
+    /// Create the handler bound to `ap`.
+    pub fn new(ap: ApContext) -> Self {
+        QuoteAuthorizationJob { ap }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for QuoteAuthorizationJob {
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let status_id = payload
+            .get("status_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| Error::Validation("quote authorization lacks status_id".into()))?;
+        let authorization_uri = payload
+            .get("authorization_uri")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                Error::Validation("quote authorization lacks authorization_uri".into())
+            })?;
+        let Some(status) = posts::load(&ctx.db, status_id).await? else {
+            return Ok(());
+        };
+        if !status.local || status.tombstone {
+            return Ok(());
+        }
+        // The Accept was matched to this quote at ingest; re-check before
+        // stamping so an edit can't inherit an approval for another target.
+        let expected = payload
+            .get("quoted_uri")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::Validation("quote authorization lacks quoted_uri".into()))?;
+        if posts::quote_target_uri(&ctx.db, &status).await?.as_deref() != Some(expected) {
+            return Ok(());
+        }
+        sqlx::query(
+            "UPDATE statuses SET quote_authorization_uri = $2, updated_at = now() \
+             WHERE id = $1 \
+               AND (quote_authorization_uri IS NULL OR quote_authorization_uri <> $2)",
+        )
+        .bind(status_id)
+        .bind(authorization_uri)
+        .execute(&ctx.db)
+        .await?;
+        ap_posts::invalidate_object(&self.ap, status_id);
+        let Some(status) = posts::load(&ctx.db, status_id).await? else {
+            return Ok(());
+        };
+        let post_ctx = PostContext::from_job(ctx, Some(self.ap.clone()));
+        ap_posts::publish_update(&self.ap, &post_ctx, &status, &[]).await?;
+        Ok(())
+    }
+}
+
+/// Register the quote-approval job (federation-enabled workers only).
+pub fn register(registry: &mut Registry, ap: &ApContext) {
+    registry.register(
+        JobKind::QuoteAuthorization,
+        QuoteAuthorizationJob::new(ap.clone()),
+    );
 }
 
 /// The statuses quoting `target`, newest first (cursor = the quote

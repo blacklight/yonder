@@ -47,7 +47,10 @@ a Redis marker — repeat ingests and re-reads don't pile up fetches.
   link to the rendered HTML, stamps all FEP-0449 quote fields on the
   object and sends a FEP-044f `QuoteRequest` to remote quoted authors
   (never blocking on the answer; Yonder's `auto_approve_quotes`
-  accepts inbound requests).
+  accepts inbound requests). When the quoted author accepts, the
+  `QuoteAuthorization` URI is stored on the status and an `Update`
+  carrying `quoteAuthorization` is published so Mastodon-family
+  instances can leave the quote pending.
 - `PUT|POST /api/v1/pleroma/statuses/{id}/reactions/{emoji}`,
   `DELETE` same, `GET …/reactions` — unicode emoji or `:shortcode:`
   resolved through `custom_emojis` (unknown → 422).
@@ -73,7 +76,7 @@ signature verification, before pubby's dispatch):
 | `Like` / `Announce` | normalized rows + counters | `PassThrough` (pubby keeps its `interactions` bookkeeping + `on_interaction_received` fan-out) |
 | `Undo(Like/Announce)` | row removal + counter decrement | `PassThrough` |
 | `EmojiReact` / `Undo(EmojiReact)` | `emoji_reactions` rows | `Handled` (pubby ignores the type) |
-| `Accept(QuoteRequest)` | `QuoteAuthorization` recorded | `Handled` |
+| `Accept(QuoteRequest)` | `QuoteAuthorization` recorded; matching local quote enqueues the approval stamp + `Update` | `Handled` |
 
 Guards: only *local* statuses are touched; actors blocked by the
 target's author drop silently. `Undo` arms inspect the inner type —

@@ -29,6 +29,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/oauth/token", post(token))
         .route("/oauth/authorize", post(authorize))
+        // Some clients (toot) hit the authorize URL with a trailing
+        // slash; axum matches paths exactly, so without these aliases
+        // the request misses the route and the SPA fallback answers a
+        // JSON 404 for the `/oauth/*` prefix.
+        .route("/oauth/authorize/", post(authorize))
         .route("/oauth/device_code", post(device_code))
         .route("/oauth/device", get(device_info))
         .route("/oauth/device/authorize", post(device_authorize))
@@ -50,6 +55,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // and every browser navigation would otherwise drain the tiny
         // `authentication` bucket and 429 the flow mid-consent.
         .route("/oauth/authorize", get(authorize_info))
+        .route("/oauth/authorize/", get(authorize_info))
 }
 
 /// `/oauth/*` clients split on body encoding: browsers and most

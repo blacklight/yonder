@@ -639,6 +639,23 @@ async fn oauth_apps_authorization_code_and_revocation() {
         res.headers().get("content-type").unwrap(),
         "text/html; charset=utf-8"
     );
+    // Clients that append a trailing slash (toot) must reach the same
+    // consent page — the path otherwise misses the route and the SPA
+    // fallback answers a JSON 404.
+    let res = env
+        .app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(authz_uri.replacen("/oauth/authorize?", "/oauth/authorize/?", 1))
+                .header("accept", "text/html,application/xhtml+xml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
     let (status, body) = request(
         &env.app,
         Request::builder()

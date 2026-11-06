@@ -98,13 +98,23 @@ export const useAuthStore = defineStore("auth", {
 
     /** Re-fetch the account/role for a persisted token (app boot). */
     async restore() {
-      if (!this.token || this.account || this.restricted) return;
+      if (!this.token || this.restricted) return;
       const { verifyCredentials } = await import("@/api/accounts");
+      const { useSettingsStore } = await import("./settings");
+      const settings = useSettingsStore();
       try {
-        const account = await verifyCredentials();
-        this.account = account;
-        const role = account.yonder?.role ?? account.role?.name;
-        this.role = role === "moderator" || role === "admin" ? role : "user";
+        if (!this.account) {
+          const account = await verifyCredentials();
+          this.account = account;
+          const role = account.yonder?.role ?? account.role?.name;
+          this.role = role === "moderator" || role === "admin" ? role : "user";
+        }
+        // Settings carry the compose defaults (content type,
+        // visibility, language, sensitive) — a restored session that
+        // skips this composes with factory defaults until the
+        // settings page happens to be visited. Retried while null so
+        // a transient failure at boot doesn't stick for the session.
+        if (!settings.settings) await settings.syncThemeFromServer();
       } catch {
         // A 401 already cleared the token inside the client; other
         // failures (offline, 5xx) keep the session so transient

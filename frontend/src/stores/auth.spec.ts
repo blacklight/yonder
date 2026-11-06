@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { useAuthStore } from "./auth";
+import { useSettingsStore } from "./settings";
 
 vi.mock("@/api/accounts", () => ({
   verifyCredentials: vi.fn(),
@@ -130,6 +131,21 @@ describe("auth store", () => {
     auth.setToken("saved");
     await auth.restore();
     expect(auth.account?.username).toBe("alice");
+  });
+
+  it("restore loads settings so compose defaults apply after reload", async () => {
+    localStorage.setItem("yonder.token", "saved");
+    const auth = useAuthStore();
+    auth.setToken("saved");
+    await auth.restore();
+    // Without this fetch the settings store stays null and the
+    // composer's account defaults (content type etc.) never apply.
+    expect(useSettingsStore().settings).not.toBeNull();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([u]) => String(u).includes("/yonder/settings")),
+    ).toBe(true);
   });
 
   it("restore is a no-op without a token or with an account", async () => {

@@ -192,6 +192,22 @@ const VISIBILITIES: StatusVisibility[] = [
 ];
 const CONTENT_TYPES = ["text/plain", "text/markdown"];
 
+// The account's default content type applies to every fresh draft —
+// reply/mention/DM seeds included — while the draft still carries the
+// untouched "text/plain" sentinel and holds no user-typed text. The
+// draft-ref watch catches `reset()`/`open*` without a remount (a
+// manual select mutates the draft in place, so it never retriggers);
+// watching settings too covers them landing after mount. `?edit=`
+// keeps the edited post's own type.
+const editing = typeof route.query.edit === "string" && route.query.edit !== "";
+if (!editing) {
+  watch(
+    () => [compose.draft, settings.settings] as const,
+    () => compose.applyContentTypeDefault(),
+    { immediate: true },
+  );
+}
+
 onMounted(async () => {
   // Embedded composers (inline reply, quote modal) mount *after* the
   // open signal fired, so the watcher below can't focus them. After
@@ -270,10 +286,6 @@ onMounted(async () => {
         d.value.visibility === "public"
           ? ((s.default_visibility as StatusVisibility) ?? "public")
           : d.value.visibility,
-      contentType:
-        d.value.contentType === "text/plain"
-          ? ((s.effective_content_type as string) ?? "text/plain")
-          : d.value.contentType,
       language:
         (s.effective_posting_language as string | null) ??
         (s.default_posting_language as string | null) ??

@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import type { Status, StatusVisibility } from "@/api/entities";
 import { storageGet, storageRemove, storageSet } from "@/utils/storage";
 import { useAuthStore } from "./auth";
+import { useSettingsStore } from "./settings";
 
 const DRAFT_KEY = "yonder.compose.draft";
 const STASH_KEY = "yonder.compose.stashed";
@@ -302,8 +303,29 @@ export const useComposeStore = defineStore("compose", {
       this.draft = emptyDraft();
       this.contextIsLive = false;
       this.persist();
+      this.applyContentTypeDefault();
       // Posting (or cancelling) also dismisses any embedded composer.
       this.closeEmbed();
+    },
+
+    /**
+     * Apply the account's default content type to a fresh draft. The
+     * "text/plain" sentinel means "never chosen" and a seed-only draft
+     * (`text === seededText`) holds no user input yet, so both take
+     * `effective_content_type`; a draft with real text or an explicit
+     * non-default pick is left alone. No-op until settings have
+     * loaded — ComposeBox watches for them landing and re-applies.
+     */
+    applyContentTypeDefault() {
+      const effective = useSettingsStore().settings?.effective_content_type;
+      const d = this.draft;
+      if (
+        typeof effective === "string" &&
+        d.contentType === "text/plain" &&
+        (!d.text || d.text === d.seededText)
+      ) {
+        this.update({ contentType: effective });
+      }
     },
 
     /** Close the inline reply form / quote modal without touching the

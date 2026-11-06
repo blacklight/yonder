@@ -570,6 +570,44 @@ describe("ComposeBox", () => {
     expect(useComposeStore().draft.contentType).toBe("text/markdown");
   });
 
+  it("a seeded reply draft takes the account default content type", async () => {
+    useSettingsStore().settings = {
+      effective_content_type: "text/markdown",
+    } as never;
+    const compose = useComposeStore();
+    compose.openReply({
+      id: "1",
+      account: { acct: "alice" },
+      mentions: [],
+    } as never);
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(compose.draft.contentType).toBe("text/markdown");
+  });
+
+  it("a draft with user text keeps its content type", async () => {
+    useSettingsStore().settings = {
+      effective_content_type: "text/markdown",
+    } as never;
+    const compose = useComposeStore();
+    compose.update({ text: "already writing" });
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(compose.draft.contentType).toBe("text/plain");
+  });
+
+  it("settings landing after mount still apply the default", async () => {
+    const compose = useComposeStore();
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(compose.draft.contentType).toBe("text/plain");
+    useSettingsStore().settings = {
+      effective_content_type: "text/markdown",
+    } as never;
+    await flushPromises();
+    expect(compose.draft.contentType).toBe("text/markdown");
+  });
+
   it("the emoji picker inserts the picked unicode at the caret", async () => {
     const { wrapper } = mountWith(ComposeBox);
     await flushPromises();

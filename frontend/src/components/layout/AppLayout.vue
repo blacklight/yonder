@@ -420,19 +420,19 @@ const bottomItems = computed<BottomNavItem[]>(() => {
       icon: "pen-to-square",
     },
     {
+      id: "notifications",
+      label: t("nav.notifications"),
+      to: "/notifications",
+      icon: "bell",
+      badge: notifications.unread || undefined,
+    },
+    {
       id: "messages",
       label: t("nav.messages"),
       to: "/messages",
       icon: "comments",
       // No aggregate count — any unread conversation flags a dot.
       badge: conversations.items.some((c) => c.unread) || undefined,
-    },
-    {
-      id: "notifications",
-      label: t("nav.notifications"),
-      to: "/notifications",
-      icon: "bell",
-      badge: notifications.unread || undefined,
     },
   ];
 });

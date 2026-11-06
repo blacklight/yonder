@@ -132,8 +132,13 @@ async function setLocale(code: string) {
 
 async function setFrontend(name: string) {
   if (!auth.isLoggedIn) return;
-  await settings.patch({ frontend: name || null });
-  notifySaved();
+  const next = name || null;
+  if ((settings.settings?.frontend ?? null) === next) return;
+  // The PATCH response mirrors the choice into the yonder_frontend
+  // cookie; a full reload is required because client-side routing
+  // never re-requests the shell from the server.
+  await settings.patch({ frontend: next });
+  location.reload();
 }
 
 // Swatch clicks apply immediately — the live recolor is the feedback.

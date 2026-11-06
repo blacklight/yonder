@@ -5,7 +5,12 @@
 
 use std::sync::Arc;
 
-use axum::{extract::State, http::HeaderMap, Json};
+use axum::{
+    extract::State,
+    http::{header, HeaderMap},
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde_json::Value;
 
 use crate::{
@@ -32,13 +37,30 @@ pub async fn preferences(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
     headers: HeaderMap,
-) -> Result<Json<Value>> {
+) -> Result<Response> {
     require_scope(&state.config(), &auth, "read:accounts")?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
-    Ok(Json(user_settings.preferences_json(
+    Ok(with_frontend_cookie(
         &state.config(),
-        settings::accept_language(&headers).as_deref(),
-    )))
+        user_settings.frontend.as_deref(),
+        Json(user_settings.preferences_json(
+            &state.config(),
+            settings::accept_language(&headers).as_deref(),
+        )),
+    ))
+}
+
+/// Attach the `yonder_frontend` cookie mirroring the user's frontend
+/// choice — page loads carry no bearer token, so this cookie is how
+/// the SPA fallback learns which frontend to serve. Emitted on every
+/// settings read/write so it self-heals (fresh login, stale value).
+fn with_frontend_cookie(
+    config: &crate::config::Config,
+    frontend: Option<&str>,
+    body: Json<Value>,
+) -> Response {
+    let cookie = crate::http::frontend::frontend_set_cookie(config, frontend);
+    ([(header::SET_COOKIE, cookie)], body).into_response()
 }
 
 /// `GET /api/v1/yonder/settings` — every non-Mastodon-native setting,
@@ -57,13 +79,17 @@ pub async fn get_settings(
     State(state): State<Arc<AppState>>,
     auth: AuthContext,
     headers: HeaderMap,
-) -> Result<Json<Value>> {
+) -> Result<Response> {
     require_scope(&state.config(), &auth, "read:accounts")?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
-    Ok(Json(user_settings.yonder_json(
+    Ok(with_frontend_cookie(
         &state.config(),
-        settings::accept_language(&headers).as_deref(),
-    )))
+        user_settings.frontend.as_deref(),
+        Json(user_settings.yonder_json(
+            &state.config(),
+            settings::accept_language(&headers).as_deref(),
+        )),
+    ))
 }
 
 /// OpenAPI shape of `PATCH /api/v1/yonder/settings` (all fields
@@ -135,13 +161,17 @@ pub async fn patch_settings(
     auth: AuthContext,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<Json<Value>> {
+) -> Result<Response> {
     require_scope(&state.config(), &auth, "write:accounts")?;
     let patch = settings::parse_patch(&state.config(), &body)?;
     settings::save(&state.db, &auth, &patch).await?;
     let user_settings = settings::load(&state.db, auth.user_id).await?;
-    Ok(Json(user_settings.yonder_json(
+    Ok(with_frontend_cookie(
         &state.config(),
-        settings::accept_language(&headers).as_deref(),
-    )))
+        user_settings.frontend.as_deref(),
+        Json(user_settings.yonder_json(
+            &state.config(),
+            settings::accept_language(&headers).as_deref(),
+        )),
+    ))
 }

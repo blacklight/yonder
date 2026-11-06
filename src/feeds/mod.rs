@@ -27,7 +27,7 @@ use crate::{
     auth::scopes::require_scope,
     error::Error,
     http::{
-        frontend::spa_entry,
+        frontend::{frontend_choice, spa_entry},
         middleware::{auth::MaybeAuth, ratelimit},
         AppState,
     },
@@ -211,6 +211,7 @@ fn page_or_404(
         return Ok(spa_entry(
             state,
             &format!("{prefix}/{}", encoded.replace('+', "%20")),
+            frontend_choice(headers).as_deref(),
         ));
     }
     Err(Error::NotFound("feed".into()))

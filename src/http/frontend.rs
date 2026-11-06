@@ -31,6 +31,48 @@ const PLACEHOLDER: &str = include_str!("placeholder.html");
 /// Cache policy for hashed build artifacts under `/assets/`.
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
+/// Cookie mirroring `users.frontend` into page loads. Navigations
+/// carry no bearer token, so the settings API writes the choice here
+/// and [`fallback`]/[`spa_entry`] read it back — this is the only
+/// transport that lets a per-user frontend reach serving.
+pub const FRONTEND_COOKIE: &str = "yonder_frontend";
+
+/// The `yonder_frontend` cookie value, if present. Values are not
+/// URL-decoded: frontend names match `[a-z0-9_-]+`, so anything else
+/// simply falls through to the instance default in
+/// [`frontends::resolve_active`].
+pub(crate) fn frontend_choice(headers: &HeaderMap) -> Option<String> {
+    let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
+    cookie.split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        (name == FRONTEND_COOKIE).then(|| value.to_string())
+    })
+}
+
+/// `Set-Cookie` value asserting [`FRONTEND_COOKIE`] to `frontend` —
+/// `None` deletes it (follow the instance default). Emitted by the
+/// settings endpoints on every read/write so the cookie self-heals:
+/// logging in on a new browser re-syncs it on the first settings
+/// fetch, and resetting the preference clears a stale value.
+/// `Secure` follows the federation base URL scheme.
+pub fn frontend_set_cookie(config: &crate::config::Config, frontend: Option<&str>) -> String {
+    // Only well-formed names are asserted; anything else (a stale or
+    // hand-edited row) is treated as "no choice" rather than echoed
+    // back into a cookie.
+    let frontend = frontend.filter(|name| frontends::validate_name(name).is_ok());
+    let mut cookie = format!(
+        "{FRONTEND_COOKIE}={}; Path=/; SameSite=Lax; HttpOnly",
+        frontend.unwrap_or("")
+    );
+    if frontend.is_none() {
+        cookie.push_str("; Max-Age=0");
+    }
+    if crate::activitypub::federation_base_url(config).starts_with("https://") {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
 /// `GET`/`HEAD` fallback handler. Registration lives in
 /// [`crate::http::build_router`] — the fallback must sit on the
 /// `Router<Arc<AppState>>` before `.with_state` for the `State`
@@ -90,7 +132,7 @@ pub async fn fallback(
     }
 
     let config = state.config();
-    let frontend = frontends::resolve_active(&config, None);
+    let frontend = frontends::resolve_active(&config, frontend_choice(&headers).as_deref());
     let Some(rel) = safe_path(uri.path()) else {
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
@@ -203,6 +245,9 @@ fn serve_file(frontend: &Frontend, rel: &Path) -> Option<Response> {
 /// but should still answer browsers with the app shell — e.g.
 /// `GET /oauth/authorize` serves this when `Accept: text/html` so the
 /// SPA's consent page mounts, while API clients get the route's JSON.
+/// Deliberately ignores the per-user cookie: the consent flow is part
+/// of the builtin SPA, so it always resolves the admin default rather
+/// than a user's alternative frontend.
 pub fn spa_index(state: &AppState) -> Response {
     let frontend = frontends::resolve_active(&state.config(), None);
     tag(&frontend.name, serve_entry(&frontend, None))
@@ -211,10 +256,12 @@ pub fn spa_index(state: &AppState) -> Response {
 /// SPA entry for a request path — resolves the active frontend and
 /// injects feed-discovery `<link>` tags when the path is feed-backed.
 /// Shared with the feed handlers, whose `/tags/{t}`-style catch-alls
-/// claim paths that are also web pages.
-pub fn spa_entry(state: &AppState, path: &str) -> Response {
+/// claim paths that are also web pages. `user_choice` carries the
+/// `yonder_frontend` cookie value so feed-backed pages render in the
+/// visitor's chosen frontend too.
+pub fn spa_entry(state: &AppState, path: &str, user_choice: Option<&str>) -> Response {
     let config = state.config();
-    let frontend = frontends::resolve_active(&config, None);
+    let frontend = frontends::resolve_active(&config, user_choice);
     let head_extra = feed_discovery(&config.instance.domain, path);
     tag(
         &frontend.name,

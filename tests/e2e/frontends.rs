@@ -178,6 +178,33 @@ async fn request_raw(
     (status, headers, bytes)
 }
 
+/// `GET` with a `Cookie` header — page loads carry no bearer token,
+/// so the per-user frontend choice arrives as the `yonder_frontend`
+/// cookie instead.
+async fn request_cookie(
+    app: &Router,
+    path: &str,
+    cookie: &str,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get(path)
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, headers, bytes)
+}
+
 fn json(body: &[u8]) -> Value {
     serde_json::from_slice(body).unwrap()
 }
@@ -622,6 +649,94 @@ async fn user_frontend_setting_roundtrip() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(json(&body)["frontend"].is_null());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn user_frontend_choice_serves_spa_via_cookie() {
+    let _permit = harness::acquire().await;
+    let (config, _dir) = base_config();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let admin = register(&env.app, "admin", "a@x.test").await;
+    make_admin(&env, "admin").await;
+    let user = register(&env.app, "user", "u@x.test").await;
+    install_zip(&env, &admin, "alt", &frontend_zip("<h1>ALT</h1>")).await;
+
+    // PATCH mirrors the choice into a Set-Cookie header.
+    let (status, headers, body) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/yonder/settings",
+        Some(&user),
+        Some(json!({"frontend": "alt"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json(&body)["frontend"], "alt");
+    let set_cookie = headers
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(set_cookie.contains("yonder_frontend=alt"), "{set_cookie}");
+
+    // The cookie drives SPA serving: `/` returns the chosen frontend.
+    let (status, headers, body) = request_cookie(&env.app, "/", "yonder_frontend=alt").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("x-yonder-frontend").unwrap().to_str().unwrap(),
+        "alt"
+    );
+    assert!(String::from_utf8_lossy(&body).contains("ALT"));
+
+    // GET settings re-asserts the cookie (self-heals on fresh login).
+    let (status, headers, _) = request(
+        &env.app,
+        "GET",
+        "/api/v1/yonder/settings",
+        Some(&user),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .contains("yonder_frontend=alt"));
+
+    // No cookie → instance default; a bogus value → same fallback.
+    let (_, headers, _) = request(&env.app, "GET", "/", None, None).await;
+    assert_eq!(
+        headers.get("x-yonder-frontend").unwrap().to_str().unwrap(),
+        "yonder"
+    );
+    let (_, headers, _) = request_cookie(&env.app, "/", "yonder_frontend=../etc").await;
+    assert_eq!(
+        headers.get("x-yonder-frontend").unwrap().to_str().unwrap(),
+        "yonder"
+    );
+
+    // Reset → the cookie is deleted.
+    let (status, headers, _) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/yonder/settings",
+        Some(&user),
+        Some(json!({"frontend": null})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let set_cookie = headers
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(set_cookie.contains("Max-Age=0"), "{set_cookie}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

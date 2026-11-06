@@ -414,6 +414,12 @@ const bottomItems = computed<BottomNavItem[]>(() => {
       icon: "magnifying-glass",
     },
     {
+      id: "compose",
+      label: t("nav.compose"),
+      to: "/compose",
+      icon: "pen-to-square",
+    },
+    {
       id: "messages",
       label: t("nav.messages"),
       to: "/messages",
@@ -427,15 +433,6 @@ const bottomItems = computed<BottomNavItem[]>(() => {
       to: "/notifications",
       icon: "bell",
       badge: notifications.unread || undefined,
-    },
-    {
-      id: "profile",
-      label: t("nav.profile"),
-      to: "/profile",
-      avatar: true,
-      avatarSrc: auth.account?.avatar,
-      // /profile redirects to /@acct — router-link-active can't see it.
-      active: !!auth.account && route.params.acct === auth.account.acct,
     },
   ];
 });

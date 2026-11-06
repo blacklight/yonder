@@ -186,17 +186,23 @@ describe("AppLayout", () => {
     expect(links.map((l) => l.attributes("href"))).toEqual([
       "/home",
       "/search",
+      "/compose",
       "/messages",
       "/notifications",
-      "/profile",
+    ]);
+    expect(links.map((l) => l.attributes("aria-label"))).toEqual([
+      "Home",
+      "Search",
+      "Compose",
+      "Messages",
+      "Notifications",
     ]);
     // Count bubble on notifications, bare dot for unread DMs.
     const badges = w.findAll(".bottomnav__badge");
     expect(badges.map((b) => b.text())).toEqual(["", "3"]);
     expect(badges[0].classes()).toContain("bottomnav__badge--dot");
-    expect(w.get(".bottomnav .avatar__img").attributes("src")).toBe(
-      "https://a.example/av.png",
-    );
+    // The profile shortcut lives in the top bar only — no avatar below.
+    expect(w.find(".bottomnav .avatar").exists()).toBe(false);
   });
 
   it("renders the unread badge on notifications", () => {

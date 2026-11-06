@@ -5,8 +5,10 @@
 # pyproject.toml and has no cargo counterpart).
 #
 # Uses cargo-edit's `cargo set-version`, which updates both files and
-# understands semver bumps. Afterwards it commits the bumped files and
-# creates a `v<version>` tag, like bumpversion's commit/tag options.
+# understands semver bumps. The first "Unreleased" heading in
+# CHANGELOG.md is renamed to the new version. Afterwards it commits
+# the bumped files and creates a `v<version>` tag, like bumpversion's
+# commit/tag options.
 #
 # Usage:
 #   scripts/bump-version.sh patch|minor|major   # semver bump
@@ -24,6 +26,13 @@ if ! cargo set-version --version >/dev/null 2>&1; then
 fi
 
 old_version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+
+# Fail before touching anything if there's no Unreleased section to
+# stamp — bumpversion errors the same way on a missing match.
+if ! grep -qE '^[[:space:]]*#+[[:space:]]+Unreleased[[:space:]]*$' CHANGELOG.md; then
+    echo "CHANGELOG.md has no 'Unreleased' heading to bump" >&2
+    exit 1
+fi
 
 case "${1:-}" in
     major|minor|patch)
@@ -51,12 +60,17 @@ if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
     exit 1
 fi
 
+# Rename the first Unreleased heading to the new version, preserving
+# its heading level (## Unreleased -> ## 0.2.0).
+sed -i -E "0,/^([[:space:]]*#+)[[:space:]]+Unreleased[[:space:]]*$/s//\1 $version/" CHANGELOG.md
+
 # Commit only the bumped files so unrelated staged work stays staged.
 git commit -m "Bump version: $old_version → $version" \
     -m "Bumped files:
 - Cargo.toml: $version
-- Cargo.lock: $version" \
-    -- Cargo.toml Cargo.lock
+- Cargo.lock: $version
+- CHANGELOG.md: ## $version" \
+    -- Cargo.toml Cargo.lock CHANGELOG.md
 
 git tag "$tag"
 

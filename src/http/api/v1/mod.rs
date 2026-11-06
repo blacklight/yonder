@@ -49,7 +49,7 @@ pub mod two_factor;
 
 use std::sync::Arc;
 
-use axum::{routing::get, routing::post, Router};
+use axum::{extract::DefaultBodyLimit, routing::get, routing::post, Router};
 
 use crate::{
     http::{middleware::ratelimit, AppState},
@@ -96,16 +96,17 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/accounts/verify_credentials",
             get(accounts::verify_credentials),
         )
-        // Profile editing (epic 09). Multipart bypasses
-        // `DefaultBodyLimit`, so the body cap rides on the route itself
-        // (two uploads + slack).
+        // Profile editing (epic 09). Multipart's extractor applies
+        // `DefaultBodyLimit` (2 MiB) on top of the route cap, so it is
+        // disabled here — the `RequestBodyLimitLayer` below (two
+        // uploads + slack) is the real limit.
         .route(
             "/api/v1/accounts/update_credentials",
-            axum::routing::patch(accounts::update_credentials).route_layer(
-                tower_http::limit::RequestBodyLimitLayer::new(
+            axum::routing::patch(accounts::update_credentials)
+                .route_layer(DefaultBodyLimit::disable())
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().media.max_avatar_size as usize * 2 + 64 * 1024,
-                ),
-            ),
+                )),
         )
         .route("/api/v1/apps", post(apps::create_app))
         .route(
@@ -305,11 +306,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/api/v1/yonder/admin/frontends",
-            post(admin_frontends::install_frontend).route_layer(
-                tower_http::limit::RequestBodyLimitLayer::new(
+            post(admin_frontends::install_frontend)
+                .route_layer(DefaultBodyLimit::disable())
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().frontends.max_upload_size as usize + 64 * 1024,
-                ),
-            ),
+                )),
         )
         .route(
             "/api/v1/yonder/admin/frontends/{name}",
@@ -375,6 +376,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/yonder/imports",
             post(transfer::create_import)
+                .route_layer(DefaultBodyLimit::disable())
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().admin.max_import_size as usize + 64 * 1024,
                 ))
@@ -427,11 +429,15 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             post(restricted::restricted_logout),
         )
         // Posting (epic 12) — outside the `authentication` bucket;
-        // writes carry their own buckets.
+        // Writes carry their own buckets. `DefaultBodyLimit::max`
+        // mirrors the explicit 2 MiB `to_bytes` cap in `parse_body`
+        // so the multipart path (Mastodon clients) gets the same
+        // limit instead of axum's extractor default.
         .route(
             "/api/v1/statuses",
             axum::routing::post(statuses::create)
                 .get(statuses::list_by_ids)
+                .route_layer(DefaultBodyLimit::max(2 * 1024 * 1024))
                 .route_layer(ratelimit::layer(state, "status")),
         )
         .route(
@@ -439,6 +445,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             get(statuses::show)
                 .put(statuses::update)
                 .delete(statuses::delete_status)
+                .route_layer(DefaultBodyLimit::max(2 * 1024 * 1024))
                 .route_layer(ratelimit::layer(state, "status")),
         )
         .route("/api/v1/statuses/{id}/context", get(statuses::context))
@@ -471,6 +478,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/media",
             axum::routing::post(media::upload)
+                .route_layer(DefaultBodyLimit::disable())
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().media.max_upload_size as usize + 64 * 1024,
                 ))
@@ -781,6 +789,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/admin/emojis",
             post(emoji_admin::create)
+                .route_layer(DefaultBodyLimit::disable())
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().media.max_emoji_size as usize + 64 * 1024,
                 ))
@@ -790,6 +799,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/admin/emojis/import_zip",
             post(emoji_admin::import_zip)
+                .route_layer(DefaultBodyLimit::disable())
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().media.max_emoji_zip_uncompressed as usize + 64 * 1024,
                 ))

@@ -9,7 +9,7 @@ pub mod suggestions;
 
 use std::sync::Arc;
 
-use axum::{routing::post, Router};
+use axum::{extract::DefaultBodyLimit, routing::post, Router};
 
 use crate::http::{middleware::ratelimit, AppState};
 
@@ -19,6 +19,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v2/media",
             post(media::upload)
+                .route_layer(DefaultBodyLimit::disable())
                 .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
                     state.config().media.max_upload_size as usize + 64 * 1024,
                 ))

@@ -803,3 +803,35 @@ async fn admin_routes_require_admin_scope() {
     let (status, _, _) = request(&env.app, "GET", "/api/v1/yonder/frontends", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+/// Regression: multipart installs must survive bodies over axum's
+/// 2 MiB `DefaultBodyLimit` — the extractor used to truncate the
+/// stream mid-field, surfacing a bogus "file read failed" 422 while
+/// the route's `RequestBodyLimitLayer` was meant to be the cap.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn zip_install_over_default_body_limit() {
+    let _permit = harness::acquire().await;
+    let (config, _dir) = base_config();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let admin = register(&env.app, "admin", "a@x.test").await;
+    make_admin(&env, "admin").await;
+
+    // A stored (uncompressed) 3 MiB entry keeps the archive — and
+    // therefore the multipart body — above the 2 MiB extractor cap.
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    writer.start_file::<_, ()>("index.html", options).unwrap();
+    writer.write_all(b"<html>big</html>").unwrap();
+    writer
+        .start_file::<_, ()>("assets/blob.bin", options)
+        .unwrap();
+    writer.write_all(&vec![0xABu8; 3 * 1024 * 1024]).unwrap();
+    let big_zip = writer.finish().unwrap().into_inner();
+    assert!(big_zip.len() > 2 * 1024 * 1024);
+
+    let (status, body) = install_zip(&env, &admin, "bigalt", &big_zip).await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+}

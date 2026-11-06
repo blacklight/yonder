@@ -38,6 +38,13 @@ volumes:
   - name: cargo_cache
     host:
       path: /home/drone/.cargo/drone
+  # Tag pipelines build the release binary + frontend dist once and share
+  # them between build-image / publish-crate / github-release via
+  # /release/$DRONE_TAG. Requires a writable /home/drone/release-artifacts
+  # on the Drone host (tag subdirs accumulate — prune periodically).
+  - name: release_artifacts
+    host:
+      path: /home/drone/release-artifacts
 
 steps:
 
@@ -167,6 +174,51 @@ steps:
     - frontend-build
 
 ###
+### Release build (tag only)
+###
+### The binary and frontend dist are built ONCE here and consumed by
+### build-image (prebuilt/yonder in the Docker context), publish-crate
+### (ordering) and github-release (tarball). Artifacts land in the
+### shared release_artifacts volume under /release/$DRONE_TAG.
+###
+
+- name: build-binary
+  image: rust:1
+  volumes:
+    - name: cargo_cache
+      path: /usr/local/cargo/registry/cache
+    - name: release_artifacts
+      path: /release
+
+  commands:
+    # aws-lc-sys (lettre) compiles C code — same toolchain bits as
+    # backend-tests (full rust image has gcc but no cmake).
+    - apt-get update && apt-get install -y cmake curl
+    - cargo build --release --locked
+    - mkdir -p "/release/$DRONE_TAG"
+    - cp target/release/yonder "/release/$DRONE_TAG/yonder"
+
+  when:
+    event:
+      - tag
+
+- name: build-frontend-dist
+  image: node:24
+  volumes:
+    - name: release_artifacts
+      path: /release
+
+  commands:
+    # Same --ignore-scripts rationale as frontend-build.
+    - cd frontend && npm ci --ignore-scripts && npm run build
+    - mkdir -p "/release/$DRONE_TAG/frontend"
+    - cp -r frontend/dist "/release/$DRONE_TAG/frontend/dist"
+
+  when:
+    event:
+      - tag
+
+###
 ### Build and publish the Docker image (x86_64 — see
 ### .drone/build-image.sh)
 ###
@@ -177,6 +229,8 @@ steps:
   volumes:
     - name: docker_sock
       path: /var/run/docker.sock
+    - name: release_artifacts
+      path: /release
 
   environment:
     REGISTRY_ENDPOINT: quay.io
@@ -190,7 +244,13 @@ steps:
     event:
       - tag
 
+  depends_on:
+    - build-binary
+
   commands:
+    # Stage the prebuilt binary into the Docker build context — the
+    # Dockerfile copies it instead of recompiling (see Dockerfile).
+    - mkdir -p prebuilt && cp "/release/$DRONE_TAG/yonder" prebuilt/yonder
     - . .drone/build-image.sh
 
 ###
@@ -211,8 +271,37 @@ steps:
     event:
       - tag
 
+  depends_on:
+    - build-binary
+
   commands:
     - . .drone/publish-crate.sh
+
+###
+### GitHub release: .tar.xz (binary + frontend dist + example config)
+###
+
+- name: github-release
+  image: alpine
+  volumes:
+    - name: release_artifacts
+      path: /release
+
+  environment:
+    GH_TOKEN:
+      from_secret: github_token
+
+  when:
+    event:
+      - tag
+
+  depends_on:
+    - build-binary
+    - build-frontend-dist
+
+  commands:
+    - apk add --no-cache xz github-cli
+    - . .drone/github-release.sh
 
 ###
 ### Upload coverage to Codacy

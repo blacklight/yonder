@@ -264,3 +264,6 @@ frontend/*.tsbuildinfo
 # Data directories
 /data
 /volumes
+
+# CI-built binary staged into the Docker build context (tag pipeline)
+/prebuilt/yonder

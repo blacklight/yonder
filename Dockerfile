@@ -34,10 +34,18 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY migrations ./migrations
 COPY src ./src
+# Tag pipelines pre-build the binary once (Drone `build-binary` step) and
+# stage it at prebuilt/yonder to skip the ~40min compile here; local
+# `docker build` leaves the dir empty and falls back to cargo build.
+COPY prebuilt ./prebuilt
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
-    cargo build --release --locked && \
-    cp /app/target/release/yonder /usr/local/bin/yonder
+    if [ -f /app/prebuilt/yonder ]; then \
+        cp /app/prebuilt/yonder /usr/local/bin/yonder; \
+    else \
+        cargo build --release --locked && \
+        cp /app/target/release/yonder /usr/local/bin/yonder; \
+    fi
 
 ###
 ### Runtime image

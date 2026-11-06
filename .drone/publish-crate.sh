@@ -9,4 +9,7 @@ fi
 
 # The package publishes as `yonder-server` — `yonder` is taken by an
 # unrelated crate. The lib/bin targets stay `yonder` (see Cargo.toml).
-cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+# --no-verify: the tag pipeline already compiled this exact source in the
+# build-binary step; crates.io would otherwise rebuild it a second time
+# just to verify the .crate.
+cargo publish --locked --no-verify --token "$CARGO_REGISTRY_TOKEN"

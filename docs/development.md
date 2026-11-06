@@ -189,14 +189,27 @@ sha256-hex; only passwords use the KDF. See `docs/authentication.md`.
 ## CI/CD
 
 `.drone.yml` mirrors the Songhive pipeline: lint + tests on push,
-image publish to quay.io and `cargo publish` of the `yonder-server`
-crate on tag (`yonder` is taken on crates.io by an unrelated project;
-the binary is still `yonder`). `backend-tests` runs the suite through
+release pipeline on tag. `backend-tests` runs the suite through
 `cargo llvm-cov` and emits `lcov.info`, uploaded to Codacy on pushes
 to `main`. Required Drone secrets: `ssh_pubkey`/`ssh_privkey` (GitHub
 mirror), `docker_user`/`docker_pass` (registry), `crates_io_token`,
-`codacy_project_token` (coverage upload). The `cargo_cache` volume
-expects a writable `/home/drone/.cargo/drone` on the Drone host.
+`codacy_project_token` (coverage upload), `github_token` (GitHub
+release). The `cargo_cache` volume expects a writable
+`/home/drone/.cargo/drone` on the Drone host; the `release_artifacts`
+volume expects a writable `/home/drone/release-artifacts`.
+
+On a tag, `build-binary` and `build-frontend-dist` compile the release
+binary and frontend once into `/release/$DRONE_TAG` on the shared
+volume. `build-image` stages the binary as `prebuilt/yonder` in the
+Docker context (the Dockerfile skips its own `cargo build` when it's
+present — local `docker build` still compiles from source),
+`publish-crate` runs `cargo publish --no-verify` against the same
+source, and `github-release` packs a
+`yonder-<version>-x86_64-unknown-linux-gnu.tar.xz` (binary +
+`frontend/dist` + `config.toml.example`) and creates a GitHub release
+on the `blacklight/yonder` mirror with the matching CHANGELOG section
+as notes. The script polls for the tag to appear on GitHub first,
+since the Forgejo push mirror is asynchronous.
 
 ### Cutting a release
 
@@ -208,7 +221,7 @@ of bumpversion, backed by cargo-edit's `cargo set-version`
 scripts/bump-version.sh minor   # or patch|major, or an explicit 1.2.3
 ```
 
-It updates `Cargo.toml` and `Cargo.lock`. Commit both, then push a
-`v<version>` tag — the tag pipeline publishes
-`quay.io/yonder/yonder:<version>` (+ `:latest`) and the
-`yonder-server` crate.
+It updates `Cargo.toml` and `Cargo.lock`. Commit both, add the
+CHANGELOG section, then push a `v<version>` tag — the tag pipeline
+publishes `quay.io/yonder/yonder:<version>` (+ `:latest`), the
+`yonder-server` crate, and the GitHub release.

@@ -4,7 +4,7 @@
 # (all `use yonder::…` imports, `env!("CARGO_BIN_EXE_yonder")` and the
 # installed binary name are unchanged).
 name = "yonder-server"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "A Mastodon-compatible ActivityPub server in Rust"

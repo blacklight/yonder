@@ -158,8 +158,11 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     // owner and their followers must always see the profile
     // timeline, and non-followers get a "limited" notice with an
     // opt-in reveal — the hiding is client-side, like Mastodon's.
+    // `a.domain IS NOT NULL` guards local accounts — `NULL = ANY(...)`
+    // is NULL rather than false, which would silently drop every local
+    // status whenever the table is non-empty.
     b.clause(
-        "NOT (a.domain = ANY(SELECT domain FROM domain_blocks \
+        "NOT (a.domain IS NOT NULL AND a.domain = ANY(SELECT domain FROM domain_blocks \
          WHERE severity = 'suspend'))",
     );
     if matches!(
@@ -167,7 +170,7 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
         TimelineScope::Local | TimelineScope::Federated { .. } | TimelineScope::Tag { .. }
     ) {
         b.clause(
-            "NOT (a.domain = ANY(SELECT domain FROM domain_blocks \
+            "NOT (a.domain IS NOT NULL AND a.domain = ANY(SELECT domain FROM domain_blocks \
              WHERE severity = 'silence'))",
         );
         b.clause("a.limited_at IS NULL");

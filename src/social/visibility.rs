@@ -44,7 +44,10 @@ pub const MUTES_EXCLUSION_ANY: &str = "NOT (a.id = ANY( \
       AND (expires_at IS NULL OR expires_at > now())))";
 
 /// [`DOMAIN_BLOCKS_EXCLUSION`] as a hashed `ANY`. Expects alias `a`.
-pub const DOMAIN_BLOCKS_EXCLUSION_ANY: &str = "NOT (a.domain = ANY( \
+/// `a.domain IS NOT NULL` guards local accounts: `NULL = ANY(...)` is
+/// NULL, not false, so without it every local row would be dropped
+/// whenever the viewer has any domain block.
+pub const DOMAIN_BLOCKS_EXCLUSION_ANY: &str = "NOT (a.domain IS NOT NULL AND a.domain = ANY( \
     SELECT domain FROM account_domain_blocks WHERE account_id = $1))";
 
 /// The joined account is live — not suspended and not deleted.

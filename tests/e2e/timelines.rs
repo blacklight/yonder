@@ -598,6 +598,39 @@ async fn filter_languages_hides_posts() {
     assert_eq!(ids.len(), 2);
 }
 
+/// Regression: `a.domain = ANY(SELECT …)` is NULL — not false — for
+/// local accounts (`domain IS NULL`), so a non-empty `domain_blocks`
+/// used to hide every local status from every timeline scope.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn domain_blocks_do_not_hide_local_statuses() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let sid = post(&env.app, &alice, json!({"status": "still here"})).await;
+    let sid: i64 = sid.parse().unwrap();
+    let alice_id = account_id(&env.state.db, "alice").await;
+    sqlx::query(
+        "INSERT INTO domain_blocks (domain, severity, created_by_account_id) \
+         VALUES ('suspended.example', 'suspend', $1)",
+    )
+    .bind(alice_id)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let (_, _, ids) = timeline_ids(
+        &env.app,
+        &format!("/api/v1/accounts/{alice_id}/statuses"),
+        Some(&alice),
+    )
+    .await;
+    assert!(ids.contains(&sid), "local status hidden: {ids:?}");
+    let (_, _, ids) = timeline_ids(&env.app, "/api/v1/timelines/public", Some(&alice)).await;
+    assert!(ids.contains(&sid), "local status hidden publicly: {ids:?}");
+}
+
 // ---------------------------------------------------------------------------
 // List & tag timelines
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
 //! ([`super::remote`]). Re-runs converge `preview_cards` to the
 //! status' current eligibility — a stale card is worse than none.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use scraper::{Html, Selector};
 use serde_json::{json, Value};
@@ -411,8 +411,10 @@ struct CardMeta {
 /// v2 = mention/hashtag links excluded from candidates — mention
 /// cards are cleared and any later eligible link is re-fetched;
 /// v3 = Mastodon-compat fetch UA — cards stored from providers'
-/// stripped bot pages are re-fetched for real metadata/embeds).
-const CARD_SCAN_VERSION: i32 = 3;
+/// stripped bot pages are re-fetched for real metadata/embeds;
+/// v4 = iframeable-player validation — cards that stored direct
+/// media URLs as `twitter:player`/`og:video` embeds are re-fetched).
+const CARD_SCAN_VERSION: i32 = 4;
 
 /// Per-run cap on the rescan sweep — one fan-out must not flood the
 /// queue unboundedly; a full batch re-enqueues the sweep until no
@@ -420,11 +422,10 @@ const CARD_SCAN_VERSION: i32 = 3;
 const SWEEP_BATCH_CAP: i64 = 1000;
 
 fn cache_key(url: &str) -> String {
-    // `v3` — envelopes cached from providers' stripped bot pages
-    // (pre Mastodon-compat UA) would otherwise serve stub titles and
-    // no embed for the whole cache TTL.
+    // `v4` — envelopes cached before player-URL validation can carry
+    // direct media URLs as embed players.
     format!(
-        "preview:v3:{}",
+        "preview:v4:{}",
         &hex::encode(Sha256::digest(url.as_bytes()))[..32]
     )
 }
@@ -526,44 +527,66 @@ const MAX_EMBED_URL: usize = 2048;
 /// relative embed-player URLs.
 fn parse_metadata(doc: &str, page_url: &str) -> CardMeta {
     let html = Html::parse_document(doc);
-    let og = |name: &str| -> Option<String> {
-        let sel = Selector::parse(&format!("meta[property=\"og:{name}\"]")).ok()?;
+    let values = |attr: &str, name: &str| -> Vec<String> {
+        let Some(sel) = Selector::parse(&format!("meta[{attr}=\"{name}\"]")).ok() else {
+            return Vec::new();
+        };
         html.select(&sel)
-            .next()
-            .and_then(|e| e.value().attr("content"))
+            .filter_map(|e| e.value().attr("content"))
             .map(str::to_string)
             .filter(|s| !s.is_empty())
+            .collect()
     };
-    let meta_name = |name: &str| -> Option<String> {
-        let sel = Selector::parse(&format!("meta[name=\"{name}\"]")).ok()?;
-        html.select(&sel)
-            .next()
-            .and_then(|e| e.value().attr("content"))
-            .map(str::to_string)
-            .filter(|s| !s.is_empty())
-    };
+    let og_values = |name: &str| values("property", &format!("og:{name}"));
+    let named_values = |name: &str| values("name", name);
+    let og = |name: &str| og_values(name).into_iter().next();
+    let meta_name = |name: &str| named_values(name).into_iter().next();
     let title = og("title")
         .or_else(|| {
             let sel = Selector::parse("title").ok()?;
             html.select(&sel).next().map(|e| e.text().collect())
         })
         .unwrap_or_default();
-    // Embeddable players: `twitter:player` is always an iframeable
-    // URL per the card spec; `og:video*` doubles for raw media files
-    // (`video/mp4`), so only a `text/html` player qualifies.
-    let embed_url = meta_name("twitter:player").or_else(|| {
-        let is_html_player = og("video:type")
-            .map(|t| t.eq_ignore_ascii_case("text/html"))
-            .unwrap_or(false);
-        is_html_player
-            .then(|| {
-                og("video:secure_url")
-                    .or_else(|| og("video:url"))
-                    .or_else(|| og("video"))
-            })
-            .flatten()
+    // Card images are collected before choosing a player: broken
+    // implementations (notably Akkoma) point `twitter:player` at the
+    // same attachment URLs they list as `og:image`.
+    let image_urls: HashSet<String> = og_values("image")
+        .into_iter()
+        .chain(named_values("twitter:image"))
+        .filter_map(|u| normalize_embed_url(&u, page_url))
+        .collect();
+    // Embeddable players: `twitter:player` counts for player cards and
+    // undeclared card types, but not when the page only declares a
+    // non-player card (Akkoma emits one per image while still saying
+    // `summary_large_image`); `og:video*` doubles for raw media files
+    // (`video/mp4`), so only `text/html` qualifies.
+    let twitter_cards = named_values("twitter:card");
+    let player_card = twitter_cards
+        .iter()
+        .any(|c| matches!(c.to_ascii_lowercase().as_str(), "player" | "player_card"));
+    let non_player_card = twitter_cards.iter().any(|c| {
+        matches!(
+            c.to_ascii_lowercase().as_str(),
+            "summary" | "summary_large_image" | "app"
+        )
     });
-    let embed_url = embed_url.and_then(|u| normalize_embed_url(&u, page_url));
+    let mut embed_candidates = if player_card || !non_player_card {
+        named_values("twitter:player")
+    } else {
+        Vec::new()
+    };
+    let is_html_player = og_values("video:type")
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("text/html"));
+    if is_html_player {
+        for key in ["video:secure_url", "video:url", "video"] {
+            embed_candidates.extend(og_values(key));
+        }
+    }
+    let embed_url = embed_candidates
+        .into_iter()
+        .filter_map(|u| normalize_embed_url(&u, page_url))
+        .find(|u| plausible_embed_url(u, &image_urls));
     let dim = |name: &str| -> i32 {
         name.parse::<i32>()
             .ok()
@@ -599,6 +622,54 @@ fn parse_metadata(doc: &str, page_url: &str) -> CardMeta {
         embed_width,
         embed_height,
     }
+}
+
+/// Whether a normalized embed-player URL can plausibly be an HTML
+/// player rather than a direct media file. Pages sometimes misuse
+/// player tags for attachments; those URLs either duplicate the
+/// card image or end in a recognizable media extension.
+fn plausible_embed_url(embed_url: &str, image_urls: &HashSet<String>) -> bool {
+    if image_urls.contains(embed_url) {
+        return false;
+    }
+    let Ok(parsed) = url::Url::parse(embed_url) else {
+        return false;
+    };
+    let filename = parsed.path().rsplit('/').next().unwrap_or_default();
+    let Some(ext) = filename.rsplit_once('.').map(|(_, ext)| ext.to_lowercase()) else {
+        return true;
+    };
+    !matches!(
+        ext.as_str(),
+        "avif"
+            | "bmp"
+            | "flac"
+            | "gif"
+            | "heic"
+            | "ico"
+            | "jpeg"
+            | "jpg"
+            | "m3u8"
+            | "m4a"
+            | "m4v"
+            | "mkv"
+            | "mov"
+            | "mp3"
+            | "mp4"
+            | "mpeg"
+            | "mpg"
+            | "oga"
+            | "ogg"
+            | "ogv"
+            | "opus"
+            | "png"
+            | "svg"
+            | "tif"
+            | "tiff"
+            | "wav"
+            | "webm"
+            | "webp"
+    )
 }
 
 /// Validate an embed-player URL: resolve against the page, require
@@ -795,5 +866,54 @@ mod tests {
         assert_eq!(decode_segment("a+b"), "a+b");
         assert_eq!(decode_segment("100%25"), "100%");
         assert_eq!(decode_segment("%zz"), "%zz");
+    }
+
+    #[test]
+    fn image_player_tags_do_not_create_video_embed() {
+        // Akkoma emits one `twitter:player` per image attachment even
+        // though the card is `summary_large_image`, not a player card.
+        let img1 = "https://cdn.example/media/first.abc123";
+        let img2 = "https://cdn.example/media/second.def456";
+        let doc = format!(
+            r#"<html><head>
+                <meta property="og:title" content="Post with images">
+                <meta property="og:image" content="{img1}">
+                <meta property="og:image" content="{img2}">
+                <meta name="twitter:card" content="summary_large_image">
+                <meta name="twitter:player" content="{img1}">
+                <meta name="twitter:card" content="summary_large_image">
+                <meta name="twitter:player" content="{img2}">
+            </head></html>"#
+        );
+        let meta = parse_metadata(&doc, "https://social.example/notice/1");
+        assert_eq!(meta.embed_url, "");
+        assert_eq!(meta.embed_width, 0);
+        assert_eq!(meta.embed_height, 0);
+        assert_eq!(meta.image.as_deref(), Some(img1));
+    }
+
+    #[test]
+    fn declared_player_card_accepts_iframe_url() {
+        let doc = r#"<html><head>
+            <meta property="og:title" content="Watch this">
+            <meta name="twitter:card" content="player">
+            <meta name="twitter:player" content="https://player.example/embed/abc">
+            <meta name="twitter:player:width" content="640">
+            <meta name="twitter:player:height" content="360">
+        </head></html>"#;
+        let meta = parse_metadata(doc, "https://social.example/watch/1");
+        assert_eq!(meta.embed_url, "https://player.example/embed/abc");
+        assert_eq!(meta.embed_width, 640);
+        assert_eq!(meta.embed_height, 360);
+    }
+
+    #[test]
+    fn direct_media_player_url_is_rejected() {
+        let doc = r#"<html><head>
+            <meta name="twitter:card" content="player">
+            <meta name="twitter:player" content="https://cdn.example/video.mp4">
+        </head></html>"#;
+        let meta = parse_metadata(doc, "https://social.example/watch/1");
+        assert_eq!(meta.embed_url, "");
     }
 }

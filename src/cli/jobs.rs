@@ -162,7 +162,7 @@ pub enum JobCommand {
     /// Fetch Open Graph link-preview metadata.
     ///
     /// Payload: `{"status_id": <id>}` refreshes one status; `{}` fans
-    /// out a rescan of statuses missing a preview card.
+    /// out a rescan of statuses with stale preview-card metadata.
     #[command(name = "fetch_link_preview")]
     FetchLinkPreview(JobArgs),
     /// Tombstone statuses due for scheduled deletion.

@@ -141,13 +141,17 @@ fresh `Create` or an accepted `Update` re-runs it, and re-runs
 converge `preview_cards` to the status' current eligibility (media
 added or URL removed clears the card, a changed URL replaces it).
 
-Pages that declare an iframeable player — `twitter:player`, or
+Pages that declare an iframeable player — `twitter:player` on a
+player card (or without an explicit non-player `twitter:card`), or
 `og:video*` with `og:video:type` = `text/html` (YouTube, Vimeo, …) —
 upgrade the card to `type: "video"`: `preview_cards` stores
 `embed_url`/`embed_width`/`embed_height` and the entity carries
 `embed_url`, `width`, `height` plus a synthesized `html` `<iframe>`
-(the Mastodon card shape). A `video/mp4` `og:video` is a raw media
-file, not a player, and stays `type: "link"`. The web UI renders
+(the Mastodon card shape). URLs that duplicate the card image or end
+in a media extension are rejected — broken implementations sometimes
+point player tags at image/video attachments. A `video/mp4`
+`og:video` is a raw media file, not a player, and stays
+`type: "link"`. The web UI renders
 video cards click-to-play — thumbnail + play button, the
 third-party iframe loads only on demand. Remote platforms that
 federate video as ActivityPub `Video` objects (PeerTube) already

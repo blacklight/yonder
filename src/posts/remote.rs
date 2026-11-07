@@ -369,6 +369,35 @@ fn att_url_str(v: &Value) -> Option<&str> {
     }
 }
 
+/// Media kind for an `attachment` entry. `mediaType` is authoritative
+/// when present; SocialHome/PyFed emit ActivityStreams `type` values
+/// (`Image`, `Video`, `Audio`) without a MIME type.
+fn attachment_kind(att: &Value) -> Option<&'static str> {
+    let media_type = att
+        .get("mediaType")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if media_type.is_empty() {
+        return match att.get("type").and_then(|v| v.as_str()) {
+            Some("Image") => Some("image"),
+            Some("Video") => Some("video"),
+            Some("Audio") => Some("audio"),
+            _ => None,
+        };
+    }
+    if media_type.starts_with("image/") {
+        return Some("image");
+    }
+    if media_type.starts_with("video/") {
+        return Some("video");
+    }
+    if media_type.starts_with("audio/") {
+        return Some("audio");
+    }
+    None
+}
+
 /// Bare `accounts` upsert for a remote actor + `RemoteActorFetch`
 /// enrichment — the `handle_flag` pattern (no network I/O).
 /// `pub(crate)` — the interaction handlers reuse it (epic 13).
@@ -541,11 +570,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .and_then(|v| v.as_array())
         .into_iter()
         .flatten()
-        .filter(|att| {
-            att.get("mediaType")
-                .and_then(|v| v.as_str())
-                .is_some_and(|m| m.starts_with("image/"))
-        })
+        .filter(|att| attachment_kind(att) == Some("image"))
         .filter_map(|att| att.get("url").and_then(att_url_str))
         .filter_map(super::render::normalize_url_for_match)
         .collect();
@@ -851,13 +876,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         let url = att.get("url").and_then(att_url_str);
         let Some(url) = url else { continue };
         let media_type = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
-        let kind = if media_type.starts_with("image/") {
-            "image"
-        } else if media_type.starts_with("video/") {
-            "video"
-        } else if media_type.starts_with("audio/") {
-            "audio"
-        } else {
+        let Some(kind) = attachment_kind(att) else {
             continue;
         };
         // The image already renders inline in the post body — a

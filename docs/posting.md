@@ -38,9 +38,11 @@ scheduling, link previews and ActivityPub federation.
   permitted only so that recognized inline images survive (below).
 - Inbound remote inline images: an `<img>` in remote `content` stays
   inline when the same object also delivers that URL as an image
-  `attachment` (Yonder↔Yonder round-trips our own wrapper markup
-  without duplicating captions), or unconditionally for the converted
-  long-form types (`Article`/`Page`/`Audio`/`Video`/`Event` — Friendica
+  `attachment` — recognized by `mediaType: image/*` or the
+  ActivityStreams `type` (`Image`, used by SocialHome/PyFed without a
+  MIME type). Yonder↔Yonder round-trips our own wrapper markup
+  without duplicating captions; converted long-form types
+  (`Article`/`Page`/`Audio`/`Video`/`Event` — Friendica
   articles carry images only in `content`). Anything else is dropped,
   exactly as before. Kept images get the same
   `data-yonder-inline-image` wrapper + visible alt caption linking to

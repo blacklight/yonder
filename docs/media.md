@@ -10,8 +10,10 @@ time. Markdown `![alt](url)` inline images are the exception: they are
 post content, not `media_attachments` rows (see `docs/posting.md`); the
 ActivityPub object still exposes them as standard `Image` attachments.
 The same applies inbound: a remote `<img>` that the object also lists
-as an image attachment (or any image in a converted long-form object)
-renders inline and does not get a `media_attachments` row.
+as an image attachment — `mediaType: image/*` or the ActivityStreams
+`type: "Image"` emitted without a MIME type by SocialHome/PyFed —
+(or any image in a converted long-form object) renders inline and does
+not get a `media_attachments` row.
 
 ## Backends (`media.backend`)
 

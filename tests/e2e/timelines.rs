@@ -1262,7 +1262,8 @@ async fn remote_create_redelivery_does_not_restream() {
 /// also become a `media_attachments` row; unattached `<img>`s are
 /// dropped; converted (Article) objects keep content images
 /// unconditionally (Friendica articles carry them only in `content`);
-/// attachment-only images still materialize normally.
+/// attachment-only images still materialize normally, including
+/// SocialHome/PyFed `type: "Image"` entries without `mediaType`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_inline_images_preserved_and_deduped() {
     let _permit = harness::acquire().await;
@@ -1331,6 +1332,41 @@ async fn remote_inline_images_preserved_and_deduped() {
         ),
     )
     .await;
+    // 5. SocialHome/PyFed: `type: "Image"` + `pyfed:inlineImage`, no
+    // mediaType — the inline `<img>` is attachment-backed.
+    let social_img = "https://remote.test/media/socialhome.jpg";
+    ingest_create(
+        &core,
+        "ri5",
+        note(
+            "ri5",
+            &format!("<p>look <img src=\"{social_img}\" alt=\"space shuttle\"/></p>"),
+            json!([{
+                "type": "Image",
+                "pyfed:inlineImage": true,
+                "name": "space shuttle",
+                "url": social_img,
+            }]),
+        ),
+    )
+    .await;
+    // 6. The same type-only attachment without an inline `<img>` still
+    // materializes as fallback media.
+    ingest_create(
+        &core,
+        "ri6",
+        note(
+            "ri6",
+            "<p>fallback</p>",
+            json!([{
+                "type": "Image",
+                "pyfed:inlineImage": true,
+                "name": "fallback",
+                "url": "https://remote.test/media/fallback.jpg",
+            }]),
+        ),
+    )
+    .await;
 
     let h1 = status_html(&env.state.db, "https://remote.test/objects/ri1").await;
     assert!(h1.contains("data-yonder-inline-image"), "{h1}");
@@ -1356,6 +1392,22 @@ async fn remote_inline_images_preserved_and_deduped() {
     assert!(!h4.contains("<img"), "{h4}");
     assert_eq!(
         status_media_count(&env.state.db, "https://remote.test/objects/ri4").await,
+        1
+    );
+
+    let h5 = status_html(&env.state.db, "https://remote.test/objects/ri5").await;
+    assert!(h5.contains("data-yonder-inline-image"), "{h5}");
+    assert!(h5.contains(&format!("src=\"{social_img}\"")), "{h5}");
+    assert!(h5.contains("space shuttle"), "{h5}");
+    assert_eq!(
+        status_media_count(&env.state.db, "https://remote.test/objects/ri5").await,
+        0
+    );
+
+    let h6 = status_html(&env.state.db, "https://remote.test/objects/ri6").await;
+    assert!(!h6.contains("<img"), "{h6}");
+    assert_eq!(
+        status_media_count(&env.state.db, "https://remote.test/objects/ri6").await,
         1
     );
 }

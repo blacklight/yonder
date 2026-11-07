@@ -6,7 +6,12 @@ per process (`AppState::media`, `JobContext::media`, `PostContext::media`).
 Storage keys are backend-agnostic (`avatars/{account}/{uuid}.{ext}`,
 `headers/…`, `media_attachments/{account}/{uuid}.{ext}`, `previews/…`); rows
 store the *key*, and `media::public_url` renders the absolute URL at read
-time.
+time. Markdown `![alt](url)` inline images are the exception: they are
+post content, not `media_attachments` rows (see `docs/posting.md`); the
+ActivityPub object still exposes them as standard `Image` attachments.
+The same applies inbound: a remote `<img>` that the object also lists
+as an image attachment (or any image in a converted long-form object)
+renders inline and does not get a `media_attachments` row.
 
 ## Backends (`media.backend`)
 

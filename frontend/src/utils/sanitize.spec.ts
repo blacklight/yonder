@@ -177,6 +177,17 @@ describe("sanitizeHtml", () => {
     expect(out).toContain('draggable="false"');
   });
 
+  it("preserves markdown inline-image markup and captions", () => {
+    const out = sanitizeHtml(
+      `<p>x <span data-yonder-inline-image><img src="https://x.test/i.png" alt="a cat">` +
+        `<small data-yonder-inline-image-alt><a href="https://x.test/i.png">a cat</a></small></span></p>`,
+    );
+    expect(out).toContain("data-yonder-inline-image");
+    expect(out).toContain("data-yonder-inline-image-alt");
+    expect(out).toContain('src="https://x.test/i.png"');
+    expect(out).toContain("<small");
+  });
+
   it("expands :shortcode: in content through links.emojis", () => {
     // Translated content arrives with literal shortcodes — the status
     // `emojis` array expands them, skipping link text.

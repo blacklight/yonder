@@ -1257,6 +1257,145 @@ async fn remote_create_redelivery_does_not_restream() {
     assert_eq!(updates, 1, "redelivered Create re-published `update`");
 }
 
+/// Remote inline images: an `<img>` in `content` that the same object
+/// also delivers as an image `attachment` stays inline and does NOT
+/// also become a `media_attachments` row; unattached `<img>`s are
+/// dropped; converted (Article) objects keep content images
+/// unconditionally (Friendica articles carry them only in `content`);
+/// attachment-only images still materialize normally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_inline_images_preserved_and_deduped() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let img = "https://remote.test/media/pic.png";
+    let note = |id: &str, content: &str, attachment: Value| {
+        json!({
+            "id": format!("https://remote.test/objects/{id}"),
+            "type": "Note",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": content,
+            "attachment": attachment,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        })
+    };
+    let image_att = |url: &str| json!([{"type": "Image", "mediaType": "image/png", "url": url, "name": "a cat"}]);
+
+    // 1. Inline `<img>` backed by an attachment → inline, no media row.
+    ingest_create(
+        &core,
+        "ri1",
+        note(
+            "ri1",
+            &format!("<p>look <img src=\"{img}\" alt=\"a cat\"></p>"),
+            image_att(img),
+        ),
+    )
+    .await;
+    // 2. `<img>` with no matching attachment → dropped.
+    ingest_create(
+        &core,
+        "ri2",
+        note(
+            "ri2",
+            "<p><img src=\"https://remote.test/media/other.png\"></p>",
+            json!([]),
+        ),
+    )
+    .await;
+    // 3. Article (converted) image with no attachment → kept inline.
+    ingest_create(
+        &core,
+        "ri3",
+        json!({
+            "id": "https://remote.test/objects/ri3",
+            "type": "Article",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": "<p>story <img src=\"https://remote.test/media/art.png\" alt=\"art\"></p>",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    )
+    .await;
+    // 4. Attachment-only image → normal media_attachments row.
+    ingest_create(
+        &core,
+        "ri4",
+        note(
+            "ri4",
+            "<p>pic</p>",
+            image_att("https://remote.test/media/only.png"),
+        ),
+    )
+    .await;
+
+    let h1 = status_html(&env.state.db, "https://remote.test/objects/ri1").await;
+    assert!(h1.contains("data-yonder-inline-image"), "{h1}");
+    assert!(h1.contains(&format!("src=\"{img}\"")), "{h1}");
+    assert!(h1.contains("a cat"), "{h1}");
+    assert_eq!(
+        status_media_count(&env.state.db, "https://remote.test/objects/ri1").await,
+        0
+    );
+
+    let h2 = status_html(&env.state.db, "https://remote.test/objects/ri2").await;
+    assert!(!h2.contains("<img"), "{h2}");
+    assert_eq!(
+        status_media_count(&env.state.db, "https://remote.test/objects/ri2").await,
+        0
+    );
+
+    let h3 = status_html(&env.state.db, "https://remote.test/objects/ri3").await;
+    assert!(h3.contains("data-yonder-inline-image"), "{h3}");
+    assert!(h3.contains("art.png"), "{h3}");
+
+    let h4 = status_html(&env.state.db, "https://remote.test/objects/ri4").await;
+    assert!(!h4.contains("<img"), "{h4}");
+    assert_eq!(
+        status_media_count(&env.state.db, "https://remote.test/objects/ri4").await,
+        1
+    );
+}
+
+async fn ingest_create(core: &yonder::activitypub::ApCore, id: &str, object: Value) {
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/{id}"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/users/eve".into(),
+        object,
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(
+        yonder::posts::remote::handle(core, &activity, &activity.to_json()).await,
+        "{id} was not ingested"
+    );
+}
+
+async fn status_html(db: &PgPool, uri: &str) -> String {
+    sqlx::query_scalar::<_, String>("SELECT content_html FROM statuses WHERE uri = $1")
+        .bind(uri)
+        .fetch_one(db)
+        .await
+        .unwrap()
+}
+
+async fn status_media_count(db: &PgPool, uri: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM media_attachments ma \
+         JOIN statuses s ON s.id = ma.status_id WHERE s.uri = $1",
+    )
+    .bind(uri)
+    .fetch_one(db)
+    .await
+    .unwrap()
+}
+
 /// An existing index key with an empty *window* must not trigger a
 /// rebuild — only a missing key (cold index) does. Detectable because
 /// a rebuild would pull in statuses whose fan-out never ran.

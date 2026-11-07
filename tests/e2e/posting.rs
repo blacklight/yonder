@@ -280,6 +280,69 @@ async fn markdown_renders_and_sanitizes() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn markdown_inline_image_renders_and_federates_as_attachment() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "ima", "ima@example.com").await;
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "look ![A tiny png](https://img.example/pic.png) here",
+            "content_type": "text/markdown",
+            "visibility": "public",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let html = body["content"].as_str().unwrap();
+    assert!(
+        html.contains("<img src=\"https://img.example/pic.png\" alt=\"A tiny png\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "data-yonder-inline-image-alt><a href=\"https://img.example/pic.png\">A tiny png</a></small>"
+        ),
+        "{html}"
+    );
+    // Inline images are content, not uploaded media rows.
+    assert_eq!(body["media_attachments"], json!([]));
+
+    // The AP object still delivers the image as a standard attachment
+    // for implementations without inline-image support.
+    let id = body["id"].as_str().unwrap();
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/ap/users/ima/statuses/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    let attachment = doc["attachment"]
+        .as_array()
+        .and_then(|a| a.iter().find(|d| d["url"] == "https://img.example/pic.png"))
+        .cloned()
+        .expect("inline image attachment");
+    assert_eq!(attachment["type"], "Image");
+    assert_eq!(attachment["mediaType"], "image/png");
+    assert_eq!(attachment["name"], "A tiny png");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn account_default_content_type_applies_when_unspecified() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

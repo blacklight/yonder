@@ -11,6 +11,7 @@
 //! stored for the target `statuses.uri`. Bare-URI Deletes resolve
 //! ownership from the existing row. Mismatches are logged and skipped.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -349,6 +350,25 @@ fn preview_art_url(att: &Value, object: &Value) -> Option<String> {
         })
 }
 
+/// `attachment[].url` shows up as a plain string, a `Link` object
+/// (`href`), or an array of either across implementations.
+fn att_url_str(v: &Value) -> Option<&str> {
+    match v {
+        Value::String(s) => Some(s.as_str()),
+        Value::Object(_) => ["href", "url"]
+            .iter()
+            .find_map(|k| v.get(*k).and_then(|u| u.as_str())),
+        Value::Array(items) => items.iter().find_map(|u| match u {
+            Value::String(s) => Some(s.as_str()),
+            Value::Object(_) => ["href", "url"]
+                .iter()
+                .find_map(|k| u.get(*k).and_then(|h| h.as_str())),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 /// Bare `accounts` upsert for a remote actor + `RemoteActorFetch`
 /// enrichment — the `handle_flag` pattern (no network I/O).
 /// `pub(crate)` — the interaction handlers reuse it (epic 13).
@@ -510,6 +530,26 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         object_type,
         "Article" | "Page" | "Audio" | "Video" | "Event"
     );
+    // Inline `<img>`s in remote HTML are only trusted when the same
+    // object also delivers the image as an attachment (Yonder/Mastodon
+    // style) — or, for the converted long-form types, unconditionally:
+    // Friendica articles carry images only in `content`, never in
+    // `attachment`. The kept `src`s later suppress the duplicate
+    // `media_attachments` row.
+    let inline_allowed: HashSet<String> = object
+        .get("attachment")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|att| {
+            att.get("mediaType")
+                .and_then(|v| v.as_str())
+                .is_some_and(|m| m.starts_with("image/"))
+        })
+        .filter_map(|att| att.get("url").and_then(att_url_str))
+        .filter_map(super::render::normalize_url_for_match)
+        .collect();
+    let inline_image_srcs: HashSet<String>;
     // AS2 `summary` is HTML (WriteFreely sends
     // `<p><img …> […]</p>`); `spoiler_text` and the converted teaser
     // are plain text — strip it or the markup renders verbatim.
@@ -523,17 +563,22 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .collect::<String>();
     let mut content_hashtags: Vec<String> = Vec::new();
     let mut content_html = if render_type == "text/html" {
-        super::render::sanitize_html(
+        let (html, srcs) = super::render::render_remote_html(
             content_src,
             &crate::config::Config {
                 content: core.config.content.clone(),
                 ..Default::default()
             },
-        )
+            &inline_allowed,
+            converted,
+        );
+        inline_image_srcs = srcs;
+        html
     } else {
         let rendered =
             super::render::render(content_src, render_type, &[], &core.base_url, &core.config);
         content_hashtags = rendered.hashtags;
+        inline_image_srcs = super::render::inline_image_srcs(&rendered.html);
         rendered.html
     };
     let url = object_url(object, &object_id);
@@ -803,7 +848,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         .into_iter()
         .flatten()
     {
-        let url = att.get("url").and_then(|v| v.as_str());
+        let url = att.get("url").and_then(att_url_str);
         let Some(url) = url else { continue };
         let media_type = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
         let kind = if media_type.starts_with("image/") {
@@ -815,6 +860,14 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         } else {
             continue;
         };
+        // The image already renders inline in the post body — a
+        // `media_attachments` row would show it twice.
+        if kind == "image"
+            && super::render::normalize_url_for_match(url)
+                .is_some_and(|u| inline_image_srcs.contains(&u))
+        {
+            continue;
+        }
         let description = att
             .get("name")
             .or_else(|| att.get("summary"))

@@ -28,7 +28,7 @@ use std::sync::Arc;
 use pubby_sdk::Object;
 
 use crate::http::AppState;
-use crate::posts::{self, mentions::ResolvedMention, PostContext, StatusRow};
+use crate::posts::{self, mentions::ResolvedMention, render, PostContext, StatusRow};
 use crate::{Error, Result};
 
 use super::{actors::sync_call, delivery, ApContext};
@@ -88,11 +88,33 @@ async fn mention_audience(ctx: &PostContext, status_id: i64) -> Result<Vec<Resol
         .collect())
 }
 
-/// `attachment` Documents for the status's media rows.
+/// Best-effort `mediaType` for a Markdown image URL — extension
+/// sniffing only; unknown types stay `image/*` so attachment consumers
+/// still classify it as an image.
+fn inline_image_media_type(url: &str) -> &'static str {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "image/*",
+    }
+}
+
+/// `attachment` Documents for the status's media rows, plus the
+/// Markdown `![alt](url)` images as standard `Image` attachments —
+/// clients without inline-image support (Mastodon, Pleroma, Akkoma…)
+/// render those instead of the `<img>` in `content`.
 async fn attachments(ctx: &PostContext, status: &StatusRow) -> Result<Vec<Value>> {
     let base = ctx.base_url();
     let media = posts::entity::media_for_status(ctx, status.id).await?;
-    Ok(media
+    let mut docs: Vec<Value> = media
         .iter()
         .filter_map(|m| {
             let url = posts::entity::media_url(&ctx.config, &base, m)?;
@@ -112,7 +134,29 @@ async fn attachments(ctx: &PostContext, status: &StatusRow) -> Result<Vec<Value>
                 "height": m.height,
             }))
         })
-        .collect())
+        .collect();
+
+    if status.content_type == "text/markdown" {
+        let mut seen: std::collections::HashSet<String> = docs
+            .iter()
+            .filter_map(|d| d.get("url").and_then(|u| u.as_str()).map(str::to_string))
+            .collect();
+        for image in render::markdown_images(&status.content, &ctx.config) {
+            if !seen.insert(image.url.clone()) {
+                continue;
+            }
+            let mut doc = json!({
+                "type": "Image",
+                "url": image.url,
+                "mediaType": inline_image_media_type(&image.url),
+            });
+            if !image.alt.is_empty() {
+                doc["name"] = json!(image.alt);
+            }
+            docs.push(doc);
+        }
+    }
+    Ok(docs)
 }
 
 /// Poll `oneOf`/`anyOf` options + `endTime` — injected into the

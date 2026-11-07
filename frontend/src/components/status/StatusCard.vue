@@ -1030,6 +1030,25 @@ async function onReact(emoji: string) {
   background: var(--bg-sunken);
   content: "";
 }
+/* Markdown `![alt](url)` images arrive as a phrasing span so they stay
+   valid inside paragraphs/links; the block display + caption rules
+   give them the figure treatment. */
+:deep(.status-card__content) [data-yonder-inline-image] {
+  display: block;
+  margin: var(--space-2) 0;
+}
+:deep(.status-card__content) [data-yonder-inline-image] img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+}
+:deep(.status-card__content) [data-yonder-inline-image-alt] {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
 .status-card__preview {
   display: flex;
   gap: var(--space-3);

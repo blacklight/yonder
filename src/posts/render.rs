@@ -8,15 +8,19 @@
 //!   `<br>` newlines); resolved `@mentions` are then turned into
 //!   profile anchors by [`enhance_html`].
 //! - `text/markdown` renders through `pulldown-cmark` and then the
-//!   [`ammonia`] allowlist — no `script`/`style`/`iframe`/`img`
-//!   (remote images are a tracking/SSRF hazard), `href` schemes
-//!   restricted to `content.valid_url_schemes`. The same
+//!   [`ammonia`] allowlist — no `script`/`style`/`iframe`, `href`/`src`
+//!   schemes restricted to `content.valid_url_schemes`. `![alt](url)`
+//!   images are the one deliberate exception to the no-`img` rule:
+//!   they render inline with the alt text repeated as a visible
+//!   caption, and [`markdown_images`] exposes the same URLs/alt text so
+//!   ActivityPub can also deliver them as standard attachments for
+//!   implementations without inline-image support. The same
 //!   [`enhance_html`] pass linkifies bare URLs/`#tags`/`@mentions` in
-//!   text nodes only (`code`/`pre`/`a` subtrees are skipped, so code
-//!   spans and already-rendered links are never touched) and collects
-//!   the hashtag list.
+//!   text nodes only (`code`/`pre`/`a`/caption subtrees are skipped, so
+//!   code spans, already-rendered links and captions are never
+//!   touched) and collects the hashtag list.
 //!
-//! [`sanitize_html`] reuses the same allowlist for inbound remote
+//! [`sanitize_html`] reuses the strict allowlist for inbound remote
 //! `content` — remote HTML is never trusted raw.
 
 use std::collections::HashSet;
@@ -83,7 +87,8 @@ pub fn render(
                 | pulldown_cmark::Options::ENABLE_TASKLISTS;
             let parser = pulldown_cmark::Parser::new_ext(source, options);
             pulldown_cmark::html::push_html(&mut html, parser);
-            let html = sanitize_html(&html, config);
+            let html = sanitize_markdown_html(&html, config);
+            let html = inline_image_spans(&html);
             let (html, hashtags) = enhance_html(&html, mentions, &tag_url, config);
             RenderedPost { html, hashtags }
         }
@@ -98,6 +103,71 @@ pub fn render(
             RenderedPost { html, hashtags }
         }
     }
+}
+
+/// A Markdown `![alt](url)` image, normalized for federation: the URL
+/// is scheme-checked against `content.valid_url_schemes` and the alt
+/// text is the flattened image description (capped like media alt
+/// text). Deduplicated by `(url, alt)` in source order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineImage {
+    /// The image URL as written in the Markdown source.
+    pub url: String,
+    /// Flattened alt text (empty when the image has none).
+    pub alt: String,
+}
+
+/// Extract the renderable inline images from Markdown `source`.
+/// `pulldown-cmark` only reports image syntax — code spans/blocks and
+/// raw HTML never produce events — and the same scheme allowlist the
+/// HTML sanitizer applies keeps `javascript:`/`data:` URLs out of the
+/// ActivityPub `attachment` list.
+pub fn markdown_images(source: &str, config: &Config) -> Vec<InlineImage> {
+    let options = pulldown_cmark::Options::ENABLE_TABLES
+        | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
+        | pulldown_cmark::Options::ENABLE_TASKLISTS;
+    let mut events = pulldown_cmark::Parser::new_ext(source, options);
+    let mut images = Vec::new();
+    let mut seen = HashSet::new();
+
+    while let Some(event) = events.next() {
+        let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { dest_url, .. }) = event
+        else {
+            continue;
+        };
+        let mut alt = String::new();
+        let mut depth = 0usize;
+        for event in events.by_ref() {
+            match event {
+                pulldown_cmark::Event::Start(_) => depth += 1,
+                pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Image) if depth == 0 => break,
+                pulldown_cmark::Event::End(_) => depth = depth.saturating_sub(1),
+                pulldown_cmark::Event::Text(text) | pulldown_cmark::Event::Code(text) => {
+                    alt.push_str(&text);
+                }
+                pulldown_cmark::Event::InlineMath(text)
+                | pulldown_cmark::Event::DisplayMath(text) => {
+                    alt.push('$');
+                    alt.push_str(&text);
+                    alt.push('$');
+                }
+                pulldown_cmark::Event::SoftBreak | pulldown_cmark::Event::HardBreak => {
+                    alt.push(' ');
+                }
+                _ => {}
+            }
+        }
+        let alt: String = alt.split_whitespace().collect::<Vec<_>>().join(" ");
+        let alt: String = alt.chars().take(5000).collect();
+        if !scheme_allowed(&dest_url, config) || !seen.insert((dest_url.clone(), alt.clone())) {
+            continue;
+        }
+        images.push(InlineImage {
+            url: dest_url.to_string(),
+            alt,
+        });
+    }
+    images
 }
 
 /// Plain text of an HTML fragment, whitespace-collapsed and capped at
@@ -157,11 +227,29 @@ pub fn html_to_text(html: &str) -> String {
     out.join(" ").chars().take(20000).collect()
 }
 
-/// The hardened allowlist applied to markdown output and inbound
-/// remote HTML. `a[href]` is limited to `content.valid_url_schemes`;
-/// every other attribute is stripped.
+/// The hardened allowlist applied to inbound remote HTML. `a[href]`
+/// is limited to `content.valid_url_schemes`; every other attribute is
+/// stripped.
 pub fn sanitize_html(html: &str, config: &Config) -> String {
-    let tags: HashSet<&'static str> = [
+    sanitize_html_inner(html, config, false)
+}
+
+/// Markdown output gets the same allowlist plus `img[src,alt]` — the
+/// only way `![alt](url)` can render. The scheme allowlist still
+/// applies to `src`, so `javascript:`/`data:` images never survive.
+fn sanitize_markdown_html(html: &str, config: &Config) -> String {
+    sanitize_html_inner(html, config, true)
+}
+
+/// Remote HTML ingest: same allowlist with `img` permitted so the
+/// caller can keep attachment-backed/long-form inline images and drop
+/// everything else ([`inline_remote_images`]).
+pub(crate) fn sanitize_html_allowing_images(html: &str, config: &Config) -> String {
+    sanitize_html_inner(html, config, true)
+}
+
+fn sanitize_html_inner(html: &str, config: &Config, allow_images: bool) -> String {
+    let mut tags: HashSet<&'static str> = [
         "p",
         "br",
         "a",
@@ -197,6 +285,9 @@ pub fn sanitize_html(html: &str, config: &Config) -> String {
     ]
     .into_iter()
     .collect();
+    if allow_images {
+        tags.insert("img");
+    }
     let schemes: HashSet<&str> = config
         .content
         .valid_url_schemes
@@ -214,10 +305,14 @@ pub fn sanitize_html(html: &str, config: &Config) -> String {
     // highlighting. Everywhere else class is still stripped (mention/
     // hashtag markers must not reach the client).
     let code_attrs: HashSet<&'static str> = ["class"].into_iter().collect();
+    let img_attrs: HashSet<&'static str> = ["src", "alt"].into_iter().collect();
     let mut tag_attrs = std::collections::HashMap::new();
     tag_attrs.insert("a", std::mem::take(&mut a_attrs));
     tag_attrs.insert("code", code_attrs.clone());
     tag_attrs.insert("pre", code_attrs);
+    if allow_images {
+        tag_attrs.insert("img", img_attrs);
+    }
     builder.tag_attributes(tag_attrs);
     builder.clean(html).to_string()
 }
@@ -228,12 +323,209 @@ pub fn render_spoiler(text: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Inline images
+// ---------------------------------------------------------------------------
+
+static IMG_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"<img\b[^>]*>"#).unwrap());
+static IMG_ALT_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\balt="([^"]*)""#).unwrap());
+static IMG_SRC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"\bsrc="([^"]*)""#).unwrap());
+
+/// Wrap every sanitized `<img>` in a `data-yonder-inline-image` span and
+/// repeat its alt text as a visible caption. The span stays phrasing
+/// content (valid inside `<p>` and `<a>`) while the frontend styles it
+/// as a block; `data-*` markers survive sanitizing because the markup
+/// is generated after the allowlist runs.
+fn inline_image_spans(html: &str) -> String {
+    inline_image_spans_where(html, |_| true).0
+}
+
+/// [`inline_image_spans`] generalized: `keep(src)` decides whether an
+/// `<img>` becomes an inline image (kept `src`s are returned for the
+/// caller's attachment bookkeeping) or is dropped entirely.
+fn inline_image_spans_where(html: &str, keep: impl Fn(&str) -> bool) -> (String, Vec<String>) {
+    if !html.contains("<img") {
+        return (html.to_string(), Vec::new());
+    }
+    let mut kept = Vec::new();
+    let out = IMG_TAG_RE
+        .replace_all(html, |caps: &regex::Captures| {
+            let tag = caps.get(0).unwrap().as_str();
+            let Some(src) = IMG_SRC_RE
+                .captures(tag)
+                .and_then(|c| c.get(1))
+                .map(|m| decode_html_entities(m.as_str()))
+            else {
+                return String::new();
+            };
+            if !keep(&src) {
+                return String::new();
+            }
+            let alt = IMG_ALT_RE
+                .captures(tag)
+                .and_then(|c| c.get(1))
+                .map(|m| decode_html_entities(m.as_str()))
+                .unwrap_or_default();
+            let alt = alt.trim();
+            // Mastodon-style: the caption is a link to the image, so
+            // the alt text doubles as the "open full image" affordance
+            // when the image itself can't be shown.
+            let wrapped = if alt.is_empty() {
+                format!("<span data-yonder-inline-image>{tag}</span>")
+            } else {
+                format!(
+                    "<span data-yonder-inline-image>{tag}<small data-yonder-inline-image-alt><a href=\"{}\">{}</a></small></span>",
+                    html_escape(&src),
+                    html_escape(alt)
+                )
+            };
+            kept.push(src);
+            wrapped
+        })
+        .to_string();
+    (out, kept)
+}
+
+/// Remote-HTML inline-image pass. `allowed_srcs` are normalized
+/// attachment URLs; `allow_all` keeps every sanitized `<img>` (used for
+/// converted long-form objects whose images are content, not
+/// attachments). Returns the rewritten HTML plus the normalized `src`s
+/// that were kept inline — the caller uses them to skip duplicate
+/// `media_attachments` rows.
+pub(crate) fn inline_remote_images(
+    html: &str,
+    allowed_srcs: &HashSet<String>,
+    allow_all: bool,
+) -> (String, HashSet<String>) {
+    let (html, kept) = inline_image_spans_where(html, |src| {
+        allow_all || normalize_url_for_match(src).is_some_and(|u| allowed_srcs.contains(&u))
+    });
+    let kept: HashSet<String> = kept
+        .into_iter()
+        .filter_map(|s| normalize_url_for_match(&s))
+        .collect();
+    (html, kept)
+}
+
+/// Remote `content` HTML ingest pipeline: undo our own inline-image
+/// wrapper markup back to bare `<img>`s (so captions aren't
+/// duplicated), sanitize with `img` permitted, then keep only the
+/// inline images [`inline_remote_images`] allows. Returns the HTML
+/// plus the normalized `src`s kept inline.
+pub(crate) fn render_remote_html(
+    html: &str,
+    config: &Config,
+    allowed_srcs: &HashSet<String>,
+    allow_all: bool,
+) -> (String, HashSet<String>) {
+    let html = strip_inline_image_markup(html);
+    let html = sanitize_html_allowing_images(&html, config);
+    inline_remote_images(&html, allowed_srcs, allow_all)
+}
+
+static INLINE_IMAGE_SPAN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?s)<span data-yonder-inline-image>\s*(<img\b[^>]*>)(?:<small data-yonder-inline-image-alt>.*?</small>)?\s*</span>"#,
+    )
+    .unwrap()
+});
+
+/// Collapse `<span data-yonder-inline-image><img>…</span>` markup (as
+/// emitted by [`inline_image_spans`]) back to the bare `<img>` so a
+/// remote round-trip doesn't double-wrap or duplicate captions.
+fn strip_inline_image_markup(html: &str) -> String {
+    if !html.contains("data-yonder-inline-image") {
+        return html.to_string();
+    }
+    INLINE_IMAGE_SPAN_RE.replace_all(html, "$1").to_string()
+}
+
+/// Normalized `src`s of every `<img>` in already-rendered inline-image
+/// markup — used to deduplicate `media_attachments` rows against
+/// images that stayed in the post body.
+pub(crate) fn inline_image_srcs(html: &str) -> HashSet<String> {
+    IMG_TAG_RE
+        .captures_iter(html)
+        .filter_map(|c| IMG_SRC_RE.captures(c.get(0)?.as_str()))
+        .filter_map(|c| c.get(1))
+        .map(|m| decode_html_entities(m.as_str()))
+        .filter_map(|s| normalize_url_for_match(&s))
+        .collect()
+}
+
+/// Normalize a URL for inline-vs-attachment comparison: absolute
+/// http(s) only, parsed through `url::Url` so trivial differences
+/// (default ports, percent-encoding case, trailing `/` on the path)
+/// still match. `None` for relative/non-http(s) values.
+pub(crate) fn normalize_url_for_match(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let strip_trailing = url.path().len() > 1;
+    let mut normalized: String = url.into();
+    if strip_trailing && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    Some(normalized)
+}
+
+/// Decode the small entity set `html_escape`/pulldown-cmark emit, in a
+/// single pass so `&amp;lt;` stays literal `&lt;` rather than `<`.
+pub(crate) fn decode_html_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i..];
+        let Some(end) = after.find(';') else {
+            out.push('&');
+            rest = &after[1..];
+            continue;
+        };
+        if end > 10 {
+            out.push('&');
+            rest = &after[1..];
+            continue;
+        }
+        let entity = &after[1..end];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                u32::from_str_radix(&entity[2..], 16)
+                    .ok()
+                    .and_then(char::from_u32)
+            }
+            _ if entity.starts_with('#') => {
+                entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+            }
+            _ => None,
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push_str(&after[..=end]);
+                rest = &after[end + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Text-node enhancement
 // ---------------------------------------------------------------------------
 
 /// Elements whose subtrees are never tokenized: existing anchors and
 /// code/preformatted content stay verbatim.
-const SKIP_TAGS: &[&str] = &["a", "code", "pre", "script", "style"];
+const SKIP_TAGS: &[&str] = &["a", "code", "pre", "script", "style", "small"];
 
 /// Linkify bare URLs, `#hashtags` and resolved `@mentions` inside the
 /// *text* of an HTML document, skipping [`SKIP_TAGS`] subtrees.
@@ -685,6 +977,78 @@ mod tests {
     }
 
     #[test]
+    fn markdown_image_renders_inline_with_caption() {
+        let r = render(
+            "before ![Alt text](https://img.example/pic.png) after",
+            "text/markdown",
+            &[],
+            "https://y.test",
+            &cfg(),
+        );
+        assert!(
+            r.html.contains(
+                "<span data-yonder-inline-image><img src=\"https://img.example/pic.png\" alt=\"Alt text\"><small data-yonder-inline-image-alt><a href=\"https://img.example/pic.png\">Alt text</a></small></span>"
+            ),
+            "{}",
+            r.html
+        );
+        // The caption links to the image exactly once — the image
+        // itself isn't wrapped in an anchor.
+        assert_eq!(
+            r.html
+                .matches("<a href=\"https://img.example/pic.png\"")
+                .count(),
+            1,
+            "{}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn markdown_image_escapes_caption_and_rejects_bad_scheme() {
+        let r = render(
+            "![a <b> & 'q'](https://img.example/x.png) ![x](javascript:alert(1))",
+            "text/markdown",
+            &[],
+            "https://y.test",
+            &cfg(),
+        );
+        assert!(
+            r.html.contains("a &lt;b&gt; &amp; &#x27;q&#x27;"),
+            "{}",
+            r.html
+        );
+        assert!(!r.html.contains("javascript:"), "{}", r.html);
+        assert_eq!(
+            markdown_images("![x](javascript:alert(1))", &cfg()).len(),
+            0
+        );
+    }
+
+    #[test]
+    fn markdown_images_extracts_url_and_alt() {
+        let images = markdown_images(
+            "![one](https://a.example/1.png) text ![two *em*](https://a.example/2.jpg) ![one](https://a.example/1.png)",
+            &cfg(),
+        );
+        assert_eq!(
+            images,
+            vec![
+                InlineImage {
+                    url: "https://a.example/1.png".to_string(),
+                    alt: "one".to_string(),
+                },
+                InlineImage {
+                    url: "https://a.example/2.jpg".to_string(),
+                    alt: "two em".to_string(),
+                },
+            ]
+        );
+        // Code spans never produce images.
+        assert!(markdown_images("`![x](https://a.example/x.png)`", &cfg()).is_empty());
+    }
+
+    #[test]
     fn markdown_enhances_bare_url_and_tag() {
         let r = render(
             "para https://example.com #tag",
@@ -729,5 +1093,91 @@ mod tests {
     #[test]
     fn cw_is_escaped() {
         assert_eq!(render_spoiler("<b>x</b>"), "&lt;b&gt;x&lt;/b&gt;");
+    }
+
+    #[test]
+    fn remote_html_keeps_attachment_backed_image_inline() {
+        let url = "https://img.example/pic.png";
+        let allowed: HashSet<String> = [url.to_string()].into_iter().collect();
+        let (html, kept) = render_remote_html(
+            &format!("<p>look <img src=\"{url}\" alt=\"a cat\"></p>"),
+            &cfg(),
+            &allowed,
+            false,
+        );
+        assert!(
+            html.contains(
+                "<span data-yonder-inline-image><img src=\"https://img.example/pic.png\" alt=\"a cat\"><small data-yonder-inline-image-alt><a href=\"https://img.example/pic.png\">a cat</a></small></span>"
+            ),
+            "{html}"
+        );
+        assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn remote_html_drops_unattached_image() {
+        let (html, kept) = render_remote_html(
+            "<p><img src=\"https://t.example/px.png\"></p>",
+            &cfg(),
+            &HashSet::new(),
+            false,
+        );
+        assert!(!html.contains("<img"), "{html}");
+        assert!(!html.contains("data-yonder-inline-image"), "{html}");
+        assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn remote_html_allow_all_keeps_images() {
+        // Converted long-form objects (Friendica articles) carry
+        // images only in `content` — no attachment to match against.
+        let (html, kept) = render_remote_html(
+            "<p><img src=\"https://img.example/a.png\" alt=\"x\"></p>",
+            &cfg(),
+            &HashSet::new(),
+            true,
+        );
+        assert!(html.contains("data-yonder-inline-image"), "{html}");
+        assert_eq!(kept.len(), 1);
+    }
+
+    #[test]
+    fn remote_html_own_markup_does_not_duplicate_caption() {
+        // A remote Yonder post round-trips our wrapper markup; it must
+        // collapse back to one inline image + one caption.
+        let url = "https://img.example/pic.png";
+        let allowed: HashSet<String> = [url.to_string()].into_iter().collect();
+        let src = format!(
+            "<p><span data-yonder-inline-image><img src=\"{url}\" alt=\"cap\"><small data-yonder-inline-image-alt>cap</small></span></p>"
+        );
+        let (html, _) = render_remote_html(&src, &cfg(), &allowed, false);
+        assert_eq!(
+            html.matches("<span data-yonder-inline-image>").count(),
+            1,
+            "{html}"
+        );
+        assert_eq!(
+            html.matches("data-yonder-inline-image-alt").count(),
+            1,
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn normalize_url_for_match_handles_trivial_differences() {
+        let a = normalize_url_for_match("https://Ex.com:443/a/b/").unwrap();
+        let b = normalize_url_for_match("https://ex.com/a/b").unwrap();
+        assert_eq!(a, b);
+        assert!(normalize_url_for_match("javascript:alert(1)").is_none());
+        assert!(normalize_url_for_match("/relative.png").is_none());
+    }
+
+    #[test]
+    fn inline_image_srcs_collects_normalized_urls() {
+        let srcs = inline_image_srcs(
+            "<span data-yonder-inline-image><img src=\"https://a.example/x.png\" alt=\"\"></span><p>no img</p>",
+        );
+        assert_eq!(srcs.len(), 1);
+        assert!(srcs.contains("https://a.example/x.png"));
     }
 }

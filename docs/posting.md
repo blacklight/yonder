@@ -26,12 +26,27 @@ scheduling, link previews and ActivityPub federation.
 - `text/plain`: pubby `render_post_html` (escape → link → hashtag →
   `<br>`) plus a mention-anchor pass.
 - `text/markdown`: `pulldown-cmark` → `ammonia` allowlist (no
-  `script`/`style`/`iframe`/`img`; `a[href]` restricted to
+  `script`/`style`/`iframe`; `a[href]`/`img[src]` restricted to
   `content.valid_url_schemes`) → text-node enhancement that linkifies
-  bare URLs/`#tags`/`@mentions`, skipping `code`/`pre`/`a` subtrees.
+  bare URLs/`#tags`/`@mentions`, skipping `code`/`pre`/`a`/`small`
+  subtrees. `![alt](url)` renders inline as an `<img>` with the alt
+  text repeated in a visible caption that links to the image URL
+  (Mastodon-style, so the alt doubles as the "open image" link).
 - CW/`spoiler_text` is always escaped plain text.
 - Rendered HTML is stored in `statuses.content_html`; inbound remote
-  HTML is re-sanitized through the same allowlist.
+  HTML is re-sanitized through the same allowlist — with `img`
+  permitted only so that recognized inline images survive (below).
+- Inbound remote inline images: an `<img>` in remote `content` stays
+  inline when the same object also delivers that URL as an image
+  `attachment` (Yonder↔Yonder round-trips our own wrapper markup
+  without duplicating captions), or unconditionally for the converted
+  long-form types (`Article`/`Page`/`Audio`/`Video`/`Event` — Friendica
+  articles carry images only in `content`). Anything else is dropped,
+  exactly as before. Kept images get the same
+  `data-yonder-inline-image` wrapper + visible alt caption linking to
+  the image URL, and the
+  matching `attachment` does **not** also become a
+  `media_attachments` row — the image shows once, inline.
 - An omitted `content_type` resolves per account: the stored
   `accounts.default_content_type` preference (set via
   `PATCH /api/v1/yonder/settings` `default_content_type` or
@@ -97,6 +112,13 @@ neither a status nor a scheduled status past
 current attachments, a supplied list (including an empty one)
 replaces them, and ids already attached to that status may be
 resubmitted.
+
+Markdown inline images (`![alt](url)`) are not `media_attachments`
+rows — they live in the post HTML only. For federation, the emitted
+ActivityPub object additionally lists each distinct image URL as a
+standard `Image` attachment (`name` = alt text, `mediaType` sniffed
+from the extension), so Mastodon/Pleroma/Akkoma-style clients that
+strip inline `<img>` still receive the media.
 
 ## Link previews
 

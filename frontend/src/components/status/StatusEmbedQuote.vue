@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
 import Spinner from "@/components/ui/Spinner.vue";
+import CwBlock from "./CwBlock.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusEmbedCard from "./StatusEmbedCard.vue";
 import { getStatus } from "@/api/statuses";
@@ -122,18 +123,20 @@ function open(event: MouseEvent) {
         >{{ formatAbsoluteDate(target.created_at) }}</a
       >
     </header>
-    <!-- eslint-disable-next-line vue/no-v-html -->
-    <div class="embed-quote__content" v-html="contentHtml" />
-    <StatusMedia
-      :media="target.media_attachments"
-      :sensitive="target.sensitive && !target.spoiler_text"
-    />
-    <StatusEmbedCard :status="target" />
-    <StatusEmbedQuote
-      v-if="target.quote || target.quote_id"
-      :status="target"
-      :depth="depth + 1"
-    />
+    <CwBlock :spoiler-text="target.spoiler_text" :emojis="target.emojis">
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <div class="embed-quote__content" v-html="contentHtml" />
+      <StatusMedia
+        :media="target.media_attachments"
+        :sensitive="target.sensitive && !target.spoiler_text"
+      />
+      <StatusEmbedCard :status="target" />
+      <StatusEmbedQuote
+        v-if="target.quote || target.quote_id"
+        :status="target"
+        :depth="depth + 1"
+      />
+    </CwBlock>
   </div>
   <div
     v-else-if="loading"

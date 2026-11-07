@@ -193,6 +193,7 @@ function onClick(event: MouseEvent) {
               </span>
             </li>
           </ul>
+          <StatusEmbedCard :status="shown" />
         </div>
       </details>
       <div v-else class="embed-card__body">
@@ -211,11 +212,8 @@ function onClick(event: MouseEvent) {
             </span>
           </li>
         </ul>
+        <StatusEmbedCard :status="shown" />
       </div>
-
-      <!-- Link-preview card — like StatusCard it stays outside the CW
-           gate: the post's own content warns, the card doesn't. -->
-      <StatusEmbedCard :status="shown" />
 
       <footer class="embed-card__footer">
         <span class="embed-card__count"

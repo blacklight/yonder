@@ -10,7 +10,10 @@ import { react, unreact } from "@/api/statuses";
 import { useAuthStore } from "@/stores/auth";
 import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
+import CwBlock from "./CwBlock.vue";
+import StatusEmbedCard from "./StatusEmbedCard.vue";
 import StatusFooter from "./StatusFooter.vue";
+import StatusMedia from "./StatusMedia.vue";
 import ReactionPicker from "./ReactionPicker.vue";
 
 const props = defineProps<{ status: Status }>();
@@ -97,8 +100,15 @@ async function onReact(emoji: string) {
         formatRelativeDate(quoted.created_at)
       }}</time>
     </header>
-    <!-- eslint-disable-next-line vue/no-v-html -->
-    <div class="quote__content" v-html="contentHtml" />
+    <CwBlock :spoiler-text="quoted.spoiler_text" :emojis="quoted.emojis">
+      <!-- eslint-disable-next-line vue/no-v-html -->
+      <div class="quote__content" v-html="contentHtml" />
+      <StatusMedia
+        :media="quoted.media_attachments"
+        :sensitive="quoted.sensitive && !quoted.spoiler_text"
+      />
+      <StatusEmbedCard :status="quoted" />
+    </CwBlock>
     <p v-if="actionError" class="quote__error" role="alert">
       {{ actionError }}
     </p>

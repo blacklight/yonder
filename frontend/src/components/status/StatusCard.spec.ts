@@ -157,6 +157,43 @@ describe("StatusCard", () => {
     );
   });
 
+  it("keeps media and link previews inside the CW gate", async () => {
+    const s = status({
+      spoiler_text: "nsfw",
+      media_attachments: [
+        {
+          id: "m1",
+          type: "image",
+          url: "https://x.test/m.png",
+          preview_url: "https://x.test/m-preview.png",
+          remote_url: null,
+          description: null,
+          blurhash: null,
+        },
+      ],
+      card: {
+        url: "https://link.test/cw",
+        title: "CW link",
+        description: "",
+        image: null,
+        type: "link",
+        provider_name: "link.test",
+      },
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+
+    expect(wrapper.find(".cw__body .status-media").exists()).toBe(true);
+    expect(wrapper.find(".cw__body .status-card__preview").exists()).toBe(true);
+    expect(wrapper.find(".cw__body").attributes("style")).toContain(
+      "display: none",
+    );
+    await wrapper.get(".cw__toggle").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".cw__body").attributes("style") ?? "").not.toContain(
+      "display: none",
+    );
+  });
+
   it("clamps tall bodies behind Show more — skipped for CW + expanded", async () => {
     scrollHeight = 1000;
     const media = {

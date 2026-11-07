@@ -665,8 +665,8 @@ async function onReact(emoji: string) {
     <p v-if="actionError" class="status-card__error">{{ actionError }}</p>
 
     <CwBlock :spoiler-text="displayedSpoiler" :emojis="shown.emojis">
-      <!-- Only the text clamps — media, quotes and polls always
-           render whole, never sliced by the fade. -->
+      <!-- Only the text clamps — media, quotes, polls and link
+           previews always render whole, never sliced by the fade. -->
       <ShowMore :disabled="!clampBody">
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="status-card__content" v-html="displayedContent" />
@@ -682,6 +682,63 @@ async function onReact(emoji: string) {
         @quote="(s) => guardDraft(() => compose.openQuote(s))"
       />
       <StatusPoll :status="displayedStatus" />
+      <div
+        v-if="card && videoEmbed"
+        class="status-card__player"
+        :style="playerStyle"
+      >
+        <iframe
+          v-if="cardPlaying"
+          :src="embedSrc"
+          :title="card.title || card.provider_name || t('status.media.play')"
+          class="status-card__player-iframe"
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
+          allowfullscreen
+        />
+        <button
+          v-else
+          type="button"
+          class="status-card__player-btn"
+          :aria-label="t('status.media.play')"
+          @click="cardPlaying = true"
+        >
+          <img
+            v-if="card.image"
+            :src="card.image"
+            alt=""
+            class="status-card__player-img"
+          />
+          <span class="status-card__player-play" aria-hidden="true">
+            <FontAwesomeIcon icon="play" />
+          </span>
+          <span class="status-card__player-info">
+            <strong v-if="card.title">{{ card.title }}</strong>
+            <span v-if="card.provider_name">{{ card.provider_name }}</span>
+          </span>
+        </button>
+      </div>
+      <a
+        v-else-if="card"
+        :href="card.url"
+        class="status-card__preview"
+        target="_blank"
+        rel="noopener"
+      >
+        <img
+          v-if="card.image"
+          :src="card.image"
+          alt=""
+          class="status-card__preview-img"
+        />
+        <span class="status-card__preview-body">
+          <strong>{{ card.title }}</strong>
+          <span class="status-card__preview-desc">{{ card.description }}</span>
+          <span class="status-card__preview-provider">{{
+            card.provider_name
+          }}</span>
+        </span>
+      </a>
     </CwBlock>
 
     <div v-if="canTranslate || translation" class="status-card__translation">
@@ -715,64 +772,6 @@ async function onReact(emoji: string) {
         {{ translating ? t("status.translating") : t("status.translate") }}
       </button>
     </div>
-
-    <div
-      v-if="card && videoEmbed"
-      class="status-card__player"
-      :style="playerStyle"
-    >
-      <iframe
-        v-if="cardPlaying"
-        :src="embedSrc"
-        :title="card.title || card.provider_name || t('status.media.play')"
-        class="status-card__player-iframe"
-        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-        sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
-        allowfullscreen
-      />
-      <button
-        v-else
-        type="button"
-        class="status-card__player-btn"
-        :aria-label="t('status.media.play')"
-        @click="cardPlaying = true"
-      >
-        <img
-          v-if="card.image"
-          :src="card.image"
-          alt=""
-          class="status-card__player-img"
-        />
-        <span class="status-card__player-play" aria-hidden="true">
-          <FontAwesomeIcon icon="play" />
-        </span>
-        <span class="status-card__player-info">
-          <strong v-if="card.title">{{ card.title }}</strong>
-          <span v-if="card.provider_name">{{ card.provider_name }}</span>
-        </span>
-      </button>
-    </div>
-    <a
-      v-else-if="card"
-      :href="card.url"
-      class="status-card__preview"
-      target="_blank"
-      rel="noopener"
-    >
-      <img
-        v-if="card.image"
-        :src="card.image"
-        alt=""
-        class="status-card__preview-img"
-      />
-      <span class="status-card__preview-body">
-        <strong>{{ card.title }}</strong>
-        <span class="status-card__preview-desc">{{ card.description }}</span>
-        <span class="status-card__preview-provider">{{
-          card.provider_name
-        }}</span>
-      </span>
-    </a>
 
     <div
       v-if="shown.pleroma?.emoji_reactions?.length"

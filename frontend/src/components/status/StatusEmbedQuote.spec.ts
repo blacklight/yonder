@@ -152,4 +152,48 @@ describe("StatusEmbedQuote", () => {
     expect(getStatus).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("unavailable");
   });
+
+  it("keeps quoted CW media and link preview collapsed until expanded", async () => {
+    const inner = status({
+      id: "9",
+      content: "<p>hidden post</p>",
+      spoiler_text: "heads up",
+      media_attachments: [
+        {
+          id: "m1",
+          type: "image",
+          url: "https://x.test/full.png",
+          preview_url: "https://x.test/preview.png",
+          remote_url: null,
+          description: null,
+          blurhash: null,
+        },
+      ],
+      card: {
+        url: "https://link.test/hidden",
+        title: "Hidden link",
+        description: "",
+        image: null,
+        type: "link",
+      },
+    });
+    const { wrapper } = mountWith(StatusEmbedQuote, {
+      props: { status: quoting(inner) },
+    });
+
+    expect(
+      (wrapper.find(".embed-quote .cw__body").element as HTMLElement).style
+        .display,
+    ).toBe("none");
+    expect(wrapper.find(".embed-quote .status-media img").exists()).toBe(true);
+    expect(wrapper.find(".embed-quote .embed-card__preview").exists()).toBe(
+      true,
+    );
+    await wrapper.get(".embed-quote .cw__toggle").trigger("click");
+    await flushPromises();
+    expect(
+      (wrapper.find(".embed-quote .cw__body").element as HTMLElement).style
+        .display,
+    ).not.toBe("none");
+  });
 });

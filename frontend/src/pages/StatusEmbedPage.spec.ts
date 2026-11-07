@@ -176,6 +176,42 @@ describe("StatusEmbedPage", () => {
     expect(card.text()).toContain("blog.test");
   });
 
+  it("keeps media and link previews inside the CW details", async () => {
+    vi.mocked(getStatus).mockResolvedValue(
+      status({
+        spoiler_text: "heads up",
+        media_attachments: [
+          {
+            id: "m1",
+            type: "image",
+            url: "https://x.test/full.png",
+            preview_url: "https://x.test/preview.png",
+            remote_url: null,
+            description: null,
+            blurhash: null,
+          },
+        ],
+        card: {
+          url: "https://blog.test/cw",
+          title: "CW link",
+          description: "",
+          image: null,
+          type: "link",
+          provider_name: "blog.test",
+        },
+      }),
+    );
+    const { wrapper } = mountWith(StatusEmbedPage, { props: { id: "10" } });
+    await flushPromises();
+
+    const cw = wrapper.get("details.embed-card__cw");
+    expect(cw.find(".status-media").exists()).toBe(true);
+    expect(cw.find(".embed-card__preview").exists()).toBe(true);
+    expect(wrapper.find(".embed-card > .embed-card__preview").exists()).toBe(
+      false,
+    );
+  });
+
   it("hides preview cards with unsafe URLs", async () => {
     vi.mocked(getStatus).mockResolvedValue(
       status({

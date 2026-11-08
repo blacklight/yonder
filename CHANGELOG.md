@@ -4,15 +4,35 @@
 
 ### Added
 
-- `math`: Render LaTeX formulas (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) to
-  inline images through a configurable external renderer command —
-  real LaTeX (tectonic/pdflatex), MathJax or KaTeX all work via the
-  stdin→PNG contract. Formulas become real media attachments that
-  federate as standard images to clients without formula support, with
-  a linked LaTeX-source fallback for clients that strip `<img>`;
-  formula rows are hidden from the on-screen media gallery since they
-  already render inline. Disabled by default — see `[math]` in
-  `config.toml.example`.
+- `markdown`: Render inline `![alt](url)` images in posts and federate them
+  as ActivityPub image attachments
+  ([`599cda5`](https://git.platypush.tech/blacklight/yonder/commit/599cda5e79feda652fb69d7ae2fdb213551bd4b7)).
+- `math`: Render LaTeX formulas (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) to inline
+  images through a configurable external renderer command — real LaTeX
+  (tectonic/pdflatex), MathJax or KaTeX all work via the stdin→PNG contract.
+  Formulas become real media attachments that federate as standard images
+  to clients without formula support, with a linked LaTeX-source fallback
+  for clients that strip `<img>`; formula rows are hidden from the
+  on-screen media gallery since they already render inline. Disabled by
+  default — see `[math]` in `config.toml.example`
+  ([`b2c871f`](https://git.platypush.tech/blacklight/yonder/commit/b2c871ff02dc7d7abee6d7adb884d8ac0bf8a277)).
+
+### Fixed
+
+- `timelines`: Keep local statuses visible when domain blocks are present
+  ([`aa01f58`](https://git.platypush.tech/blacklight/yonder/commit/aa01f5846a7ff76a1b8650a9b67b48db9b91e7d5)).
+- `status`: Keep media and link previews behind content warnings
+  ([`e5f82b5`](https://git.platypush.tech/blacklight/yonder/commit/e5f82b51fd696adda47172a6d06a083a5d36edb9)).
+- `previews`: Reject media URLs as embed players
+  ([`3136813`](https://git.platypush.tech/blacklight/yonder/commit/31368135d3907c7280c80ab710abd053c4fca2c8)).
+- `ap`: Treat type-only `Image`, `Video`, and `Audio` ActivityPub attachments
+  as media kinds, preserving inline images from SocialHome/PyFed
+  ([`994f2c3`](https://git.platypush.tech/blacklight/yonder/commit/994f2c3be8a9d9bc8f5436656745d90f12077c3e)).
+
+### Changed
+
+- `docs`: Move the installation guide to `INSTALL.md`
+  ([`5d358c1`](https://git.platypush.tech/blacklight/yonder/commit/5d358c1456cd0ab1d35bb5fe58f18d59f88649b5)).
 
 ## 1.0.3
 

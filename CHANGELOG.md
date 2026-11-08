@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## Unreleased
+
+### Added
+
+- `instance`: Add `instance.single_user` personal-instance mode — visitors
+  without a working session who open `/` are redirected to the configured
+  local profile (`/@user`); signed-in users keep the normal home timeline.
+  Exposed to the SPA as `yonder.single_user` on the instance entities.
+
 ## 1.0.4
 
 ### Added

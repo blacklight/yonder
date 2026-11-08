@@ -27,6 +27,28 @@ anonymous-eligible.
   `instance.expose_moderated_instances` (404 when off). The SPA hides
   the section on a 404.
 
+Both entities also carry a `yonder` extension block; today it only
+has `single_user` (see below).
+
+## Single-user redirect
+
+`instance.single_user` puts the instance in personal-instance mode:
+when it names a valid local username, visitors **without a working
+session** who open `/` are redirected to that profile
+(`/@<user>`) instead of the public landing feed. Signed-in users keep
+the normal home timeline, and only the root route is affected — every
+other public page (`/explore`, `/tags/…`, `/about`, permalinks) still
+works anonymously.
+
+The value must pass the same username rules as registration
+(`[a-zA-Z0-9_]`, length ≤ `content.max_username_length`, not reserved);
+blank/whitespace clears the setting. It is admin-writable through the
+settings overlay like any other `instance.*` key, and it is exposed to
+the SPA as `yonder.single_user` (`null` when unset) so the redirect
+decision is made client-side — page loads carry no bearer token, so
+the server cannot distinguish a signed-in browser from an anonymous
+one.
+
 ## `rules` and `contact`
 
 `instance.rules` is a string list in config but serializes as

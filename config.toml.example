@@ -87,6 +87,11 @@ expose_moderated_instances = true
 peers_api_enabled = true
 # Enable the profile directory.
 directory_enabled = true
+# Personal-instance mode: anonymous visitors to `/` are redirected to
+# this local profile (`/@user`). Must be a valid local username; unset
+# or empty keeps the public landing feed. Signed-in users still get the
+# normal home timeline.
+# single_user = "alice"
 
 [i18n]
 # Locale used when neither the user's stored preference nor the

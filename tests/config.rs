@@ -351,3 +351,32 @@ fn filter_trends_and_emoji_bounds() {
         assert_eq!(config.validate().is_ok(), valid);
     }
 }
+
+#[test]
+fn single_user_must_be_a_local_username() {
+    let mut config = Config::default();
+    config.validate().expect("unset is valid");
+    assert_eq!(config.instance.single_user(), None);
+
+    // Empty/whitespace values mean "unset" — the admin UI clears the
+    // redirect by saving an empty string rather than a reset.
+    config.instance.single_user = Some("   ".to_string());
+    config.validate().expect("blank is unset");
+    assert_eq!(config.instance.single_user(), None);
+
+    config.instance.single_user = Some("alice_1".to_string());
+    config.validate().expect("valid username");
+    assert_eq!(config.instance.single_user(), Some("alice_1"));
+
+    let too_long = "x".repeat(101);
+    for bad in [
+        "alice bob",
+        "alice/bob",
+        "alice@example.com",
+        "instance",
+        too_long.as_str(),
+    ] {
+        config.instance.single_user = Some(bad.to_string());
+        assert!(config.validate().is_err(), "{bad:?} must be rejected");
+    }
+}

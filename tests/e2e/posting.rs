@@ -3363,7 +3363,8 @@ async fn math_multiline_aligned_survives_markdown_and_plain() {
 
     // LaTeX row separators (`\\`) and spacing (`\\[4pt]`) — each `\\`
     // below is one escaped backslash pair in the Rust literal.
-    let formula = "$$\n\\begin{aligned}\n\\text{(A1)}\\quad & a \\\\\n b &= c \\\\[4pt]\n\\end{aligned}\n$$";
+    let formula =
+        "$$\n\\begin{aligned}\n\\text{(A1)}\\quad & a \\\\\n b &= c \\\\[4pt]\n\\end{aligned}\n$$";
     for content_type in ["text/markdown", "text/plain"] {
         let (status, body) = request(
             &env.app,
@@ -3383,7 +3384,10 @@ async fn math_multiline_aligned_survives_markdown_and_plain() {
         let src = atts[0]["yonder"]["math_source"].as_str().unwrap();
         assert!(src.starts_with("display:"), "{src}");
         let latex = &src["display:".len()..];
-        assert!(latex.contains("\\\\"), "row sep lost ({content_type}): {latex}");
+        assert!(
+            latex.contains("\\\\"),
+            "row sep lost ({content_type}): {latex}"
+        );
         assert!(
             latex.contains("\\\\[4pt]"),
             "spacing lost ({content_type}): {latex}"

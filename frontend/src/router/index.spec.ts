@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { router } from "./index";
 import { useAuthStore } from "@/stores/auth";
+import { getInstance } from "@/api/instance";
 
 // `auth.restore()` early-returns once `account` is set, so tests
 // that preset the account never hit the network; the mock exists
@@ -8,6 +9,10 @@ import { useAuthStore } from "@/stores/auth";
 vi.mock("@/api/accounts", () => ({
   verifyCredentials: vi.fn(),
 }));
+vi.mock("@/api/instance", () => ({
+  getInstance: vi.fn(),
+}));
+const mockedGetInstance = vi.mocked(getInstance);
 
 function signInAs(role: "user" | "moderator" | "admin") {
   const auth = useAuthStore();
@@ -81,6 +86,42 @@ describe("router role guards", () => {
     signInAs("user");
     await router.push("/settings");
     expect(router.currentRoute.value.name).toBe("settings");
+  });
+});
+
+describe("single-user redirect", () => {
+  beforeEach(() => {
+    useAuthStore().setToken(null);
+    mockedGetInstance.mockReset();
+  });
+
+  it("sends anonymous visitors to the configured profile", async () => {
+    mockedGetInstance.mockResolvedValue({
+      yonder: { single_user: "alice" },
+    } as never);
+    await router.push("/about");
+    await router.push("/");
+    expect(router.currentRoute.value.name).toBe("profile-acct");
+    expect(router.currentRoute.value.path).toBe("/@alice");
+  });
+
+  it("keeps the public feed when no single user is configured", async () => {
+    mockedGetInstance.mockResolvedValue({
+      yonder: { single_user: null },
+    } as never);
+    await router.push("/about");
+    await router.push("/");
+    expect(router.currentRoute.value.name).toBe("home");
+  });
+
+  it("does not redirect a signed-in session", async () => {
+    signInAs("user");
+    mockedGetInstance.mockResolvedValue({
+      yonder: { single_user: "alice" },
+    } as never);
+    await router.push("/about");
+    await router.push("/");
+    expect(router.currentRoute.value.name).toBe("home");
   });
 });
 

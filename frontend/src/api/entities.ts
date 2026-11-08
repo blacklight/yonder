@@ -561,6 +561,12 @@ export interface InstanceEntity {
       };
     };
   };
+  /** Yonder instance extensions — `single_user` is the personal-instance
+   * redirect target for anonymous `/` visitors (`instance.single_user`). */
+  yonder?: {
+    single_user?: string | null;
+    [key: string]: unknown;
+  };
   [key: string]: unknown;
 }
 

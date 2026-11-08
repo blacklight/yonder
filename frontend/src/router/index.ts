@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { i18n } from "@/i18n";
 import { useAuthStore } from "@/stores/auth";
+import { useInstanceStore } from "@/stores/instance";
 import HomePage from "@/pages/HomePage.vue";
 
 declare module "vue-router" {
@@ -522,6 +523,20 @@ router.beforeEach(async (to) => {
   }
   if (!auth.restricted && to.name === "restricted") {
     return { name: "settings" };
+  }
+  // Personal-instance mode (`instance.single_user`): visitors without a
+  // working session land on the configured profile instead of the
+  // public feed. `restore()` is a no-op for anonymous/restricted
+  // sessions and for accounts already loaded; a revoked token is
+  // cleared by the 401 and counts as anonymous here.
+  if (to.name === "home") {
+    await auth.restore();
+    if (!auth.isLoggedIn) {
+      const instance = useInstanceStore();
+      await instance.ensure();
+      const single = instance.singleUser;
+      if (single) return `/@${encodeURIComponent(single)}`;
+    }
   }
   if (to.meta.requiresRole) {
     await auth.restore();

@@ -59,6 +59,21 @@ pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
     })
 }
 
+/// Yonder-specific instance extensions, emitted identically on the v1
+/// and v2 entities. `single_user` is the personal-instance redirect
+/// target (`instance.single_user`) — `null` when unset.
+pub(crate) fn yonder_metadata(config: &crate::config::Config) -> Value {
+    // Overlay writes skip `Config::validate`, so re-check the username
+    // here — an invalid value simply disables the redirect.
+    let single_user = config
+        .instance
+        .single_user()
+        .filter(|user| crate::auth::registration::validate_username(config, user).is_ok());
+    json!({
+        "single_user": single_user,
+    })
+}
+
 /// Resolve `instance.contact_url` to a local Account entity for
 /// `contact.account` (v2) / `contact_account` (v1). Only `/@user` and
 /// `/users/{user}` URLs on this instance's own host resolve — remote
@@ -162,6 +177,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         // `pleroma_emoji_reactions` points them at the
         // `/api/v1/pleroma/statuses/{id}/reactions` endpoints.
         "pleroma": pleroma_metadata(config),
+        "yonder": yonder_metadata(config),
     })))
 }
 

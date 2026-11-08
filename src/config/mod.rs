@@ -231,6 +231,9 @@ impl Config {
                 crate::i18n::SUPPORTED_LOCALES.join(", ")
             )));
         }
+        if let Some(user) = self.instance.single_user() {
+            crate::auth::registration::validate_username(self, user)?;
+        }
         Ok(())
     }
 
@@ -362,6 +365,22 @@ pub struct InstanceConfig {
     pub peers_api_enabled: bool,
     /// Enable the profile directory.
     pub directory_enabled: bool,
+    /// Personal-instance mode: anonymous visitors to `/` are redirected
+    /// to this local profile (`/@user`). Unset/empty keeps the public
+    /// landing feed. Must be a valid local username — validated in
+    /// [`Config::validate`].
+    pub single_user: Option<String>,
+}
+
+impl InstanceConfig {
+    /// The configured single-user profile target, trimmed; empty means
+    /// unset so admin overlays can clear it with `""`.
+    pub fn single_user(&self) -> Option<&str> {
+        self.single_user
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
 }
 
 impl Default for InstanceConfig {
@@ -382,6 +401,7 @@ impl Default for InstanceConfig {
             expose_moderated_instances: true,
             peers_api_enabled: true,
             directory_enabled: true,
+            single_user: None,
         }
     }
 }

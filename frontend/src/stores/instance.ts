@@ -12,6 +12,9 @@ export const useInstanceStore = defineStore("instance", () => {
   const translationEnabled = computed(
     () => entity.value?.configuration?.translation?.enabled === true,
   );
+  const singleUser = computed(
+    () => entity.value?.yonder?.single_user?.trim() || null,
+  );
   let inflight: Promise<InstanceEntity | null> | null = null;
 
   /** Fetch the instance entity once; failures stay unloaded — every
@@ -24,5 +27,5 @@ export const useInstanceStore = defineStore("instance", () => {
     await inflight;
   }
 
-  return { entity, translationEnabled, ensure };
+  return { entity, translationEnabled, singleUser, ensure };
 });

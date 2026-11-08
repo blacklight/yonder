@@ -12,7 +12,9 @@ use serde_json::{json, Value};
 
 use crate::{
     config::RegistrationMode,
-    http::api::v1::instance::{asset_url, contact_account, pleroma_metadata, rules_json},
+    http::api::v1::instance::{
+        asset_url, contact_account, pleroma_metadata, rules_json, yonder_metadata,
+    },
     http::AppState,
     Result,
 };
@@ -94,5 +96,6 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         // reads `fields_limits` for the profile-edit caps and v2-only
         // clients get identical discovery.
         "pleroma": pleroma_metadata(config),
+        "yonder": yonder_metadata(config),
     })))
 }

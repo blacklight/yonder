@@ -979,3 +979,30 @@ async fn authentication_bucket_scoped_to_auth_endpoints() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
+
+/// `instance.single_user` is exposed to clients as `yonder.single_user`
+/// on both instance entities — the SPA reads it for the anonymous `/`
+/// redirect.
+#[tokio::test]
+async fn instance_entities_advertise_single_user() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state(|c| {
+        c.instance.single_user = Some("alice".to_string());
+    })
+    .await
+    else {
+        return;
+    };
+    let app = http::build_router(state);
+
+    for path in ["/api/v1/instance", "/api/v2/instance"] {
+        let resp = get(&app, path).await;
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        let body = body_json(resp).await;
+        assert_eq!(
+            body["yonder"]["single_user"],
+            json!("alice"),
+            "{path}: {body}"
+        );
+    }
+}

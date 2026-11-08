@@ -1,6 +1,12 @@
 # Installation
 
 <!-- toc -->
+
+- [🐳 Docker](#docker)
+- [🦀 Cargo](#cargo)
+- [📦 Direct binary download](#direct-binary-download)
+- [🚧 Building from source](#building-from-source)
+
 <!-- tocstop -->
 
 ## 🐳 Docker

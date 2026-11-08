@@ -20,8 +20,6 @@
   * [⚖️ Moderation & administration](#moderation-administration)
   * [🛠️ Platform](#platform)
 - [📦 Installation](#installation)
-  * [🐳 Docker](#docker)
-  * [🦀 Cargo](#cargo)
 - [⚙️ Configuration](#configuration)
 - [⚡ Running the service](#running-the-service)
   * [Creating a user](#creating-a-user)

@@ -221,7 +221,16 @@ fn scan_text(text: &str, cfg: &MathConfig, out: &mut String) {
     let mut pos = 0usize;
     let mut lit_start = 0usize;
     while pos < bytes.len() {
-        let found = match_delim(text, pos, cfg);
+        // Only `$`/`\` can open a formula. Checking the raw byte first
+        // keeps `pos` on a char boundary for the slices inside
+        // `match_delim` — UTF-8 continuation bytes never equal these
+        // ASCII values, so `pos` may sit mid-character safely as long
+        // as we never slice there.
+        let found = if matches!(bytes[pos], b'$' | b'\\') {
+            match_delim(text, pos, cfg)
+        } else {
+            None
+        };
         let Some(d) = found else {
             pos += 1;
             continue;
@@ -722,6 +731,20 @@ mod tests {
         c.max_input_chars = 3;
         assert_eq!(inject_markers("<p>$abcd$</p>", &c), "<p>$abcd$</p>");
         assert!(inject_markers("<p>$abc$</p>", &c).contains("data-yonder-math"));
+    }
+
+    #[test]
+    fn multibyte_text_does_not_panic() {
+        // Regression: the scanner advanced byte-wise and sliced at
+        // non-char-boundaries — any multi-byte char (€, ’, emoji, CJK)
+        // in a post containing a delimiter panicked the request.
+        let out = markers("<p>€100 for \u{1f495} and $x^2$ plus ’quotes’ and ＋plus</p>");
+        assert!(out.contains("data-yonder-math=\"inline\" data-yonder-math-src=\"x^2\""));
+        assert!(out.contains("€100"));
+        assert!(out.contains("’quotes’"));
+        // Multibyte chars before/inside formulas too.
+        let out = markers("<p>café $naïve$ — déjà $x_i$ vu</p>");
+        assert_eq!(out.matches("data-yonder-math").count(), 4);
     }
 
     #[test]

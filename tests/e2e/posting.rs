@@ -517,6 +517,71 @@ async fn idempotency_replays_result() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_idempotency_reservation_is_taken_over() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "ida", "ida@example.com").await;
+    let headers = [("idempotency-key", "stale-key")];
+    let body = || json!({"status": "retry me"});
+
+    // Complete a real request so the stored fingerprint is genuine.
+    let (s, b) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(body()),
+        &headers,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b}");
+
+    // Simulate a request that died mid-flight: reservation kept, target
+    // never back-filled. A *fresh* stuck row must still 409.
+    sqlx::query(
+        "UPDATE status_idempotency_keys SET target_id = NULL, created_at = now() \
+         WHERE idempotency_key = 'stale-key'",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (s, _) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(body()),
+        &headers,
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+
+    // Age the stuck reservation past the stale threshold — the retry
+    // takes it over and posts a fresh status instead of 409ing until
+    // the 24 h prune.
+    sqlx::query(
+        "UPDATE status_idempotency_keys SET created_at = now() - interval '1 hour' \
+         WHERE idempotency_key = 'stale-key'",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (s, b2) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(body()),
+        &headers,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{b2}");
+    assert_ne!(b["id"], b2["id"], "takeover must create a new status");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn polls_create_vote_and_reject_duplicates() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

@@ -361,44 +361,74 @@ async fn idem_begin(
     key: &str,
     fingerprint: &str,
 ) -> Result<IdemReservation> {
+    // A reservation with no target means the original request never
+    // finished — normally it completes or `idem_release` drops it, but
+    // a panic/restart between reserve and commit leaves it behind.
+    // Treat reservations older than this as abandoned so retries can
+    // take over instead of being stuck on 409s until the 24 h prune.
+    const STALE_IN_FLIGHT: chrono::Duration = chrono::Duration::minutes(15);
+
     sqlx::query(
         "DELETE FROM status_idempotency_keys \
          WHERE created_at < now() - interval '24 hours'",
     )
     .execute(&ctx.db)
     .await?;
-    let won: Option<i64> = sqlx::query_scalar(
-        "INSERT INTO status_idempotency_keys (account_id, idempotency_key, target_type, fingerprint) \
-         VALUES ($1, $2, 'status', $3) ON CONFLICT (account_id, idempotency_key) DO NOTHING \
-         RETURNING id",
-    )
-    .bind(account_id)
-    .bind(key)
-    .bind(fingerprint)
-    .fetch_optional(&ctx.db)
-    .await?;
-    if won.is_some() {
-        return Ok(IdemReservation::Reserved);
+    // Two rounds: the second covers losing the takeover race to a
+    // concurrent retry.
+    for _ in 0..2 {
+        let won: Option<i64> = sqlx::query_scalar(
+            "INSERT INTO status_idempotency_keys (account_id, idempotency_key, target_type, fingerprint) \
+             VALUES ($1, $2, 'status', $3) ON CONFLICT (account_id, idempotency_key) DO NOTHING \
+             RETURNING id",
+        )
+        .bind(account_id)
+        .bind(key)
+        .bind(fingerprint)
+        .fetch_optional(&ctx.db)
+        .await?;
+        if won.is_some() {
+            return Ok(IdemReservation::Reserved);
+        }
+        let row = sqlx::query(
+            "SELECT id, target_type, target_id, fingerprint, created_at \
+             FROM status_idempotency_keys \
+             WHERE account_id = $1 AND idempotency_key = $2",
+        )
+        .bind(account_id)
+        .bind(key)
+        .fetch_one(&ctx.db)
+        .await?;
+        let existing_fp: String = row.get("fingerprint");
+        if existing_fp != fingerprint {
+            return Ok(IdemReservation::Mismatch);
+        }
+        match row.get::<Option<i64>, _>("target_id") {
+            None => {
+                let created_at: DateTime<Utc> = row.get("created_at");
+                if Utc::now() - created_at > STALE_IN_FLIGHT {
+                    // Abandoned mid-flight — drop it and retry the
+                    // reservation once around the loop.
+                    sqlx::query(
+                        "DELETE FROM status_idempotency_keys \
+                         WHERE id = $1 AND target_id IS NULL",
+                    )
+                    .bind(row.get::<i64, _>("id"))
+                    .execute(&ctx.db)
+                    .await?;
+                    continue;
+                }
+                return Ok(IdemReservation::InFlight);
+            }
+            Some(target_id) => {
+                return Ok(IdemReservation::Replay {
+                    target_type: row.get("target_type"),
+                    target_id,
+                })
+            }
+        }
     }
-    let row = sqlx::query(
-        "SELECT target_type, target_id, fingerprint FROM status_idempotency_keys \
-         WHERE account_id = $1 AND idempotency_key = $2",
-    )
-    .bind(account_id)
-    .bind(key)
-    .fetch_one(&ctx.db)
-    .await?;
-    let existing_fp: String = row.get("fingerprint");
-    if existing_fp != fingerprint {
-        return Ok(IdemReservation::Mismatch);
-    }
-    match row.get::<Option<i64>, _>("target_id") {
-        None => Ok(IdemReservation::InFlight),
-        Some(target_id) => Ok(IdemReservation::Replay {
-            target_type: row.get("target_type"),
-            target_id,
-        }),
-    }
+    Ok(IdemReservation::InFlight)
 }
 
 /// Back-fill the completed target inside the create transaction.

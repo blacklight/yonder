@@ -92,7 +92,12 @@ export interface MediaAttachment {
     original?: { width?: number; height?: number; aspect?: number };
     focus?: { x: number; y: number };
   };
-  yonder?: { content_type?: string; processed?: boolean };
+  yonder?: {
+    content_type?: string;
+    processed?: boolean;
+    /** `{mode}:{latex}` — set on renderer-generated formula images. */
+    math_source?: string | null;
+  };
 }
 
 export interface PreviewCard {

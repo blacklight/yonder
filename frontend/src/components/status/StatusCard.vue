@@ -1048,6 +1048,37 @@ async function onReact(emoji: string) {
   color: var(--text-muted);
   font-size: 0.85em;
 }
+/* Server-rendered LaTeX formulas (`[math]` config): `inline` sits in
+   the text flow, `display` centers as its own block. The image is a
+   real attachment but StatusMedia filters `yonder.math_source` rows
+   out of the gallery since they already render here. */
+:deep(.status-card__content) [data-yonder-math-image="inline"] img {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 100%;
+  height: auto;
+}
+:deep(.status-card__content) [data-yonder-math-image="display"] {
+  display: block;
+  text-align: center;
+  margin: var(--space-2) 0;
+}
+:deep(.status-card__content) [data-yonder-math-image="display"] img {
+  max-width: 100%;
+  height: auto;
+}
+/* LaTeX-source fallback link emitted for clients that strip <img>
+   (e.g. Mastodon) — visually hidden here since the <img> is the
+   visible formula, but still exposed to assistive tech. */
+:deep(.status-card__content) [data-yonder-math-alt] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .status-card__preview {
   display: flex;
   gap: var(--space-3);
@@ -1244,5 +1275,19 @@ a.status-card__stat:hover {
   padding: var(--space-1) var(--space-3);
   color: var(--text);
   cursor: pointer;
+}
+</style>
+
+<!-- Unscoped: [data-theme] lives on <html>, an ancestor of this
+     component, so a scoped/:deep() selector can never reach it. -->
+<style>
+/* Formula PNGs are rasterized once server-side with fixed colors.
+   Under the dark theme, approximate a dark render by inverting —
+   `hue-rotate(180deg)` restores the original color families. Works
+   best with transparent-background renderers (ghostscript pngalpha,
+   sharp SVG); a white-page renderer leaves a dark box instead of a
+   light one. */
+[data-theme="dark"] .status-card__content [data-yonder-math-image] img {
+  filter: invert(1) hue-rotate(180deg);
 }
 </style>

@@ -853,11 +853,22 @@ async fn remote_article_converted_text() {
     assert!(spoiler.is_none(), "article summary must not become a CW");
     assert_eq!(url, "https://blog.remote/eve/when-a-childs-kite");
     // Headline, stripped teaser, sanitized body, permalink footer.
-    assert!(html.contains("<strong>When a Child’s Kite"));
-    assert!(html.contains("<p>[…]</p>"), "teaser in text: {html}");
     assert!(
-        !html.contains("<img"),
-        "remote img must be stripped: {html}"
+        html.contains("<strong>When a Child’s Kite"),
+        "headline: {html}"
+    );
+    assert!(html.contains("<p>[…]</p>"), "teaser in text: {html}");
+    // Converted types keep body `<img>`s inline unconditionally —
+    // Friendica articles carry images only in `content`. The teaser
+    // img stays stripped (its `[…]` marker is the only remnant).
+    assert_eq!(html.matches("<img").count(), 1, "{html}");
+    assert!(
+        html.contains("data-yonder-inline-image"),
+        "body img kept inline: {html}"
+    );
+    assert!(
+        html.contains("src=\"https://i.postimg.cc/x/IMG.jpg\""),
+        "{html}"
     );
     assert!(html.contains("A child flies a kite."));
     assert!(
@@ -1768,7 +1779,11 @@ async fn link_preview_video_card_embeds() {
             .fetch_one(&env.state.db)
             .await
             .unwrap();
-    assert_eq!(scan, 3, "sweep must mark the row scanned");
+    assert_eq!(
+        scan,
+        yonder::posts::preview::CARD_SCAN_VERSION,
+        "sweep must mark the row scanned"
+    );
     let jobs = drain_queue(&env, "bulk").await;
     let swept: Vec<_> = jobs
         .iter()
@@ -3166,4 +3181,103 @@ async fn translate_reports_disabled_without_backend() {
         body["error"].as_str().unwrap().contains("not configured"),
         "{body}"
     );
+}
+
+/// `[math]` — LaTeX formulas render through the configured command
+/// into real `media_attachments` rows: the status HTML carries an
+/// `<img>` per formula and the entity lists them as attachments.
+/// Edits reuse the same `math_source` rows instead of regenerating.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn math_formulas_render_as_media_attachments() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.math.enabled = true;
+    config.math.command = harness::fake_math_command();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env.app, "math", "math@example.com").await;
+
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "inline $x^2$ and display $$y^2$$ plus $x^2$ again",
+            "content_type": "text/markdown",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap();
+    let html = body["content"].as_str().unwrap();
+    assert!(html.contains("data-yonder-math-image=\"inline\""), "{html}");
+    assert!(
+        html.contains("data-yonder-math-image=\"display\""),
+        "{html}"
+    );
+    // Two distinct formulas → two attachment rows (the repeated
+    // `$x^2$` shares the first image).
+    let atts = body["media_attachments"].as_array().unwrap();
+    assert_eq!(atts.len(), 2, "{body}");
+    assert!(atts.iter().all(|a| a["type"] == "image"), "{atts:?}");
+    let mut sources: Vec<&str> = atts
+        .iter()
+        .map(|a| a["yonder"]["math_source"].as_str().unwrap())
+        .collect();
+    sources.sort();
+    assert_eq!(sources, ["display:y^2", "inline:x^2"]);
+    // The rendered <img> points at the same public media URL the
+    // attachment entity exposes.
+    let img_url = atts[0]["url"].as_str().unwrap();
+    assert!(html.contains(&format!("src=\"{img_url}\"")), "{html}");
+    // Clients that strip <img> (e.g. Mastodon) still get a link to the
+    // rendered formula carrying its delimited LaTeX source.
+    assert!(html.contains("data-yonder-math-alt"), "{html}");
+    assert!(html.contains("\\(x^2\\)"), "{html}");
+
+    // Editing with the same formulas reuses the attachment rows —
+    // same ids, no regeneration.
+    let (status, edited) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{id}"),
+        Some(&token),
+        Some(json!({
+            "status": "still $x^2$ and $$y^2$$, edited",
+            "content_type": "text/markdown",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    let mut edited_ids: Vec<&str> = edited["media_attachments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .collect();
+    edited_ids.sort();
+    let mut orig_ids: Vec<&str> = atts.iter().map(|a| a["id"].as_str().unwrap()).collect();
+    orig_ids.sort();
+    assert_eq!(edited_ids, orig_ids, "{edited}");
+
+    // Removing the formulas detaches the math rows.
+    let (status, stripped) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{id}"),
+        Some(&token),
+        Some(json!({"status": "no math left", "content_type": "text/markdown"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stripped}");
+    assert!(
+        stripped["media_attachments"].as_array().unwrap().is_empty(),
+        "{stripped}"
+    );
+    assert!(!stripped["content"].as_str().unwrap().contains("<img"));
 }

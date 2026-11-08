@@ -48,6 +48,35 @@ describe("StatusMedia", () => {
     expect(document.body.style.overflow).toBe("");
   });
 
+  it("hides formula images already rendered inline in the post body", () => {
+    const media = [
+      attachment({ id: "1" }),
+      attachment({
+        id: "2",
+        yonder: { math_source: "inline:x^2" },
+      } as Partial<MediaAttachment>),
+    ];
+    const { wrapper } = mountWith(StatusMedia, {
+      props: { media, sensitive: false },
+    });
+    expect(wrapper.findAll(".status-media__item")).toHaveLength(1);
+  });
+
+  it("renders nothing when every attachment is an inline formula", () => {
+    const { wrapper } = mountWith(StatusMedia, {
+      props: {
+        media: [
+          attachment({
+            id: "1",
+            yonder: { math_source: "display:y^2" },
+          } as Partial<MediaAttachment>),
+        ],
+        sensitive: false,
+      },
+    });
+    expect(wrapper.find(".status-media").exists()).toBe(false);
+  });
+
   it("navigates between attachments with arrows and keyboard", async () => {
     const media = [
       attachment({ id: "1", url: "https://x.test/1.png" }),

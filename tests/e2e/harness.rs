@@ -379,3 +379,21 @@ pub async fn dedicated_redis(
     let redis = cache::connect(config).await.expect("redis connect");
     Some((redis, container))
 }
+
+/// A `[math]` renderer command for tests — a shell script that drains
+/// the LaTeX on stdin and emits a fixed 1x1 PNG, so the formula
+/// pipeline runs end-to-end without a real LaTeX toolchain. Assign
+/// the result to `config.math.command` (with `enabled = true`).
+pub fn fake_math_command() -> String {
+    let dir = std::env::temp_dir().join(format!("yonder-math-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).expect("math fixture dir");
+    let script = dir.join("fake-math.sh");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\ncat >/dev/null\n\
+         printf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' \
+         | base64 -d\n",
+    )
+    .expect("math fixture script");
+    format!("/bin/sh {}", script.display())
+}

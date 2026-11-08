@@ -122,6 +122,89 @@ standard `Image` attachment (`name` = alt text, `mediaType` sniffed
 from the extension), so Mastodon/Pleroma/Akkoma-style clients that
 strip inline `<img>` still receive the media.
 
+## Math formulas
+
+With `[math] enabled = true` and a configured `math.command`
+(disabled by default), LaTeX delimiters in post text — `$…$`,
+`$$…$$`, `\(…\)`, `\[…\]` — are detected in the rendered HTML's text
+nodes (code, preformatted text, link text and existing markup are
+skipped) and rendered to images by the external command. Each
+distinct formula becomes a real `media_attachments` row
+(`math_source = "{mode}:{latex}"` marks it), so:
+
+- the post HTML shows the formula inline (`<img>` inside a
+  `data-yonder-math-image` span — `inline` flows with the text,
+  `display` centers as a block),
+- the media gallery hides it — `StatusMedia` filters rows carrying
+  `yonder.math_source` since the formula already renders in the body.
+  Formula images are bounded by `math.max_formulas`, **not**
+  `media.max_attachments_per_post` — they are inline content, not
+  uploads, so a photo-heavy post can't starve them (and vice versa).
+- the ActivityPub `attachment` list carries it as a standard `Image`
+  document — Mastodon and other clients without formula support see
+  the rendered image. Inside the `content` markup each formula is also
+  followed by `<a data-yonder-math-alt>` linking to the image with the
+  delimited LaTeX source as its text: clients that strip `<img>`
+  (Mastodon) still get a clickable formula reference, and MathJax
+  forks may typeset the link text inline. Yonder hides the link
+  visually (the `<img>` is the visible formula) but keeps it for
+  assistive tech.
+
+Renderer contract: `<command>… inline|display` (argv split on
+whitespace, no shell), LaTeX source without delimiters on stdin, PNG
+bytes on stdout. Non-zero exit, timeout
+(`math.timeout_seconds`) or empty output leaves the formula as
+literal text — a broken renderer never fails a post. Limits:
+`math.max_formulas` distinct formulas per post, `math.max_input_chars`
+per formula. Repeated identical formulas share one render and one
+attachment. Edits and remote `Update`s reuse rows whose
+`math_source` still matches (same image URL), and formulas removed
+from the text have their attachments detached. Applies to local and
+federated posts alike; see `docs/media.md` for storage details and
+`config.toml.example` for the command contract.
+
+### Renderer options
+
+The contract is deliberately generic — **any** command honoring
+stdin-LaTeX → stdout-PNG works, and the trailing `inline|display`
+argument may be ignored by wrappers that don't need it. KaTeX/MathJax
+are *not* required; pick whichever fits your platform:
+
+- **Real LaTeX (most compatible)** — `scripts/latex-math-render.sh`
+  wraps `tectonic` (single static binary, self-downloads its TeX
+  bundle) or `pdflatex` (TeX Live) and rasterizes the PDF with
+  `pdftoppm` (poppler-utils) or `mutool`. Full LaTeX/MathJax command
+  coverage. Heaviest option (~100 MB with tectonic, ~500 MB+ with
+  texlive). Install hints are in the script header.
+- **MathJax v3 (mathstodon-style)** — `scripts/math-renderer-example.mjs`
+  uses the `mathjax-full` Node library + `sharp` to rasterize the SVG
+  output. Requires Node.js; closest match to how mathstodon renders.
+- **KaTeX** — same pattern as the MathJax example with the `katex`
+  package instead; KaTeX covers a smaller LaTeX subset but is faster.
+- **Pre-made converters** — tools like `latex2png`/`tex2png`
+  (LaTeX→PNG wrappers around `latex`+`dvipng`) or `math2image`
+  (MathJax-node based) work if they honor the stdin/stdout contract;
+  most expect a file argument, so wrap them in a small script that
+  feeds stdin and `cat`s the PNG to stdout.
+- **Typst** — `typst compile` emits PNG directly and is a single
+  ~30 MB binary, but its math syntax is LaTeX-*like*, not LaTeX —
+  many real-world formulas won't parse. Usable for simple content;
+  expect literal-text fallback for complex input.
+
+`docs/media.md` covers where the generated files live; the Dockerfile
+ships a commented recipe for adding a renderer to the container
+image.
+
+**Theming:** formula images are rasterized once with fixed colors, so
+they can't be re-rendered per viewer theme. The frontend approximates
+dark mode with a CSS `invert(1) hue-rotate(180deg)` filter on the
+math `<img>`s. It works best with **transparent-background** renderers
+— ghostscript `pngalpha` (see `MATH_PDF2PNG` in
+`scripts/latex-math-render.sh`) or the MathJax/sharp example — where
+inversion only affects the glyph colors. A white-page renderer
+(`pdftoppm` default) inverts to a dark box instead of a light one;
+still readable, slightly less polished.
+
 ## Link previews
 
 `FetchLinkPreview` extracts the first eligible URL (skips own-instance

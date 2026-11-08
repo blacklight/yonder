@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Unreleased
+
+### Added
+
+- `math`: Render LaTeX formulas (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) to
+  inline images through a configurable external renderer command —
+  real LaTeX (tectonic/pdflatex), MathJax or KaTeX all work via the
+  stdin→PNG contract. Formulas become real media attachments that
+  federate as standard images to clients without formula support, with
+  a linked LaTeX-source fallback for clients that strip `<img>`;
+  formula rows are hidden from the on-screen media gallery since they
+  already render inline. Disabled by default — see `[math]` in
+  `config.toml.example`.
+
 ## 1.0.3
 
 ### Added

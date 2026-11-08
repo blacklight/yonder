@@ -637,6 +637,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         wrapped.push_str("</p>");
         content_html = wrapped;
     }
+    // LaTeX math → placeholders (idempotent — markdown/plain sources
+    // already carry them from `render()`). Materialized into media
+    // attachments below, once the status row exists.
+    content_html = super::math::inject_markers(&content_html, &core.config.math);
     let source_text = object
         .get("source")
         .and_then(|s| s.get("content"))
@@ -702,6 +706,30 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     };
     let published = object.get("published").and_then(pubby_sdk::model::parse_dt);
     let updated = object.get("updated").and_then(pubby_sdk::model::parse_dt);
+
+    // Render any math placeholders into formula-image attachments —
+    // reusing the status's existing `math_source` rows on Update.
+    // Runs before the transaction; renderer failures degrade to
+    // literal text inside `materialize`.
+    let math = if content_html.contains("data-yonder-math") {
+        let store = crate::media::storage::MediaStore::from_config(&core.config);
+        super::math::materialize(
+            &core.db,
+            &store,
+            &core.config,
+            &core.base_url,
+            account_id,
+            existing.as_ref().map(|e| e.id),
+            &content_html,
+        )
+        .await?
+    } else {
+        super::math::Materialized {
+            html: content_html.clone(),
+            ..Default::default()
+        }
+    };
+    let content_html = math.html;
 
     // One transaction for the whole materialization — a mid-way
     // failure never leaves a half-written status.
@@ -967,6 +995,31 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     )
     .bind(status_id)
     .bind(&remote_urls)
+    .execute(&mut *tx)
+    .await?;
+    // Math-rendered attachments are local files (`remote_url` NULL),
+    // so the sweep above never touches them: attach the rows this
+    // render produced (reused rows are already attached — the
+    // `status_id IS NULL` guard makes that a no-op) and detach math
+    // rows the new HTML no longer references.
+    if !math.kept_ids.is_empty() {
+        sqlx::query(
+            "UPDATE media_attachments SET status_id = $1, updated_at = now() \
+             WHERE id = ANY($2) AND account_id = $3 AND status_id IS NULL",
+        )
+        .bind(status_id)
+        .bind(&math.kept_ids)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE media_attachments SET status_id = NULL, updated_at = now() \
+         WHERE status_id = $1 AND math_source IS NOT NULL \
+           AND NOT (id = ANY($2))",
+    )
+    .bind(status_id)
+    .bind(&math.kept_ids)
     .execute(&mut *tx)
     .await?;
     // Question → polls/poll_options (votes stay remote).

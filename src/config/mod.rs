@@ -57,6 +57,8 @@ pub struct Config {
     pub rate_limit: RateLimitConfig,
     pub polls: PollsConfig,
     pub content: ContentConfig,
+    /// LaTeX formula rendering (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`).
+    pub math: MathConfig,
     pub admin: AdminConfig,
     pub jobs: JobsConfig,
     pub timelines: TimelinesConfig,
@@ -175,6 +177,28 @@ impl Config {
             return Err(crate::Error::Validation(
                 "timelines.trends_max_limit must be in 1..=100".to_string(),
             ));
+        }
+        if self.math.enabled {
+            if self.math.command.trim().is_empty() {
+                return Err(crate::Error::Validation(
+                    "math.enabled requires math.command".to_string(),
+                ));
+            }
+            if self.math.max_formulas == 0 || self.math.max_formulas > 100 {
+                return Err(crate::Error::Validation(
+                    "math.max_formulas must be in 1..=100".to_string(),
+                ));
+            }
+            if self.math.max_input_chars == 0 || self.math.max_input_chars > 20_000 {
+                return Err(crate::Error::Validation(
+                    "math.max_input_chars must be in 1..=20000".to_string(),
+                ));
+            }
+            if self.math.timeout_seconds == 0 || self.math.timeout_seconds > 300 {
+                return Err(crate::Error::Validation(
+                    "math.timeout_seconds must be in 1..=300".to_string(),
+                ));
+            }
         }
         if self.timelines.trends_cache_seconds > 86400 {
             return Err(crate::Error::Validation(
@@ -1056,6 +1080,42 @@ impl Default for ContentConfig {
             link_preview_cache_hours: 24,
             scheduled_status_sweep_schedule: Some("0 * * * *".to_string()),
             scheduled_deletion_sweep_schedule: Some("0 * * * *".to_string()),
+        }
+    }
+}
+
+/// `[math]` — LaTeX formula rendering. Formulas are detected in post
+/// text (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`), rendered to images by an
+/// administrator-provided command, and stored as ordinary
+/// `media_attachments` rows so the ActivityPub `attachment` list
+/// carries them for clients without inline-image support.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MathConfig {
+    /// Master switch — formulas stay literal text when `false`.
+    pub enabled: bool,
+    /// Renderer command, split on whitespace into argv (no shell).
+    /// Contract: invoked as `<command>… inline|display`, the LaTeX
+    /// source (without delimiters) on stdin, PNG bytes on stdout;
+    /// non-zero exit, timeout or empty stdout leaves the formula as
+    /// text. Empty disables rendering even when `enabled`.
+    pub command: String,
+    /// Maximum distinct formulas rendered per post.
+    pub max_formulas: u32,
+    /// Maximum LaTeX source length per formula (characters).
+    pub max_input_chars: usize,
+    /// Per-formula renderer timeout in seconds.
+    pub timeout_seconds: u64,
+}
+
+impl Default for MathConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: String::new(),
+            max_formulas: 20,
+            max_input_chars: 2000,
+            timeout_seconds: 10,
         }
     }
 }

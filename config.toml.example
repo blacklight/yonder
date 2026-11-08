@@ -352,6 +352,32 @@ scheduled_status_sweep_schedule = "0 * * * *"
 # (users' scheduled_deletion_days setting). Set to "" to disable.
 scheduled_deletion_sweep_schedule = "0 * * * *"
 
+[math]
+# LaTeX formula rendering (mathstodon-style). Delimited formulas in
+# post text — $…$, $$…$$, \(…\), \[…\] — are rendered to images by an
+# administrator-provided command and stored as ordinary media
+# attachments, so they display inline here and federate as standard
+# images to clients without formula support. Disabled by default.
+enabled = false
+# Renderer command, split on whitespace into argv (no shell). Contract:
+# invoked as `<command>… inline|display`, the LaTeX source (without
+# delimiters) on stdin, PNG bytes on stdout. Non-zero exit, timeout or
+# empty stdout leaves the formula as literal text.
+#
+# Any stdin→PNG converter works — the trailing mode arg may be ignored.
+# Options (see docs/posting.md "Renderer options"):
+#   command = "/usr/local/bin/latex-math-render.sh"   # tectonic/pdflatex → pdftoppm (scripts/)
+#   command = "node /app/scripts/math-renderer-example.mjs"  # MathJax+sharp
+#   command = "/usr/bin/latex2png"                    # pre-made wrapper, if stdin/stdout compatible
+# Maximum distinct formulas rendered per post. Formula images are
+# inline content — they don't consume media.max_attachments_per_post
+# upload slots.
+max_formulas = 20
+# Maximum LaTeX source length per formula (characters).
+max_input_chars = 2000
+# Per-formula renderer timeout in seconds.
+timeout_seconds = 10
+
 [timelines]
 # Entries kept per Redis home-feed index; older entries are trimmed on
 # fan-out. Postgres remains the source of truth — this only bounds the

@@ -54,6 +54,14 @@ uploads run the shared pipeline (sniff → bounded decode → EXIF strip →
 blurhash); `media.strip_exif` (default `true`) re-encodes so metadata is
 dropped by construction — GIF comment/XMP extension blocks are a known gap.
 
+Generated media: with `[math] enabled`, formula images rendered from
+post LaTeX are ordinary `media_attachments` rows — `file_path` storage
+through the same backend, `content_type = image/png`, and
+`math_source = "{mode}:{latex}"` marking them for edit/Update reuse
+and stale-row detachment. They flow through the normal gallery,
+attachment limits, orphan cleanup and AP `attachment` output like any
+upload; see `docs/posting.md` "Math formulas".
+
 ## Remote media
 
 Poster art: ingest also extracts a preview image for the attachment —

@@ -30,6 +30,9 @@ pub struct MediaRow {
     pub focus_x: Option<f32>,
     pub focus_y: Option<f32>,
     pub processed: bool,
+    /// `{mode}:{latex}` for renderer-generated formula images — lets
+    /// the frontend style them and edits/Updates reuse the row.
+    pub math_source: Option<String>,
 }
 
 fn media_from_row(r: &sqlx::postgres::PgRow) -> MediaRow {
@@ -50,12 +53,14 @@ fn media_from_row(r: &sqlx::postgres::PgRow) -> MediaRow {
         focus_x: r.get("focus_x"),
         focus_y: r.get("focus_y"),
         processed: r.get("processed"),
+        math_source: r.get("math_source"),
     }
 }
 
 const MEDIA_COLS: &str = "id, account_id, status_id, type, file_path, remote_url, \
      preview_remote_url, content_type, \
-     file_size, description, blurhash, width, height, focus_x, focus_y, processed";
+     file_size, description, blurhash, width, height, focus_x, focus_y, processed, \
+     math_source";
 
 /// Load one media row by id.
 pub async fn load_media(ctx: &PostContext, media_id: i64) -> Result<Option<MediaRow>> {
@@ -142,6 +147,7 @@ pub fn media_entity(config: &crate::config::Config, base_url: &str, row: &MediaR
             "content_type": row.content_type,
             "file_size": row.file_size,
             "processed": row.processed,
+            "math_source": row.math_source,
         },
     })
 }

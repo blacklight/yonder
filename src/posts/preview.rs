@@ -414,7 +414,10 @@ struct CardMeta {
 /// stripped bot pages are re-fetched for real metadata/embeds;
 /// v4 = iframeable-player validation — cards that stored direct
 /// media URLs as `twitter:player`/`og:video` embeds are re-fetched).
-const CARD_SCAN_VERSION: i32 = 4;
+///
+/// `pub` so integration tests can assert the sweep stamps the
+/// current version instead of hardcoding it.
+pub const CARD_SCAN_VERSION: i32 = 4;
 
 /// Per-run cap on the rescan sweep — one fan-out must not flood the
 /// queue unboundedly; a full batch re-enqueues the sweep until no

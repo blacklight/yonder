@@ -295,6 +295,24 @@ async fn publish_one(ctx: &PostContext, id: i64) -> Result<()> {
         &mut rendered.html,
     )
     .await?;
+    // LaTeX math → formula images claimed alongside the reserved
+    // uploads (bounded by `math.max_formulas`, like publish).
+    let math = super::math::materialize(
+        &ctx.db,
+        &ctx.media,
+        &ctx.config,
+        &ctx.base_url(),
+        account_id,
+        None,
+        &rendered.html,
+    )
+    .await?;
+    rendered.html = math.html;
+    if !math.new_ids.is_empty() {
+        let mut ids = validated.media_ids.clone().unwrap_or_default();
+        ids.extend(math.new_ids);
+        validated.media_ids = Some(ids);
+    }
     let deletion_days: i32 = sqlx::query_scalar::<_, Option<i32>>(
         "SELECT scheduled_deletion_days FROM users WHERE account_id = $1",
     )

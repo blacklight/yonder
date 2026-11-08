@@ -79,6 +79,42 @@ LABEL org.opencontainers.image.title="yonder" \
       org.opencontainers.image.source="https://git.platypush.tech/blacklight/yonder" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later"
 USER yonder
+
+# --- Optional: LaTeX formula rendering ([math]) ------------------------
+# `math.enabled` shells out to a renderer command (LaTeX on stdin, PNG
+# on stdout). Nothing is bundled by default — every real option is
+# heavy for an opt-in feature. To enable, pick ONE recipe below, build
+# a derived image (or uncomment), copy the wrapper in, and set:
+#   YONDER_MATH__ENABLED=true
+#   YONDER_MATH__COMMAND="/usr/local/bin/latex-math-render"
+# See docs/posting.md "Renderer options" for alternatives (MathJax/
+# KaTeX via Node.js, pre-made converters, Typst).
+#
+# Recipe A — tectonic + poppler-utils (~100 MB, recommended):
+#   RUN apt-get update && apt-get install -y --no-install-recommends \
+#         poppler-utils curl ca-certificates && rm -rf /var/lib/apt/lists/* \
+#     && case "${TARGETARCH:-amd64}" in \
+#          amd64) t=x86_64-unknown-linux-gnu ;; \
+#          arm64) t=aarch64-unknown-linux-gnu ;; \
+#          *) echo "unsupported arch ${TARGETARCH:-amd64}" >&2; exit 1 ;; \
+#        esac \
+#     && curl -fsSL "https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%400.15.0/tectonic-0.15.0-${t}.tar.gz" \
+#        -o /tmp/tectonic.tar.gz \
+#     && tar -xzf /tmp/tectonic.tar.gz -C /usr/local/bin --strip-components=1 \
+#     && rm /tmp/tectonic.tar.gz && tectonic --version
+#   # First render downloads Tectonic's TeX bundle into the cache —
+#   # ensure the yonder user can write $HOME/.cache (it can).
+#
+# Recipe B — TeX Live via apt (~500 MB, no first-run download):
+#   RUN apt-get update && apt-get install -y --no-install-recommends \
+#         poppler-utils texlive-latex-base texlive-latex-recommended \
+#         fonts-lmodern && rm -rf /var/lib/apt/lists/*
+#
+# Then, either recipe:
+#   COPY scripts/latex-math-render.sh /usr/local/bin/latex-math-render
+#   RUN chmod +x /usr/local/bin/latex-math-render
+# ---------------------------------------------------------------------
+
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD curl -fsS "http://127.0.0.1:${YONDER_SERVER__PORT:-3000}/healthz" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

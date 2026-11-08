@@ -1412,6 +1412,88 @@ async fn remote_inline_images_preserved_and_deduped() {
     );
 }
 
+/// Remote math: `$…$`/`$$…$$` in federated `content` render through
+/// the configured command into `media_attachments` rows just like
+/// local posts; an Update reusing the same formula keeps its row,
+/// and dropping it detaches the attachment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_math_formulas_render_and_update() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.math.enabled = true;
+    config.math.command = harness::fake_math_command();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let uri = "https://remote.test/objects/rm1";
+    let activity = |ty: &str, content: &str, updated: Option<&str>| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/rm{ty}"),
+        activity_type: ty.into(),
+        actor: "https://remote.test/users/eve".into(),
+        object: json!({
+            "id": uri,
+            "type": "Note",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": content,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+            "updated": updated,
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+
+    let create = activity("Create", "<p>remote $x^2$ math</p>", None);
+    assert!(yonder::posts::remote::handle(&core, &create, &create.to_json()).await);
+    let h = status_html(&env.state.db, uri).await;
+    assert!(h.contains("data-yonder-math-image=\"inline\""), "{h}");
+    assert_eq!(status_media_count(&env.state.db, uri).await, 1);
+    let math_id: i64 = sqlx::query_scalar(
+        "SELECT ma.id FROM media_attachments ma \
+         JOIN statuses s ON s.id = ma.status_id \
+         WHERE s.uri = $1 AND ma.math_source IS NOT NULL",
+    )
+    .bind(uri)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    // Update keeps the same formula → same attachment row.
+    let update = activity(
+        "Update",
+        "<p>remote $x^2$ math, edited</p>",
+        Some("2100-01-01T00:00:00Z"),
+    );
+    assert!(yonder::posts::remote::handle(&core, &update, &update.to_json()).await);
+    let h = status_html(&env.state.db, uri).await;
+    assert!(h.contains("data-yonder-math-image=\"inline\""), "{h}");
+    assert_eq!(status_media_count(&env.state.db, uri).await, 1);
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT ma.id FROM media_attachments ma \
+         JOIN statuses s ON s.id = ma.status_id \
+         WHERE s.uri = $1 AND ma.math_source IS NOT NULL",
+    )
+    .bind(uri)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, math_id, "identical formula must reuse its row");
+
+    // Update dropping the formula → attachment detached.
+    let update = activity(
+        "Update",
+        "<p>remote math, gone</p>",
+        Some("2100-01-02T00:00:00Z"),
+    );
+    assert!(yonder::posts::remote::handle(&core, &update, &update.to_json()).await);
+    let h = status_html(&env.state.db, uri).await;
+    assert!(!h.contains("data-yonder-math-image"), "{h}");
+    assert_eq!(status_media_count(&env.state.db, uri).await, 0);
+}
+
 async fn ingest_create(core: &yonder::activitypub::ApCore, id: &str, object: Value) {
     let activity = pubby_sdk::Activity {
         id: format!("{BASE}/ap/activities/{id}"),

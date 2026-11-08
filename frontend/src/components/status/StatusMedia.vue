@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import Modal from "@/components/ui/Modal.vue";
 import MediaModal from "@/components/status/MediaModal.vue";
@@ -7,11 +7,18 @@ import AudioPlayer from "@/components/status/AudioPlayer.vue";
 import VideoAttachment from "@/components/status/VideoAttachment.vue";
 import type { MediaAttachment } from "@/api/entities";
 
-defineProps<{
+const props = defineProps<{
   media: MediaAttachment[];
   sensitive: boolean;
 }>();
 const { t } = useI18n();
+
+// Renderer-generated formula images (`yonder.math_source`) already
+// appear inline in the post body — keep them out of the attachment
+// gallery so they aren't duplicated.
+const gallery = computed(() =>
+  props.media.filter((m) => !m.yonder?.math_source),
+);
 
 const revealed = ref(false);
 const altModal = ref<MediaAttachment | null>(null);
@@ -28,7 +35,7 @@ function altPlacement(type: MediaAttachment["type"]): string {
 </script>
 
 <template>
-  <div v-if="media.length" class="status-media">
+  <div v-if="gallery.length" class="status-media">
     <div
       v-if="sensitive && !revealed"
       class="status-media__cover"
@@ -45,9 +52,9 @@ function altPlacement(type: MediaAttachment["type"]): string {
     <div
       v-else
       class="status-media__grid"
-      :class="`status-media__grid--${media.length}`"
+      :class="`status-media__grid--${gallery.length}`"
     >
-      <figure v-for="(m, i) in media" :key="m.id" class="status-media__item">
+      <figure v-for="(m, i) in gallery" :key="m.id" class="status-media__item">
         <button
           v-if="m.type === 'image' || m.type === 'gifv'"
           type="button"
@@ -90,7 +97,7 @@ function altPlacement(type: MediaAttachment["type"]): string {
     </Modal>
     <MediaModal
       v-if="viewerIndex !== null"
-      :media="media"
+      :media="gallery"
       :initial-index="viewerIndex"
       @close="viewerIndex = null"
     />

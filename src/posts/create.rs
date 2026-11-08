@@ -726,6 +726,26 @@ pub async fn publish(
         &mut rendered.html,
     )
     .await?;
+    // LaTeX math → rendered formula images, stored as media
+    // attachments claimed alongside the user's uploads. Bounded by
+    // `math.max_formulas`, not the upload attachment cap — formulas
+    // are inline content, not gallery media.
+    let math = super::math::materialize(
+        &ctx.db,
+        &ctx.media,
+        &ctx.config,
+        &ctx.base_url(),
+        account_id,
+        None,
+        &rendered.html,
+    )
+    .await?;
+    rendered.html = math.html;
+    if !math.new_ids.is_empty() {
+        let mut ids = effective.media_ids.clone().unwrap_or_default();
+        ids.extend(math.new_ids);
+        effective.media_ids = Some(ids);
+    }
     let deletion_days = scheduled_deletion_days(ctx, account_id).await;
     let status_id = insert_status(
         ctx,
@@ -846,13 +866,28 @@ pub async fn edit_status(
     let resolved =
         mentions::resolve(ctx, &validated.status, auth.account_id, parent.as_ref()).await?;
     let links: Vec<render::MentionLink> = resolved.iter().filter_map(|m| m.link()).collect();
-    let rendered = render::render(
+    let mut rendered = render::render(
         &validated.status,
         &validated.content_type,
         &links,
         &ctx.base_url(),
         &ctx.config,
     );
+    // LaTeX math → formula images. Reused `math_source` rows keep
+    // their attachment (and URL) across edits; the transaction below
+    // detaches math rows the new source no longer references.
+    let math = super::math::materialize(
+        &ctx.db,
+        &ctx.media,
+        &ctx.config,
+        &ctx.base_url(),
+        auth.account_id,
+        Some(status_id),
+        &rendered.html,
+    )
+    .await?;
+    rendered.html = math.html;
+    let math_kept = math.kept_ids;
 
     // Snapshot the superseded version into `status_edits` *before* the
     // update so `/statuses/{id}/history` can replay v0 → current.
@@ -939,6 +974,29 @@ pub async fn edit_status(
                 )));
             }
         }
+    }
+    // Math-rendered attachments: rows the new HTML still references
+    // stay attached (re-claimed — the blanket detach above may have
+    // cleared them), stale math rows detach for orphan cleanup.
+    sqlx::query(
+        "UPDATE media_attachments SET status_id = NULL, updated_at = now() \
+         WHERE status_id = $1 AND math_source IS NOT NULL \
+           AND NOT (id = ANY($2))",
+    )
+    .bind(status_id)
+    .bind(&math_kept)
+    .execute(&mut *tx)
+    .await?;
+    for media_id in &math_kept {
+        sqlx::query(
+            "UPDATE media_attachments SET status_id = $1, updated_at = now() \
+             WHERE id = $2 AND account_id = $3 AND status_id IS NULL",
+        )
+        .bind(status_id)
+        .bind(media_id)
+        .bind(auth.account_id)
+        .execute(&mut *tx)
+        .await?;
     }
     if let Some(poll) = &validated.poll {
         if let Some(old) = status.poll_id {

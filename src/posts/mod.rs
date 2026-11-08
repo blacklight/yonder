@@ -32,6 +32,7 @@ pub mod conversations;
 pub mod create;
 pub mod entity;
 pub mod jobs;
+pub mod math;
 pub mod mentions;
 pub mod polls;
 pub mod preview;

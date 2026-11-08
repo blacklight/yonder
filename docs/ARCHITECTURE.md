@@ -152,7 +152,10 @@ to these services, which are the same functions the CLI subcommands call.
 - **`posts`** — the status lifecycle: compose, render (Markdown or plain
   text), edit, delete, mentions, polls, link previews, conversations and
   scheduled/cleanup jobs. Visibility is canonicalized to
-  `public | unlisted | followers_only | direct`. See [posting.md](posting.md).
+  `public | unlisted | followers_only | direct`. With `[math] enabled`,
+  LaTeX delimiters in post text are rendered to images by an external
+  command and stored as ordinary media attachments (`math_source`
+  marks them for edit/Update reuse). See [posting.md](posting.md).
 - **`timelines`** — home, local, federated, list and tag reads. One SQL
   engine serves every scope; the home feed additionally keeps a Redis
   sorted-set index per user, filled by fan-out jobs on publish. Postgres

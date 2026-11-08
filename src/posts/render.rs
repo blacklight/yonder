@@ -90,6 +90,7 @@ pub fn render(
             let html = sanitize_markdown_html(&html, config);
             let html = inline_image_spans(&html);
             let (html, hashtags) = enhance_html(&html, mentions, &tag_url, config);
+            let html = super::math::inject_markers(&html, &config.math);
             RenderedPost { html, hashtags }
         }
         _ => {
@@ -100,6 +101,7 @@ pub fn render(
                     hashtags.push(tag);
                 }
             }
+            let html = super::math::inject_markers(&html, &config.math);
             RenderedPost { html, hashtags }
         }
     }
@@ -215,6 +217,16 @@ pub fn html_to_text(html: &str) -> String {
                             }
                         }
                     }
+                    // A math placeholder flattens back to its
+                    // delimited source so `content` keeps `$…$`.
+                    if elem.name() == "span" {
+                        if let Some(mode) = elem.attr("data-yonder-math") {
+                            let inner: String = eref.text().collect();
+                            let d = if mode == "display" { "$$" } else { "$" };
+                            out.push(format!("{d}{inner}{d}"));
+                            continue;
+                        }
+                    }
                     walk(&eref, out);
                 }
                 _ => {}
@@ -294,7 +306,12 @@ fn sanitize_html_inner(html: &str, config: &Config, allow_images: bool) -> Strin
         .iter()
         .map(String::as_str)
         .collect();
-    let mut a_attrs: HashSet<&'static str> = ["href"].into_iter().collect();
+    // `data-yonder-math-image`/`data-yonder-math-alt` mark server-rendered
+    // formula markup on inbound posts — without them a Yonder→Yonder
+    // round-trip loses the inline/display styling and the LaTeX-source
+    // fallback link.
+    let a_attrs: HashSet<&'static str> = ["href", "data-yonder-math-alt"].into_iter().collect();
+    let span_attrs: HashSet<&'static str> = ["data-yonder-math-image"].into_iter().collect();
     let mut builder = ammonia::Builder::default();
     builder
         .tags(tags)
@@ -307,7 +324,8 @@ fn sanitize_html_inner(html: &str, config: &Config, allow_images: bool) -> Strin
     let code_attrs: HashSet<&'static str> = ["class"].into_iter().collect();
     let img_attrs: HashSet<&'static str> = ["src", "alt"].into_iter().collect();
     let mut tag_attrs = std::collections::HashMap::new();
-    tag_attrs.insert("a", std::mem::take(&mut a_attrs));
+    tag_attrs.insert("a", a_attrs);
+    tag_attrs.insert("span", span_attrs);
     tag_attrs.insert("code", code_attrs.clone());
     tag_attrs.insert("pre", code_attrs);
     if allow_images {

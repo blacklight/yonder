@@ -126,9 +126,12 @@ strip inline `<img>` still receive the media.
 
 With `[math] enabled = true` and a configured `math.command`
 (disabled by default), LaTeX delimiters in post text — `$…$`,
-`$$…$$`, `\(…\)`, `\[…\]` — are detected in the rendered HTML's text
-nodes (code, preformatted text, link text and existing markup are
-skipped) and rendered to images by the external command. Each
+`$$…$$`, `\(…\)`, `\[…\]` — are detected on the raw source before
+Markdown/plain-text rendering (so multi-line `aligned` blocks keep
+their `\\` row separators and backslash commands verbatim; code,
+link text/destinations, raw HTML and URLs are skipped, matching the
+HTML-level pass used for remote `text/html` posts) and rendered to
+images by the external command. Each
 distinct formula becomes a real `media_attachments` row
 (`math_source = "{mode}:{latex}"` marks it), so:
 

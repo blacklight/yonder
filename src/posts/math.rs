@@ -346,6 +346,105 @@ fn escaped(text: &str, pos: usize) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Source-level extraction
+// ---------------------------------------------------------------------------
+
+/// A math span lifted out of raw post source before the renderer can
+/// mangle it — Markdown eats backslash escapes (`\\` → `\`, `\,` → `,`)
+/// and the plain-text renderer inserts `<br>` per line, both of which
+/// corrupt or hide multi-line formulas.
+pub(crate) struct SourceMath {
+    /// Private-use token standing in for the span in the masked source.
+    pub token: String,
+    /// `"inline"` | `"display"`.
+    pub mode: &'static str,
+    /// Raw LaTeX source (unescaped).
+    pub latex: String,
+}
+
+/// Mask math delimiters in `source`, returning the masked text plus
+/// the extracted spans. `protected` holds source byte ranges (code
+/// spans, link text/targets, raw HTML, URLs…) where math must stay
+/// literal — same exclusions [`inject_markers`] applies to rendered
+/// HTML.
+pub(crate) fn extract_source_math(
+    source: &str,
+    protected: &[std::ops::Range<usize>],
+    cfg: &MathConfig,
+) -> (String, Vec<SourceMath>) {
+    if !cfg.enabled || cfg.command.trim().is_empty() {
+        return (source.to_string(), Vec::new());
+    }
+    if !source.contains('$') && !source.contains("\\(") && !source.contains("\\[") {
+        return (source.to_string(), Vec::new());
+    }
+    let bytes = source.as_bytes();
+    let mut matches: Vec<(usize, Delim)> = Vec::new();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        // Same boundary rule as `scan_text`: only ASCII delimiter bytes
+        // may open a formula, so `pos` is always a char boundary here.
+        if !matches!(bytes[pos], b'$' | b'\\') {
+            pos += 1;
+            continue;
+        }
+        if let Some(d) = match_delim(source, pos, cfg) {
+            let overlaps = protected.iter().any(|r| r.start < d.next && r.end > pos);
+            if !overlaps {
+                let next = d.next;
+                matches.push((pos, d));
+                pos = next;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+    if matches.is_empty() {
+        return (source.to_string(), Vec::new());
+    }
+    let mut masked = String::with_capacity(source.len());
+    let mut spans = Vec::with_capacity(matches.len());
+    let mut cursor = 0usize;
+    for (i, (open, d)) in matches.iter().enumerate() {
+        masked.push_str(&source[cursor..*open]);
+        let token = format!("\u{e000}YM{i}\u{e001}");
+        masked.push_str(&token);
+        spans.push(SourceMath {
+            token,
+            mode: if d.display { "display" } else { "inline" },
+            latex: source[d.start..d.end].trim().to_string(),
+        });
+        cursor = d.next;
+    }
+    masked.push_str(&source[cursor..]);
+    (masked, spans)
+}
+
+/// Swap extraction tokens in rendered HTML for the
+/// `data-yonder-math` placeholder spans [`materialize`] consumes.
+/// The LaTeX is raw source text, so it is entity-escaped here — the
+/// attr form for `data-yonder-math-src` (decoded back by
+/// [`materialize`]) and the text form for the fallback content.
+pub(crate) fn materialize_tokens(html: &str, spans: &[SourceMath]) -> String {
+    if spans.is_empty() {
+        return html.to_string();
+    }
+    let mut out = html.to_string();
+    for s in spans {
+        out = out.replace(
+            &s.token,
+            &format!(
+                "<span data-yonder-math=\"{}\" data-yonder-math-src=\"{}\">{}</span>",
+                s.mode,
+                html_escape_attr(&s.latex),
+                html_escape_text(&s.latex),
+            ),
+        );
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Materialization
 // ---------------------------------------------------------------------------
 
@@ -755,5 +854,70 @@ mod tests {
         c.enabled = true;
         c.command.clear();
         assert_eq!(inject_markers("<p>$x$</p>", &c), "<p>$x$</p>");
+    }
+
+    // -- source-level extraction -------------------------------------
+
+    #[test]
+    fn extract_multiline_display_math() {
+        // The reported failure: `$$…$$` blocks with `aligned`, `\\`
+        // row separators and `\\[4pt]` spacing must survive verbatim.
+        let src = "before\n$$\n\\begin{aligned}\n\\text{(A1)}\\quad & a \\\\\n b &= c \\\\[4pt]\n\\end{aligned}\n$$\nafter";
+        let (masked, spans) = extract_source_math(src, &[], &cfg());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].mode, "display");
+        assert!(
+            spans[0].latex.contains("\\\\"),
+            "row sep: {}",
+            spans[0].latex
+        );
+        assert!(
+            spans[0].latex.contains("\\\\[4pt]"),
+            "spacing: {}",
+            spans[0].latex
+        );
+        assert!(!masked.contains("$$"), "masked: {masked}");
+        assert!(masked.contains(&spans[0].token));
+        assert!(masked.starts_with("before\n"));
+        assert!(masked.ends_with("\nafter"));
+    }
+
+    #[test]
+    fn extract_protected_ranges_stay_literal() {
+        // `$x$` inside a protected range (code span / link / URL) must
+        // not be extracted; `$y$` outside still is.
+        let src = "a `$x$` b $y$";
+        let (masked, spans) = extract_source_math(src, std::slice::from_ref(&(2..9)), &cfg());
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].latex, "y");
+        assert!(masked.contains("$x$"));
+    }
+
+    #[test]
+    fn extract_disabled_or_no_delims_passthrough() {
+        let mut c = cfg();
+        c.enabled = false;
+        let (m, s) = extract_source_math("$x$", &[], &c);
+        assert_eq!(m, "$x$");
+        assert!(s.is_empty());
+        let (m, s) = extract_source_math("no math here", &[], &cfg());
+        assert_eq!(m, "no math here");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn materialize_tokens_emits_placeholders() {
+        let src = "hi $x < y$ and $$a & b$$";
+        let (masked, spans) = extract_source_math(src, &[], &cfg());
+        assert_eq!(spans.len(), 2);
+        let html = format!("<p>{masked}</p>");
+        let out = materialize_tokens(&html, &spans);
+        assert!(out.contains("data-yonder-math=\"inline\""), "{out}");
+        assert!(out.contains("data-yonder-math=\"display\""), "{out}");
+        // Attr-escaped for materialize's decode; text-escaped for
+        // the unwrap fallback.
+        assert!(out.contains("data-yonder-math-src=\"x &lt; y\""), "{out}");
+        assert!(out.contains("data-yonder-math-src=\"a &amp; b\""), "{out}");
+        assert!(!out.contains(&spans[0].token));
     }
 }

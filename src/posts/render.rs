@@ -85,26 +85,89 @@ pub fn render(
             let options = pulldown_cmark::Options::ENABLE_TABLES
                 | pulldown_cmark::Options::ENABLE_STRIKETHROUGH
                 | pulldown_cmark::Options::ENABLE_TASKLISTS;
-            let parser = pulldown_cmark::Parser::new_ext(source, options);
+            // Lift math out of the source before pulldown-cmark can
+            // eat backslash escapes (`\\` → `\`, `\,` → `,`) — the
+            // rendered HTML then carries placeholder tokens swapped
+            // for `data-yonder-math` spans below.
+            let (masked, math_spans) = if config.math.enabled {
+                let protected = markdown_math_protected(source, options);
+                super::math::extract_source_math(source, &protected, &config.math)
+            } else {
+                (source.to_string(), Vec::new())
+            };
+            let parser = pulldown_cmark::Parser::new_ext(&masked, options);
             pulldown_cmark::html::push_html(&mut html, parser);
             let html = sanitize_markdown_html(&html, config);
             let html = inline_image_spans(&html);
             let (html, hashtags) = enhance_html(&html, mentions, &tag_url, config);
+            let html = super::math::materialize_tokens(&html, &math_spans);
             let html = super::math::inject_markers(&html, &config.math);
             RenderedPost { html, hashtags }
         }
         _ => {
-            let RenderedContent { html, mut hashtags } = render_post_html(source, &tag_url);
+            let (masked, math_spans) = if config.math.enabled {
+                let protected = plain_url_ranges(source);
+                super::math::extract_source_math(source, &protected, &config.math)
+            } else {
+                (source.to_string(), Vec::new())
+            };
+            let RenderedContent { html, mut hashtags } = render_post_html(&masked, &tag_url);
             let (html, found) = enhance_html(&html, mentions, &tag_url, config);
             for tag in found {
                 if !hashtags.contains(&tag) {
                     hashtags.push(tag);
                 }
             }
+            let html = super::math::materialize_tokens(&html, &math_spans);
             let html = super::math::inject_markers(&html, &config.math);
             RenderedPost { html, hashtags }
         }
     }
+}
+
+/// Source byte ranges in Markdown `source` where math must stay
+/// literal — inline code, code blocks, raw HTML, footnote refs, and
+/// everything inside links/images (matching the `code`/`a` skip list
+/// [`super::math::inject_markers`] applies to rendered HTML). Link and
+/// image containers are tracked by depth so their text *and*
+/// destination stay protected regardless of how pulldown spans the
+/// tag events.
+fn markdown_math_protected(
+    source: &str,
+    options: pulldown_cmark::Options,
+) -> Vec<std::ops::Range<usize>> {
+    use pulldown_cmark::{Event, Tag, TagEnd};
+    let mut ranges = Vec::new();
+    let mut link_depth = 0usize;
+    for (event, range) in pulldown_cmark::Parser::new_ext(source, options).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link { .. } | Tag::Image { .. }) => {
+                link_depth += 1;
+                ranges.push(range);
+            }
+            Event::End(TagEnd::Link | TagEnd::Image) => {
+                link_depth = link_depth.saturating_sub(1);
+                ranges.push(range);
+            }
+            _ if link_depth > 0 => ranges.push(range),
+            Event::Code(_)
+            | Event::Html(_)
+            | Event::InlineHtml(_)
+            | Event::FootnoteReference(_) => ranges.push(range),
+            _ => {}
+        }
+    }
+    ranges.sort_by_key(|r| r.start);
+    ranges
+}
+
+/// Source byte ranges of http(s) URLs in plain text — the same pattern
+/// pubby's [`render_post_html`] linkifies, so `$…$` inside a URL is
+/// never mistaken for math (it would render inside the anchor anyway).
+fn plain_url_ranges(source: &str) -> Vec<std::ops::Range<usize>> {
+    static URL_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"https?://[^\s<>"']+"#).unwrap());
+    URL_RE.find_iter(source).map(|m| m.range()).collect()
 }
 
 /// A Markdown `![alt](url)` image, normalized for federation: the URL
@@ -1197,5 +1260,76 @@ mod tests {
         );
         assert_eq!(srcs.len(), 1);
         assert!(srcs.contains("https://a.example/x.png"));
+    }
+
+    // -- math source extraction ----------------------------------------
+
+    fn math_cfg() -> Config {
+        let mut c = cfg();
+        c.math.enabled = true;
+        c.math.command = "true".to_string();
+        c
+    }
+
+    #[test]
+    fn markdown_multiline_display_math_survives() {
+        // Regression: pulldown-cmark eats backslash escapes (`\\` → `\`,
+        // `\,` → `,`) — extraction must happen on the raw source so
+        // `aligned` row separators and `\\[4pt]` spacing reach the
+        // renderer verbatim.
+        let src = "intro\n$$\n\\begin{aligned}\n\\text{(A1)}\\quad & a \\\\\n b &= c \\\\[4pt]\n\\end{aligned}\n$$\noutro";
+        let r = render(src, "text/markdown", &[], "https://y.test", &math_cfg());
+        assert!(
+            r.html.contains("data-yonder-math=\"display\""),
+            "{}",
+            r.html
+        );
+        assert!(r.html.contains("\\begin{aligned}"), "{}", r.html);
+        assert!(r.html.contains("\\\\"), "row sep lost: {}", r.html);
+        assert!(r.html.contains("\\\\[4pt]"), "spacing lost: {}", r.html);
+        assert!(r.html.contains("intro"), "{}", r.html);
+        assert!(r.html.contains("outro"), "{}", r.html);
+    }
+
+    #[test]
+    fn plain_multiline_display_math_survives() {
+        // Regression: the plain-text renderer inserts `<br>` per line,
+        // splitting `$$…$$` across text nodes so the HTML scanner
+        // never matched. Extraction on the source fixes it.
+        let src = "x\n$$\n\\begin{aligned}\na &= b \\\\\n\\end{aligned}\n$$\ny";
+        let r = render(src, "text/plain", &[], "https://y.test", &math_cfg());
+        assert!(
+            r.html.contains("data-yonder-math=\"display\""),
+            "{}",
+            r.html
+        );
+        assert!(r.html.contains("\\begin{aligned}"), "{}", r.html);
+    }
+
+    #[test]
+    fn markdown_math_in_code_links_stays_literal() {
+        // Same exclusions as the HTML scanner: code spans and link
+        // text/destinations keep `$…$` literal; only the bare `$z$`
+        // becomes a placeholder.
+        let src = "`$x$` and [$y$](https://e.com) and $z$";
+        let r = render(src, "text/markdown", &[], "https://y.test", &math_cfg());
+        assert_eq!(
+            r.html.matches("data-yonder-math=\"").count(),
+            1,
+            "{}",
+            r.html
+        );
+        assert!(r.html.contains("<code>$x$</code>"), "{}", r.html);
+        assert!(r.html.contains(">$y$</a>"), "{}", r.html);
+        assert!(r.html.contains("data-yonder-math-src=\"z\""), "{}", r.html);
+    }
+
+    #[test]
+    fn markdown_disabled_math_renders_normally() {
+        // With [math] off the source is untouched — Markdown still
+        // eats the backslashes (pre-existing behaviour).
+        let src = "$$\na \\\\ b\n$$";
+        let r = render(src, "text/markdown", &[], "https://y.test", &cfg());
+        assert!(!r.html.contains("data-yonder-math"), "{}", r.html);
     }
 }

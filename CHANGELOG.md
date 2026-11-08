@@ -28,6 +28,10 @@
 - `ap`: Treat type-only `Image`, `Video`, and `Audio` ActivityPub attachments
   as media kinds, preserving inline images from SocialHome/PyFed
   ([`994f2c3`](https://git.platypush.tech/blacklight/yonder/commit/994f2c3be8a9d9bc8f5436656745d90f12077c3e)).
+- `math`: Fix multi-line `$$…$$` formulas rendering as literal LaTeX or
+  corrupted single lines — formulas are now extracted from the raw source
+  before Markdown/plain-text rendering, preserving `aligned` environments,
+  `\\` row separators and backslash spacing commands verbatim.
 
 ### Changed
 

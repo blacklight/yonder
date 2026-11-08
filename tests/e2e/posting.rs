@@ -3346,3 +3346,53 @@ async fn math_formulas_render_as_media_attachments() {
     );
     assert!(!stripped["content"].as_str().unwrap().contains("<img"));
 }
+
+/// Multi-line `$$…$$` blocks with `aligned` environments must reach
+/// the renderer verbatim — Markdown's backslash escapes (`\\` → `\`)
+/// and the plain-text `<br>` insertion used to corrupt or hide them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn math_multiline_aligned_survives_markdown_and_plain() {
+    let _permit = harness::acquire().await;
+    let mut config = Config::default();
+    config.math.enabled = true;
+    config.math.command = harness::fake_math_command();
+    let Some(env) = test_env(config).await else {
+        return;
+    };
+    let token = register(&env.app, "mathml", "mathml@example.com").await;
+
+    // LaTeX row separators (`\\`) and spacing (`\\[4pt]`) — each `\\`
+    // below is one escaped backslash pair in the Rust literal.
+    let formula = "$$\n\\begin{aligned}\n\\text{(A1)}\\quad & a \\\\\n b &= c \\\\[4pt]\n\\end{aligned}\n$$";
+    for content_type in ["text/markdown", "text/plain"] {
+        let (status, body) = request(
+            &env.app,
+            "POST",
+            "/api/v1/statuses",
+            Some(&token),
+            Some(json!({
+                "status": format!("before\n{formula}\nafter"),
+                "content_type": content_type,
+            })),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{content_type}: {body}");
+        let atts = body["media_attachments"].as_array().unwrap();
+        assert_eq!(atts.len(), 1, "{content_type}: {body}");
+        let src = atts[0]["yonder"]["math_source"].as_str().unwrap();
+        assert!(src.starts_with("display:"), "{src}");
+        let latex = &src["display:".len()..];
+        assert!(latex.contains("\\\\"), "row sep lost ({content_type}): {latex}");
+        assert!(
+            latex.contains("\\\\[4pt]"),
+            "spacing lost ({content_type}): {latex}"
+        );
+        assert!(latex.contains("\\begin{aligned}"), "{latex}");
+        let html = body["content"].as_str().unwrap();
+        assert!(
+            html.contains("data-yonder-math-image=\"display\""),
+            "{content_type}: {html}"
+        );
+    }
+}

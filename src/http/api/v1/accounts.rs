@@ -660,7 +660,7 @@ pub async fn account_statuses(
         HeaderMap::new()
     } else {
         let cursors = crate::timelines::query::cursors(&rows);
-        paginate::headers(&uri, &params, &cursors, page.limit)
+        paginate::headers(&state.config(), &uri, &params, &cursors, page.limit)
     };
     Ok((headers, Json(json!(out))))
 }

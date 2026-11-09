@@ -160,7 +160,7 @@ pub async fn list(
         .filter(|r| r.status_id.is_none_or(|id| !muted.contains(&id)))
         .collect();
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     let ctx = PostContext::new(&state);
     let out = notifications::entities(&ctx, &rows, &rules).await?;
     Ok((headers, Json(Value::Array(out))))

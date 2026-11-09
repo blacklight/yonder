@@ -115,7 +115,7 @@ pub async fn favourites_list(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let statuses: Vec<crate::posts::StatusRow> = rows.into_iter().map(|(s, _)| s).collect();
     let items = entity::status_entities(&ctx, &statuses, Some(auth.account_id)).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(items))))
 }
 
@@ -171,7 +171,7 @@ pub async fn favourited_by(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
 }
 
@@ -311,7 +311,7 @@ pub async fn reblogged_by(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
 }
 
@@ -343,7 +343,7 @@ pub async fn quotes(
     let page = paginate::parse(&params);
     let (statuses, cursors) = quote::quoted_by(&ctx, &status, &page, viewer).await?;
     let items = entity::status_entities(&ctx, &statuses, viewer).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(items))))
 }
 
@@ -419,7 +419,7 @@ pub async fn bookmarks_list(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let statuses: Vec<crate::posts::StatusRow> = rows.into_iter().map(|(s, _)| s).collect();
     let items = entity::status_entities(&ctx, &statuses, Some(auth.account_id)).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(items))))
 }
 

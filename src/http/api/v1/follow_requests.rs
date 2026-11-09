@@ -43,7 +43,7 @@ pub async fn list(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
 }
 

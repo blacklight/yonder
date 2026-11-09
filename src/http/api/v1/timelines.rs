@@ -85,7 +85,7 @@ async fn render(
     let mut out = posts::entity::status_entities(&ctx, &rows, viewer).await?;
     content_filters::apply::attach_filtered(&state.db, rules, &rows, &mut out).await?;
     let cursors = timelines::query::cursors(&rows);
-    let headers = paginate::headers(uri, params, &cursors, limit);
+    let headers = paginate::headers(&state.config(), uri, params, &cursors, limit);
     Ok((headers, Json(json!(out))))
 }
 

@@ -41,7 +41,7 @@ pub async fn list(
     let rows = lists::list(&state.db, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|l| l.id).collect();
     let entities: Vec<Value> = rows.iter().map(|l| l.entity()).collect();
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(entities))))
 }
 
@@ -176,7 +176,7 @@ pub async fn members(
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(accounts))))
 }
 

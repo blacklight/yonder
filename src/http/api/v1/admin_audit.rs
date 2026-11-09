@@ -89,6 +89,6 @@ pub async fn list(
         .iter()
         .filter_map(|row| row["id"].as_str().and_then(|s| s.parse().ok()))
         .collect();
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(rows))))
 }

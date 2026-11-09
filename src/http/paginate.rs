@@ -11,6 +11,8 @@ use std::collections::HashMap;
 
 use axum::http::{header, HeaderMap, HeaderValue, Uri};
 
+use crate::{activitypub::federation_base_url, config::Config};
+
 /// The parsed pagination params.
 #[derive(Debug, Clone, Default)]
 pub struct Page {
@@ -36,14 +38,18 @@ pub fn parse(params: &HashMap<String, String>) -> Page {
 /// Build the `Link` header for a page of results: `rel="next"` when
 /// `next_cursor` is set (older rows exist), always `rel="prev"` when
 /// `prev_cursor` is set (newer rows). `uri`'s path is preserved; the
-/// caller's other query params survive via `params`.
+/// caller's other query params survive via `params`. URLs are absolute
+/// — Mastodon clients (e.g. masto.js) parse them with `new URL()` and
+/// reject relative targets.
 pub fn link_header(
+    config: &Config,
     uri: &Uri,
     params: &HashMap<String, String>,
     next_cursor: Option<i64>,
     prev_cursor: Option<i64>,
 ) -> Option<HeaderValue> {
     let mut parts = Vec::new();
+    let base = federation_base_url(config);
     let build = |cursor_key: &str, cursor: i64| {
         let mut q: Vec<(String, String)> = params
             .iter()
@@ -56,7 +62,7 @@ pub fn link_header(
         let query = url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(q.iter())
             .finish();
-        format!("{}?{}", uri.path(), query)
+        format!("{base}{}?{}", uri.path(), query)
     };
     if let Some(c) = next_cursor {
         parts.push(format!("<{}>; rel=\"next\"", build("max_id", c)));
@@ -74,6 +80,7 @@ pub fn link_header(
 /// `next` from the last cursor (only when the page was full), `prev`
 /// from the first cursor (always, unless the caller opts out).
 pub fn headers(
+    config: &Config,
     uri: &Uri,
     params: &HashMap<String, String>,
     cursors: &[i64],
@@ -86,7 +93,7 @@ pub fn headers(
         None
     };
     let prev = cursors.first().copied();
-    if let Some(v) = link_header(uri, params, next, prev) {
+    if let Some(v) = link_header(config, uri, params, next, prev) {
         map.insert(header::LINK, v);
     }
     map

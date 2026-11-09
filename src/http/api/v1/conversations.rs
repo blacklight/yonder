@@ -181,7 +181,7 @@ pub async fn list_conversations(
         ));
     }
     let cursors: Vec<i64> = groups.iter().map(|g| g.newest_id).collect();
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(out))))
 }
 
@@ -221,7 +221,7 @@ pub async fn conversation_statuses(
     let ctx = PostContext::new(&state);
     let out = posts::entity::status_entities(&ctx, &rows, Some(auth.account_id)).await?;
     let cursors = crate::timelines::query::cursors(&rows);
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(out))))
 }
 

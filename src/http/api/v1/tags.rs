@@ -147,6 +147,6 @@ pub async fn followed_tags(
     let base = ctx.base_url();
     let cursors: Vec<i64> = rows.iter().map(|(_, cursor)| *cursor).collect();
     let out: Vec<Value> = rows.iter().map(|(t, _)| tag_json(&base, t)).collect();
-    let headers = paginate::headers(&uri, &params, &cursors, page.limit);
+    let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     Ok((headers, Json(json!(out))))
 }

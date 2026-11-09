@@ -7,7 +7,29 @@
 - `instance`: Add `instance.single_user` personal-instance mode — visitors
   without a working session who open `/` are redirected to the configured
   local profile (`/@user`); signed-in users keep the normal home timeline.
-  Exposed to the SPA as `yonder.single_user` on the instance entities.
+  Exposed to the SPA as `yonder.single_user` on the instance entities
+  ([`9f049a0`](https://git.platypush.tech/blacklight/yonder/commit/9f049a0d3b07bbb60647c7f2ea2f57ea96271d99)).
+
+### Fixed
+
+- `math`: Fix posts containing math delimiters and non-ASCII text
+  panicking — the failure also wedged retries on a stale idempotency
+  reservation, now treated as abandoned after 15 minutes
+  ([`b6097fa`](https://git.platypush.tech/blacklight/yonder/commit/b6097fa48dad896a748db7e67a861b8e72066c14)).
+- `http`: Emit absolute URLs in pagination `Link` headers — clients like
+  Phanpy (masto.js) parse link targets with `new URL()` and rejected
+  Yonder's relative paths, failing to load timelines
+  ([`cd06edb`](https://git.platypush.tech/blacklight/yonder/commit/cd06edbf2533f0cf675c82fe54d5620190d97b27)).
+- `math`: Use paper-style numbered links (`(1)`, `(2)`, …) as the
+  fallback for rendered formulas instead of the raw LaTeX link text, and
+  apply the formula styles globally so quotes, embeds and conversations
+  render — and hide — them consistently
+  ([`44d3293`](https://git.platypush.tech/blacklight/yonder/commit/44d32934f5eeb8570e71170a753aa5b318287666)).
+
+### Changed
+
+- `docs`: Update the table of contents in `README.md` and `INSTALL.md`
+  ([`f18d79d`](https://git.platypush.tech/blacklight/yonder/commit/f18d79d60f3e266a331e253d2a3d8a83b808e903)).
 
 ## 1.0.4
 

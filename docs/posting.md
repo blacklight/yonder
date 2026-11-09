@@ -146,12 +146,13 @@ distinct formula becomes a real `media_attachments` row
 - the ActivityPub `attachment` list carries it as a standard `Image`
   document — Mastodon and other clients without formula support see
   the rendered image. Inside the `content` markup each formula is also
-  followed by `<a data-yonder-math-alt>` linking to the image with the
-  delimited LaTeX source as its text: clients that strip `<img>`
-  (Mastodon) still get a clickable formula reference, and MathJax
-  forks may typeset the link text inline. Yonder hides the link
-  visually (the `<img>` is the visible formula) but keeps it for
-  assistive tech.
+  followed by `<a data-yonder-math-alt>` linking to the image, its
+  text a paper-style numbered reference — `(1)`, `(2)`, … — counted
+  per rendered formula in document order: clients that strip `<img>`
+  (Mastodon) still get a compact clickable formula reference. The
+  LaTeX source stays available as the `<img>` `alt` text and the
+  attachment's `description`. Yonder hides the link visually (the
+  `<img>` is the visible formula) but keeps it for assistive tech.
 
 Renderer contract: `<command>… inline|display` (argv split on
 whitespace, no shell), LaTeX source without delimiters on stdin, PNG

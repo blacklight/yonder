@@ -280,9 +280,24 @@ pub fn html_to_text(html: &str) -> String {
                             }
                         }
                     }
-                    // A math placeholder flattens back to its
-                    // delimited source so `content` keeps `$…$`.
                     if elem.name() == "span" {
+                        // A materialized formula (`<img>` + numbered
+                        // fallback link) flattens to the LaTeX source
+                        // carried in the img's `alt` — keeps `content`
+                        // searchable instead of leaving the "(N)" link
+                        // text.
+                        if elem.attr("data-yonder-math-image").is_some() {
+                            let alt = eref
+                                .children()
+                                .filter_map(scraper::ElementRef::wrap)
+                                .find(|c| c.value().name() == "img")
+                                .and_then(|img| img.value().attr("alt"))
+                                .unwrap_or("");
+                            out.extend(alt.split_whitespace().map(str::to_string));
+                            continue;
+                        }
+                        // A math placeholder flattens back to its
+                        // delimited source so `content` keeps `$…$`.
                         if let Some(mode) = elem.attr("data-yonder-math") {
                             let inner: String = eref.text().collect();
                             let d = if mode == "display" { "$$" } else { "$" };
@@ -927,6 +942,22 @@ mod tests {
         // Multi-word anchor text is not a token — kept verbatim.
         let html = "<p><a href=\"https://x.test\">@ our team</a></p>";
         assert_eq!(html_to_text(html), "@ our team");
+    }
+
+    #[test]
+    fn html_to_text_math_image_flattens_to_alt() {
+        // The materialized formula span keeps the LaTeX source in the
+        // img `alt`; flattening must emit that, not the "(N)" fallback
+        // link text.
+        let html = "<p>energy <span data-yonder-math-image=\"inline\">\
+                    <img src=\"https://x.test/m/1.png\" alt=\"E = mc^2\" width=\"60\" height=\"20\">\
+                    <a data-yonder-math-alt href=\"https://x.test/m/1.png\">(1)</a></span> holds</p>";
+        assert_eq!(html_to_text(html), "energy E = mc^2 holds");
+
+        // An image-less span (shouldn't happen, but degrade quietly).
+        let html = "<p><span data-yonder-math-image=\"display\">\
+                    <a data-yonder-math-alt href=\"https://x.test/m/2.png\">(1)</a></span></p>";
+        assert_eq!(html_to_text(html), "");
     }
 
     #[test]

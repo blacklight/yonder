@@ -3298,10 +3298,16 @@ async fn math_formulas_render_as_media_attachments() {
     // attachment entity exposes.
     let img_url = atts[0]["url"].as_str().unwrap();
     assert!(html.contains(&format!("src=\"{img_url}\"")), "{html}");
-    // Clients that strip <img> (e.g. Mastodon) still get a link to the
-    // rendered formula carrying its delimited LaTeX source.
+    // Clients that strip <img> (e.g. Mastodon) still get paper-style
+    // numbered links to the rendered image — one per occurrence, the
+    // repeated `$x^2$` gets its own number. The LaTeX source lives in
+    // the img `alt` and the attachment `description`.
     assert!(html.contains("data-yonder-math-alt"), "{html}");
-    assert!(html.contains("\\(x^2\\)"), "{html}");
+    assert!(html.contains(">(1)</a>"), "{html}");
+    assert!(html.contains(">(2)</a>"), "{html}");
+    assert!(html.contains(">(3)</a>"), "{html}");
+    assert!(html.contains("alt=\"x^2\""), "{html}");
+    assert!(!html.contains("\\(x^2\\)"), "{html}");
 
     // Editing with the same formulas reuses the attachment rows —
     // same ids, no regeneration.

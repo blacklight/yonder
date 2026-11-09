@@ -559,6 +559,10 @@ pub async fn materialize(
     let mut cursor = 0usize;
     let mut kept: Vec<i64> = Vec::new();
     let mut new_ids: Vec<i64> = Vec::new();
+    // Paper-style equation counter for the fallback links — only
+    // rendered formulas consume a number, so failures/budget
+    // overflows never leave gaps.
+    let mut eq_no = 0usize;
     for f in &found {
         out.push_str(&html[cursor..f.range.start]);
         cursor = f.range.end;
@@ -570,26 +574,24 @@ pub async fn materialize(
         };
         match img {
             Some(r) => {
+                eq_no += 1;
                 let mode = if f.display { "display" } else { "inline" };
                 let alt: String = f.latex.chars().take(200).collect();
                 // Fallback for clients that strip <img> (e.g. Mastodon):
-                // a link to the rendered image carrying the delimited
-                // LaTeX source. MathJax-enabled forks may typeset it
-                // inline; Yonder hides it since the <img> is the
-                // visible formula.
-                let delimited = if f.display {
-                    format!("\\[{}\\]", html_escape_text(&f.latex))
-                } else {
-                    format!("\\({}\\)", html_escape_text(&f.latex))
-                };
+                // a numbered link to the rendered image, `(N)` like a
+                // paper's equation reference. The LaTeX source stays in
+                // the img `alt` and the attachment `description` — the
+                // raw delimited source used to be the link text, which
+                // clients that show both <img> and anchors (Phanpy)
+                // rendered as an unreadable blob. Yonder hides the link
+                // visually since the <img> is the visible formula.
                 out.push_str(&format!(
-                    "<span data-yonder-math-image=\"{mode}\"><img src=\"{}\" alt=\"{}\" width=\"{}\" height=\"{}\"><a data-yonder-math-alt href=\"{}\">{}</a></span>",
+                    "<span data-yonder-math-image=\"{mode}\"><img src=\"{}\" alt=\"{}\" width=\"{}\" height=\"{}\"><a data-yonder-math-alt href=\"{}\">({eq_no})</a></span>",
                     html_escape_attr(&r.url),
                     html_escape_attr(&alt),
                     r.width,
                     r.height,
                     html_escape_attr(&r.url),
-                    delimited,
                 ));
                 if !kept.contains(&r.id) {
                     kept.push(r.id);

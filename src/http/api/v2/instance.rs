@@ -13,7 +13,8 @@ use serde_json::{json, Value};
 use crate::{
     config::RegistrationMode,
     http::api::v1::instance::{
-        asset_url, contact_account, pleroma_metadata, rules_json, yonder_metadata,
+        asset_url, contact_account, pleroma_metadata, rules_json, streaming_api_url,
+        yonder_metadata,
     },
     http::AppState,
     Result,
@@ -65,7 +66,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         },
         "configuration": {
             "urls": {
-                "streaming_api": format!("wss://{}/api/v1/streaming", config.instance.domain),
+                "streaming_api": streaming_api_url(config),
             },
             "statuses": {
                 "max_characters": config.content.max_post_length,

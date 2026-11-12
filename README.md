@@ -144,7 +144,9 @@ Configuration resolves in this order (highest wins):
 4. **Built-in defaults**
 
 Run `yonder config list` to see every key in both `config.toml` and
-environment-variable form.
+environment-variable form. For split-domain deployments — handles on
+one domain, ActivityPub on another — see
+[`docs/instance.md`](docs/instance.md#domains-the-acct-domain-vs-the-federation-origin).
 
 ## ⚡ Running the service
 

@@ -30,6 +30,59 @@ anonymous-eligible.
 Both entities also carry a `yonder` extension block; today it only
 has `single_user` (see below).
 
+## Domains: the acct domain vs the federation origin
+
+`instance.domain` and `federation.base_url` can name different hosts —
+the Mastodon `WEB_DOMAIN`/`LOCAL_DOMAIN` split.
+
+- **`instance.domain`** is the *acct identity*: local handles render as
+  `@user@{instance.domain}`, WebFinger answers `acct:` resources for it,
+  and it feeds `uri`/`domain` on the instance entities,
+  `urls.streaming_api`, the WebAuthn `rp_id` and the TOTP enrollment
+  issuer. It is a bare hostname (no scheme, no path) — Yonder does not
+  require it to be the host the app is served on.
+- **`federation.base_url`** is the *federation origin*: actor ids,
+  inbox/outbox endpoints and object URLs are minted under it
+  (`{base}/ap/users/{username}`, `{base}/ap/actor`, …). It defaults to
+  `https://{instance.domain}`; set it explicitly whenever the two
+  differ, and for `http` dev or containerized setups.
+
+Example — app served on `social.example.com`, handles advertised as
+`@user@example.com`:
+
+```toml
+[instance]
+domain = "example.com"
+
+[federation]
+base_url = "https://social.example.com"
+```
+
+With that split:
+
+- WebFinger for `acct:alice@example.com` is answered at
+  `https://example.com/.well-known/webfinger`, but the actor document
+  it links to lives at `https://social.example.com/ap/users/alice`.
+  The reverse proxy must therefore forward `/.well-known/webfinger`
+  (plus `/.well-known/host-meta`, `/.well-known/nodeinfo` and
+  `/nodeinfo/*` for compatibility) on the handle domain to Yonder.
+- Both names count as "this instance" for `/@user@domain` profile
+  paths and local-URL detection (`activitypub::own_domain`), so either
+  spelling resolves. Feed discovery (`<link rel="alternate">`) and
+  `rel="me"` injection match `instance.domain` only.
+- `urls.streaming_api` on both instance entities is derived from
+  `federation.base_url` — the host actually serving the app — with the
+  scheme remapped `https`→`wss`/`http`→`ws`, so clients dial the
+  federation origin, not the handle domain.
+
+Caveats:
+
+- Actor ids are provisioned once, at account creation, from
+  `base_url`; changing it later does not rekey existing actors — pick
+  the origin before users register.
+- `yonder instance set-domain` (and `config set instance.domain`)
+  change only the acct domain.
+
 ## Single-user redirect
 
 `instance.single_user` puts the instance in personal-instance mode:

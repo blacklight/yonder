@@ -338,7 +338,10 @@ impl Default for RedisConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InstanceConfig {
-    /// Public domain name of this instance (`example.com`, no scheme).
+    /// Acct/WebFinger domain — local handles render as
+    /// `@user@{domain}`. Bare hostname, no scheme; may differ from the
+    /// host the app is served on (see `federation.base_url` and
+    /// `docs/instance.md` "Domains").
     pub domain: String,
     pub name: String,
     pub description: String,
@@ -504,9 +507,11 @@ pub struct FederationConfig {
     /// fetches). Inbound requests are verified in either format.
     pub signature_scheme: SignatureScheme,
     /// Public base URL for ActivityPub identifiers (scheme included,
-    /// e.g. `https://example.com`). Defaults to `https://{instance.domain}`
-    /// at resolve time — set explicitly for http dev and containerized
-    /// federation tests.
+    /// e.g. `https://example.com`) — the origin actor/object IRIs are
+    /// minted under. Defaults to `https://{instance.domain}` at resolve
+    /// time — set explicitly for http dev, containerized federation
+    /// tests, or a domain split where `instance.domain` stays the
+    /// handle domain (see `docs/instance.md` "Domains").
     pub base_url: Option<String>,
     /// Allow federation traffic to loopback/private targets. Dev/test
     /// only — the SSRF guard refuses them otherwise.

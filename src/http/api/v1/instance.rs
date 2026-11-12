@@ -59,6 +59,28 @@ pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
     })
 }
 
+/// `urls.streaming_api` — the WebSocket endpoint clients dial. Derived
+/// from `federation.base_url` (the origin actually serving the app, so
+/// domain-split deployments advertise the host that answers) with the
+/// scheme remapped `https`→`wss`/`http`→`ws`; falls back to
+/// `wss://{instance.domain}` when the base URL doesn't parse.
+pub(crate) fn streaming_api_url(config: &crate::config::Config) -> String {
+    let base = crate::activitypub::federation_base_url(config);
+    let parsed = url::Url::parse(&base).ok().and_then(|mut u| {
+        let scheme = match u.scheme() {
+            "https" => "wss".to_string(),
+            "http" => "ws".to_string(),
+            other => other.to_string(),
+        };
+        u.set_scheme(&scheme).ok()?;
+        Some(u)
+    });
+    match parsed {
+        Some(u) => format!("{}/api/v1/streaming", u.as_str().trim_end_matches('/')),
+        None => format!("wss://{}/api/v1/streaming", config.instance.domain),
+    }
+}
+
 /// Yonder-specific instance extensions, emitted identically on the v1
 /// and v2 entities. `single_user` is the personal-instance redirect
 /// target (`instance.single_user`) — `null` when unset.
@@ -139,7 +161,7 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         "short_description": config.instance.short_description,
         "email": config.instance.contact_email,
         "version": format!("Yonder/{}", env!("CARGO_PKG_VERSION")),
-        "urls": {"streaming_api": format!("wss://{}/api/v1/streaming", config.instance.domain)},
+        "urls": {"streaming_api": streaming_api_url(config)},
         "thumbnail": asset_url(&base_url, &config.instance.banner_path, "banner"),
         "stats": {
             "user_count": row.get::<i64, _>("user_count"),
@@ -352,5 +374,37 @@ fn asset_content_type(path: &str) -> Option<&'static str> {
         "avif" => Some("image/avif"),
         "ico" => Some("image/x-icon"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn streaming_api_defaults_to_instance_domain() {
+        let mut config = Config::default();
+        config.instance.domain = "example.com".into();
+        assert_eq!(
+            streaming_api_url(&config),
+            "wss://example.com/api/v1/streaming"
+        );
+    }
+
+    #[test]
+    fn streaming_api_follows_base_url_scheme_and_port() {
+        let mut config = Config::default();
+        config.instance.domain = "example.com".into();
+        config.federation.base_url = Some("https://social.example.com:8443/".into());
+        assert_eq!(
+            streaming_api_url(&config),
+            "wss://social.example.com:8443/api/v1/streaming"
+        );
+        config.federation.base_url = Some("http://localhost:3000".into());
+        assert_eq!(
+            streaming_api_url(&config),
+            "ws://localhost:3000/api/v1/streaming"
+        );
     }
 }

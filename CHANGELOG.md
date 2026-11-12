@@ -4,6 +4,10 @@
 
 ### Added
 
+- `docs`: Document the domain-split configuration — `instance.domain`
+  is the acct/WebFinger identity (`@user@domain`) while
+  `federation.base_url` is the origin actor/object IRIs are minted
+  under; `config.toml.example` and the config field docs now say so.
 - `federation.signature_scheme` (`"draft-cavage"` default, or `"rfc9421"`)
   selects the wire format for outbound signed requests — deliveries and
   object/actor fetches. Inbound requests are verified in either format.
@@ -11,6 +15,14 @@
   Ed25519 key (migration 0053, generated on first load for existing rows).
   It is advertised in `additionalPublicKeys` and signs RFC 9421 deliveries
   and object fetches when `federation.signature_scheme = "rfc9421"`.
+
+### Fixed
+
+- `instance`: `urls.streaming_api` on the v1/v2 instance entities is
+  now derived from `federation.base_url` (scheme remapped to
+  `ws`/`wss`) instead of `instance.domain` — domain-split deployments
+  advertise the host that actually serves `/api/v1/streaming`, and
+  non-default ports/schemes are expressed correctly.
 
 ## 1.0.6
 

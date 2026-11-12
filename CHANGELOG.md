@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## Unreleased
+
+### Fixed
+
+- `blocks`: Enforce per-user account and domain blocks across reads —
+  blocked or domain-blocked accounts are now hidden from status views,
+  timelines, interaction lists, follow listings, notifications,
+  conversations and ActivityPub object serving, and their inbound
+  Like/Announce/EmojiReact activities no longer apply
+  ([`95aeef7`](https://git.platypush.tech/blacklight/yonder/commit/95aeef77a88c6eebb7d2cb12a352bef596153fa4)).
+
 ## 1.0.5
 
 ### Added

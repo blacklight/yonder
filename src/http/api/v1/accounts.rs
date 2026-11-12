@@ -739,9 +739,16 @@ pub async fn familiar_followers(
     .bind(&ids)
     .fetch_all(&state.db)
     .await?;
+    // Familiar followers the viewer blocks or domain-blocked stay
+    // hidden — suggestions must not route around a block.
+    let mut pairs: Vec<(i64, i64)> = rows.iter().map(|(_, follower)| (*follower, 0)).collect();
+    crate::social::visibility::retain_visible(&state.db, Some(auth.account_id), &mut pairs).await?;
+    let visible: std::collections::HashSet<i64> = pairs.into_iter().map(|(id, _)| id).collect();
     let mut by_target: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
     for (target, follower) in &rows {
-        by_target.entry(*target).or_default().push(*follower);
+        if visible.contains(follower) {
+            by_target.entry(*target).or_default().push(*follower);
+        }
     }
     let ctx = crate::posts::PostContext::new(&state);
     let base = ctx.base_url();

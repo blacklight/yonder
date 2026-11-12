@@ -79,10 +79,14 @@ pub async fn is_local_account(db: &PgPool, account_id: i64) -> Result<bool> {
         .ok_or_else(|| Error::NotFound("account".into()))
 }
 
-/// Whether `blocker` has blocked `blocked` (blocker → blocked).
+/// Whether `blocker` has blocked `blocked` (blocker → blocked): a direct
+/// account block, or a per-user domain block covering the blocked
+/// account's remote domain.
 pub async fn is_blocked(db: &PgPool, blocker: i64, blocked_id: i64) -> Result<bool> {
     sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2)",
+        "SELECT EXISTS(SELECT 1 FROM blocks WHERE account_id = $1 AND target_account_id = $2) \
+         OR EXISTS(SELECT 1 FROM account_domain_blocks d JOIN accounts a ON a.id = $2 \
+                   WHERE d.account_id = $1 AND a.domain IS NOT NULL AND d.domain = a.domain)",
     )
     .bind(blocker)
     .bind(blocked_id)

@@ -413,8 +413,9 @@ async fn username_of(ctx: &PostContext, account_id: i64) -> Result<String> {
 
 /// Resolve the signer's actor URL to an `accounts.id` — `None` for
 /// unknown actors (a foreign signer is never a follower/recipient
-/// here).
-async fn signer_account_id(ctx: &PostContext, actor_url: &str) -> Result<Option<i64>> {
+/// here). `pub(crate)` — the featured collection applies the same
+/// block gate.
+pub(crate) async fn signer_account_id(ctx: &PostContext, actor_url: &str) -> Result<Option<i64>> {
     sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1")
         .bind(actor_url)
         .fetch_optional(&ctx.db)
@@ -492,6 +493,20 @@ async fn serve_object_inner(
         return Err(Error::Unauthorized);
     }
 
+    // A verified signer the author blocked — or who blocked/domain-
+    // blocked the author — gets the same 404 private docs do. Only
+    // applies when the signature resolves to a known local account
+    // row; unknown remote signers can't be in `blocks`.
+    let signer_account = match &signer {
+        Some(actor) => signer_account_id(&ctx, actor).await?,
+        None => None,
+    };
+    if let Some(sid) = signer_account {
+        if crate::social::visibility::author_hidden(&ctx.db, sid, status.account_id).await? {
+            return Err(Error::NotFound("status".into()));
+        }
+    }
+
     if public_doc {
         // Shared doc-cache — public/unlisted only.
         let key = object_key(status_id);
@@ -526,11 +541,10 @@ async fn serve_object_inner(
     }
 
     // followers_only / direct — the verified signer must be allowed.
-    let Some(signer) = signer else {
+    if signer.is_none() {
         return Err(Error::NotFound("status".into()));
-    };
-    let account = signer_account_id(&ctx, &signer).await?;
-    match account {
+    }
+    match signer_account {
         Some(id) if posts::can_see(&ctx.db, &status, Some(id)).await? => {
             build_object(&ctx, &status).await.map(|doc| (doc, false))
         }

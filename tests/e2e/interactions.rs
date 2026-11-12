@@ -2172,3 +2172,405 @@ async fn quotes_list_filters_by_viewer() {
     .await;
     assert_eq!(code, StatusCode::NOT_FOUND);
 }
+
+/// Regression: a viewer's direct block and per-user domain block hide
+/// blocked accounts from `favourited_by` / `reblogged_by`, while shared
+/// rows stay intact and anonymous viewers are unaffected.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interaction_lists_respect_viewer_blocks() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    let (status_id, _) = post(&env.app, &alice, "hi", "public").await;
+    let status_id: i64 = status_id.parse().unwrap();
+    let db = &env.state.db;
+
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{status_id}/favourite"),
+        Some(&bob),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let bob_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'bob' AND domain IS NULL")
+            .fetch_one(db)
+            .await
+            .unwrap();
+    let ned_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (username, domain, actor_id) \
+         VALUES ('ned', 'ned.example', 'https://ned.example/users/ned') RETURNING id",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO favourites (account_id, status_id) VALUES ($1, $2)")
+        .bind(ned_id)
+        .bind(status_id)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO statuses (id, account_id, content, content_html, content_type, visibility, \
+             local, reblog_of_id, uri, url, created_at) \
+         VALUES (timestamp_id('statuses', now()), $1, '', '', 'text/plain', 'public', false, $2, \
+                 'https://ned.example/activities/boost-1', '', now())",
+    )
+    .bind(ned_id)
+    .bind(status_id)
+    .execute(db)
+    .await
+    .unwrap();
+
+    let accts = |body: &Value| -> Vec<String> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["acct"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let fav = format!("/api/v1/statuses/{status_id}/favourited_by");
+    let boo = format!("/api/v1/statuses/{status_id}/reblogged_by");
+
+    let (_, body) = request(&env.app, "GET", &fav, Some(&alice), None).await;
+    assert_eq!(accts(&body).len(), 2, "{body}");
+    let (_, body) = request(&env.app, "GET", &boo, Some(&alice), None).await;
+    assert_eq!(accts(&body), vec!["ned@ned.example".to_string()]);
+
+    request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{bob_id}/block"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    sqlx::query("INSERT INTO account_domain_blocks (account_id, domain) VALUES ((SELECT id FROM accounts WHERE username = 'alice' AND domain IS NULL), 'ned.example')")
+        .execute(db)
+        .await
+        .unwrap();
+
+    let (_, body) = request(&env.app, "GET", &fav, Some(&alice), None).await;
+    assert!(
+        accts(&body).is_empty(),
+        "blocked likers must be hidden: {body}"
+    );
+    let (_, body) = request(&env.app, "GET", &boo, Some(&alice), None).await;
+    assert!(
+        accts(&body).is_empty(),
+        "domain-blocked boosters must be hidden: {body}"
+    );
+
+    let (_, body) = request(&env.app, "GET", &fav, None, None).await;
+    assert_eq!(
+        accts(&body).len(),
+        2,
+        "anonymous view is unaffected: {body}"
+    );
+
+    let likes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM favourites WHERE status_id = $1")
+        .bind(status_id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    assert_eq!(likes, 2, "shared rows must not be deleted");
+}
+
+/// Regression: inbound Like/Announce/EmojiReact from an actor the
+/// target's author blocked — directly or through a per-user domain
+/// block — drop before any row or counter moves. An unblocked actor
+/// on another domain still lands, proving the gate is selective.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_interactions_respect_author_blocks() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let (id, uri) = post(&env.app, &alice, "federate me", "public").await;
+    let status_id: i64 = id.parse().unwrap();
+    let db = &env.state.db;
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let alice_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'alice' AND domain IS NULL")
+            .fetch_one(db)
+            .await
+            .unwrap();
+
+    // eve: domain-blocked instance. kim: direct-blocked account.
+    // fay: unblocked control on a third domain.
+    let actors = [
+        ("https://remote.test/users/eve", "remote.test", "eve"),
+        ("https://other.test/users/kim", "other.test", "kim"),
+        ("https://fine.test/users/fay", "fine.test", "fay"),
+    ];
+    for (actor, domain, name) in actors {
+        sqlx::query(
+            "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+             VALUES ($1, $2, $3, $3, $4)",
+        )
+        .bind(domain)
+        .bind(name)
+        .bind(actor)
+        .bind(format!("https://{domain}/inbox"))
+        .execute(db)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO account_domain_blocks (account_id, domain) VALUES ($1, 'remote.test')",
+    )
+    .bind(alice_id)
+    .execute(db)
+    .await
+    .unwrap();
+    let kim_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM accounts WHERE actor_id = 'https://other.test/users/kim'",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/accounts/{kim_id}/block"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+
+    for actor in [actors[0].0, actors[1].0] {
+        let (act, raw) = activity("Like", actor, json!(uri));
+        interactions::inbound::handle(&core, &act, &raw).unwrap();
+        let (act, raw) = activity("Announce", actor, json!(uri));
+        interactions::inbound::handle(&core, &act, &raw).unwrap();
+        let (act, mut raw) = activity("EmojiReact", actor, json!(uri));
+        raw["content"] = json!("🎉");
+        interactions::inbound::handle(&core, &act, &raw).unwrap();
+    }
+
+    let count: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM favourites WHERE status_id = $1) + \
+                (SELECT count(*) FROM emoji_reactions WHERE status_id = $1) + \
+                (SELECT count(*) FROM statuses WHERE reblog_of_id = $1)",
+    )
+    .bind(status_id)
+    .fetch_one(db)
+    .await
+    .unwrap();
+    assert_eq!(count, 0, "blocked inbound interactions must not land");
+    let favourites: i32 = sqlx::query_scalar("SELECT favourites_count FROM statuses WHERE id = $1")
+        .bind(status_id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    assert_eq!(favourites, 0);
+
+    // Control: an actor on an unblocked domain still lands a Like.
+    let (act, raw) = activity("Like", actors[2].0, json!(uri));
+    interactions::inbound::handle(&core, &act, &raw).unwrap();
+    let favourites: i32 = sqlx::query_scalar("SELECT favourites_count FROM statuses WHERE id = $1")
+        .bind(status_id)
+        .fetch_one(db)
+        .await
+        .unwrap();
+    assert_eq!(favourites, 1);
+}
+
+/// Regression: a viewer's blocks hide the author's statuses on direct
+/// fetch and inside nested reblog originals, filter followers /
+/// follow-request / reaction / notification listings — while shared
+/// rows stay intact and unaffected viewers are unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn viewer_blocks_hide_authors_everywhere() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let _bob = register(&env.app, "bob", "b@x.com").await;
+    let carol = register(&env.app, "carol", "c@x.com").await;
+    let (alice_post, _) = post(&env.app, &alice, "my post", "public").await;
+    let alice_post_id: i64 = alice_post.parse().unwrap();
+    let db = &env.state.db;
+    let alice_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'alice' AND domain IS NULL")
+            .fetch_one(db)
+            .await
+            .unwrap();
+    let bob_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'bob' AND domain IS NULL")
+            .fetch_one(db)
+            .await
+            .unwrap();
+
+    // Remote author ned@ned.example with a public status.
+    let ned_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ('ned.example', 'ned', 'https://ned.example/users/ned', \
+                 'https://ned.example/users/ned', 'https://ned.example/inbox') RETURNING id",
+    )
+    .fetch_one(db)
+    .await
+    .unwrap();
+    let ned_status_id: i64 = sqlx::query_scalar(
+        "INSERT INTO statuses (id, account_id, content, content_html, content_type, visibility, \
+             local, reblog_of_id, uri, url, created_at) \
+         VALUES (timestamp_id('statuses', now()), $1, 'ned post', '<p>ned post</p>', \
+                 'text/plain', 'public', false, NULL, \
+                 'https://ned.example/notes/1', '', now()) RETURNING id",
+    )
+    .bind(ned_id)
+    .fetch_one(db)
+    .await
+    .unwrap();
+
+    // alice boosts ned's status — the boost wraps the remote original.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/statuses/{ned_status_id}/reblog"),
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let boost_id = body["id"].as_str().unwrap().to_string();
+
+    // Followers/follow-requests/reactions/notifications fixtures.
+    sqlx::query("INSERT INTO follows (account_id, target_account_id) VALUES ($1, $2), ($3, $2)")
+        .bind(bob_id)
+        .bind(alice_id)
+        .bind(ned_id)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO follow_requests (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(ned_id)
+        .bind(alice_id)
+        .execute(db)
+        .await
+        .unwrap();
+    for reactor in [bob_id, ned_id] {
+        sqlx::query(
+            "INSERT INTO emoji_reactions (account_id, status_id, emoji) VALUES ($1, $2, '👍')",
+        )
+        .bind(reactor)
+        .bind(alice_post_id)
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO notifications (account_id, from_account_id, type, status_id) \
+             VALUES ($1, $2, 'favourite', $3)",
+        )
+        .bind(alice_id)
+        .bind(reactor)
+        .bind(alice_post_id)
+        .execute(db)
+        .await
+        .unwrap();
+    }
+
+    let accts = |body: &Value| -> Vec<String> {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["acct"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let status_path = format!("/api/v1/statuses/{ned_status_id}");
+    let boost_path = format!("/api/v1/statuses/{boost_id}");
+    let followers_path = format!("/api/v1/accounts/{alice_id}/followers");
+    let requests_path = "/api/v1/follow_requests".to_string();
+    let reactions_path = format!("/api/v1/pleroma/statuses/{alice_post_id}/reactions");
+    let notifications_path = "/api/v1/notifications".to_string();
+
+    // ── Before any block: everything visible ──
+    let (code, _) = request(&env.app, "GET", &status_path, Some(&alice), None).await;
+    assert_eq!(code, StatusCode::OK);
+    let (_, body) = request(&env.app, "GET", &boost_path, Some(&alice), None).await;
+    assert!(body["reblog"].is_object(), "{body}");
+    let (_, body) = request(&env.app, "GET", &followers_path, Some(&alice), None).await;
+    assert_eq!(accts(&body).len(), 2, "{body}");
+    let (_, body) = request(&env.app, "GET", &requests_path, Some(&alice), None).await;
+    assert_eq!(accts(&body), vec!["ned@ned.example".to_string()]);
+    let (_, body) = request(&env.app, "GET", &reactions_path, Some(&alice), None).await;
+    assert_eq!(body[0]["accounts"].as_array().unwrap().len(), 2, "{body}");
+    let (_, body) = request(&env.app, "GET", &notifications_path, Some(&alice), None).await;
+    assert_eq!(body.as_array().unwrap().len(), 2, "{body}");
+
+    // ── alice blocks bob and domain-blocks ned.example ──
+    sqlx::query("INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(alice_id)
+        .bind(bob_id)
+        .execute(db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO account_domain_blocks (account_id, domain) VALUES ($1, 'ned.example')",
+    )
+    .bind(alice_id)
+    .execute(db)
+    .await
+    .unwrap();
+
+    // Direct fetch of the blocked author's status 404s for alice but
+    // stays public for everyone else.
+    let (code, _) = request(&env.app, "GET", &status_path, Some(&alice), None).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    let (code, _) = request(&env.app, "GET", &status_path, Some(&carol), None).await;
+    assert_eq!(code, StatusCode::OK);
+    let (code, _) = request(&env.app, "GET", &status_path, None, None).await;
+    assert_eq!(code, StatusCode::OK);
+
+    // The boost wrapper (alice's own) still renders for alice, but the
+    // blocked original inside it is suppressed; carol sees it whole.
+    let (_, body) = request(&env.app, "GET", &boost_path, Some(&alice), None).await;
+    assert!(body["reblog"].is_null(), "{body}");
+    let (_, body) = request(&env.app, "GET", &boost_path, Some(&carol), None).await;
+    assert!(body["reblog"].is_object(), "{body}");
+
+    // Listings filter per viewer; anonymous is unaffected.
+    let (_, body) = request(&env.app, "GET", &followers_path, Some(&alice), None).await;
+    assert!(accts(&body).is_empty(), "{body}");
+    let (_, body) = request(&env.app, "GET", &followers_path, None, None).await;
+    assert_eq!(accts(&body).len(), 2, "{body}");
+    let (_, body) = request(&env.app, "GET", &requests_path, Some(&alice), None).await;
+    assert!(accts(&body).is_empty(), "{body}");
+    let (_, body) = request(&env.app, "GET", &reactions_path, Some(&alice), None).await;
+    assert!(body[0]["accounts"].as_array().unwrap().is_empty(), "{body}");
+    let (_, body) = request(&env.app, "GET", &reactions_path, Some(&carol), None).await;
+    assert_eq!(body[0]["accounts"].as_array().unwrap().len(), 2, "{body}");
+    let (_, body) = request(&env.app, "GET", &notifications_path, Some(&alice), None).await;
+    assert!(body.as_array().unwrap().is_empty(), "{body}");
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/notifications/unread_count",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["count"], 0, "{body}");
+
+    // Shared rows are untouched — the block only shapes the viewer.
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM follows WHERE target_account_id = $1) + \
+                (SELECT count(*) FROM follow_requests WHERE target_account_id = $1) + \
+                (SELECT count(*) FROM emoji_reactions WHERE status_id = $2) + \
+                (SELECT count(*) FROM notifications WHERE account_id = $1)",
+    )
+    .bind(alice_id)
+    .bind(alice_post_id)
+    .fetch_one(db)
+    .await
+    .unwrap();
+    assert_eq!(rows, 7, "shared rows must not be deleted");
+}

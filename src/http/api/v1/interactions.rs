@@ -147,7 +147,7 @@ pub async fn favourited_by(
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
     let page = paginate::parse(&params);
-    let mut rows = favourite::favourited_by(&ctx, &status, &page).await?;
+    let mut rows = favourite::favourited_by(&ctx, &status, &page, viewer).await?;
     // Remote fill — the origin's `likes` collection proxies in once
     // the local page under-fills (page-cached, account stubs, no
     // per-like rows). Failures degrade to the local rows alone.
@@ -168,6 +168,7 @@ pub async fn favourited_by(
             }
         }
     }
+    crate::social::visibility::retain_visible(&ctx.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;
@@ -290,7 +291,7 @@ pub async fn reblogged_by(
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
     let page = paginate::parse(&params);
-    let mut rows = boost::reblogged_by(&ctx, &status, &page).await?;
+    let mut rows = boost::reblogged_by(&ctx, &status, &page, viewer).await?;
     if let Some(ap) = &ctx.ap {
         match crate::activitypub::remote_lists::fill(
             &ctx,
@@ -308,6 +309,7 @@ pub async fn reblogged_by(
             }
         }
     }
+    crate::social::visibility::retain_visible(&ctx.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;

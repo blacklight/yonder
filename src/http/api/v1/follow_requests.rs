@@ -39,7 +39,10 @@ pub async fn list(
 ) -> Result<(HeaderMap, Json<Value>)> {
     require_scope(&state.config(), &auth, "read:follows")?;
     let page = paginate::parse(&params);
-    let rows = requests::list(&state.db, auth.account_id, &page).await?;
+    let mut rows = requests::list(&state.db, auth.account_id, &page).await?;
+    // Requesters the caller blocks or domain-blocked stay hidden —
+    // the shared `follow_requests` row is untouched.
+    crate::social::visibility::retain_visible(&state.db, Some(auth.account_id), &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;

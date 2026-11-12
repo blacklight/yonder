@@ -244,8 +244,25 @@ pub(crate) async fn markers(
         .collect())
 }
 
+/// Statuses the caller may see inside a conversation: the caller
+/// participates (author or mentioned), and the author is neither
+/// blocked (either direction) nor domain-blocked by the caller. Binds
+/// the caller as `$1` and the key as `$2`. Expects alias `s`.
+fn thread_scope_sql() -> String {
+    use crate::social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION};
+    format!(
+        "s.conversation_key = $2 AND s.visibility = 'direct' AND NOT s.tombstone \
+           AND (s.account_id = $1 OR EXISTS ( \
+               SELECT 1 FROM status_mentions m \
+               WHERE m.status_id = s.id AND m.account_id = $1)) \
+           AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = s.account_id \
+               AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION})"
+    )
+}
+
 /// The thread's statuses, newest first, `Link`-paginated — tombstones
-/// excluded; the caller's participation is checked by the handler.
+/// and statuses from accounts the caller blocks are excluded; the
+/// caller's participation is checked by the handler.
 pub(crate) async fn thread(
     db: &PgPool,
     caller: i64,
@@ -254,16 +271,14 @@ pub(crate) async fn thread(
 ) -> Result<Vec<StatusRow>> {
     let rows = sqlx::query(&format!(
         "SELECT {STATUS_COLS} FROM statuses s \
-         WHERE s.conversation_key = $1 AND s.visibility = 'direct' AND NOT s.tombstone \
-           AND (s.account_id = $2 OR EXISTS ( \
-               SELECT 1 FROM status_mentions m \
-               WHERE m.status_id = s.id AND m.account_id = $2)) \
+         WHERE {scope} \
            AND ($3::bigint IS NULL OR s.id < $3) \
            AND ($4::bigint IS NULL OR s.id > $4) \
-         ORDER BY s.id DESC LIMIT $5"
+         ORDER BY s.id DESC LIMIT $5",
+        scope = thread_scope_sql(),
     ))
-    .bind(key)
     .bind(caller)
+    .bind(key)
     .bind(page.max_id)
     .bind(page.since_id)
     .bind(page.limit)
@@ -275,18 +290,15 @@ pub(crate) async fn thread(
 /// Upsert the caller's read marker to the newest visible status id —
 /// never touches other participants' rows.
 pub(crate) async fn mark_read(db: &PgPool, caller: i64, key: &str) -> Result<()> {
-    sqlx::query(
+    sqlx::query(&format!(
         "INSERT INTO conversation_markers (account_id, conversation_key, last_read_status_id) \
-         SELECT $2, $1, MAX(s.id) FROM statuses s \
-         WHERE s.conversation_key = $1 AND s.visibility = 'direct' AND NOT s.tombstone \
-           AND (s.account_id = $2 OR EXISTS ( \
-               SELECT 1 FROM status_mentions m \
-               WHERE m.status_id = s.id AND m.account_id = $2)) \
+         SELECT $1, $2, MAX(s.id) FROM statuses s WHERE {scope} \
          ON CONFLICT (account_id, conversation_key) \
          DO UPDATE SET last_read_status_id = EXCLUDED.last_read_status_id",
-    )
-    .bind(key)
+        scope = thread_scope_sql(),
+    ))
     .bind(caller)
+    .bind(key)
     .execute(db)
     .await?;
     Ok(())

@@ -403,6 +403,14 @@ pub async fn can_see(
     if Some(status.account_id) == viewer_account_id {
         return Ok(true);
     }
+    // A viewer's blocks (either direction) and per-user domain blocks
+    // hide the author's statuses entirely — direct fetches 404 like
+    // audience-gated ones do.
+    if let Some(v) = viewer_account_id {
+        if crate::social::visibility::author_hidden(db, v, status.account_id).await? {
+            return Ok(false);
+        }
+    }
     match status.visibility.as_str() {
         "public" | "unlisted" => Ok(true),
         "direct" => match viewer_account_id {
@@ -458,6 +466,18 @@ pub async fn visible_ids(
     let Some(v) = viewer else {
         return Ok(visible);
     };
+    // Authors the viewer blocks (either direction) or domain-blocks
+    // never surface — the batched [`can_see`] block check.
+    let mut author_ids: Vec<i64> = statuses.iter().map(|s| s.account_id).collect();
+    author_ids.sort_unstable();
+    author_ids.dedup();
+    let hidden_accounts = crate::social::visibility::hidden_authors(db, v, &author_ids).await?;
+    let hidden_statuses: std::collections::HashSet<i64> = statuses
+        .iter()
+        .filter(|s| hidden_accounts.contains(&s.account_id))
+        .map(|s| s.id)
+        .collect();
+    visible.retain(|id| !hidden_statuses.contains(id));
     if gated.is_empty() {
         return Ok(visible);
     }
@@ -491,8 +511,9 @@ pub async fn visible_ids(
         .collect()
     };
     for s in gated {
-        if mentioned.contains(&s.id)
-            || (s.visibility != "direct" && followed.contains(&s.account_id))
+        if !hidden_statuses.contains(&s.id)
+            && (mentioned.contains(&s.id)
+                || (s.visibility != "direct" && followed.contains(&s.account_id)))
         {
             visible.insert(s.id);
         }

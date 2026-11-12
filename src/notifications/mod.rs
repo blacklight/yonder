@@ -178,6 +178,20 @@ fn status_visible(alias: &str) -> String {
     )
 }
 
+/// The notification's actor (`from_account_id`) isn't blocked by the
+/// recipient (`$1`) — direct block or per-user domain block. Fan-out
+/// suppresses at insert time, but rows predating the block (or
+/// slipped past it) must not resurface in lists or the unread badge.
+fn actor_visible(alias: &str) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM blocks nb \
+         WHERE nb.account_id = $1 AND nb.target_account_id = {alias}.from_account_id) \
+         AND NOT EXISTS (SELECT 1 FROM account_domain_blocks nd \
+         JOIN accounts na ON na.id = {alias}.from_account_id \
+         WHERE nd.account_id = $1 AND na.domain IS NOT NULL AND nd.domain = na.domain)"
+    )
+}
+
 /// The `ON CONFLICT` arbiter — must mirror `ix_notifications_dedupe`
 /// (migration 0047) exactly, including the `COALESCE` expression.
 const DEDUPE_TARGET: &str = "(account_id, from_account_id, type, \
@@ -279,10 +293,11 @@ pub async fn list(
            AND ($3::bigint IS NULL OR id > $3) \
            AND (cardinality($4) = 0 OR type = ANY($4)) \
            AND (cardinality($5) = 0 OR type <> ALL($5)) \
-           AND {}{} \
+           AND {} AND {}{} \
          ORDER BY id DESC LIMIT $6",
         NOTIFICATION_COLS,
         status_visible("notifications"),
+        actor_visible("notifications"),
         hide_sql
     );
     let mut q = sqlx::query(&sql)
@@ -343,8 +358,10 @@ pub async fn unread_count(
 ) -> Result<i64> {
     let mut sql = format!(
         "SELECT COUNT(*) FROM notifications n \
-         WHERE n.account_id = $1 AND NOT n.read AND {}",
-        status_visible("n")
+         WHERE n.account_id = $1 AND NOT n.read \
+           AND {} AND {}",
+        status_visible("n"),
+        actor_visible("n")
     );
     let binds = match hide {
         Some(h) => {

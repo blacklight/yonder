@@ -105,6 +105,73 @@ pub async fn domain_blocked(db: &PgPool, viewer: i64, domain: Option<&str>) -> R
     .map_err(Into::into)
 }
 
+/// Drop `(account_id, cursor)` rows whose account the viewer blocks
+/// (either direction) or has domain-blocked. Anonymous viewers see
+/// everything. Rows are filtered, never deleted — shared data stays.
+pub async fn retain_visible(
+    db: &PgPool,
+    viewer: Option<i64>,
+    rows: &mut Vec<(i64, i64)>,
+) -> Result<()> {
+    if viewer.is_none() || rows.is_empty() {
+        return Ok(());
+    }
+    let ids: Vec<i64> = rows.iter().map(|(a, _)| *a).collect();
+    let visible: std::collections::HashSet<i64> = sqlx::query_scalar(&format!(
+        "SELECT a.id FROM accounts a WHERE a.id = ANY($2) AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION}"
+    ))
+    .bind(viewer)
+    .bind(&ids)
+    .fetch_all(db)
+    .await?
+    .into_iter()
+    .collect();
+    rows.retain(|(a, _)| visible.contains(a));
+    Ok(())
+}
+
+/// Whether `viewer` must not see `author`'s content: a `blocks` row
+/// in either direction, or a per-user domain block covering the
+/// author's remote domain. Single-author form of the `*_EXCLUSION`
+/// pair — for `can_see` and other per-row gates.
+pub async fn author_hidden(db: &PgPool, viewer: i64, author: i64) -> Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM blocks b \
+         WHERE (b.account_id = $1 AND b.target_account_id = $2) \
+            OR (b.account_id = $2 AND b.target_account_id = $1)) \
+         OR EXISTS(SELECT 1 FROM account_domain_blocks d \
+                   JOIN accounts a ON a.id = $2 \
+                   WHERE d.account_id = $1 AND a.domain IS NOT NULL AND d.domain = a.domain)",
+    )
+    .bind(viewer)
+    .bind(author)
+    .fetch_one(db)
+    .await
+    .map_err(Into::into)
+}
+
+/// The subset of `ids` [`author_hidden`] hides from `viewer` — one
+/// query for batch callers (status entities, `visible_ids`).
+pub async fn hidden_authors(
+    db: &PgPool,
+    viewer: i64,
+    ids: &[i64],
+) -> Result<std::collections::HashSet<i64>> {
+    if ids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    sqlx::query_scalar(&format!(
+        "SELECT a.id FROM accounts a WHERE a.id = ANY($2) \
+         AND (NOT ({BLOCKS_EXCLUSION}) OR NOT ({DOMAIN_BLOCKS_EXCLUSION}))"
+    ))
+    .bind(viewer)
+    .bind(ids)
+    .fetch_all(db)
+    .await
+    .map(|v| v.into_iter().collect())
+    .map_err(Into::into)
+}
+
 /// Whether the account is live — not suspended and not deleted.
 pub async fn visible(db: &PgPool, account_id: i64) -> Result<bool> {
     sqlx::query_scalar(

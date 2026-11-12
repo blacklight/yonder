@@ -76,10 +76,18 @@ async fn serve_featured_inner(
     // (`/Alice` vs `/alice`) must share one key so invalidation hits.
     let username = account.get::<String, _>("username");
 
-    if state.config().federation.authorized_fetch {
-        let signer = super::posts::verify_signature(state, ap, &username, headers, uri).await;
-        if signer.is_none() {
-            return Err(Error::Unauthorized);
+    let signer = super::posts::verify_signature(state, ap, &username, headers, uri).await;
+    if state.config().federation.authorized_fetch && signer.is_none() {
+        return Err(Error::Unauthorized);
+    }
+    // Same gate as `serve_object`: a signer blocked by (or blocking /
+    // domain-blocking) this author gets a 404 — the collection embeds
+    // full status objects, so it must not route around the check.
+    if let Some(actor) = &signer {
+        if let Some(sid) = super::posts::signer_account_id(&PostContext::new(state), actor).await? {
+            if crate::social::visibility::author_hidden(&state.db, sid, account_id).await? {
+                return Err(Error::NotFound("featured".into()));
+            }
         }
     }
 

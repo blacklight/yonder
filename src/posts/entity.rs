@@ -688,6 +688,15 @@ impl StatusBatch {
                 _ => Ok(Vec::new()),
             }
         };
+        // Reblog/quote originals authored by an account the viewer
+        // blocks (either direction) or domain-blocks never render —
+        // the batched [`can_see`] block check.
+        let hidden_f = async {
+            match viewer {
+                Some(v) => crate::social::visibility::hidden_authors(db, v, &author_ids).await,
+                None => Ok(std::collections::HashSet::new()),
+            }
+        };
         // Conversation mutes: one recursive root-resolution over every
         // rendered id, intersected with the viewer's muted roots.
         let mutes_f = interactions::mutes::muted_status_ids(db, viewer, &all_ids);
@@ -701,10 +710,11 @@ impl StatusBatch {
             own_rows,
             mention_seen_ids,
             followed,
+            hidden_accounts,
             muted,
         ) = tokio::try_join!(
             accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, mention_f, follows_f,
-            mutes_f
+            hidden_f, mutes_f
         )?;
 
         let accounts: HashMap<i64, account_mapper::AccountRow> =
@@ -775,7 +785,7 @@ impl StatusBatch {
             } else {
                 followed.contains(&o.account_id) || mention_seen.contains(&o.id)
             };
-            if ok {
+            if ok && !hidden_accounts.contains(&o.account_id) {
                 visible.insert(o.id);
             }
         }

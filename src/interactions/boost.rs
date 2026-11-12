@@ -5,6 +5,7 @@ use crate::{
     activitypub::{delivery, ApContext},
     http::middleware::auth::AuthContext,
     posts::{self, PostContext, StatusRow},
+    social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION},
     Error, Result,
 };
 
@@ -221,20 +222,24 @@ pub async fn unreblog_row(ctx: &PostContext, boost: &StatusRow) -> Result<Status
         .ok_or_else(|| Error::Internal("boost missing after unreblog".into()))
 }
 
-/// Account ids of the boosters of `target`, newest first (cursor =
-/// the boost row id).
+/// Account ids of the boosters of `target` visible to `viewer` (blocks
+/// and domain blocks hidden), newest first (cursor = the boost row id).
 pub async fn reblogged_by(
     ctx: &PostContext,
     target: &StatusRow,
     page: &crate::http::paginate::Page,
+    viewer: Option<i64>,
 ) -> Result<Vec<(i64, i64)>> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(
-        "SELECT account_id, id FROM statuses \
-         WHERE reblog_of_id = $1 AND NOT tombstone \
-           AND ($2::bigint IS NULL OR id < $2) \
-           AND ($3::bigint IS NULL OR id > $3) \
-         ORDER BY id DESC LIMIT $4",
-    )
+    let rows: Vec<(i64, i64)> = sqlx::query_as(&format!(
+        "SELECT s.account_id, s.id FROM statuses s \
+         JOIN accounts a ON a.id = s.account_id \
+         WHERE s.reblog_of_id = $2 AND NOT s.tombstone \
+           AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION} \
+           AND ($3::bigint IS NULL OR s.id < $3) \
+           AND ($4::bigint IS NULL OR s.id > $4) \
+         ORDER BY s.id DESC LIMIT $5"
+    ))
+    .bind(viewer)
     .bind(target.id)
     .bind(page.max_id)
     .bind(page.since_id)

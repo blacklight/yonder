@@ -339,7 +339,7 @@ pub async fn reaction_summary(
             }
         }
         if include_accounts {
-            let accounts: Vec<Value> = sqlx::query_scalar::<_, i64>(
+            let mut pairs: Vec<(i64, i64)> = sqlx::query_scalar::<_, i64>(
                 "SELECT account_id FROM emoji_reactions \
                  WHERE status_id = $1 AND emoji = $2 ORDER BY id",
             )
@@ -348,8 +348,15 @@ pub async fn reaction_summary(
             .fetch_all(&ctx.db)
             .await?
             .into_iter()
-            .map(|id| json!(id.to_string()))
+            .map(|id| (id, 0))
             .collect();
+            // Rows stay shared — the viewer's blocks/domain blocks
+            // only shape what this list renders.
+            crate::social::visibility::retain_visible(&ctx.db, viewer, &mut pairs).await?;
+            let accounts: Vec<Value> = pairs
+                .into_iter()
+                .map(|(id, _)| json!(id.to_string()))
+                .collect();
             entry["accounts"] = Value::Array(accounts);
         }
         out.push(entry);

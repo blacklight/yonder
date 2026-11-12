@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## Unreleased
+
+### Added
+
+- `federation.signature_scheme` (`"draft-cavage"` default, or `"rfc9421"`)
+  selects the wire format for outbound signed requests — deliveries and
+  object/actor fetches. Inbound requests are verified in either format.
+- Per-actor Ed25519 keys: each local account and the instance actor get an
+  Ed25519 key (migration 0053, generated on first load for existing rows).
+  It is advertised in `additionalPublicKeys` and signs RFC 9421 deliveries
+  and object fetches when `federation.signature_scheme = "rfc9421"`.
+
 ## 1.0.6
 
 ### Fixed

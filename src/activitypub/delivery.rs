@@ -255,25 +255,26 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
         // resolve its key by username and sign with the handler's keyId
         // (the URI WebFinger advertises). Per-user activities keep the
         // `{actor_id}#main-key` shape, which already matches their handler.
-        let (pem, key_id) = if actor_id == self.ctx.multi.instance.actor_id {
-            let pem: Option<String> = sqlx::query_scalar(
-                "SELECT private_key_pem FROM accounts \
+        let (pem, ed25519_pem, key_id) = if actor_id == self.ctx.multi.instance.actor_id {
+            let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT private_key_pem, ed25519_private_key_pem FROM accounts \
                  WHERE username = $1 AND domain IS NULL",
             )
             .bind(actors::INSTANCE_USERNAME)
             .fetch_optional(&ctx.db)
-            .await?
-            .flatten();
-            (pem, self.ctx.multi.instance.key_id.clone())
+            .await?;
+            let (pem, ed25519_pem) = row.unwrap_or_default();
+            (pem, ed25519_pem, self.ctx.multi.instance.key_id.clone())
         } else {
-            let pem: Option<String> = sqlx::query_scalar(
-                "SELECT private_key_pem FROM accounts WHERE actor_id = $1 AND domain IS NULL",
+            let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT private_key_pem, ed25519_private_key_pem FROM accounts \
+                 WHERE actor_id = $1 AND domain IS NULL",
             )
             .bind(&actor_id)
             .fetch_optional(&ctx.db)
-            .await?
-            .flatten();
-            (pem, format!("{actor_id}#main-key"))
+            .await?;
+            let (pem, ed25519_pem) = row.unwrap_or_default();
+            (pem, ed25519_pem, format!("{actor_id}#main-key"))
         };
         let Some(pem) = pem else {
             // The instance actor signs its own deliveries; a missing key
@@ -290,6 +291,19 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
             .map_err(|e| crate::Error::Internal(format!("bad actor key: {e}")))?;
         let http = http_client(&self.ctx);
         let user_agent = self.ctx.core.config.federation.user_agent.clone();
+        let scheme = self.ctx.core.config.federation.signature_scheme.into();
+        // The Ed25519 key is advertised as `<actor_id>#ed25519-key`, next to
+        // the `<actor_id>#main-key` RSA key the signer's keyId is built from.
+        let ed25519 = ed25519_pem
+            .map(|pem| {
+                pubby_sdk::crypto::load_ed25519_private_key(&pem)
+                    .map(|key| pubby_sdk::crypto::Ed25519Identity {
+                        key_id: format!("{}#ed25519-key", key_id.trim_end_matches("#main-key")),
+                        key,
+                    })
+                    .map_err(|e| crate::Error::Internal(format!("bad ed25519 key: {e}")))
+            })
+            .transpose()?;
 
         let attempt = actors::sync_call(move || {
             pubby_sdk::deliver_activity(
@@ -299,6 +313,8 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
                 &private_key,
                 Some(&user_agent),
                 &http,
+                scheme,
+                ed25519.as_ref(),
             )
         });
 

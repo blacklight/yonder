@@ -15,7 +15,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use pubby_sdk::crypto::keys::{
-    export_private_key_pem, export_public_key_pem, generate_rsa_keypair,
+    export_ed25519_private_key_pem, export_private_key_pem, export_public_key_pem,
+    generate_ed25519_key, generate_rsa_keypair, load_ed25519_private_key,
 };
 use pubby_sdk::handlers::HandlerOptions;
 use pubby_sdk::{
@@ -99,6 +100,9 @@ pub struct LocalActor {
     pub profile_fields: Value,
     /// PEM private key (migration 0009); `None` when unprovisioned.
     pub private_key_pem: Option<String>,
+    /// PKCS#8 PEM Ed25519 key (migration 0053); present whenever
+    /// `private_key_pem` is — backfilled on first load.
+    pub ed25519_private_key_pem: Option<String>,
     /// `moved_to_account_id` → target `accounts.actor_id`.
     pub moved_to: Option<String>,
     /// `account_aliases` URIs → `alsoKnownAs`.
@@ -113,7 +117,7 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
         SELECT a.id, a.username, a.actor_id, a.url, a.display_name, a.bio,
                a.locked, a.bot, a.avatar_path, a.avatar_remote_url,
                a.banner_path, a.banner_remote_url,
-               a.profile_fields, a.private_key_pem,
+               a.profile_fields, a.private_key_pem, a.ed25519_private_key_pem,
                t.actor_id AS moved_to
         FROM accounts a
         LEFT JOIN accounts t ON t.id = a.moved_to_account_id
@@ -131,8 +135,14 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
             .bind(r.get::<i64, _>("id"))
             .fetch_all(pool)
             .await?;
+    let id: i64 = r.get("id");
+    let private_key_pem: Option<String> = r.get("private_key_pem");
+    let mut ed25519_private_key_pem: Option<String> = r.get("ed25519_private_key_pem");
+    if private_key_pem.is_some() && ed25519_private_key_pem.is_none() {
+        ed25519_private_key_pem = Some(ensure_ed25519_key(pool, id).await?);
+    }
     Ok(Some(LocalActor {
-        id: r.get("id"),
+        id,
         username: r.get("username"),
         actor_id: r.get("actor_id"),
         url: r.get::<Option<String>, _>("url").unwrap_or_default(),
@@ -145,10 +155,36 @@ pub async fn load_local_actor(pool: &PgPool, username: &str) -> Result<Option<Lo
         banner_path: r.get("banner_path"),
         banner_remote_url: r.get("banner_remote_url"),
         profile_fields: r.get("profile_fields"),
-        private_key_pem: r.get("private_key_pem"),
+        private_key_pem,
+        ed25519_private_key_pem,
         moved_to: r.get("moved_to"),
         also_known_as: aliases,
     }))
+}
+
+/// The account's Ed25519 key PEM, generated and stored if the row has
+/// none. Concurrent loads converge on whichever key was stored first.
+async fn ensure_ed25519_key(pool: &PgPool, account_db_id: i64) -> Result<String> {
+    let pem = export_ed25519_private_key_pem(&generate_ed25519_key())
+        .map_err(|e| crate::Error::Internal(format!("ed25519 keygen failed: {e}")))?;
+    let stored: Option<String> = sqlx::query_scalar(
+        "UPDATE accounts SET ed25519_private_key_pem = $2, updated_at = now() \
+         WHERE id = $1 AND ed25519_private_key_pem IS NULL \
+         RETURNING ed25519_private_key_pem",
+    )
+    .bind(account_db_id)
+    .bind(&pem)
+    .fetch_optional(pool)
+    .await?;
+    match stored {
+        Some(pem) => Ok(pem),
+        None => Ok(sqlx::query_scalar(
+            "SELECT ed25519_private_key_pem FROM accounts WHERE id = $1",
+        )
+        .bind(account_db_id)
+        .fetch_one(pool)
+        .await?),
+    }
 }
 
 /// Provision AP identity for an existing local `accounts` row:
@@ -418,6 +454,7 @@ pub fn handler_options(
         http_timeout: config.federation.request_timeout_seconds as f64,
         user_agent: Some(config.federation.user_agent.clone()),
         allow_private_targets: config.federation.allow_private_targets,
+        signature_scheme: config.federation.signature_scheme.into(),
         software_name: "Yonder".to_string(),
         software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         nodeinfo_stats: stats,
@@ -433,7 +470,7 @@ pub fn handler_for(
     base_url: &str,
     actor: &LocalActor,
     actor_path: &str,
-    options: HandlerOptions,
+    mut options: HandlerOptions,
     db: &PgPool,
 ) -> Result<Option<ActivityPubHandler>> {
     let Some(pem) = &actor.private_key_pem else {
@@ -442,6 +479,12 @@ pub fn handler_for(
     };
     let private_key = pubby_sdk::crypto::keys::load_private_key(pem)
         .map_err(|e| crate::Error::Validation(format!("invalid actor key: {e}")))?;
+    if let Some(pem) = &actor.ed25519_private_key_pem {
+        options.ed25519_key = Some(
+            load_ed25519_private_key(pem)
+                .map_err(|e| crate::Error::Validation(format!("invalid ed25519 key: {e}")))?,
+        );
+    }
     let handler = ActivityPubHandler::new(
         storage,
         actor_config(config, base_url, actor, actor_path, db),

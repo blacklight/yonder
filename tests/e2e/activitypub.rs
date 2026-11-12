@@ -347,6 +347,68 @@ async fn storage_actor_cache_and_quote_authorizations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_actor_ed25519_key_is_stable_backfilled_and_advertised() {
+    let _permit = harness::acquire().await;
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let alice = seed_actor(&pool, "alice").await;
+    let ed_pem = alice
+        .ed25519_private_key_pem
+        .clone()
+        .expect("provisioned actors carry an ed25519 key");
+    assert!(ed_pem.contains("PRIVATE KEY"));
+
+    // Rows provisioned before migration 0053 have no Ed25519 key yet:
+    // the first load backfills it, and later loads keep the same key.
+    sqlx::query("UPDATE accounts SET ed25519_private_key_pem = NULL WHERE id = $1")
+        .bind(alice.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let backfilled = actors::load_local_actor(&pool, "alice")
+        .await
+        .unwrap()
+        .unwrap()
+        .ed25519_private_key_pem
+        .expect("backfilled on load");
+    let again = actors::load_local_actor(&pool, "alice")
+        .await
+        .unwrap()
+        .unwrap()
+        .ed25519_private_key_pem;
+    assert_eq!(again.as_deref(), Some(backfilled.as_str()));
+
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
+        pool.clone(),
+        Arc::new(Config::default()),
+    ));
+    let actor = actors::load_local_actor(&pool, "alice")
+        .await
+        .unwrap()
+        .unwrap();
+    let handler = actors::handler_for(
+        storage,
+        &Config::default(),
+        BASE,
+        &actor,
+        &actors::actor_path("alice"),
+        pubby_sdk::handlers::HandlerOptions::default(),
+        &pool,
+    )
+    .unwrap()
+    .expect("handler for provisioned actor");
+    let doc: Value = handler.get_actor_document();
+    let key = &doc["additionalPublicKeys"][0];
+    assert_eq!(key["id"], format!("{BASE}/ap/users/alice#ed25519-key"));
+    assert_eq!(key["owner"], format!("{BASE}/ap/users/alice"));
+    assert!(key["publicKeyPem"]
+        .as_str()
+        .unwrap()
+        .starts_with("-----BEGIN PUBLIC KEY-----"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ensure_instance_actor_is_idempotent() {
     let _permit = harness::acquire().await;
     let Some(pool) = test_pool().await else {

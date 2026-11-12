@@ -76,7 +76,7 @@ async fn handle(state: Arc<AppState>, username: Option<String>, req: Request) ->
     }
     let (parts, body) = req.into_parts();
     let path = parts.uri.path().to_string();
-    let headers: HashMap<String, String> = parts
+    let mut headers: HashMap<String, String> = parts
         .headers
         .iter()
         .map(|(k, v)| {
@@ -86,6 +86,13 @@ async fn handle(state: Arc<AppState>, username: Option<String>, req: Request) ->
             )
         })
         .collect();
+    // HTTP/2 carries the authority in the URI, not a `host` field; RFC
+    // 9421's `@authority` needs it either way.
+    if let Some(authority) = parts.uri.authority() {
+        headers
+            .entry("host".to_string())
+            .or_insert_with(|| authority.as_str().to_string());
+    }
     let body = match to_bytes(body, MAX_INBOX_BODY).await {
         Ok(b) => b,
         Err(_) => return err(StatusCode::PAYLOAD_TOO_LARGE, "inbox body too large"),

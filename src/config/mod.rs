@@ -500,6 +500,9 @@ pub struct FederationConfig {
     pub sign_fetches: bool,
     /// Require HTTP signatures on inbound ActivityPub fetches.
     pub authorized_fetch: bool,
+    /// Wire format for outbound signed requests (deliveries and object
+    /// fetches). Inbound requests are verified in either format.
+    pub signature_scheme: SignatureScheme,
     /// Public base URL for ActivityPub identifiers (scheme included,
     /// e.g. `https://example.com`). Defaults to `https://{instance.domain}`
     /// at resolve time — set explicitly for http dev and containerized
@@ -555,6 +558,7 @@ impl Default for FederationConfig {
             allow_relays: true,
             sign_fetches: true,
             authorized_fetch: false,
+            signature_scheme: SignatureScheme::default(),
             base_url: None,
             allow_private_targets: false,
             max_reply_depth: 100,
@@ -570,6 +574,26 @@ impl Default for FederationConfig {
             delivery_sweep_schedule: Some("*/15 * * * *".to_string()),
             profile_link_verification_schedule: Some("0 4 * * *".to_string()),
             remote_actor_refresh_schedule: None,
+        }
+    }
+}
+
+/// `federation.signature_scheme` values.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SignatureScheme {
+    /// draft-cavage-http-signatures-12 (`Signature` with `keyId`).
+    #[default]
+    DraftCavage,
+    /// RFC 9421 HTTP Message Signatures.
+    Rfc9421,
+}
+
+impl From<SignatureScheme> for pubby_sdk::crypto::SignatureScheme {
+    fn from(scheme: SignatureScheme) -> Self {
+        match scheme {
+            SignatureScheme::DraftCavage => Self::DraftCavage,
+            SignatureScheme::Rfc9421 => Self::Rfc9421,
         }
     }
 }
@@ -1425,5 +1449,27 @@ impl Default for RemoteContextConfig {
             prune_batch: 500,
             path_jobs_per_author_hour: 20,
         }
+    }
+}
+
+#[cfg(test)]
+mod signature_scheme_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_kebab_case_values() {
+        for (raw, expected) in [
+            ("draft-cavage", SignatureScheme::DraftCavage),
+            ("rfc9421", SignatureScheme::Rfc9421),
+        ] {
+            let federation: FederationConfig =
+                serde_json::from_value(json!({"signature_scheme": raw})).unwrap();
+            assert_eq!(federation.signature_scheme, expected, "{raw}");
+        }
+        assert!(
+            serde_json::from_value::<FederationConfig>(json!({"signature_scheme": "rfc9999"}))
+                .is_err()
+        );
     }
 }

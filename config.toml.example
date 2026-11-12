@@ -134,6 +134,9 @@ allow_relays = true
 sign_fetches = true
 # Require HTTP signatures on inbound ActivityPub fetches.
 authorized_fetch = false
+# Wire format for outbound signed requests: "draft-cavage" or "rfc9421".
+# Inbound requests are verified in either format.
+signature_scheme = "draft-cavage"
 # Public base URL for ActivityPub identifiers (scheme included).
 # Defaults to https://{instance.domain} — set explicitly for http dev
 # or containerized federation tests.

@@ -316,7 +316,18 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
     // authorized_fetch) reject a keyId that dereferences to a *different*
     // actor URI than the WebFinger loopback returns.
     let key_id = ap.multi.instance.key_id.clone();
+    let ed25519 = actor
+        .ed25519_private_key_pem
+        .as_deref()
+        .map(pubby_sdk::crypto::load_ed25519_private_key)
+        .transpose()
+        .map_err(|e| Error::Validation(format!("invalid instance ed25519 key: {e}")))?
+        .map(|key| pubby_sdk::crypto::Ed25519Identity {
+            key_id: format!("{}#ed25519-key", ap.multi.instance.actor_id),
+            key,
+        });
     let user_agent = ap.core.config.federation.user_agent.clone();
+    let scheme = ap.core.config.federation.signature_scheme.into();
     let http = http_client(ap);
     let url = url.to_string();
     Ok(sync_call(move || {
@@ -333,9 +344,11 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
             headers: base_headers.clone(),
             signed_headers: None,
         };
-        let headers = match pubby_sdk::crypto::sign_request(
+        let headers = match pubby_sdk::crypto::sign_outgoing(
+            scheme,
             &private_key,
             &key_id,
+            ed25519.as_ref(),
             "GET",
             &url,
             None,

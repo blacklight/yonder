@@ -24,6 +24,14 @@
   instance-scoped, and the composer, default-visibility setting and
   status cards expose the new audience
   ([`4577f22`](https://git.platypush.tech/blacklight/yonder/commit/4577f22be8f81d073c3215ef0ee0fe209ae56a62)).
+- Honor `indexable = false` (the profile search-engine opt-out) on
+  every indexing surface: profile, follow-list, status and embed pages
+  carry `<meta name="robots" content="noindex">` — injected into the
+  served HTML and set client-side for JS-rendering crawlers — public
+  profile/hashtag feeds drop the author's items, status text search
+  hides their posts (still findable by the author), and outgoing
+  webmention source documents get the tag
+  ([`60d140d`](https://git.platypush.tech/blacklight/yonder/commit/60d140d2e76e0e1ef8c75a3954ee56c200004c42)).
 
 ### Fixed
 

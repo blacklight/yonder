@@ -117,6 +117,8 @@ struct Cursor {
 /// isn't remote, the remote total doesn't exceed the local counter,
 /// the local page already filled, or the remote page is unreachable
 /// (degradation is silent by design: callers serve what they have).
+/// `viewer` applies the same block/domain-block/suspended filters as
+/// the local page before an item can consume response room.
 pub(crate) async fn fill(
     ctx: &crate::posts::PostContext,
     ap: &ApContext,
@@ -124,6 +126,7 @@ pub(crate) async fn fill(
     kind: ListKind,
     page: &Page,
     local: &[(i64, i64)],
+    viewer: Option<i64>,
 ) -> Result<Vec<(i64, i64)>> {
     let db = &ctx.db;
     let redis = &ctx.redis;
@@ -186,6 +189,15 @@ pub(crate) async fn fill(
             else {
                 continue;
             };
+            let visible = crate::social::visibility::visible(db, account_id).await?;
+            let hidden = match viewer {
+                Some(v) => crate::social::visibility::author_hidden(db, v, account_id).await?,
+                None => false,
+            };
+            if !visible || hidden {
+                seen.insert(account_id);
+                continue;
+            }
             if seen.insert(account_id) {
                 let cursor = -(prev_offset + extra.len() as i64 + 1);
                 extra.push((account_id, cursor));

@@ -7,7 +7,7 @@ use crate::{
     activitypub::{delivery, ApContext},
     http::middleware::auth::AuthContext,
     posts::{self, PostContext, StatusRow},
-    social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION},
+    social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION, VISIBLE},
     Error, Result,
 };
 
@@ -151,7 +151,8 @@ pub async fn favourited_by(
     let rows: Vec<(i64, i64)> = sqlx::query_as(&format!(
         "SELECT f.account_id, f.id FROM favourites f \
          JOIN accounts a ON a.id = f.account_id \
-         WHERE f.status_id = $2 AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION} \
+         WHERE f.status_id = $2 AND {VISIBLE} \
+           AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION} \
            AND ($3::bigint IS NULL OR f.id < $3) \
            AND ($4::bigint IS NULL OR f.id > $4) \
          ORDER BY f.id DESC LIMIT $5"

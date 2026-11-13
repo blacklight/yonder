@@ -156,7 +156,7 @@ pub async fn muted_list(db: &PgPool, caller_id: i64, page: &Page) -> Result<Vec<
         db,
         "mutes",
         "b.id",
-        "b.expires_at IS NULL OR b.expires_at > now()",
+        "a.suspended_at IS NULL AND (b.expires_at IS NULL OR b.expires_at > now())",
         caller_id,
         page,
     )

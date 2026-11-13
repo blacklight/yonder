@@ -5,7 +5,7 @@ use crate::{
     activitypub::{delivery, ApContext},
     http::middleware::auth::AuthContext,
     posts::{self, PostContext, StatusRow},
-    social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION},
+    social::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION, VISIBLE},
     Error, Result,
 };
 
@@ -233,7 +233,7 @@ pub async fn reblogged_by(
     let rows: Vec<(i64, i64)> = sqlx::query_as(&format!(
         "SELECT s.account_id, s.id FROM statuses s \
          JOIN accounts a ON a.id = s.account_id \
-         WHERE s.reblog_of_id = $2 AND NOT s.tombstone \
+         WHERE s.reblog_of_id = $2 AND NOT s.tombstone AND {VISIBLE} \
            AND {BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION} \
            AND ($3::bigint IS NULL OR s.id < $3) \
            AND ($4::bigint IS NULL OR s.id > $4) \

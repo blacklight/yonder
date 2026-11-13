@@ -192,6 +192,26 @@ fn actor_visible(alias: &str) -> String {
     )
 }
 
+/// Statuses inside conversations the recipient muted — the muted root
+/// plus every descendant, resolved in SQL so the filter lands before
+/// `LIMIT` (a post-page filter would under-fill pages and suppress the
+/// `next` cursor). `$1` is the recipient account id.
+const MUTED_THREADS_CTE: &str = "WITH RECURSIVE muted_threads(id, depth) AS ( \
+     SELECT cm.root_status_id, 0 FROM conversation_mutes cm \
+     WHERE cm.account_id = $1 \
+     UNION ALL \
+     SELECT s.id, mt.depth + 1 FROM statuses s \
+     JOIN muted_threads mt ON s.in_reply_to_id = mt.id \
+     WHERE mt.depth < 128 \
+   )";
+
+fn conversation_unmuted(alias: &str) -> String {
+    format!(
+        "({alias}.status_id IS NULL OR {alias}.status_id NOT IN \
+         (SELECT id FROM muted_threads))"
+    )
+}
+
 /// The `ON CONFLICT` arbiter — must mirror `ix_notifications_dedupe`
 /// (migration 0047) exactly, including the `COALESCE` expression.
 const DEDUPE_TARGET: &str = "(account_id, from_account_id, type, \
@@ -287,17 +307,18 @@ pub async fn list(
         );
     }
     let sql = format!(
-        "SELECT {} FROM notifications \
+        "{MUTED_THREADS_CTE} SELECT {} FROM notifications \
          WHERE account_id = $1 \
            AND ($2::bigint IS NULL OR id < $2) \
            AND ($3::bigint IS NULL OR id > $3) \
            AND (cardinality($4) = 0 OR type = ANY($4)) \
            AND (cardinality($5) = 0 OR type <> ALL($5)) \
-           AND {} AND {}{} \
+           AND {} AND {} AND {}{} \
          ORDER BY id DESC LIMIT $6",
         NOTIFICATION_COLS,
         status_visible("notifications"),
         actor_visible("notifications"),
+        conversation_unmuted("notifications"),
         hide_sql
     );
     let mut q = sqlx::query(&sql)
@@ -357,11 +378,12 @@ pub async fn unread_count(
     hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<i64> {
     let mut sql = format!(
-        "SELECT COUNT(*) FROM notifications n \
+        "{MUTED_THREADS_CTE} SELECT COUNT(*) FROM notifications n \
          WHERE n.account_id = $1 AND NOT n.read \
-           AND {} AND {}",
+           AND {} AND {} AND {}",
         status_visible("n"),
-        actor_visible("n")
+        actor_visible("n"),
+        conversation_unmuted("n")
     );
     let binds = match hide {
         Some(h) => {

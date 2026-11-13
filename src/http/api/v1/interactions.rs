@@ -159,6 +159,7 @@ pub async fn favourited_by(
             crate::activitypub::remote_lists::ListKind::Likes,
             &page,
             &rows,
+            viewer,
         )
         .await
         {
@@ -168,7 +169,6 @@ pub async fn favourited_by(
             }
         }
     }
-    crate::social::visibility::retain_visible(&ctx.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;
@@ -300,6 +300,7 @@ pub async fn reblogged_by(
             crate::activitypub::remote_lists::ListKind::Shares,
             &page,
             &rows,
+            viewer,
         )
         .await
         {
@@ -309,7 +310,6 @@ pub async fn reblogged_by(
             }
         }
     }
-    crate::social::visibility::retain_visible(&ctx.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&ctx, &ids).await?;

@@ -149,16 +149,6 @@ pub async fn list(
         crate::filters::apply::hide_clause(&rules).as_ref(),
     )
     .await?;
-    // Conversation mutes: a muted thread's notifications drop out of
-    // the page (Mastodon hides them rather than never generating).
-    let status_ids: Vec<i64> = rows.iter().filter_map(|r| r.status_id).collect();
-    let muted =
-        crate::interactions::mutes::muted_status_ids(&state.db, Some(auth.account_id), &status_ids)
-            .await?;
-    let rows: Vec<_> = rows
-        .into_iter()
-        .filter(|r| r.status_id.is_none_or(|id| !muted.contains(&id)))
-        .collect();
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
     let ctx = PostContext::new(&state);

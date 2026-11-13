@@ -16,7 +16,10 @@ use crate::{
     Error, Result,
 };
 
-use super::{FollowOpts, FollowOutcome};
+use super::{
+    visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION},
+    FollowOpts, FollowOutcome,
+};
 
 /// Follow `target_id` on behalf of `follower_id`, emitting the
 /// `follow`/`follow_request` notification event for local targets
@@ -86,26 +89,32 @@ pub async fn follow_by_uri(state: &AppState, follower_id: i64, uri: &str) -> Res
 }
 
 /// `(account_id, cursor)` pages for followers/following lists —
-/// newest `follows` rows first, cursor is `follows.id`.
+/// newest `follows` rows first, cursor is `follows.id`. Viewer block
+/// and domain-block exclusions run before `LIMIT` so a filtered row
+/// can't consume the page and suppress the next cursor.
 async fn edge_page(
     db: &PgPool,
     direction: &str,
     account_id: i64,
     page: &Page,
+    viewer: Option<i64>,
 ) -> Result<Vec<(i64, i64)>> {
-    // $1 = the listed account; cursor/filter params follow.
+    // $1 = viewer (NULL for anonymous), $2 = the listed account;
+    // cursor/filter params follow.
     let query = format!(
         "SELECT a.id AS account_id, f.id AS cursor FROM follows f \
          JOIN accounts a ON a.id = f.{direction} \
-         WHERE f.{other} = $1 \
+         WHERE f.{other} = $2 \
            AND a.suspended_at IS NULL AND a.deleted_at IS NULL \
-           AND ($2::bigint IS NULL OR f.id < $2) \
-           AND ($3::bigint IS NULL OR f.id > $3) \
-         ORDER BY f.id DESC LIMIT $4",
+           AND ($3::bigint IS NULL OR f.id < $3) \
+           AND ($4::bigint IS NULL OR f.id > $4) \
+           AND ($1::bigint IS NULL OR ({BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION})) \
+         ORDER BY f.id DESC LIMIT $5",
         direction = direction,
         other = other_column(direction),
     );
     let rows = sqlx::query(&query)
+        .bind(viewer)
         .bind(account_id)
         .bind(page.max_id)
         .bind(page.since_id)
@@ -127,13 +136,23 @@ fn other_column(direction: &str) -> &'static str {
 }
 
 /// Accounts following `target_id` (its followers).
-pub async fn followers(db: &PgPool, target_id: i64, page: &Page) -> Result<Vec<(i64, i64)>> {
-    edge_page(db, "account_id", target_id, page).await
+pub async fn followers(
+    db: &PgPool,
+    target_id: i64,
+    page: &Page,
+    viewer: Option<i64>,
+) -> Result<Vec<(i64, i64)>> {
+    edge_page(db, "account_id", target_id, page, viewer).await
 }
 
 /// Accounts `account_id` follows.
-pub async fn following(db: &PgPool, account_id: i64, page: &Page) -> Result<Vec<(i64, i64)>> {
-    edge_page(db, "target_account_id", account_id, page).await
+pub async fn following(
+    db: &PgPool,
+    account_id: i64,
+    page: &Page,
+    viewer: Option<i64>,
+) -> Result<Vec<(i64, i64)>> {
+    edge_page(db, "target_account_id", account_id, page, viewer).await
 }
 
 /// Whether `hide_network` keeps the caller out of `account`'s
@@ -571,22 +590,44 @@ async fn sync_remote_network(
     Ok(true)
 }
 
+/// Whether any cached remote edges exist for `(account_id, direction)`
+/// — checked only when a filtered page comes back empty, so the caller
+/// can tell "remote list is empty" apart from "every member is hidden".
+pub async fn remote_edge_exists(db: &PgPool, account_id: i64, direction: &str) -> Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM remote_network_edges \
+         WHERE account_id = $1 AND direction = $2)",
+    )
+    .bind(account_id)
+    .bind(direction)
+    .fetch_one(db)
+    .await
+    .map_err(Into::into)
+}
+
 /// `(account_id, cursor)` page over a remote account's cached network
 /// edges — remote order, the cursor is `position` (`max_id` pages
 /// older, `min_id`/`since_id` newer, same convention as `follows`).
+/// Viewer exclusions run before `LIMIT`, matching [`edge_page`].
 pub async fn remote_edge_page(
     db: &PgPool,
     account_id: i64,
     direction: &str,
     page: &Page,
+    viewer: Option<i64>,
 ) -> Result<Vec<(i64, i64)>> {
-    let rows = sqlx::query(
-        "SELECT member_account_id, position::bigint AS position FROM remote_network_edges \
-         WHERE account_id = $1 AND direction = $2 \
-           AND ($3::bigint IS NULL OR position > $3) \
-           AND ($4::bigint IS NULL OR position < $4) \
-         ORDER BY position LIMIT $5",
-    )
+    let rows = sqlx::query(&format!(
+        "SELECT e.member_account_id, e.position::bigint AS position \
+         FROM remote_network_edges e \
+         JOIN accounts a ON a.id = e.member_account_id \
+         WHERE e.account_id = $2 AND e.direction = $3 \
+           AND a.suspended_at IS NULL AND a.deleted_at IS NULL \
+           AND ($4::bigint IS NULL OR e.position > $4) \
+           AND ($5::bigint IS NULL OR e.position < $5) \
+           AND ($1::bigint IS NULL OR ({BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION})) \
+         ORDER BY e.position LIMIT $6"
+    ))
+    .bind(viewer)
     .bind(account_id)
     .bind(direction)
     .bind(page.max_id)

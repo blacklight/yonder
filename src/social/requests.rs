@@ -23,18 +23,29 @@ use crate::{
     Error, Result,
 };
 
-/// Pending requesters of `target_id`, newest first — `(account_id,
-/// cursor)` where the cursor is `follow_requests.id`.
-pub async fn list(db: &PgPool, target_id: i64, page: &Page) -> Result<Vec<(i64, i64)>> {
-    let rows = sqlx::query(
+use super::visibility::{BLOCKS_EXCLUSION, DOMAIN_BLOCKS_EXCLUSION};
+
+/// Pending requesters of `target_id` visible to `viewer`, newest
+/// first — `(account_id, cursor)` where the cursor is
+/// `follow_requests.id`. Viewer exclusions run before `LIMIT` so a
+/// hidden requester can't consume the page and suppress the cursor.
+pub async fn list(
+    db: &PgPool,
+    target_id: i64,
+    page: &Page,
+    viewer: i64,
+) -> Result<Vec<(i64, i64)>> {
+    let rows = sqlx::query(&format!(
         "SELECT r.account_id, r.id AS cursor FROM follow_requests r \
          JOIN accounts a ON a.id = r.account_id \
-         WHERE r.target_account_id = $1 \
+         WHERE r.target_account_id = $2 \
            AND a.suspended_at IS NULL AND a.deleted_at IS NULL \
-           AND ($2::bigint IS NULL OR r.id < $2) \
-           AND ($3::bigint IS NULL OR r.id > $3) \
-         ORDER BY r.id DESC LIMIT $4",
-    )
+           AND ($3::bigint IS NULL OR r.id < $3) \
+           AND ($4::bigint IS NULL OR r.id > $4) \
+           AND ({BLOCKS_EXCLUSION} AND {DOMAIN_BLOCKS_EXCLUSION}) \
+         ORDER BY r.id DESC LIMIT $5"
+    ))
+    .bind(viewer)
     .bind(target_id)
     .bind(page.max_id)
     .bind(page.since_id)

@@ -281,12 +281,11 @@ pub async fn followers(
     follows::visible_target(&state.db, id).await?;
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let page = paginate::parse(&params);
-    let mut rows = if follows::network_hidden(&state.db, id, viewer).await? {
+    let rows = if follows::network_hidden(&state.db, id, viewer).await? {
         Vec::new()
     } else {
-        network_page(&state, id, "followers", &page).await?
+        network_page(&state, id, "followers", &page, viewer).await?
     };
-    crate::social::visibility::retain_visible(&state.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;
@@ -305,18 +304,23 @@ async fn network_page(
     id: i64,
     direction: &'static str,
     page: &paginate::Page,
+    viewer: Option<i64>,
 ) -> Result<Vec<(i64, i64)>> {
     if !follows::ensure_remote_network(state, id, direction).await {
         return match direction {
-            "followers" => follows::followers(&state.db, id, page).await,
-            _ => follows::following(&state.db, id, page).await,
+            "followers" => follows::followers(&state.db, id, page, viewer).await,
+            _ => follows::following(&state.db, id, page, viewer).await,
         };
     }
-    let rows = follows::remote_edge_page(&state.db, id, direction, page).await?;
-    if rows.is_empty() && page.max_id.is_none() && page.since_id.is_none() {
+    let rows = follows::remote_edge_page(&state.db, id, direction, page, viewer).await?;
+    if rows.is_empty()
+        && page.max_id.is_none()
+        && page.since_id.is_none()
+        && !follows::remote_edge_exists(&state.db, id, direction).await?
+    {
         return match direction {
-            "followers" => follows::followers(&state.db, id, page).await,
-            _ => follows::following(&state.db, id, page).await,
+            "followers" => follows::followers(&state.db, id, page, viewer).await,
+            _ => follows::following(&state.db, id, page, viewer).await,
         };
     }
     Ok(rows)
@@ -347,12 +351,11 @@ pub async fn following(
     follows::visible_target(&state.db, id).await?;
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let page = paginate::parse(&params);
-    let mut rows = if follows::network_hidden(&state.db, id, viewer).await? {
+    let rows = if follows::network_hidden(&state.db, id, viewer).await? {
         Vec::new()
     } else {
-        network_page(&state, id, "following", &page).await?
+        network_page(&state, id, "following", &page, viewer).await?
     };
-    crate::social::visibility::retain_visible(&state.db, viewer, &mut rows).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
     let ids: Vec<i64> = rows.into_iter().map(|(a, _)| a).collect();
     let accounts = account_entities(&state, &ids).await?;

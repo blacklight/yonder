@@ -322,6 +322,193 @@ async fn follow_roundtrip_flags_and_unfollow() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn network_listings_paginate_after_block_filter() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let owner = register(&env.app, "owner", "owner@x.com").await;
+    let owner_id = account_id(&env.state.db, "owner").await;
+
+    // 22 mutual edges leave 21 visible accounts after the owner's block.
+    // The hidden account is newest, so filtering after LIMIT would return
+    // only 19 rows and suppress the next-page cursor.
+    let mut fan_ids = Vec::new();
+    for i in 1..=22 {
+        let username = format!("fan{i:02}");
+        let fan_id: i64 = sqlx::query_scalar(
+            "INSERT INTO accounts (username, actor_id) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(&username)
+        .bind(format!("{BASE}/ap/users/{username}"))
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+        fan_ids.push(fan_id);
+        for (account_id, target_account_id) in [(fan_id, owner_id), (owner_id, fan_id)] {
+            sqlx::query(
+                "INSERT INTO follows (account_id, target_account_id) \
+                 VALUES ($1, $2)",
+            )
+            .bind(account_id)
+            .bind(target_account_id)
+            .execute(&env.state.db)
+            .await
+            .unwrap();
+        }
+    }
+    sqlx::query("INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(owner_id)
+        .bind(*fan_ids.last().unwrap())
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    for direction in ["followers", "following"] {
+        let path = format!("/api/v1/accounts/{owner_id}/{direction}?limit=20");
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::get(&path)
+                    .header("authorization", format!("Bearer {owner}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let link = resp
+            .headers()
+            .get("link")
+            .expect("Link header")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(link.contains("rel=\"next\""), "{direction}: {link}");
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 20, "{direction}: {body}");
+
+        let next = link.split('<').nth(1).unwrap().split('>').next().unwrap();
+        let resp = env
+            .app
+            .clone()
+            .oneshot(
+                Request::get(next)
+                    .header("authorization", format!("Bearer {owner}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body: Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 1, "{direction}: {body}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn follow_requests_paginate_after_block_filter() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let owner = register(&env.app, "owner", "owner@x.com").await;
+    let owner_id = account_id(&env.state.db, "owner").await;
+
+    for i in 1..=22 {
+        let username = format!("requester{i:02}");
+        let requester_id: i64 = sqlx::query_scalar(
+            "INSERT INTO accounts (username, actor_id) VALUES ($1, $2) RETURNING id",
+        )
+        .bind(&username)
+        .bind(format!("{BASE}/ap/users/{username}"))
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO follow_requests (account_id, target_account_id) VALUES ($1, $2)")
+            .bind(requester_id)
+            .bind(owner_id)
+            .execute(&env.state.db)
+            .await
+            .unwrap();
+    }
+    let hidden: i64 = sqlx::query_scalar(
+        "SELECT account_id FROM follow_requests \
+         WHERE target_account_id = $1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(owner_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(owner_id)
+        .bind(hidden)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/follow_requests?limit=20")
+                .header("authorization", format!("Bearer {owner}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let link = resp
+        .headers()
+        .get("link")
+        .expect("Link header")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(link.contains("rel=\"next\""), "{link}");
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 20, "{body}");
+
+    let next = link.split('<').nth(1).unwrap().split('>').next().unwrap();
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get(next)
+                .header("authorization", format!("Bearer {owner}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 1, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn locked_follow_request_authorize_and_reject() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

@@ -1079,6 +1079,99 @@ async fn favourited_by_proxies_remote_likes_pages() {
     assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
+/// A viewer-blocked remote liker must not consume the proxied page:
+/// the fill skips it and still returns a full page with `rel="next"`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn favourited_by_remote_fill_skips_blocked_accounts() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env().await else {
+        return;
+    };
+    let (base, _counter) = serve_docs_counted(|base| {
+        let mut docs = remote_docs(base);
+        for (p, doc) in docs.iter_mut() {
+            if *p == "/objects/leaf" {
+                doc["likes"] = json!({
+                    "id": format!("{base}/likes/leaf"),
+                    "type": "OrderedCollection",
+                    "totalItems": 3,
+                    "first": format!("{base}/likes/leaf?page=1"),
+                });
+            }
+        }
+        docs.push((
+            "/likes/leaf",
+            json!({
+                "id": format!("{base}/likes/leaf?page=1"),
+                "type": "OrderedCollectionPage",
+                "partOf": format!("{base}/likes/leaf"),
+                "orderedItems": [
+                    format!("{base}/actor2"),
+                    format!("{base}/actor3"),
+                    format!("{base}/actor4"),
+                ],
+            }),
+        ));
+        docs
+    })
+    .await;
+    let leaf_id = seed_remote_leaf(&env.state.db, &base).await;
+    sqlx::query("UPDATE statuses SET remote_likes_count = 3 WHERE id = $1")
+        .bind(leaf_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let token = register(&env.app, "liker", "liker@test.local").await;
+    let viewer_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'liker' AND domain IS NULL")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    // Pre-seed the first remote liker so the viewer can block exactly
+    // that account without hiding the status author (which would 404
+    // the status itself).
+    let hidden_domain = base
+        .trim_start_matches("http://")
+        .split(':')
+        .next()
+        .unwrap()
+        .to_string();
+    let hidden_id: i64 = sqlx::query_scalar(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) \
+         VALUES ($1, 'actor2', $2, $2, '') RETURNING id",
+    )
+    .bind(&hidden_domain)
+    .bind(format!("{base}/actor2"))
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO blocks (account_id, target_account_id) VALUES ($1, $2)")
+        .bind(viewer_id)
+        .bind(hidden_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let (status, headers, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{leaf_id}/favourited_by?limit=2"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let page = body.as_array().unwrap();
+    assert_eq!(page.len(), 2, "{body}");
+    let link = headers.get("link").expect("Link header").to_str().unwrap();
+    assert!(link.contains("rel=\"next\""), "{link}");
+    let accts: Vec<&str> = page.iter().filter_map(|a| a["acct"].as_str()).collect();
+    assert!(
+        accts.iter().all(|a| !a.contains("actor2")),
+        "blocked remote liker leaked: {accts:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Pruning (Section 8): the sweep deletes eligible context-only rows,
 // keeps local anchors and whole ancestor chains of kept rows.

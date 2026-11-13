@@ -188,6 +188,7 @@ const VISIBILITIES: StatusVisibility[] = [
   "public",
   "unlisted",
   "private",
+  "local",
   "direct",
 ];
 const CONTENT_TYPES = ["text/plain", "text/markdown"];

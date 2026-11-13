@@ -114,6 +114,7 @@ const VISIBILITY_ICONS: Record<StatusVisibility, string> = {
   public: "globe",
   unlisted: "lock-open",
   private: "lock",
+  local: "building",
   direct: "envelope",
 };
 const visIcon = computed(

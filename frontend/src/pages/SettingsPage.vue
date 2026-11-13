@@ -317,6 +317,7 @@ onMounted(async () => {
                   {{ t("settings.vis_followers") }}
                 </option>
                 <option value="private">{{ t("settings.vis_private") }}</option>
+                <option value="local">{{ t("settings.vis_local") }}</option>
               </select>
             </label>
             <label class="settings__row">

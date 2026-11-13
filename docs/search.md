@@ -109,9 +109,10 @@ Every query composes:
 - **Author opt-out**: `users.include_public_posts_in_search = false`
   hides that author's statuses from everyone but the author themself.
 - **Visibility**: anonymous callers see `public`/`unlisted` only;
-  viewers additionally see `followers_only`/`private` from authors
-  they follow and `direct` posts that mention them. Reblogs are
-  excluded from text matching (the original is searchable itself).
+  viewers additionally see `local` posts and `followers_only`/`private`
+  from authors they follow and `direct` posts that mention them.
+  Reblogs are excluded from text matching (the original is searchable
+  itself).
 
 ## Matching details
 

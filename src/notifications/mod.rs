@@ -168,7 +168,7 @@ fn status_visible(alias: &str) -> String {
     format!(
         "({alias}.status_id IS NULL OR EXISTS ( \
          SELECT 1 FROM statuses vs WHERE vs.id = {alias}.status_id AND ( \
-             vs.account_id = $1 OR vs.visibility IN ('public', 'unlisted') \
+             vs.account_id = $1 OR vs.visibility IN ('public', 'unlisted', 'local') \
              OR EXISTS (SELECT 1 FROM status_mentions vsm \
                         WHERE vsm.status_id = vs.id AND vsm.account_id = $1) \
              OR (vs.visibility IN ('followers_only', 'private') \

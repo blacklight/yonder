@@ -62,9 +62,10 @@ Validation is strict — unknown keys, unknown values and out-of-range
 numbers are 422. Highlights:
 
 - `default_visibility` / `source.privacy`:
-  `public`/`unlisted`/`followers_only`/`private`. `direct` is rejected
-  on writes; a legacy stored `direct` renders as `private` and logs a
-  warning.
+  `public`/`unlisted`/`followers_only`/`private`/`local`. `direct` is
+  rejected on writes; a legacy stored `direct` renders as `private`
+  and logs a warning. `local` makes new posts instance-only by
+  default.
 - `interface_language`, `default_posting_language`, `source.language`
   and registration `locale`: `en`/`es`/`it`/`de`/`ar` (normalized to
   lowercase).

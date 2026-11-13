@@ -48,6 +48,10 @@ pub struct Filters {
     /// tightening scopes that would otherwise admit `unlisted` — e.g.
     /// the anonymous `Account` scope on profile feeds.
     pub public_only: bool,
+    /// Feed-only restriction: `local` posts excluded even though the
+    /// (local) owner is the `viewer` — public feed documents must not
+    /// carry instance-only content.
+    pub exclude_local: bool,
     /// Server-side `hide` filters (epic 20): the viewer's compiled
     /// `NOT (…)` predicate for one context. `None` when the viewer has
     /// no active hide rules — the common case, zero extra SQL.
@@ -194,6 +198,9 @@ pub fn build_where(scope: &TimelineScope, filters: &Filters) -> Where {
     if filters.public_only {
         b.clause("s.visibility = 'public'");
     }
+    if filters.exclude_local {
+        b.clause("s.visibility <> 'local'");
+    }
     if let Some(hide) = &filters.hide {
         let (sql, binds) = hide.numbered(b.binds.len());
         for bind in binds {
@@ -220,7 +227,13 @@ fn scope_clauses(b: &mut Builder, scope: &TimelineScope, filters: &Filters) {
     match scope {
         TimelineScope::Local => {
             b.clause("a.domain IS NULL");
-            b.clause("s.visibility = 'public'");
+            // `local`-visibility posts are instance-only — they join
+            // the local timeline for authenticated viewers only.
+            if filters.viewer.is_some() {
+                b.clause("s.visibility IN ('public', 'local')");
+            } else {
+                b.clause("s.visibility = 'public'");
+            }
         }
         TimelineScope::Federated { remote_only } => {
             b.clause("s.visibility = 'public'");
@@ -257,7 +270,7 @@ fn account_clauses(b: &mut Builder, account_id: i64, filters: &Filters) {
     b.clause(format!("s.account_id = {ap}"));
     if filters.viewer.is_some() {
         b.clause(
-            "(s.visibility IN ('public', 'unlisted') \
+            "(s.visibility IN ('public', 'unlisted', 'local') \
              OR (s.account_id = $1 AND s.visibility <> 'direct') \
              OR (s.visibility IN ('followers_only', 'private') \
                  AND s.account_id = ANY(SELECT target_account_id FROM follows \
@@ -322,8 +335,9 @@ fn list_clauses(b: &mut Builder, list_id: i64, replies_policy: RepliesPolicy) {
          WHERE la.list_id = {lp} AND la.account_id = s.account_id)"
     ));
     // List members are followed accounts, so the whole follower-gated
-    // set is fair; `direct` stays out.
-    b.clause("s.visibility IN ('public', 'unlisted', 'followers_only', 'private')");
+    // set is fair; `direct` stays out. `local` posts are instance-only
+    // — every list viewer is a local account, so they pass too.
+    b.clause("s.visibility IN ('public', 'unlisted', 'followers_only', 'private', 'local')");
     match replies_policy {
         RepliesPolicy::None => b.clause("s.in_reply_to_id IS NULL"),
         RepliesPolicy::List => b.clause(format!(
@@ -355,6 +369,7 @@ mod tests {
                 exclude_replies: false,
                 exclude_reblogs: false,
                 public_only: false,
+                exclude_local: false,
                 hide: None,
             },
         )
@@ -486,6 +501,7 @@ mod tests {
                 exclude_replies: false,
                 exclude_reblogs: false,
                 public_only: false,
+                exclude_local: false,
                 hide: None,
             },
         );

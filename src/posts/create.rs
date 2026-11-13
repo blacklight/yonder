@@ -31,7 +31,7 @@ pub struct StatusParams {
     /// `text/plain` / `text/markdown`; `None` = the account's default
     /// (`accounts.default_content_type`, else the instance default).
     pub content_type: Option<String>,
-    /// `public|unlisted|private|followers_only|direct`; `None` =
+    /// `public|unlisted|private|followers_only|direct|local`; `None` =
     /// account default.
     pub visibility: Option<String>,
     /// BCP-47 language; `None` = resolved user default.
@@ -61,7 +61,7 @@ pub struct ValidatedStatus {
     pub status: String,
     /// `text/plain|text/markdown`.
     pub content_type: String,
-    /// Stored visibility (`public|unlisted|followers_only|direct`).
+    /// Stored visibility (`public|unlisted|followers_only|direct|local`).
     pub visibility: String,
     /// BCP-47 language (resolved through the user default chain).
     pub language: Option<String>,
@@ -184,7 +184,10 @@ pub async fn validate(
     // still writes `visibility`, so "post direct → edit to public"
     // would otherwise bypass the guard). A direct parent pins the
     // reply to `direct`: an explicit wider audience is a leak (422),
-    // an omitted one inherits the conversation's scope.
+    // an omitted one inherits the conversation's scope. A `local`
+    // parent likewise pins the reply to the instance — `local` or
+    // narrower (`direct`) only, since anything wider would federate
+    // the reply text.
     let effective_parent = match params.in_reply_to_id {
         Some(id) => Some(id),
         None => match editing_status_id {
@@ -201,13 +204,21 @@ pub async fn validate(
     if let Some(parent_id) = effective_parent {
         match super::load(&ctx.db, parent_id).await? {
             Some(parent) if super::can_see(&ctx.db, &parent, Some(auth.account_id)).await? => {
-                if parent.visibility == "direct" && visibility != "direct" {
+                let pin = match parent.visibility.as_str() {
+                    "direct" if visibility != "direct" => Some(("direct", "direct")),
+                    "local" if !matches!(visibility.as_str(), "local" | "direct") => {
+                        Some(("local", "local or direct"))
+                    }
+                    _ => None,
+                };
+                if let Some((pin, allowed)) = pin {
                     if params.visibility.is_none() {
-                        visibility = "direct".to_string();
+                        visibility = pin.to_string();
                     } else {
-                        return Err(Error::Validation(
-                            "a reply to a direct status must be direct".to_string(),
-                        ));
+                        return Err(Error::Validation(format!(
+                            "a reply to a {} status must be {allowed}",
+                            parent.visibility
+                        )));
                     }
                 }
             }
@@ -222,14 +233,37 @@ pub async fn validate(
     }
     // A quote_id on edit is validated but not applied — Mastodon
     // forbids retargeting a quote post-hoc.
-    let quote_of_id = match params.quote_id {
-        Some(qid) => Some(
-            crate::interactions::quote::validate_target(ctx, qid, auth.account_id)
-                .await?
-                .id,
-        ),
-        None => None,
+    let quote_target = match params.quote_id {
+        Some(qid) => {
+            Some(crate::interactions::quote::validate_target(ctx, qid, auth.account_id).await?)
+        }
+        None => match editing_status_id {
+            Some(id) => match super::load(&ctx.db, id).await? {
+                Some(s) => match s.quote_of_id {
+                    Some(qid) => super::load(&ctx.db, qid).await?,
+                    None => None,
+                },
+                None => None,
+            },
+            None => None,
+        },
     };
+    // Quoting a `local` target pins the quote to `local` too: the
+    // `RE:` link and FEP-0449 quote URI ride the document that
+    // `public`/`unlisted`/`followers_only`/`direct` posts federate,
+    // which would leak the instance-only target's existence.
+    if let Some(target) = &quote_target {
+        if target.visibility == "local" && visibility != "local" {
+            if params.visibility.is_none() {
+                visibility = "local".to_string();
+            } else {
+                return Err(Error::Validation(
+                    "a quote of a local status must itself be local".to_string(),
+                ));
+            }
+        }
+    }
+    let quote_of_id = quote_target.map(|t| t.id);
     if let Some(poll) = &params.poll {
         polls::validate(ctx, poll)?;
     }

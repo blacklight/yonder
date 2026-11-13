@@ -42,11 +42,16 @@ One predicate builder (`src/timelines/filter.rs`) shapes every scope.
 `$1` when present — the convention `social::visibility`'s exclusion
 fragments already use.
 
-- **Visibility.** Public scopes (`local`, `federated`, `tag`) serve
+- **Visibility.** Public scopes (`federated`, `tag`) serve
   `public` only — `unlisted` never appears, matching Mastodon's public
-  streams. Home admits `public`, `unlisted`, `followers_only`/`private`
-  (the follows join doubles as the gate) and `direct` when the viewer
-  is mentioned. List admits all non-`direct` visibilities from members.
+  streams. The `local` scope serves `public` plus `local`-visibility
+  posts for authenticated viewers (anonymous gets `public` only);
+  `local` never appears in `federated`/`tag`. Home admits `public`,
+  `unlisted`, `local` (the audience rules below already restrict it
+  to followed/own authors), `followers_only`/`private` (the follows
+  join doubles as the gate) and `direct` when the viewer is mentioned.
+  List admits all non-`direct` visibilities from members — `local`
+  included, since every list viewer is a local account.
 - **Replies.** Home shows replies addressed to the viewer, to the
   author itself, or to someone the viewer follows. List replies follow
   `lists.replies_policy` (`followed` / `list` / `none`). Public and tag
@@ -122,8 +127,10 @@ Deletions (`tombstone`, remote `Delete`, `unreblog`, `Undo(Announce)`)
   `hashtag:{tag}` / `hashtag:local:{tag}` for each tag, `user:{uid}`
   for the author and every local follower (`uid` is `users.id`), and
   `list:{list_id}:{uid}` for local lists containing the author.
-- `unlisted`/`followers_only` → `user:` and `list:` streams only
-  (followers and list owners — the same accounts that can read them).
+- `unlisted`/`followers_only`/`local` → `user:` and `list:` streams
+  only (followers and list owners — the same local accounts that can
+  read them). `local` never reaches `public`, `public:local` or
+  hashtag streams.
 - `direct` → `user:{uid}` for the author and mentioned local users
   only; never public, hashtag or list streams.
 

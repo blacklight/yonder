@@ -114,6 +114,9 @@ pub async fn list_feed(
     let filters = Filters {
         viewer: Some(list.account_id),
         exclude_reblogs: true,
+        // The feed document is public — `local` posts stay off it even
+        // though the owner is the viewer.
+        exclude_local: true,
         ..Default::default()
     };
     let rows = fetch(db, &scope, filters, max_items).await?;

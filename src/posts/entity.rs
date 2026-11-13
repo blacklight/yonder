@@ -697,6 +697,20 @@ impl StatusBatch {
                 None => Ok(std::collections::HashSet::new()),
             }
         };
+        // `local` originals render for any viewer account local to
+        // this instance — the batched [`can_see`] locality check.
+        let viewer_local_f = async {
+            match viewer {
+                Some(v) => sqlx::query_scalar::<_, bool>(
+                    "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1 AND domain IS NULL)",
+                )
+                .bind(v)
+                .fetch_one(db)
+                .await
+                .map_err(to_err),
+                None => Ok(false),
+            }
+        };
         // Conversation mutes: one recursive root-resolution over every
         // rendered id, intersected with the viewer's muted roots.
         let mutes_f = interactions::mutes::muted_status_ids(db, viewer, &all_ids);
@@ -711,10 +725,21 @@ impl StatusBatch {
             mention_seen_ids,
             followed,
             hidden_accounts,
+            viewer_local,
             muted,
         ) = tokio::try_join!(
-            accounts_f, pins_f, polls_f, options_f, votes_f, voters_f, own_f, mention_f, follows_f,
-            hidden_f, mutes_f
+            accounts_f,
+            pins_f,
+            polls_f,
+            options_f,
+            votes_f,
+            voters_f,
+            own_f,
+            mention_f,
+            follows_f,
+            hidden_f,
+            viewer_local_f,
+            mutes_f
         )?;
 
         let accounts: HashMap<i64, account_mapper::AccountRow> =
@@ -780,6 +805,8 @@ impl StatusBatch {
                 true
             } else if viewer.is_none() {
                 false
+            } else if o.visibility == "local" {
+                viewer_local
             } else if o.visibility == "direct" {
                 mention_seen.contains(&o.id)
             } else {

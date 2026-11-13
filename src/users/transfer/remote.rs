@@ -2367,7 +2367,10 @@ fn audience_for(s: &Value) -> (Value, Value) {
         .unwrap_or("public")
     {
         "unlisted" => (json!([followers]), json!([super::AS_PUBLIC])),
-        "private" => (json!([followers]), json!([])),
+        // `local` is instance-scoped on the source — importing it as
+        // followers-only keeps the content off the public web without
+        // pretending it was ever federated.
+        "private" | "local" => (json!([followers]), json!([])),
         "direct" => (json!([]), json!([])),
         _ => (json!([super::AS_PUBLIC]), json!([followers])),
     }

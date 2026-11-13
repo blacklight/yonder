@@ -5,10 +5,14 @@
 //! so every service takes one argument; handlers stay thin.
 //!
 //! Visibility canonicalization: statuses *store* `public | unlisted |
-//! followers_only | direct` — the redundant `private` spelling (admitted
-//! by the schema CHECK and writable through user settings) is
-//! normalized to `followers_only` at the write boundary, while the
+//! followers_only | direct | local` — the redundant `private` spelling
+//! (admitted by the schema CHECK and writable through user settings)
+//! is normalized to `followers_only` at the write boundary, while the
 //! Mastodon wire value is always `private` ([`wire_visibility`]).
+//! `local` is the instance-only audience (Songhive's `LOCAL`): any
+//! authenticated local account sees it, anonymous and remote viewers
+//! never do, and it never federates — `addressing` gives it a
+//! mentions-only audience and the AP publish paths skip it entirely.
 //!
 //! Cross-cutting invariants (see `docs/posting.md`):
 //!
@@ -129,28 +133,30 @@ impl PostContext {
 
 /// Stored visibility values (the `statuses.visibility` CHECK set, minus
 /// the redundant `private` spelling this boundary normalizes away).
-pub const VISIBILITIES: &[&str] = &["public", "unlisted", "followers_only", "direct"];
+pub const VISIBILITIES: &[&str] = &["public", "unlisted", "followers_only", "direct", "local"];
 
 /// Normalize an API-supplied visibility to its stored value: Mastodon's
 /// `private` and the `followers_only` alias both store
-/// `followers_only`; `unlisted`/`public`/`direct` pass through.
+/// `followers_only`; `unlisted`/`public`/`direct`/`local` pass through.
 pub fn normalize_visibility(input: &str) -> Result<String> {
     match input {
-        "public" | "unlisted" | "direct" => Ok(input.to_string()),
+        "public" | "unlisted" | "direct" | "local" => Ok(input.to_string()),
         "private" | "followers_only" => Ok("followers_only".to_string()),
         other => Err(Error::Validation(format!(
-            "visibility must be one of: public, unlisted, private, direct (got {other:?})"
+            "visibility must be one of: public, unlisted, private, direct, local (got {other:?})"
         ))),
     }
 }
 
 /// Stored visibility → the Mastodon wire value (`followers_only` and
-/// legacy `private` rows both render `private`).
+/// legacy `private` rows both render `private`; `local` has no
+/// Mastodon spelling and reports verbatim).
 pub fn wire_visibility(stored: &str) -> &'static str {
     match stored {
         "followers_only" | "private" => "private",
         "public" => "public",
         "unlisted" => "unlisted",
+        "local" => "local",
         _ => "direct",
     }
 }
@@ -163,6 +169,7 @@ pub fn default_visibility(stored: &str) -> &'static str {
     match stored {
         "public" => "public",
         "unlisted" => "unlisted",
+        "local" => "local",
         _ => "followers_only",
     }
 }
@@ -187,7 +194,7 @@ pub fn addressing(
             to.extend(mentions.iter().cloned());
             (to, vec![public])
         }
-        "direct" => (mentions.to_vec(), Vec::new()),
+        "direct" | "local" => (mentions.to_vec(), Vec::new()),
         // followers_only / private
         _ => {
             let mut to = vec![followers.to_string()];
@@ -387,9 +394,25 @@ pub async fn quote_target_uri(db: &PgPool, status: &StatusRow) -> Result<Option<
     }
 }
 
+/// `local` visibility's audience check: the viewer must be an account
+/// *local to this instance* (`accounts.domain IS NULL`) — "logged on
+/// the current instance". Remote accounts (e.g. AP signers resolved
+/// through `signer_account_id`) fail this even though they have an
+/// `accounts` row.
+async fn local_viewer(db: &PgPool, account_id: i64) -> Result<bool> {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1 AND domain IS NULL)",
+    )
+    .bind(account_id)
+    .fetch_one(db)
+    .await
+    .map_err(Into::into)
+}
+
 /// The minimal read-side visibility primitive epic 15's timelines
 /// extend: the author always sees their own; `public`/`unlisted` are
-/// world-readable; `followers_only` needs an accepted `follows` row
+/// world-readable; `local` needs any authenticated *local* viewer;
+/// `followers_only` needs an accepted `follows` row
 /// from viewer to author *or* a `status_mentions` row (a mention
 /// grants audience — Mastodon's `permitted?` — otherwise the
 /// mentioned user could never reply to a thread addressed to them);
@@ -413,6 +436,10 @@ pub async fn can_see(
     }
     match status.visibility.as_str() {
         "public" | "unlisted" => Ok(true),
+        "local" => match viewer_account_id {
+            Some(viewer) => local_viewer(db, viewer).await,
+            None => Ok(false),
+        },
         "direct" => match viewer_account_id {
             Some(viewer) => Ok(sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS(SELECT 1 FROM status_mentions \
@@ -455,10 +482,22 @@ pub async fn visible_ids(
     let mut visible = std::collections::HashSet::new();
     let mut gated_ids = Vec::new();
     let mut gated: Vec<&StatusRow> = Vec::new();
+    // `local` rows resolve in memory like public/unlisted — but only
+    // for a viewer account local to this instance. The lookup runs
+    // only when a `local` row is actually present.
+    let viewer_local = match viewer {
+        Some(v) if statuses.iter().any(|s| s.visibility == "local") => local_viewer(db, v).await?,
+        _ => false,
+    };
     for s in statuses {
-        if Some(s.account_id) == viewer || matches!(s.visibility.as_str(), "public" | "unlisted") {
+        if Some(s.account_id) == viewer
+            || matches!(s.visibility.as_str(), "public" | "unlisted")
+            || (s.visibility == "local" && viewer_local)
+        {
             visible.insert(s.id);
-        } else if viewer.is_some() {
+        } else if viewer.is_some() && s.visibility != "local" {
+            // `local` rows a non-local viewer can't see never enter
+            // the gated path — a mention or follow must not leak them.
             gated_ids.push(s.id);
             gated.push(s);
         }
@@ -540,6 +579,7 @@ mod tests {
             "followers_only"
         );
         assert_eq!(normalize_visibility("direct").unwrap(), "direct");
+        assert_eq!(normalize_visibility("local").unwrap(), "local");
         assert!(normalize_visibility("friends").is_err());
     }
 
@@ -549,6 +589,7 @@ mod tests {
         assert_eq!(wire_visibility("private"), "private");
         assert_eq!(wire_visibility("public"), "public");
         assert_eq!(wire_visibility("unlisted"), "unlisted");
+        assert_eq!(wire_visibility("local"), "local");
     }
 
     #[test]
@@ -563,6 +604,10 @@ mod tests {
         let (to, cc) = addressing("followers_only", &f, &m);
         assert!(to.contains(&f) && cc.is_empty());
         let (to, cc) = addressing("direct", &f, &m);
+        assert_eq!(to, m);
+        assert!(cc.is_empty());
+        // `local` never federates — its audience is nominal mentions.
+        let (to, cc) = addressing("local", &f, &m);
         assert_eq!(to, m);
         assert!(cc.is_empty());
     }

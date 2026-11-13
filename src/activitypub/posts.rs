@@ -11,8 +11,16 @@
 //! `authorized_fetch` gates `public`/`unlisted`; `followers_only`
 //! requires the verified signer to be the author or an accepted
 //! follower; `direct` requires the author or a mentioned recipient —
-//! resolved via `can_see`. Only public/unlisted documents enter the
-//! shared `doc_cache`; private documents render per-request.
+//! resolved via `can_see`. `local` statuses take the private path:
+//! the signer must resolve to an account *local to this instance*.
+//! Only public/unlisted documents enter the shared `doc_cache`;
+//! private documents render per-request.
+//!
+//! **`local` never federates**: [`publish_create`] and
+//! [`publish_update`] return early for it — no `activities` row, no
+//! deliveries, no outbox entry — so instance-only content can't leak
+//! through any publish call site (create, edit, scheduled publish,
+//! media/admin re-federation, quote authorization).
 
 use axum::{
     extract::{Path, State},
@@ -329,6 +337,9 @@ pub async fn publish_create(
     status: &StatusRow,
     _resolved: &[ResolvedMention],
 ) -> Result<()> {
+    if status.visibility == "local" {
+        return Ok(());
+    }
     let username = username_of(ctx, status.account_id).await?;
     let doc = build_object(ctx, status).await?;
     let obj = object_for_activity(&doc);
@@ -350,6 +361,9 @@ pub async fn publish_update(
     status: &StatusRow,
     _resolved: &[ResolvedMention],
 ) -> Result<()> {
+    if status.visibility == "local" {
+        return Ok(());
+    }
     let username = username_of(ctx, status.account_id).await?;
     let doc = build_object(ctx, status).await?;
     let obj = object_for_activity(&doc);

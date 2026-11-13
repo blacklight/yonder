@@ -38,7 +38,7 @@ const MAX_LANGUAGE_TAG_LEN: usize = 35;
 
 /// Default-post visibilities BOOTSTRAP allows. `direct` is not a valid
 /// *default* even though the DB CHECK (from epic 02) admits the value.
-pub const VISIBILITIES: &[&str] = &["public", "unlisted", "followers_only", "private"];
+pub const VISIBILITIES: &[&str] = &["public", "unlisted", "followers_only", "private", "local"];
 
 /// Stored `users.theme` values; NULL resolves to `system`.
 pub const THEMES: &[&str] = &["light", "dark", "system"];

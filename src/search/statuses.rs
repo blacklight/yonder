@@ -14,12 +14,13 @@ use super::like_pattern;
 use super::params::{QueryKind, SearchParams};
 
 /// Status visibility predicate for `s`/`a` joins — `$1` is the viewer
-/// when bound. Anonymous callers see `public`/`unlisted` only.
+/// when bound. Anonymous callers see `public`/`unlisted` only;
+/// authenticated (local) viewers also see `local` posts.
 /// `pub(crate)` — hashtag and resolve paths reuse the same rule.
 pub(crate) fn visibility_clause(viewer: Option<i64>) -> String {
     match viewer {
         None => "s.visibility IN ('public', 'unlisted')".to_string(),
-        Some(_) => "(s.visibility IN ('public', 'unlisted') \
+        Some(_) => "(s.visibility IN ('public', 'unlisted', 'local') \
             OR s.account_id = $1 \
             OR (s.visibility IN ('followers_only', 'private') \
                 AND EXISTS (SELECT 1 FROM follows fv \

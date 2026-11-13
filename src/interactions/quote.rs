@@ -70,6 +70,11 @@ pub async fn send_quote_request(
     status: &StatusRow,
     target: &StatusRow,
 ) -> Result<()> {
+    // A `local` quoting status never federates — the QuoteRequest
+    // would carry its Note document to the remote author.
+    if status.visibility == "local" {
+        return Ok(());
+    }
     if target.local {
         return Ok(());
     }

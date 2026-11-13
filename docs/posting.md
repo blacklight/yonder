@@ -57,9 +57,9 @@ scheduling, link previews and ActivityPub federation.
 
 ## Visibility
 
-Stored: `public`, `unlisted`, `followers_only`, `direct` (input
-`private` normalizes to `followers_only`; wire output maps back to
-`private`). `can_see` enforces author/followers/mention/public
+Stored: `public`, `unlisted`, `followers_only`, `direct`, `local`
+(input `private` normalizes to `followers_only`; wire output maps back
+to `private`). `can_see` enforces author/followers/mention/public
 semantics (a mention grants audience even on follower-gated posts —
 otherwise the addressee could never reply); the same predicate guards
 the poll endpoints (a poll is only as visible as its status) and the
@@ -69,6 +69,23 @@ never a revealing 401. Replies to a `direct` status stay in the
 conversation: an omitted `visibility` inherits `direct`, an explicit
 wider audience is a 422, and the same guard applies to edits via the
 stored parent.
+
+`local` posts are instance-only (Akkoma/Songhive semantics): any
+authenticated *local* account (`accounts.domain IS NULL`) can read
+them — anonymous and remote-account viewers cannot — and they never
+federate. `publish_create`/`publish_update` return early for them (no
+`activities` row, no deliveries, no outbox entry), the AP object GET
+treats them like other gated documents (a verified signer must still
+resolve to a local account via `can_see`), and boosts are rejected
+outright since boosts only target `public`/`unlisted`. Mentions still
+address nominal `to` recipients so local notifications work, but no
+AP traffic results. Replies to a `local` parent are pinned the same
+way: omitted visibility inherits `local`, `direct` is allowed as the
+narrower audience, anything wider is a 422. Quoting a `local` target
+pins the quote to `local` for the same reason — the `RE:` link and
+quote URI would otherwise ride a federated document. Public feed
+documents (RSS/Atom list feeds) exclude `local` even though the list
+owner is the viewer.
 
 ## Idempotency
 
@@ -334,7 +351,8 @@ Outbound `Create`/`Update`/`Delete` are built through pubby's
 are injected into the emitted object. `GET
 /ap/users/{u}/statuses/{id}` is visibility-scoped: public/unlisted use
 the shared doc-cache under `authorized_fetch`; followers-only/direct
-require a verified signer passing `can_see`.
+require a verified signer passing `can_see`; `local` additionally
+requires the signer to resolve to an account local to this instance.
 
 The **web permalinks** — `/@{acct}` (`accounts.url`), `/@{acct}/{id}`
 (`statuses.url`) and the SPA's `/statuses/{id}` — content-negotiate on

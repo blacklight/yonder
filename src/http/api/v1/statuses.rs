@@ -817,7 +817,7 @@ pub struct StatusCreateSchema {
     pub status: Option<String>,
     /// `text/plain` / `text/markdown` (yonder extension).
     pub content_type: Option<String>,
-    /// `public|unlisted|private|direct`.
+    /// `public|unlisted|private|direct|local`.
     pub visibility: Option<String>,
     /// BCP-47 language.
     pub language: Option<String>,

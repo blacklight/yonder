@@ -13,7 +13,7 @@ bucket (default 30 requests / 60 s).
 |---|---|---|---|
 | Profile | `GET /users/{username}.atom` `.rss` | Local accounts only; **public** posts | None |
 | Hashtag | `GET /tags/{tag}.atom` `.rss` | **public** posts carrying the tag (case-insensitive) | None |
-| List | `GET /lists/{id}.atom` `.rss` | List-owner scope: members' `public`, `unlisted`, `followers_only`, `private` (never `direct`) | Required — see below |
+| List | `GET /lists/{id}.atom` `.rss` | List-owner scope: members' `public`, `unlisted`, `followers_only`, `private` (never `direct` or `local`) | Required — see below |
 
 Content types are `application/atom+xml; charset=utf-8` and
 `application/rss+xml; charset=utf-8`. Usernames and tags are matched

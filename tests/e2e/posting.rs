@@ -473,6 +473,89 @@ async fn visibility_gates_reads() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_visibility_is_instance_scoped() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&alice),
+        Some(json!({"status": "instance only", "visibility": "local"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["visibility"], "local");
+    let id = body["id"].as_str().unwrap().to_string();
+    let id_num: i64 = id.parse().unwrap();
+
+    // Any other account logged on this instance can read it.
+    let (status, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{id}"),
+        Some(&bob),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Anonymous cannot.
+    let (status, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{id}"),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The local timeline shows it to authenticated viewers only.
+    let local_tl = "/api/v1/timelines/public?local=true";
+    let has_id = |body: &Value| {
+        body.as_array()
+            .is_some_and(|rows| rows.iter().any(|s| s["id"].as_str() == Some(id.as_str())))
+    };
+    let (_, body) = request(&env.app, "GET", local_tl, Some(&alice), None, &[]).await;
+    assert!(has_id(&body), "{body}");
+    let (_, body) = request(&env.app, "GET", local_tl, Some(&bob), None, &[]).await;
+    assert!(has_id(&body), "{body}");
+    let (_, body) = request(&env.app, "GET", local_tl, None, None, &[]).await;
+    assert!(!has_id(&body), "{body}");
+
+    // The federated timeline never carries it.
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/timelines/public",
+        Some(&alice),
+        None,
+        &[],
+    )
+    .await;
+    assert!(!has_id(&body), "{body}");
+
+    // Nothing federated: no `activities` row for the status's object.
+    let activities: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM activities WHERE object_id = \
+         (SELECT uri FROM statuses WHERE id = $1)",
+    )
+    .bind(id_num)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(activities, 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn idempotency_replays_result() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

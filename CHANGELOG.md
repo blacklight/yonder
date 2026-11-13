@@ -7,14 +7,23 @@
 - `docs`: Document the domain-split configuration — `instance.domain`
   is the acct/WebFinger identity (`@user@domain`) while
   `federation.base_url` is the origin actor/object IRIs are minted
-  under; `config.toml.example` and the config field docs now say so.
+  under; `config.toml.example` and the config field docs now say so
+  ([`9fc1c56`](https://git.platypush.tech/blacklight/yonder/commit/9fc1c56ef4b9067c9bc5ba304bfa9b577013bea4)).
 - `federation.signature_scheme` (`"draft-cavage"` default, or `"rfc9421"`)
   selects the wire format for outbound signed requests — deliveries and
-  object/actor fetches. Inbound requests are verified in either format.
+  object/actor fetches. Inbound requests are verified in either format
+  ([`d4de0da`](https://git.platypush.tech/blacklight/yonder/commit/d4de0da2e19ead53449cc84aa6cb5b51c62f7d8a)).
 - Per-actor Ed25519 keys: each local account and the instance actor get an
   Ed25519 key (migration 0053, generated on first load for existing rows).
   It is advertised in `additionalPublicKeys` and signs RFC 9421 deliveries
-  and object fetches when `federation.signature_scheme = "rfc9421"`.
+  and object fetches when `federation.signature_scheme = "rfc9421"`
+  ([`d4de0da`](https://git.platypush.tech/blacklight/yonder/commit/d4de0da2e19ead53449cc84aa6cb5b51c62f7d8a)).
+- `statuses`: Add `local` visibility — posts marked `local` are readable
+  only by accounts logged on this instance (never anonymous or remote
+  viewers) and never federate; replies and quotes of `local` posts stay
+  instance-scoped, and the composer, default-visibility setting and
+  status cards expose the new audience
+  ([`4577f22`](https://git.platypush.tech/blacklight/yonder/commit/4577f22be8f81d073c3215ef0ee0fe209ae56a62)).
 
 ### Fixed
 
@@ -22,7 +31,8 @@
   now derived from `federation.base_url` (scheme remapped to
   `ws`/`wss`) instead of `instance.domain` — domain-split deployments
   advertise the host that actually serves `/api/v1/streaming`, and
-  non-default ports/schemes are expressed correctly.
+  non-default ports/schemes are expressed correctly
+  ([`9fc1c56`](https://git.platypush.tech/blacklight/yonder/commit/9fc1c56ef4b9067c9bc5ba304bfa9b577013bea4)).
 
 ## 1.0.6
 

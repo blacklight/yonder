@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## Unreleased
+
+### Fixed
+
+- `search`: Scope the `indexable = false` opt-out to search-engine
+  indexing surfaces only — it no longer hides the account or its
+  statuses from the instance's own search; account discovery is
+  governed by `discoverable` alone and status search by
+  `include_public_posts_in_search`, matching Mastodon's `noindex`
+  semantics
+
 ## 1.0.7
 
 ### Added

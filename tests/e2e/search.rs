@@ -588,7 +588,7 @@ async fn author_opt_out_hides_posts_from_others() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn noindex_hides_posts_from_status_search() {
+async fn noindex_does_not_hide_posts_from_status_search() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {
         return;
@@ -602,8 +602,9 @@ async fn noindex_hides_posts_from_status_search() {
         .await
         .unwrap();
 
+    // Internal search is unaffected — `indexable` only governs
+    // search-engine indexing surfaces (robots meta, feeds).
     let bob = register(&env.app, "bob").await;
-    // Another account — and anonymous — find nothing.
     for token in [Some(bob.as_str()), None] {
         let (_, body) = request(
             &env.app,
@@ -613,18 +614,8 @@ async fn noindex_hides_posts_from_status_search() {
             None,
         )
         .await;
-        assert_eq!(body["statuses"].as_array().unwrap().len(), 0);
+        assert_eq!(body["statuses"].as_array().unwrap().len(), 1);
     }
-    // The author still finds their own post.
-    let (_, body) = request(
-        &env.app,
-        "GET",
-        "/api/v2/search?q=noindexmarker&type=statuses",
-        Some(&alice),
-        None,
-    )
-    .await;
-    assert_eq!(body["statuses"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -760,7 +751,14 @@ async fn discoverability_opt_outs_and_exceptions() {
     .await;
     assert_eq!(names(&body, "accounts"), vec!["hidden".to_string()]);
 
-    // indexable=false hides a local account from text search too.
+    // indexable=false does NOT hide a local account from the
+    // instance's own text search — it is the search-engine opt-out
+    // (robots meta/feeds), while `discoverable` governs discovery.
+    sqlx::query("UPDATE accounts SET discoverable = true WHERE id = $1")
+        .bind(bob_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
     sqlx::query("UPDATE users SET indexable = false WHERE account_id = $1")
         .bind(bob_id)
         .execute(&env.state.db)
@@ -775,7 +773,7 @@ async fn discoverability_opt_outs_and_exceptions() {
         None,
     )
     .await;
-    assert_eq!(body["accounts"].as_array().unwrap().len(), 0);
+    assert_eq!(body["accounts"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

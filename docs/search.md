@@ -103,13 +103,12 @@ Every query composes:
   statuses (public-scope semantics, same as timelines).
 - **Social graph** (authenticated viewers): blocks in either
   direction, unexpired mutes, per-user `account_domain_blocks`.
-- **Discoverability**: `accounts.discoverable = false` and
-  `users.indexable = false` hide accounts from text search — except
-  accounts the caller follows and exact FQN/URL matches.
-- **Author opt-out**: `users.indexable = false` keeps the author's
-  statuses out of status text search entirely, and
-  `users.include_public_posts_in_search = false` hides that author's
-  public posts — both stay findable to the author themself.
+- **Discoverability**: `accounts.discoverable = false` hides accounts
+  from text search — except accounts the caller follows and exact
+  FQN/URL matches. (`users.indexable` is the search-*engine* opt-out —
+  it does not affect this instance's own search.)
+- **Author opt-out**: `users.include_public_posts_in_search = false`
+  hides that author's statuses from everyone but the author themself.
 - **Visibility**: anonymous callers see `public`/`unlisted` only;
   viewers additionally see `local` posts and `followers_only`/`private`
   from authors they follow and `direct` posts that mention them.

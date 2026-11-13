@@ -1,6 +1,6 @@
 //! Account search — trigram ILIKE over `username`/`display_name`
 //! (indexes from migration 0018) and `domain`, with the social-graph
-//! exclusions and the `discoverable`/`indexable` opt-outs applied.
+//! exclusions and the `discoverable` opt-out applied.
 
 use sqlx::{PgPool, Row};
 
@@ -88,9 +88,12 @@ pub async fn search(
                  OR a.display_name ILIKE {pat} \
                  OR a.domain ILIKE {pat})"
             ));
-            // Non-exact matches respect the discoverability opt-outs —
+            // Non-exact matches respect the discoverability opt-out —
             // except accounts the caller already follows.
-            let mut disc = "(a.discoverable AND COALESCE(u.indexable, true))".to_string();
+            // `users.indexable` deliberately does not apply: it governs
+            // search-engine indexing (robots meta, feeds), not the
+            // instance's own search — `discoverable` is the opt-out here.
+            let mut disc = "a.discoverable".to_string();
             if viewer.is_some() {
                 disc = format!(
                     "({disc} OR EXISTS (SELECT 1 FROM follows ff \
@@ -128,7 +131,6 @@ pub async fn search(
     let offset = alloc(Bind::I64(params.offset));
     let sql = format!(
         "SELECT a.id FROM accounts a \
-         LEFT JOIN users u ON u.account_id = a.id \
          WHERE {} ORDER BY {order} LIMIT {limit} OFFSET {offset}",
         clauses.join(" AND ")
     );

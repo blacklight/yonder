@@ -87,7 +87,8 @@
     "scheduledDeletionUnit": "días",
     "scheduledDeletionHint": "0 desactiva la eliminación programada (máx. 3650 días).",
     "save": "Guardar",
-    "saved": "Guardado"
+    "saved": "Guardado",
+    "postType": "Tipo de publicación predeterminado"
   },
   "settingsProfile": {
     "title": "Editar perfil",
@@ -635,7 +636,6 @@
     "homeIntro": "Últimos posts de todo el fediverso."
   },
   "compose": {
-    "title": "Redactar",
     "placeholder": "¿Qué estás pensando?",
     "post": "Publicar",
     "schedule": "Programar",
@@ -693,7 +693,17 @@
     "draftDelete": "Eliminar borrador",
     "draftUntitled": "(sin texto)",
     "draftMedia": "{n} archivo | {n} archivos",
-    "draftReplyTo": "Responder a {'@'}{user}"
+    "draftReplyTo": "Responder a {'@'}{user}",
+    "postType": "Tipo de publicación",
+    "postType_note": "Nota",
+    "postType_article": "Artículo",
+    "titlePlaceholder": "Título del artículo",
+    "summary": "Resumen",
+    "summaryPlaceholder": "Anticipación corta sobre el artículo",
+    "cover": "Portada",
+    "pollArticleHint": "Los artículos no pueden tener encuestas",
+    "articleTitle": "Título",
+    "title": "Redactar"
   },
   "moderation": {
     "showResolved": "Mostrar resueltos",

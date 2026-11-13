@@ -739,14 +739,32 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // keeps its stored value when the Update carries no `updated`.
     // `in_reply_to_uri` is always written — it powers relink-on-arrival
     // and the ancestor walk when `in_reply_to_id` is still NULL.
+    // Article/Page metadata for the frontend article block — plain
+    // text, already bounded by the column CHECKs.
+    let article_meta = matches!(object_type, "Article" | "Page");
+    let title_col = if article_meta {
+        object
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(super::render::html_to_text)
+            .map(|n| n.chars().take(500).collect::<String>())
+            .filter(|n| !n.is_empty())
+    } else {
+        None
+    };
+    let summary_col = if article_meta && !summary_text.is_empty() {
+        Some(summary_text.clone())
+    } else {
+        None
+    };
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (id, account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
              in_reply_to_account_id, in_reply_to_uri, quote_of_id, quote_uri, object_type, \
-             created_at, edited_at) \
+             title, summary, created_at, edited_at) \
          VALUES (timestamp_id('statuses', LEAST(COALESCE($12, now()), now())), \
                  $1,$2,$3,'text/plain',$4,$5,$6,$7,false,$8,$9,$10,$11,$17,$14,$15,$16, \
-                 LEAST(COALESCE($12, now()), now()), $13) \
+                 $18,$19, LEAST(COALESCE($12, now()), now()), $13) \
          ON CONFLICT (uri) DO UPDATE SET \
              content = EXCLUDED.content, content_html = EXCLUDED.content_html, \
              language = EXCLUDED.language, visibility = EXCLUDED.visibility, \
@@ -758,6 +776,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
              quote_of_id = EXCLUDED.quote_of_id, \
              quote_uri = EXCLUDED.quote_uri, \
              object_type = EXCLUDED.object_type, \
+             title = EXCLUDED.title, summary = EXCLUDED.summary, \
              edited_at = COALESCE(EXCLUDED.edited_at, statuses.edited_at), \
              updated_at = now() \
          RETURNING id",
@@ -779,6 +798,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .bind(&quote_uri_col)
     .bind(object.get("type").and_then(|v| v.as_str()))
     .bind(&in_reply_to_uri)
+    .bind(&title_col)
+    .bind(&summary_col)
     .fetch_one(&mut *tx)
     .await?;
 

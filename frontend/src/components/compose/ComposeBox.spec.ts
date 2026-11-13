@@ -740,4 +740,50 @@ describe("ComposeBox", () => {
       spy.mock.calls.filter(([u]) => String(u).includes("/api/v2/search")),
     ).toHaveLength(0);
   });
+
+  it("an untouched draft takes the account default post type", async () => {
+    useSettingsStore().settings = {
+      effective_post_type: "article",
+    } as never;
+    mountWith(ComposeBox);
+    await flushPromises();
+    expect(useComposeStore().draft.postType).toBe("article");
+  });
+
+  it("article mode requires a title and submits the article fields", async () => {
+    const spy = mockPost({ id: "9" });
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='post-type']").setValue("article");
+    expect(wrapper.find("[data-testid='article-title']").exists()).toBe(true);
+    expect(wrapper.find("[data-testid='article-summary']").exists()).toBe(true);
+    // No title yet — post stays disabled even with body text.
+    await wrapper.get("[data-testid='compose-text']").setValue("body");
+    expect(
+      wrapper.get("[data-testid='post']").attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.get("[data-testid='article-title']").setValue("My Post");
+    await wrapper.get("[data-testid='article-summary']").setValue("Teaser");
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.post_type).toBe("article");
+    expect(body.title).toBe("My Post");
+    expect(body.summary).toBe("Teaser");
+  });
+
+  it("switching back to note clears the article fields", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const select = wrapper.get("[data-testid='post-type']");
+    await select.setValue("article");
+    await wrapper.get("[data-testid='article-title']").setValue("T");
+    await select.setValue("note");
+    const d = useComposeStore().draft;
+    expect(d.postType).toBe("note");
+    expect(d.title).toBe("");
+    expect(d.summary).toBe("");
+    expect(d.coverMediaId).toBeNull();
+    expect(wrapper.find("[data-testid='article-title']").exists()).toBe(false);
+  });
 });

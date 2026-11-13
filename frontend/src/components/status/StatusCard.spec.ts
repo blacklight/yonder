@@ -932,4 +932,78 @@ describe("StatusCard", () => {
     const cwImg = wrapper.get(".cw__text img.emoji");
     expect(cwImg.attributes("alt")).toBe(":blobcat:");
   });
+
+  it("renders FEP-b2b8 article metadata — cover, title, summary", () => {
+    const cover = {
+      id: "55",
+      type: "image",
+      url: "https://x.test/media/cover.png",
+      preview_url: "https://x.test/media/cover.png",
+      remote_url: null,
+      description: "cover alt",
+      blurhash: null,
+      meta: {},
+    } as Status["media_attachments"][number];
+    const s = status({
+      content: "<p>article body</p>",
+      media_attachments: [cover],
+      yonder: {
+        article: {
+          title: "My Post",
+          summary: "A teaser",
+          cover,
+        },
+      },
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    const article = wrapper.get("[data-testid='article']");
+    expect(article.find(".status-card__article-cover").exists()).toBe(true);
+    expect(article.find(".status-card__article-title").text()).toContain(
+      "My Post",
+    );
+    expect(article.find(".status-card__article-summary").text()).toContain(
+      "A teaser",
+    );
+    // The cover is not repeated in the attachment gallery.
+    expect(wrapper.find(".status-media").exists()).toBe(false);
+  });
+
+  it("strips the folded headline/teaser a remote Article ingest prepends", () => {
+    const s = status({
+      account: {
+        ...status().account,
+        acct: "writer@remote.test",
+      } as Status["account"],
+      content:
+        "<p><strong>Remote Title</strong></p>" +
+        "<p>Remote teaser</p>" +
+        "<p>real body</p>",
+      yonder: {
+        article: {
+          title: "Remote Title",
+          summary: "Remote teaser",
+          cover: null,
+        },
+      },
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    const html = wrapper.get(".status-card__content").html();
+    expect(html).not.toContain("Remote Title</strong>");
+    expect(html).not.toContain("Remote teaser");
+    expect(html).toContain("real body");
+  });
+
+  it("keeps a matching folded prefix on local posts (no remote strip)", () => {
+    const s = status({
+      content:
+        "<p><strong>Local Title</strong></p><p>real body</p>",
+      yonder: {
+        article: { title: "Local Title", summary: null, cover: null },
+      },
+    });
+    const { wrapper } = mountWith(StatusCard, { props: { status: s } });
+    expect(wrapper.get(".status-card__content").html()).toContain(
+      "Local Title",
+    );
+  });
 });

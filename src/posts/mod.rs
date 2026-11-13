@@ -242,11 +242,24 @@ pub struct StatusRow {
     pub original_id: Option<String>,
     /// The source's original publication instant on imported copies.
     pub original_created_at: Option<DateTime<Utc>>,
-    /// The AP object `type` for remote statuses (`Note`, `Video`,
-    /// `Audio`, …); NULL for local posts and rows ingested before the
-    /// column existed. The read-time media self-heal uses it to bound
+    /// The AP object `type` — `Note`/`Article`/`Question` for local
+    /// posts (FEP-b2b8 long-form text is `Article`), the remote
+    /// object's own `type` (`Note`, `Video`, `Audio`, `Page`, …) for
+    /// remote statuses; NULL for rows ingested before the column
+    /// existed. The read-time media self-heal uses it to bound
     /// re-fetches to A/V objects.
     pub object_type: Option<String>,
+    /// AS2 `name` — the article headline (plain text, ≤500 chars).
+    /// NULL on notes and rows predating the column.
+    pub title: Option<String>,
+    /// AS2 `summary` teaser for long-form posts (plain text, ≤2000
+    /// chars); the AP layer renders it as HTML. Distinct from
+    /// `spoiler_text` (the content warning).
+    pub summary: Option<String>,
+    /// The article's representative image (`media_attachments.id`) —
+    /// emitted as the object's `image`; NULL falls back to the first
+    /// image attachment.
+    pub cover_media_id: Option<i64>,
     pub poll_id: Option<i64>,
     pub replies_count: i32,
     pub reblogs_count: i32,
@@ -276,7 +289,8 @@ pub(crate) const STATUS_COLS: &str =
     "id, account_id, content, content_html, content_type, language, \
      visibility, spoiler_text, sensitive, local, uri, url, in_reply_to_id, \
      in_reply_to_account_id, in_reply_to_uri, reblog_of_id, quote_of_id, quote_uri, \
-     quote_authorization_uri, original_id, original_created_at, object_type, poll_id, replies_count, \
+     quote_authorization_uri, original_id, original_created_at, object_type, title, summary, \
+     cover_media_id, poll_id, replies_count, \
      reblogs_count, favourites_count, quotes_count, edited_at, \
      remote_likes_count, remote_shares_count, remote_quotes_count, \
      remote_counts_fetched_at, last_selected_at, fetched_at, tombstone, \
@@ -307,6 +321,9 @@ pub(crate) fn row_to_status(r: &sqlx::postgres::PgRow) -> StatusRow {
         original_id: r.get("original_id"),
         original_created_at: r.get("original_created_at"),
         object_type: r.get("object_type"),
+        title: r.get("title"),
+        summary: r.get("summary"),
+        cover_media_id: r.get("cover_media_id"),
         poll_id: r.get("poll_id"),
         replies_count: r.get("replies_count"),
         reblogs_count: r.get("reblogs_count"),
@@ -467,6 +484,15 @@ pub async fn can_see(
             None => Ok(false),
         },
     }
+}
+
+/// Long-form text (FEP-b2b8): `Article` (and the Mastodon-flavored
+/// `Page`) statuses render with title/summary/cover metadata.
+pub fn is_article(status: &StatusRow) -> bool {
+    matches!(
+        status.object_type.as_deref(),
+        Some("Article") | Some("Page")
+    )
 }
 
 /// [`can_see`] for a page of statuses in at most two queries — the

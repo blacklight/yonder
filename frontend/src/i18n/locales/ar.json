@@ -87,7 +87,8 @@
     "scheduledDeletionUnit": "يومًا",
     "scheduledDeletionHint": "القيمة 0 تعطل الحذف المجدول (بحد أقصى 3650 يومًا).",
     "save": "حفظ",
-    "saved": "تم الحفظ"
+    "saved": "تم الحفظ",
+    "postType": "نوع المنشور الافتراضي"
   },
   "settingsProfile": {
     "title": "تعديل الملف الشخصي",
@@ -635,7 +636,6 @@
     "homeIntro": "أحدث المنشورات من الفيديفرس."
   },
   "compose": {
-    "title": "تحرير",
     "placeholder": "بماذا تفكر؟",
     "post": "انشر",
     "schedule": "جدولة",
@@ -693,7 +693,17 @@
     "draftDelete": "حذف المسودة",
     "draftUntitled": "(لا نص)",
     "draftMedia": "{n} مرفق | {n} مرفقات",
-    "draftReplyTo": "رد على {'@'}{user}"
+    "draftReplyTo": "رد على {'@'}{user}",
+    "postType": "نوع المنشور",
+    "postType_note": "ملاحظة",
+    "postType_article": "مقال",
+    "titlePlaceholder": "عنوان المقال",
+    "summary": "الملخص",
+    "summaryPlaceholder": "مقتطف قصير عن المقال",
+    "cover": "الغلاف",
+    "pollArticleHint": "لا يمكن للمقالات أن تحتوي على استطلاعات",
+    "articleTitle": "العنوان",
+    "title": "تحرير"
   },
   "moderation": {
     "showResolved": "عرض المحلولة",

@@ -48,6 +48,11 @@ pub const THEMES: &[&str] = &["light", "dark", "system"];
 /// (`content.default_post_content_type`).
 pub const CONTENT_TYPES: &[&str] = &["text/plain", "text/markdown"];
 
+/// `accounts.default_post_type` values — the AP object types a local
+/// post can be published as (FEP-b2b8 long-form text is `article`).
+/// NULL resolves to `note`.
+pub const POST_TYPES: &[&str] = &["note", "article"];
+
 // ---------------------------------------------------------------------------
 // Patch tri-state
 // ---------------------------------------------------------------------------
@@ -221,6 +226,19 @@ pub fn validate_content_type(content_type: &str) -> Result<()> {
     )))
 }
 
+/// Normalize `post_type` input (`note`/`article`, also `Note`/
+/// `Article`) to the stored lowercase form; rejects anything else.
+pub fn normalize_post_type(raw: &str) -> Result<String> {
+    let normalized = raw.trim().to_ascii_lowercase();
+    if POST_TYPES.contains(&normalized.as_str()) {
+        return Ok(normalized);
+    }
+    Err(Error::Validation(format!(
+        "post_type must be one of: {}",
+        POST_TYPES.join(", ")
+    )))
+}
+
 pub fn validate_deletion_days(days: i64) -> Result<i32> {
     if !(0..=MAX_SCHEDULED_DELETION_DAYS as i64).contains(&days) {
         return Err(Error::Validation(format!(
@@ -370,6 +388,8 @@ pub struct UserSettings {
     pub default_sensitive: bool,
     /// NULL resolves to the instance `content.default_post_content_type`.
     pub default_content_type: Option<String>,
+    /// NULL resolves to `note`.
+    pub default_post_type: Option<String>,
     // users
     pub indexable: bool,
     pub include_public_posts_in_search: bool,
@@ -398,6 +418,7 @@ pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
     let row = sqlx::query(
         "SELECT a.hide_network, a.directory_opt_in, a.default_visibility, \
                 a.default_language, a.default_sensitive, a.default_content_type, \
+                a.default_post_type, \
                 u.indexable, u.include_public_posts_in_search, \
                 u.show_app_display, u.cw_always_expand, \
                 u.block_stranger_notifications, u.scheduled_deletion_days, \
@@ -419,6 +440,7 @@ pub async fn load(pool: &PgPool, user_id: i64) -> Result<UserSettings> {
         default_language: row.get("default_language"),
         default_sensitive: row.get("default_sensitive"),
         default_content_type: row.get("default_content_type"),
+        default_post_type: row.get("default_post_type"),
         indexable: row.get("indexable"),
         include_public_posts_in_search: row.get("include_public_posts_in_search"),
         show_app_display: row.get("show_app_display"),
@@ -467,6 +489,12 @@ impl UserSettings {
             "default_sensitive": self.default_sensitive,
             "default_content_type": self.default_content_type,
             "effective_content_type": self.effective_content_type(config),
+            "default_post_type": self.default_post_type,
+            "effective_post_type": self
+                .default_post_type
+                .as_deref()
+                .filter(|t| POST_TYPES.contains(t))
+                .unwrap_or("note"),
             "theme": self.theme.as_deref().unwrap_or("system"),
             "accent": self.accent,
             "frontend": self.frontend,
@@ -540,6 +568,7 @@ pub struct SettingsPatch {
     pub default_visibility: Patch<String>,
     pub default_sensitive: Patch<bool>,
     pub default_content_type: Patch<String>,
+    pub default_post_type: Patch<String>,
     pub theme: Patch<String>,
     pub accent: Patch<String>,
     pub frontend: Patch<String>,
@@ -652,6 +681,7 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
             | "default_visibility"
             | "default_sensitive"
             | "default_content_type"
+            | "default_post_type"
             | "theme"
             | "accent"
             | "frontend"
@@ -699,6 +729,10 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
         }
         other => other,
     };
+    let default_post_type = match json_string_patch(body, "default_post_type")? {
+        Patch::Set(v) => Patch::Set(normalize_post_type(&v)?),
+        other => other,
+    };
     let theme = match json_string_patch(body, "theme")? {
         Patch::Set(t) => {
             let t = t.to_ascii_lowercase();
@@ -731,6 +765,7 @@ pub fn parse_patch(config: &Config, body: &Value) -> Result<SettingsPatch> {
         default_visibility,
         default_sensitive: patch_bool(body, "default_sensitive")?,
         default_content_type,
+        default_post_type,
         theme,
         accent,
         frontend,
@@ -752,7 +787,7 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
 
     let acct = sqlx::query(
         "SELECT directory_opt_in, default_visibility, default_language, \
-                default_sensitive, default_content_type \
+                default_sensitive, default_content_type, default_post_type \
          FROM accounts WHERE id = $1 AND domain IS NULL FOR UPDATE",
     )
     .bind(auth.account_id)
@@ -779,12 +814,13 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
         || !patch.default_visibility.is_unset()
         || !patch.default_posting_language.is_unset()
         || !patch.default_sensitive.is_unset()
-        || !patch.default_content_type.is_unset();
+        || !patch.default_content_type.is_unset()
+        || !patch.default_post_type.is_unset();
     if accounts_touched {
         sqlx::query(
             "UPDATE accounts SET directory_opt_in = $2, default_visibility = $3, \
                     default_language = $4, default_sensitive = $5, \
-                    default_content_type = $6, \
+                    default_content_type = $6, default_post_type = $7, \
                     updated_at = now() WHERE id = $1",
         )
         .bind(auth.account_id)
@@ -817,6 +853,12 @@ pub async fn save(db: &PgPool, auth: &AuthContext, patch: &SettingsPatch) -> Res
                 .default_content_type
                 .clone()
                 .resolve_nullable(acct.get("default_content_type")),
+        )
+        .bind(
+            patch
+                .default_post_type
+                .clone()
+                .resolve_nullable(acct.get("default_post_type")),
         )
         .execute(&mut *tx)
         .await?;

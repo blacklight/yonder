@@ -109,6 +109,7 @@ function scheduledIsPast() {
   );
 }
 const schedulePast = computed(scheduledIsPast);
+const isArticle = computed(() => d.value.postType === "article");
 const canPost = computed(
   () =>
     !posting.value &&
@@ -116,6 +117,7 @@ const canPost = computed(
     !pollInvalid.value &&
     !schedulePast.value &&
     !uploading.value &&
+    (!isArticle.value || d.value.title.trim().length > 0) &&
     (d.value.text.trim().length > 0 || media.value.length > 0),
 );
 
@@ -192,6 +194,9 @@ const VISIBILITIES: StatusVisibility[] = [
   "direct",
 ];
 const CONTENT_TYPES = ["text/plain", "text/markdown"];
+const POST_TYPES = ["note", "article"];
+const TITLE_MAX = 500; // mirrors the server-side `name` bound
+const SUMMARY_MAX = 2000; // mirrors the server-side `summary` bound
 
 // The account's default content type applies to every fresh draft —
 // reply/mention/DM seeds included — while the draft still carries the
@@ -204,7 +209,10 @@ const editing = typeof route.query.edit === "string" && route.query.edit !== "";
 if (!editing) {
   watch(
     () => [compose.draft, settings.settings] as const,
-    () => compose.applyContentTypeDefault(),
+    () => {
+      compose.applyContentTypeDefault();
+      compose.applyPostTypeDefault();
+    },
     { immediate: true },
   );
 }
@@ -233,6 +241,10 @@ onMounted(async () => {
       compose.update({
         text: s.yonder?.source ?? s.content.replace(/<[^>]+>/g, ""),
         contentType: s.yonder?.content_type ?? "text/plain",
+        postType: s.yonder?.article ? "article" : "note",
+        title: s.yonder?.article?.title ?? "",
+        summary: s.yonder?.article?.summary ?? "",
+        coverMediaId: s.yonder?.article?.cover?.id ?? null,
         visibility: s.visibility,
         language: s.language,
         sensitive: s.sensitive,
@@ -373,7 +385,16 @@ async function saveAlt() {
 
 function removeMedia(m: MediaAttachment) {
   media.value = media.value.filter((x) => x.id !== m.id);
+  if (d.value.coverMediaId === m.id) compose.update({ coverMediaId: null });
   syncMediaIds();
+}
+
+/** Article cover pick — one image attachment doubles as the AS2
+ * `image`. Tapping the marked image clears the pick. */
+function toggleCover(m: MediaAttachment) {
+  compose.update({
+    coverMediaId: d.value.coverMediaId === m.id ? null : m.id,
+  });
 }
 
 /** `datetime-local` values are local time — the minimum must be too
@@ -681,6 +702,12 @@ async function submit() {
         : undefined,
       quote_id: d.value.quoteId ?? undefined,
       scheduled_at: d.value.scheduledAt ?? undefined,
+      post_type: d.value.postType,
+      title: isArticle.value ? d.value.title.trim() : undefined,
+      summary: isArticle.value ? d.value.summary.trim() : undefined,
+      cover_media_id: isArticle.value
+        ? (d.value.coverMediaId ?? undefined)
+        : undefined,
     };
     const sig = JSON.stringify(body);
     if (sig !== idemBody) {
@@ -782,6 +809,36 @@ async function submit() {
         />
       </div>
 
+      <template v-if="isArticle">
+        <input
+          :value="d.title"
+          class="compose__title"
+          :placeholder="t('compose.titlePlaceholder')"
+          :maxlength="TITLE_MAX"
+          :aria-label="t('compose.articleTitle')"
+          data-testid="article-title"
+          @input="
+            compose.update({
+              title: ($event.target as HTMLInputElement).value,
+            })
+          "
+        />
+        <textarea
+          :value="d.summary"
+          class="compose__summary"
+          rows="2"
+          :placeholder="t('compose.summaryPlaceholder')"
+          :maxlength="SUMMARY_MAX"
+          :aria-label="t('compose.summary')"
+          data-testid="article-summary"
+          @input="
+            compose.update({
+              summary: ($event.target as HTMLTextAreaElement).value,
+            })
+          "
+        />
+      </template>
+
       <div class="compose__text-wrap">
         <textarea
           ref="textarea"
@@ -832,6 +889,19 @@ async function submit() {
             <FontAwesomeIcon v-if="m.description" icon="check" />
           </button>
           <button
+            v-if="isArticle && m.type === 'image'"
+            type="button"
+            class="compose__cover"
+            :class="{ 'compose__cover--on': d.coverMediaId === m.id }"
+            :title="t('compose.cover')"
+            :aria-label="t('compose.cover')"
+            :aria-pressed="d.coverMediaId === m.id"
+            data-testid="cover-toggle"
+            @click="toggleCover(m)"
+          >
+            {{ t("compose.cover") }}
+          </button>
+          <button
             type="button"
             class="compose__media-x"
             :aria-label="t('compose.mediaRemove')"
@@ -875,9 +945,9 @@ async function submit() {
           type="button"
           class="compose__ctl"
           :class="{ 'compose__ctl--on': d.poll }"
-          :title="t('compose.pollAdd')"
           :aria-label="t('compose.pollAdd')"
-          :disabled="media.length > 0"
+          :disabled="media.length > 0 || isArticle"
+          :title="isArticle ? t('compose.pollArticleHint') : t('compose.pollAdd')"
           data-testid="poll-toggle"
           @click="togglePoll"
         >
@@ -1000,6 +1070,35 @@ async function submit() {
         </span>
         <span class="compose__select">
           <select
+            :value="d.postType"
+            :aria-label="t('compose.postType')"
+            :title="t('compose.postType')"
+            data-testid="post-type"
+            @change="
+              (() => {
+                const v = ($event.target as HTMLSelectElement).value;
+                compose.update(
+                  v === 'article'
+                    ? // Articles can't carry polls — drop the draft.
+                      { postType: v, poll: null }
+                    : {
+                        postType: v,
+                        title: '',
+                        summary: '',
+                        coverMediaId: null,
+                      },
+                );
+              })()
+            "
+          >
+            <option v-for="pt in POST_TYPES" :key="pt" :value="pt">
+              {{ t(`compose.postType_${pt}`) }}
+            </option>
+          </select>
+          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
+        </span>
+        <span class="compose__select">
+          <select
             :value="d.contentType"
             :aria-label="t('compose.contentType')"
             :title="t('compose.contentType')"
@@ -1115,6 +1214,8 @@ async function submit() {
   font: inherit;
 }
 .compose__cw-input,
+.compose__title,
+.compose__summary,
 .compose__text {
   width: 100%;
   padding: var(--space-3);
@@ -1208,6 +1309,24 @@ async function submit() {
   background: rgb(0 0 0 / 70%);
   color: #fff;
   cursor: pointer;
+}
+/* Article cover pick — bottom-right counterpart of the ALT badge. */
+.compose__cover {
+  position: absolute;
+  inset-inline-end: var(--space-1);
+  bottom: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: rgb(0 0 0 / 70%);
+  color: #fff;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+.compose__cover--on {
+  background: var(--accent-link);
+  color: #fff;
 }
 .compose__bottom {
   flex: 0 0 auto;

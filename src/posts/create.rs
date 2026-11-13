@@ -51,6 +51,18 @@ pub struct StatusParams {
     pub quote_id: Option<i64>,
     /// Future time → schedule instead of publishing.
     pub scheduled_at: Option<DateTime<Utc>>,
+    /// `note`/`article` (case-insensitive; `Note`/`Article` also
+    /// accepted) — the AP object type (FEP-b2b8). `None` = the
+    /// account's `default_post_type`, else `note`.
+    pub post_type: Option<String>,
+    /// Article headline (AS2 `name`, ≤500 chars) — required for
+    /// `article`, rejected for `note`.
+    pub title: Option<String>,
+    /// Article teaser (AS2 `summary`, ≤2000 chars, plain text).
+    pub summary: Option<String>,
+    /// `media_attachments` id of the representative image (AS2
+    /// `image`); must be one of the status's image attachments.
+    pub cover_media_id: Option<i64>,
 }
 
 /// The validated, resolved create payload (stored verbatim in
@@ -80,6 +92,22 @@ pub struct ValidatedStatus {
     /// rows normalized to the original).
     #[serde(default)]
     pub quote_of_id: Option<i64>,
+    /// `note`|`article` — resolved through the account default.
+    #[serde(default = "default_post_type")]
+    pub post_type: String,
+    /// Article headline — `Some` only for `article` posts.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Article teaser — `Some` only for `article` posts.
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// Representative-image attachment — `Some` only for `article`.
+    #[serde(default)]
+    pub cover_media_id: Option<i64>,
+}
+
+fn default_post_type() -> String {
+    "note".to_string()
 }
 
 /// What a create produced.
@@ -91,6 +119,10 @@ pub enum CreateOutcome {
 }
 
 const SPOILER_MAX: usize = 2000;
+/// FEP-b2b8 `name` bound — a headline fits a line or two.
+const TITLE_MAX: usize = 500;
+/// FEP-b2b8 `summary` bound — a few sentences / short paragraph.
+const SUMMARY_MAX: usize = 2000;
 
 /// Parse+validate `params` against config, settings defaults and the
 /// database (`in_reply_to` visibility, media ownership).
@@ -267,6 +299,76 @@ pub async fn validate(
     if let Some(poll) = &params.poll {
         polls::validate(ctx, poll)?;
     }
+    // Post type (FEP-b2b8): `note` or `article`, resolved through the
+    // account's `default_post_type`. Article metadata is exclusive to
+    // articles — a note carrying a title/summary/cover is a client
+    // bug, not something to silently drop.
+    let post_type = match params.post_type.as_deref() {
+        Some(raw) => crate::users::settings::normalize_post_type(raw)?,
+        None => user_settings
+            .default_post_type
+            .as_deref()
+            .and_then(|v| crate::users::settings::normalize_post_type(v).ok())
+            .unwrap_or_else(|| "note".to_string()),
+    };
+    let article = post_type == "article";
+    let title = params.title.clone().map(|t| t.trim().to_string());
+    let summary = params.summary.clone().map(|s| s.trim().to_string());
+    if article {
+        let Some(title) = &title else {
+            return Err(Error::Validation("an article requires a title".to_string()));
+        };
+        if title.is_empty() {
+            return Err(Error::Validation("an article requires a title".to_string()));
+        }
+        if title.chars().count() > TITLE_MAX {
+            return Err(Error::Validation(format!(
+                "title must be at most {TITLE_MAX} characters"
+            )));
+        }
+        if let Some(s) = &summary {
+            if s.chars().count() > SUMMARY_MAX {
+                return Err(Error::Validation(format!(
+                    "summary must be at most {SUMMARY_MAX} characters"
+                )));
+            }
+        }
+        if params.poll.is_some() {
+            return Err(Error::Validation(
+                "an article cannot have a poll".to_string(),
+            ));
+        }
+        if let Some(cover_id) = params.cover_media_id {
+            check_cover_claimable(
+                ctx,
+                auth.account_id,
+                cover_id,
+                editing_status_id,
+                params.media_ids.as_deref(),
+            )
+            .await?;
+        }
+        // An edit keeps the existing poll when `poll` is omitted —
+        // the resulting object would be a `Question`, not an
+        // `Article`.
+        if let Some(status_id) = editing_status_id {
+            let has_poll: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM statuses WHERE id = $1 AND poll_id IS NOT NULL)",
+            )
+            .bind(status_id)
+            .fetch_one(&ctx.db)
+            .await?;
+            if has_poll && params.poll.is_none() {
+                return Err(Error::Validation(
+                    "an article cannot have a poll".to_string(),
+                ));
+            }
+        }
+    } else if title.is_some() || summary.is_some() || params.cover_media_id.is_some() {
+        return Err(Error::Validation(
+            "title, summary and cover_media_id require post_type=article".to_string(),
+        ));
+    }
     let cap = config.media.max_attachments_per_post as usize;
     // Dedupe, preserving order — a repeated id would otherwise double
     // the attachment and violate `scheduled_status_media`'s PK.
@@ -301,6 +403,18 @@ pub async fn validate(
         media_ids,
         poll: params.poll.clone(),
         quote_of_id,
+        post_type,
+        title: if article {
+            title.filter(|t| !t.is_empty())
+        } else {
+            None
+        },
+        summary: if article {
+            summary.filter(|s| !s.is_empty())
+        } else {
+            None
+        },
+        cover_media_id: if article { params.cover_media_id } else { None },
     })
 }
 
@@ -350,6 +464,58 @@ pub async fn check_media_claimable(
     }
 }
 
+/// An article cover (`media_attachments.id`) must pass the attachment
+/// rules, be an image, and belong to the status's *effective*
+/// attachment set: when `media_ids` is supplied the cover must be in
+/// it (an edit replaces the whole set); otherwise the media must
+/// already be attached to the status being edited.
+async fn check_cover_claimable(
+    ctx: &PostContext,
+    account_id: i64,
+    cover_id: i64,
+    editing_status_id: Option<i64>,
+    media_ids: Option<&[i64]>,
+) -> Result<()> {
+    check_media_claimable(ctx, account_id, cover_id, editing_status_id).await?;
+    let ty: String = sqlx::query_scalar("SELECT type FROM media_attachments WHERE id = $1")
+        .bind(cover_id)
+        .fetch_one(&ctx.db)
+        .await?;
+    if ty != "image" {
+        return Err(Error::Validation(
+            "cover_media_id must reference an image attachment".to_string(),
+        ));
+    }
+    match media_ids {
+        Some(ids) if ids.contains(&cover_id) => Ok(()),
+        Some(_) => Err(Error::Validation(
+            "cover_media_id must be one of the status's attachments".to_string(),
+        )),
+        None => match editing_status_id {
+            Some(status_id) => {
+                let attached: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM media_attachments \
+                     WHERE id = $1 AND status_id = $2)",
+                )
+                .bind(cover_id)
+                .bind(status_id)
+                .fetch_one(&ctx.db)
+                .await?;
+                if attached {
+                    Ok(())
+                } else {
+                    Err(Error::Validation(
+                        "cover_media_id must be one of the status's attachments".to_string(),
+                    ))
+                }
+            }
+            None => Err(Error::Validation(
+                "cover_media_id requires the image to be attached to the status".to_string(),
+            )),
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Idempotency
 // ---------------------------------------------------------------------------
@@ -382,6 +548,10 @@ fn fingerprint(validated: &ValidatedStatus, scheduled: bool) -> String {
         "media_ids": validated.media_ids.as_deref().unwrap_or_default(),
         "poll": validated.poll,
         "quote_of_id": validated.quote_of_id,
+        "post_type": validated.post_type,
+        "title": validated.title,
+        "summary": validated.summary,
+        "cover_media_id": validated.cover_media_id,
         "scheduled": scheduled,
     });
     hex::encode(Sha256::digest(canonical.to_string().as_bytes()))
@@ -559,12 +729,25 @@ pub async fn insert_status_tx(
         }
         None => None,
     };
+    // `object_type` is the AP object type we emit: polls are
+    // `Question`s, `article` posts are FEP-b2b8 `Article`s, everything
+    // else a `Note`.
+    let object_type = if v.poll.is_some() {
+        "Question"
+    } else if v.post_type == "article" {
+        "Article"
+    } else {
+        "Note"
+    };
+    let article = v.post_type == "article";
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, in_reply_to_id, \
-             in_reply_to_account_id, scheduled_deletion_at, quote_of_id) \
+             in_reply_to_account_id, scheduled_deletion_at, quote_of_id, \
+             object_type, title, summary, cover_media_id) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10, \
-                 CASE WHEN $11::int > 0 THEN now() + $11::int * interval '1 day' ELSE NULL END, $12) \
+                 CASE WHEN $11::int > 0 THEN now() + $11::int * interval '1 day' ELSE NULL END, $12, \
+                 $13,$14,$15,$16) \
          RETURNING id",
     )
     .bind(account_id)
@@ -579,6 +762,10 @@ pub async fn insert_status_tx(
     .bind(parent_account)
     .bind(scheduled_deletion_days)
     .bind(v.quote_of_id)
+    .bind(object_type)
+    .bind(if article { v.title.as_deref() } else { None })
+    .bind(if article { v.summary.as_deref() } else { None })
+    .bind(if article { v.cover_media_id } else { None })
     .fetch_one(&mut **tx)
     .await?;
 
@@ -999,9 +1186,21 @@ pub async fn edit_status(
     .bind(status.edited_at.unwrap_or(status.created_at))
     .execute(&mut *tx)
     .await?;
+    // Same `object_type` resolution as `insert_status_tx`; an omitted
+    // `poll` on edit keeps the existing one.
+    let object_type =
+        if validated.poll.is_some() || (validated.poll.is_none() && status.poll_id.is_some()) {
+            "Question"
+        } else if validated.post_type == "article" {
+            "Article"
+        } else {
+            "Note"
+        };
+    let article = validated.post_type == "article";
     sqlx::query(
         "UPDATE statuses SET content = $2, content_html = $3, content_type = $4, \
              language = $5, sensitive = $6, spoiler_text = $7, visibility = $8, \
+             object_type = $9, title = $10, summary = $11, cover_media_id = $12, \
              edited_at = now(), updated_at = now() WHERE id = $1",
     )
     .bind(status_id)
@@ -1012,6 +1211,22 @@ pub async fn edit_status(
     .bind(validated.sensitive)
     .bind(&validated.spoiler_text)
     .bind(&validated.visibility)
+    .bind(object_type)
+    .bind(if article {
+        validated.title.as_deref()
+    } else {
+        None
+    })
+    .bind(if article {
+        validated.summary.as_deref()
+    } else {
+        None
+    })
+    .bind(if article {
+        validated.cover_media_id
+    } else {
+        None
+    })
     .execute(&mut *tx)
     .await?;
     // `media_ids` supplied (even empty) replaces the attachment set;
@@ -1191,7 +1406,8 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     }
     sqlx::query(
         "UPDATE statuses SET content = '', content_html = '', spoiler_text = NULL, \
-             sensitive = false, tombstone = true, updated_at = now() WHERE id = $1",
+             title = NULL, summary = NULL, sensitive = false, tombstone = true, \
+             updated_at = now() WHERE id = $1",
     )
     .bind(status.id)
     .execute(&ctx.db)

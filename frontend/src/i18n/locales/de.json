@@ -87,7 +87,8 @@
     "scheduledDeletionUnit": "Tagen",
     "scheduledDeletionHint": "0 deaktiviert die geplante Löschung (max. 3650 Tage).",
     "save": "Speichern",
-    "saved": "Gespeichert"
+    "saved": "Gespeichert",
+    "postType": "Standard-Beitragstyp"
   },
   "settingsProfile": {
     "title": "Profil bearbeiten",
@@ -635,7 +636,6 @@
     "homeIntro": "Neueste Beiträge aus dem Fediverse."
   },
   "compose": {
-    "title": "Schreiben",
     "placeholder": "Was beschäftigt dich?",
     "post": "Posten",
     "schedule": "Planen",
@@ -693,7 +693,17 @@
     "draftDelete": "Entwurf löschen",
     "draftUntitled": "(kein Text)",
     "draftMedia": "{n} Anhang | {n} Anhänge",
-    "draftReplyTo": "Antwort an {'@'}{user}"
+    "draftReplyTo": "Antwort an {'@'}{user}",
+    "postType": "Beitragstyp",
+    "postType_note": "Notiz",
+    "postType_article": "Artikel",
+    "titlePlaceholder": "Artikeltitel",
+    "summary": "Zusammenfassung",
+    "summaryPlaceholder": "Kurze Einleitung zum Artikel",
+    "cover": "Titelbild",
+    "pollArticleHint": "Artikel können keine Umfragen haben",
+    "articleTitle": "Titel",
+    "title": "Schreiben"
   },
   "moderation": {
     "showResolved": "Erledigte anzeigen",

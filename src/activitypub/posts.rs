@@ -1,6 +1,8 @@
-//! Status objects on the wire — Note/Question building, Create/Update/
-//! Delete envelopes, and the `/ap/users/{u}/statuses/{id}` object GET
-//! (epic 12).
+//! Status objects on the wire — Note/Article/Question building,
+//! Create/Update/Delete envelopes, and the `/ap/users/{u}/statuses/{id}`
+//! object GET (epic 12). `Article` objects implement FEP-b2b8
+//! long-form text: `name` headline, HTML `summary`, `image` cover and
+//! a `preview` Note.
 //!
 //! Pubby builds the base `Object` and the activity envelopes; Yonder
 //! injects what `Object` can't express — `source` (markdown
@@ -206,8 +208,54 @@ async fn poll_fields(ctx: &PostContext, poll_id: i64) -> Result<Value> {
     Ok(fields)
 }
 
-/// The full object document (Note/Question) for a stored status —
-/// served verbatim by the object GET and embedded in Create/Update.
+/// The status's representative image as an AS2 `Image` — the
+/// `cover_media_id` pick when set, else the first image attachment
+/// (FEP-b2b8 `image`). `None` when the status has no usable image.
+async fn article_image(ctx: &PostContext, status: &StatusRow) -> Result<Option<Value>> {
+    let base = ctx.base_url();
+    let media = posts::entity::media_for_status(ctx, status.id).await?;
+    let chosen = status
+        .cover_media_id
+        .and_then(|id| media.iter().find(|m| m.id == id))
+        .or_else(|| media.iter().find(|m| m.kind == "image"));
+    let Some(m) = chosen else { return Ok(None) };
+    let Some(url) = posts::entity::media_url(&ctx.config, &base, m) else {
+        return Ok(None);
+    };
+    let mut doc = json!({
+        "type": "Image",
+        "url": url,
+        "mediaType": m.content_type,
+    });
+    if let Some(description) = &m.description {
+        doc["name"] = json!(description);
+    }
+    if let Some(width) = m.width {
+        doc["width"] = json!(width);
+    }
+    if let Some(height) = m.height {
+        doc["height"] = json!(height);
+    }
+    Ok(Some(doc))
+}
+
+/// The FEP-b2b8 `summary`/`preview` body: the content warning and the
+/// article lede, each as a `<p>` of escaped plain text. `None` when
+/// the article has neither.
+fn article_summary_html(status: &StatusRow) -> Option<String> {
+    let mut paragraphs = Vec::new();
+    if let Some(cw) = status.spoiler_text.as_deref().filter(|s| !s.is_empty()) {
+        paragraphs.push(format!("<p>{}</p>", pubby_sdk::content::html_escape(cw)));
+    }
+    if let Some(lede) = status.summary.as_deref().filter(|s| !s.is_empty()) {
+        paragraphs.push(format!("<p>{}</p>", pubby_sdk::content::html_escape(lede)));
+    }
+    (!paragraphs.is_empty()).then(|| paragraphs.join(""))
+}
+
+/// The full object document (Note/Article/Question) for a stored
+/// status — served verbatim by the object GET and embedded in
+/// Create/Update.
 pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value> {
     let (_username, actor_id) = author_parts(ctx, status.account_id).await?;
     let followers = format!("{actor_id}/followers");
@@ -216,8 +264,11 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
     let (to, cc) = posts::addressing(&status.visibility, &followers, &mention_urls);
 
     let mut object = Object::new(status.uri.clone().unwrap_or_default());
+    let article = posts::is_article(status);
     object.object_type = if status.poll_id.is_some() {
         "Question"
+    } else if article {
+        "Article"
     } else {
         "Note"
     }
@@ -240,7 +291,13 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
     };
     object.published = Some(status.created_at);
     object.updated = status.edited_at.or(Some(status.updated_at));
-    object.summary = status.spoiler_text.clone();
+    // Articles carry the spoiler + lede as HTML `summary` (injected
+    // below); notes keep the plain-text content warning.
+    object.summary = if article {
+        None
+    } else {
+        status.spoiler_text.clone()
+    };
     object.sensitive = status.sensitive;
     object.tag = posts::mentions::mention_tags(&mentions);
     object.tag.extend(pubby_sdk::build_hashtag_tags(
@@ -294,6 +351,54 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         {
             doc[k] = v;
         }
+    }
+    // FEP-b2b8 Article properties `Object` can't express: `name`
+    // headline, HTML `summary`, `image` cover and the `preview` Note.
+    if article {
+        if let Some(title) = status.title.as_deref().filter(|t| !t.is_empty()) {
+            doc["name"] = json!(title);
+            if let Some(lang) = status.language.as_deref() {
+                doc["nameMap"] = json!({ lang: title });
+            }
+        }
+        if let Some(summary_html) = article_summary_html(status) {
+            doc["summary"] = json!(summary_html);
+            if let Some(lang) = status.language.as_deref() {
+                doc["summaryMap"] = json!({ lang: summary_html });
+            }
+        }
+        let image = article_image(ctx, status).await?;
+        if let Some(img) = &image {
+            doc["image"] = img.clone();
+        }
+        // The `preview` Note repeats the metadata consumers need
+        // without fetching the full article (FEP-b2b8).
+        let mut preview = json!({
+            "type": "Note",
+            "attributedTo": actor_id.clone(),
+            "published": pubby_sdk::model::dt_to_iso(&status.created_at),
+            "url": status.url.clone(),
+        });
+        if let Some(title) = status.title.as_deref().filter(|t| !t.is_empty()) {
+            preview["name"] = json!(title);
+        }
+        if let Some(summary_html) = article_summary_html(status) {
+            preview["content"] = json!(summary_html);
+        }
+        if let Some(updated) = status.edited_at.or(Some(status.updated_at)) {
+            preview["updated"] = json!(pubby_sdk::model::dt_to_iso(&updated));
+        }
+        if let Some(tags) = doc.get("tag").cloned() {
+            preview["tag"] = tags;
+        }
+        if let Some(img) = image {
+            preview["attachment"] = json!([img]);
+        }
+        doc["preview"] = preview;
+        doc["generator"] = json!({
+            "type": "Application",
+            "name": "Yonder",
+        });
     }
     pubby_sdk::quotes::allow_public_quotes(&mut doc);
     // Quotes (epic 13): stamp every FEP-0449 spelling. `quote_of_id`
@@ -406,6 +511,14 @@ pub(crate) fn merge_object_extras(target: &mut Value, doc: &Value) {
         "_misskey_quote",
         "quoteAuthorization",
         "interactionPolicy",
+        // Article fields `Object` doesn't model (FEP-b2b8).
+        "name",
+        "nameMap",
+        "summary",
+        "summaryMap",
+        "image",
+        "preview",
+        "generator",
     ] {
         if let Some(v) = doc.get(key) {
             target[key] = v.clone();

@@ -16,6 +16,10 @@ interface YonderSettings {
   default_content_type?: string | null;
   /** Resolved default (`default_content_type` ?? instance default). */
   effective_content_type?: string;
+  /** Stored pick — `null`/absent resolves to `note`. */
+  default_post_type?: string | null;
+  /** Resolved default (`default_post_type` ?? `note`). */
+  effective_post_type?: string;
   cw_always_expand?: boolean;
   show_app_display?: boolean;
   filter_languages?: string[];

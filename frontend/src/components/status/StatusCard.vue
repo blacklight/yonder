@@ -77,6 +77,35 @@ const shownContent = computed(() =>
     : shown.value.content,
 );
 
+// FEP-b2b8 long-form metadata (`yonder.article`) — non-null on
+// `Article`/`Page` statuses.
+const article = computed(() => shown.value.yonder?.article ?? null);
+
+// Remote Article/Page ingest folds the headline and teaser into the
+// HTML body as `<p><strong>title</strong></p><p>summary</p>`
+// (`posts::remote`). Now that the card renders them as article
+// metadata, strip that exact folded prefix — but only for remote
+// authors (a local post could legitimately open with the same HTML).
+const articleBody = computed(() => {
+  const html = shownContent.value;
+  const a = article.value;
+  if (!a?.title || !shown.value.account.acct.includes("@")) return html;
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;");
+  const head = `<p><strong>${esc(a.title)}</strong></p>`;
+  if (!html.startsWith(head)) return html;
+  let rest = html.slice(head.length);
+  if (a.summary) {
+    const lede = `<p>${esc(a.summary)}</p>`;
+    if (rest.startsWith(lede)) rest = rest.slice(lede.length);
+  }
+  return rest;
+});
+
 // The whole card is the permalink's click target, Mastodon-style —
 // except interactive elements (links, buttons, the composer) and an
 // in-progress text selection.
@@ -179,7 +208,7 @@ const translatedFromName = computed(() => {
 // original entity.
 const displayedContent = computed(() =>
   highlightCodeBlocks(
-    sanitizeHtml(translation.value?.content ?? shownContent.value, {
+    sanitizeHtml(translation.value?.content ?? articleBody.value, {
       mentions: shown.value.mentions,
       tags: shown.value.tags,
       // Translated HTML keeps literal `:code:` — `emojis` expands it.
@@ -212,6 +241,13 @@ const displayedStatus = computed(() => {
     );
   }
   return out;
+});
+// The article cover doubles as `image` — don't repeat it in the
+// attachment gallery below.
+const displayedMedia = computed(() => {
+  const coverId = article.value?.cover?.id;
+  const list = displayedStatus.value.media_attachments;
+  return coverId ? list.filter((m) => m.id !== coverId) : list;
 });
 // Expanded (permalink) cards get a stats strip — "N boosts · N
 // quotes · N likes" — that links to the per-interaction lists.
@@ -666,6 +702,26 @@ async function onReact(emoji: string) {
     <p v-if="actionError" class="status-card__error">{{ actionError }}</p>
 
     <CwBlock :spoiler-text="displayedSpoiler" :emojis="shown.emojis">
+      <!-- FEP-b2b8 article header: cover, headline, teaser — the
+           author line above already carries `attributedTo`. -->
+      <div v-if="article" class="status-card__article" data-testid="article">
+        <img
+          v-if="article.cover"
+          :src="article.cover.preview_url ?? article.cover.url"
+          :alt="article.cover.description ?? ''"
+          class="status-card__article-cover"
+          loading="lazy"
+        />
+        <h2 v-if="article.title" class="status-card__article-title">
+          <EmojiText :text="article.title" :emojis="shown.emojis" />
+        </h2>
+        <p
+          v-if="article.summary"
+          class="status-card__article-summary"
+        >
+          <EmojiText :text="article.summary" :emojis="shown.emojis" />
+        </p>
+      </div>
       <!-- Only the text clamps — media, quotes, polls and link
            previews always render whole, never sliced by the fade. -->
       <ShowMore :disabled="!clampBody">
@@ -674,7 +730,7 @@ async function onReact(emoji: string) {
       </ShowMore>
 
       <StatusMedia
-        :media="displayedStatus.media_attachments"
+        :media="displayedMedia"
         :sensitive="shown.sensitive && !shown.spoiler_text"
       />
       <StatusQuote
@@ -1245,6 +1301,31 @@ a.status-card__stat:hover {
   padding: var(--space-1) var(--space-3);
   color: var(--text);
   cursor: pointer;
+}
+/* FEP-b2b8 article header — cover, headline, teaser. */
+.status-card__article {
+  margin-bottom: var(--space-3);
+}
+.status-card__article-cover {
+  display: block;
+  width: 100%;
+  max-height: 24rem;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+  background: var(--bg-sunken);
+}
+.status-card__article-title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-2xl, 1.5rem);
+  line-height: 1.3;
+  font-weight: 700;
+}
+.status-card__article-summary {
+  margin: 0 0 var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  font-weight: bold;
 }
 </style>
 

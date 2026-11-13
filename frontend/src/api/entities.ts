@@ -239,6 +239,13 @@ export interface Status {
     source?: string;
     content_type?: string;
     quote?: { id: string | null; uri: string | null } | null;
+    /** FEP-b2b8 long-form metadata — present (non-null) on `Article`/
+     * `Page` statuses. `cover` is a full MediaAttachment entity. */
+    article?: {
+      title: string | null;
+      summary: string | null;
+      cover: MediaAttachment | null;
+    } | null;
   };
 }
 
@@ -596,4 +603,12 @@ export interface StatusCreateBody {
   };
   quote_id?: string;
   scheduled_at?: string;
+  /** `note`/`article` — FEP-b2b8 long-form text. */
+  post_type?: string;
+  /** Article headline (AS2 `name`), required for `article`. */
+  title?: string;
+  /** Article teaser (AS2 `summary`, plain text). */
+  summary?: string;
+  /** Representative image attachment id (AS2 `image`). */
+  cover_media_id?: string;
 }

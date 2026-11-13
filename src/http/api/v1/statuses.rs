@@ -835,6 +835,14 @@ pub struct StatusCreateSchema {
     pub quote_id: Option<String>,
     /// Future RFC-3339 time → scheduled post.
     pub scheduled_at: Option<String>,
+    /// `note`/`article` — FEP-b2b8 long-form text (yonder extension).
+    pub post_type: Option<String>,
+    /// Article headline (AS2 `name`), required for `article`.
+    pub title: Option<String>,
+    /// Article teaser (AS2 `summary`, plain text).
+    pub summary: Option<String>,
+    /// Representative image attachment id (AS2 `image`).
+    pub cover_media_id: Option<i64>,
 }
 
 /// `poll` object shape.
@@ -937,6 +945,19 @@ fn params_from_json(body: &Value) -> Result<StatusParams> {
         poll: poll_from_json(body.get("poll"))?,
         quote_id: opt_i64(body.get("quote_id"), "quote_id")?,
         scheduled_at: opt_time(body.get("scheduled_at"), "scheduled_at")?,
+        post_type: body
+            .get("post_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        title: body
+            .get("title")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        summary: body
+            .get("summary")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        cover_media_id: opt_i64(body.get("cover_media_id"), "cover_media_id")?,
     })
 }
 
@@ -1014,6 +1035,15 @@ fn params_from_pairs(pairs: &[(String, String)]) -> Result<StatusParams> {
             ),
             None => None,
         },
+        post_type: get("post_type").map(str::to_string),
+        title: get("title").map(str::to_string),
+        summary: get("summary").map(str::to_string),
+        cover_media_id: get("cover_media_id")
+            .map(|s| {
+                s.parse()
+                    .map_err(|_| Error::Validation("cover_media_id must be an integer".into()))
+            })
+            .transpose()?,
     })
 }
 

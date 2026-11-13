@@ -1056,6 +1056,200 @@ async fn remote_article_converted_text() {
     assert_eq!(cw, "spoilers ahead");
 }
 
+/// FEP-b2b8 local articles: `post_type=article` + `title`/`summary`/
+/// `cover_media_id` persist, surface in `yonder.article`, emit an
+/// `Article` AP object (`name`/`summary`/`image`/`preview`/`source`),
+/// round-trip through edits, and honor `default_post_type`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_article_post() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "ann", "ann@example.com").await;
+
+    // Validation: article needs a title; notes reject article fields;
+    // unknown post types 422.
+    for body in [
+        json!({"status": "x", "post_type": "article"}),
+        json!({"status": "x", "post_type": "article", "title": "  "}),
+        json!({"status": "x", "title": "t"}),
+        json!({"status": "x", "post_type": "blog"}),
+    ] {
+        let (status, resp) = request(
+            &env.app,
+            "POST",
+            "/api/v1/statuses",
+            Some(&token),
+            Some(body),
+            &[],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{resp}");
+    }
+
+    // A cover must be an image attachment of the same post.
+    let (mstatus, media) = multipart(&env.app, "/api/v1/media", &token, &png_bytes(), &[]).await;
+    assert_eq!(mstatus, StatusCode::OK, "{media}");
+    let media_id = media["id"].as_str().unwrap().to_string();
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "body without the image",
+            "post_type": "article",
+            "title": "T",
+            "cover_media_id": media_id,
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "Once upon a time there was a blog.",
+            "post_type": "article",
+            "title": "My First Post",
+            "summary": "A short teaser",
+            "spoiler_text": "CW",
+            "media_ids": [media_id],
+            "cover_media_id": media_id,
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap();
+    assert_eq!(body["yonder"]["article"]["title"], "My First Post");
+    assert_eq!(body["yonder"]["article"]["summary"], "A short teaser");
+    assert_eq!(
+        body["yonder"]["article"]["cover"]["id"],
+        media["id"].as_str().unwrap()
+    );
+    assert!(body["yonder"]["article"]["cover"]["url"].is_string());
+
+    // The AP object is an `Article` with the FEP-b2b8 properties.
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/ap/users/ann/statuses/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["type"], "Article");
+    assert_eq!(doc["name"], "My First Post");
+    assert_eq!(doc["attributedTo"], format!("{BASE}/ap/users/ann"));
+    assert!(doc["published"].is_string());
+    // summary = CW + lede as HTML paragraphs.
+    let summary = doc["summary"].as_str().unwrap();
+    assert!(summary.contains("<p>CW</p>"), "{summary}");
+    assert!(summary.contains("<p>A short teaser</p>"), "{summary}");
+    assert_eq!(doc["image"]["type"], "Image");
+    assert!(doc["image"]["url"].as_str().unwrap().contains("/media/"));
+    assert_eq!(doc["preview"]["type"], "Note");
+    assert_eq!(doc["preview"]["name"], "My First Post");
+    assert_eq!(
+        doc["source"]["content"],
+        "Once upon a time there was a blog."
+    );
+    assert_eq!(doc["generator"]["type"], "Application");
+
+    // Edit → note: article metadata clears, the object becomes a Note.
+    let (status, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{id}"),
+        Some(&token),
+        Some(json!({"status": "now a note", "post_type": "note"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["yonder"]["article"].is_null(), "{body}");
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/ap/users/ann/statuses/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["type"], "Note");
+    assert!(doc.get("name").is_none());
+    assert!(doc.get("preview").is_none());
+
+    // `default_post_type` setting: PATCH, then an unspecified post
+    // type resolves to article.
+    let (status, body) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/yonder/settings",
+        Some(&token),
+        Some(json!({"default_post_type": "article"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["default_post_type"], "article");
+    assert_eq!(body["effective_post_type"], "article");
+    let (status, body) = request(
+        &env.app,
+        "PATCH",
+        "/api/v1/yonder/settings",
+        Some(&token),
+        Some(json!({"default_post_type": "blog"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "defaulted article", "title": "Second"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["yonder"]["article"]["title"], "Second");
+
+    // An explicit note overrides the article default.
+    let (status, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({"status": "still a note", "post_type": "note"})),
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["yonder"]["article"].is_null(), "{body}");
+}
+
 /// Songhive/Funkwhale tracks arrive as `Create{Audio}` — the object
 /// carries a `url` array (media + `text/html` track page) and an
 /// `audio/*` Document attachment. The materialized status keeps the

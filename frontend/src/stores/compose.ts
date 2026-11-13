@@ -23,6 +23,14 @@ export interface ComposeDraft {
    * user input — and a new context may replace it freely. */
   seededText: string;
   contentType: string;
+  /** `note`/`article` — the AP object type (FEP-b2b8 long-form). */
+  postType: string;
+  /** Article headline (AS2 `name`) — only sent for `article`. */
+  title: string;
+  /** Article teaser (AS2 `summary`), plain text. */
+  summary: string;
+  /** Representative image attachment id (AS2 `image`). */
+  coverMediaId: string | null;
   visibility: StatusVisibility;
   language: string | null;
   sensitive: boolean;
@@ -53,6 +61,10 @@ function emptyDraft(): ComposeDraft {
     text: "",
     seededText: "",
     contentType: "text/plain",
+    postType: "note",
+    title: "",
+    summary: "",
+    coverMediaId: null,
     visibility: "public",
     language: null,
     sensitive: false,
@@ -148,6 +160,9 @@ export const useComposeStore = defineStore("compose", {
       Boolean(
         s.draft.text.trim() ||
         s.draft.spoilerText.trim() ||
+        s.draft.title.trim() ||
+        s.draft.summary.trim() ||
+        s.draft.coverMediaId !== null ||
         s.draft.mediaIds.length ||
         s.draft.poll,
       ),
@@ -304,6 +319,7 @@ export const useComposeStore = defineStore("compose", {
       this.contextIsLive = false;
       this.persist();
       this.applyContentTypeDefault();
+      this.applyPostTypeDefault();
       // Posting (or cancelling) also dismisses any embedded composer.
       this.closeEmbed();
     },
@@ -325,6 +341,28 @@ export const useComposeStore = defineStore("compose", {
         (!d.text || d.text === d.seededText)
       ) {
         this.update({ contentType: effective });
+      }
+    },
+
+    /**
+     * Apply the account's default post type to a fresh draft — same
+     * "untouched shell" rule as `applyContentTypeDefault`: only while
+     * the draft still says `note`, holds no user-typed text and no
+     * article fields. `?edit=` and explicit picks are left alone.
+     */
+    applyPostTypeDefault() {
+      const effective = useSettingsStore().settings?.effective_post_type;
+      const d = this.draft;
+      if (
+        typeof effective === "string" &&
+        effective !== "note" &&
+        d.postType === "note" &&
+        (!d.text || d.text === d.seededText) &&
+        !d.title &&
+        !d.summary &&
+        d.coverMediaId === null
+      ) {
+        this.update({ postType: effective });
       }
     },
 

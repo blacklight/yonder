@@ -68,6 +68,12 @@ async function setContentType(value: string) {
   notifySaved();
 }
 
+async function setPostType(value: string) {
+  if (!auth.isLoggedIn) return;
+  await settings.patch({ default_post_type: value || null });
+  notifySaved();
+}
+
 async function setEmailNotif(key: string, checked: boolean) {
   if (!auth.isLoggedIn) return;
   await settings.patch({ email_notifications: { [key]: checked } });
@@ -356,6 +362,20 @@ onMounted(async () => {
                 </option>
                 <option value="text/markdown">
                   {{ t("settings.contentType_markdown") }}
+                </option>
+              </select>
+            </label>
+            <label class="settings__row">
+              <span>{{ t("settings.postType") }}</span>
+              <select
+                :value="settings.settings.default_post_type ?? 'note'"
+                @change="
+                  setPostType(($event.target as HTMLSelectElement).value)
+                "
+              >
+                <option value="note">{{ t("compose.postType_note") }}</option>
+                <option value="article">
+                  {{ t("compose.postType_article") }}
                 </option>
               </select>
             </label>

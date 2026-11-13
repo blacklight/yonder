@@ -1208,6 +1208,25 @@ impl StatusBatch {
                 status.remote_quotes_count.unwrap_or(0),
             )
         });
+        // FEP-b2b8 long-form metadata — `title`/`summary` are plain
+        // text, `cover` a full MediaAttachment entity (the
+        // `cover_media_id` pick, else the first image attachment).
+        let article_block = if super::is_article(status) {
+            let rows: Vec<&MediaRow> = self.media.get(&status.id).into_iter().flatten().collect();
+            let cover = status
+                .cover_media_id
+                .and_then(|id| rows.iter().copied().find(|m| m.id == id))
+                .or_else(|| rows.iter().copied().find(|m| m.kind == "image"));
+            json!({
+                "title": status.title,
+                "summary": status.summary,
+                "cover": cover
+                    .map(|m| media_entity(&ctx.config, &base_url, m))
+                    .unwrap_or(Value::Null),
+            })
+        } else {
+            Value::Null
+        };
         let imported_block = status.original_id.as_ref().map(|uri| {
             json!({
                 "source_uri": uri,
@@ -1290,6 +1309,7 @@ impl StatusBatch {
                     (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
                     _ => Value::Null,
                 },
+                "article": article_block,
                 // §10: import provenance — the source URI and the
                 // post's original publication instant, present only
                 // on imported copies. Observation details stay on the

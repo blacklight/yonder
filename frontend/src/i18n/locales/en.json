@@ -87,7 +87,8 @@
     "scheduledDeletionUnit": "days",
     "scheduledDeletionHint": "0 disables scheduled deletion (max 3650 days).",
     "save": "Save",
-    "saved": "Saved"
+    "saved": "Saved",
+    "postType": "Default post type"
   },
   "settingsProfile": {
     "title": "Edit profile",
@@ -605,7 +606,6 @@
     "homeIntro": "Latest posts from across the fediverse."
   },
   "compose": {
-    "title": "Compose",
     "placeholder": "What's on your mind?",
     "post": "Post",
     "schedule": "Schedule",
@@ -663,7 +663,17 @@
     "draftDelete": "Delete draft",
     "draftUntitled": "(no text)",
     "draftMedia": "{n} attachment | {n} attachments",
-    "draftReplyTo": "Reply to {'@'}{user}"
+    "draftReplyTo": "Reply to {'@'}{user}",
+    "postType": "Post type",
+    "postType_note": "Note",
+    "postType_article": "Article",
+    "titlePlaceholder": "Article title",
+    "summary": "Summary",
+    "summaryPlaceholder": "Short teaser shown above the article",
+    "cover": "Cover",
+    "pollArticleHint": "Articles can't have polls",
+    "articleTitle": "Title",
+    "title": "Compose"
   },
   "moderation": {
     "showResolved": "Show resolved",

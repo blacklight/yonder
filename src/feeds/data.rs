@@ -44,7 +44,7 @@ pub async fn account_feed(
     };
     let rows = fetch(db, &scope, public_filters(), max_items).await?;
     let url = format!("{base_url}/@{}", account.username);
-    let entries = items(db, config, base_url, &rows).await?;
+    let entries = items(db, config, base_url, &rows, true).await?;
     Ok(Feed {
         id: url.clone(),
         title: account
@@ -76,7 +76,7 @@ pub async fn tag_feed(
     };
     let rows = fetch(db, &scope, public_filters(), max_items).await?;
     let url = tag_url(base_url, tag);
-    let entries = items(db, config, base_url, &rows).await?;
+    let entries = items(db, config, base_url, &rows, true).await?;
     Ok(Feed {
         id: url.clone(),
         title: format!("#{tag}"),
@@ -121,7 +121,8 @@ pub async fn list_feed(
     };
     let rows = fetch(db, &scope, filters, max_items).await?;
     let url = format!("{base_url}/lists/{}", list.id);
-    let entries = items(db, config, base_url, &rows).await?;
+    // Token-gated owner's view — member opt-outs don't apply.
+    let entries = items(db, config, base_url, &rows, false).await?;
     Ok(Feed {
         id: url.clone(),
         title: list.title.clone(),
@@ -160,11 +161,16 @@ async fn fetch(
 /// Map status rows to feed items, resolving authors in one query.
 /// Emoji maps are cached per distinct author domain (epic 20 — feed
 /// content goes through the same read-time substitution the API uses).
+/// `respect_noindex` drops items by `users.indexable = false` authors —
+/// public feed documents must not carry content the author opted out
+/// of search-engine indexing; list feeds pass `false` (the owner's
+/// token-gated view is not an indexing surface).
 async fn items(
     db: &PgPool,
     config: &crate::config::Config,
     base_url: &str,
     rows: &[StatusRow],
+    respect_noindex: bool,
 ) -> Result<Vec<FeedItem>> {
     let mut ids: Vec<i64> = rows.iter().map(|r| r.account_id).collect();
     ids.sort_unstable();
@@ -180,6 +186,9 @@ async fn items(
     for row in rows {
         let Some(id) = row.uri.clone() else { continue };
         let author_row = authors.get(&row.account_id);
+        if respect_noindex && author_row.is_some_and(|a| a.indexable == Some(false)) {
+            continue;
+        }
         let author = author_row.map(author_name).unwrap_or_default();
         let domain = author_row.and_then(|a| a.domain.clone());
         if !maps.contains_key(&domain) {

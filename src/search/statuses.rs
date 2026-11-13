@@ -1,6 +1,7 @@
 //! Status search — trigram ILIKE over `content`/`spoiler_text`
 //! (indexes from migration 0003) with the caller's visibility and the
-//! author's `include_public_posts_in_search` opt-out applied.
+//! authors' `include_public_posts_in_search`/`indexable` opt-outs
+//! applied.
 
 use sqlx::PgPool;
 
@@ -111,12 +112,18 @@ pub async fn search(
     // Reblogs carry the original's content — the original is
     // independently searchable, so doubles would be noise.
     clauses.push("s.reblog_of_id IS NULL".to_string());
-    // Author opt-out: the author's own posts stay findable to them.
+    // Author opt-outs: `indexable = false` keeps the author's content
+    // out of search indexes entirely; `include_public_posts_in_search
+    // = false` hides public posts. The author's own posts stay
+    // findable to them in both cases.
     clauses.push(match viewer {
-        Some(_) => "(COALESCE(u.include_public_posts_in_search, true) \
-                    OR s.account_id = $1)"
+        Some(_) => "(s.account_id = $1 \
+                    OR (COALESCE(u.indexable, true) \
+                        AND COALESCE(u.include_public_posts_in_search, true)))"
             .to_string(),
-        None => "COALESCE(u.include_public_posts_in_search, true)".to_string(),
+        None => "COALESCE(u.indexable, true) \
+                 AND COALESCE(u.include_public_posts_in_search, true)"
+            .to_string(),
     });
     if let Some(author) = params.account_id {
         let p = alloc(Bind::I64(author));

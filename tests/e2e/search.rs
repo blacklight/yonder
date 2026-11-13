@@ -588,6 +588,46 @@ async fn author_opt_out_hides_posts_from_others() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn noindex_hides_posts_from_status_search() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice").await;
+    post(&env.app, &alice, "noindexmarker post", "public").await;
+    let alice_id = account_id(&env.state.db, "alice").await;
+    sqlx::query("UPDATE users SET indexable = false WHERE account_id = $1")
+        .bind(alice_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let bob = register(&env.app, "bob").await;
+    // Another account — and anonymous — find nothing.
+    for token in [Some(bob.as_str()), None] {
+        let (_, body) = request(
+            &env.app,
+            "GET",
+            "/api/v2/search?q=noindexmarker&type=statuses",
+            token,
+            None,
+        )
+        .await;
+        assert_eq!(body["statuses"].as_array().unwrap().len(), 0);
+    }
+    // The author still finds their own post.
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        "/api/v2/search?q=noindexmarker&type=statuses",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert_eq!(body["statuses"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn blocked_suspended_and_undiscoverable_are_excluded() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

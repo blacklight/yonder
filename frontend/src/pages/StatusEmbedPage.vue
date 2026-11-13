@@ -11,6 +11,7 @@ import { getStatus } from "@/api/statuses";
 import { sanitizeHtml } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
+import { statusNoindex, useRobotsNoindex } from "@/utils/robots";
 import { FontAwesomeIcon } from "@/icons";
 import type { Status } from "@/api/entities";
 
@@ -22,6 +23,8 @@ const { t } = useI18n();
 
 const status = ref<Status | null>(null);
 const failed = ref(false);
+// Noindex authors' embeds carry the same robots opt-out.
+useRobotsNoindex(() => statusNoindex(status.value));
 const root = ref<HTMLElement | null>(null);
 
 // Boosts wrap the inner status — the embed shows what was boosted,

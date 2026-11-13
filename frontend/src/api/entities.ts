@@ -17,6 +17,8 @@ export interface Account {
   locked: boolean;
   bot: boolean;
   discoverable?: boolean;
+  /** `users.indexable = false` — the account opted out of search-engine indexing. */
+  noindex?: boolean;
   created_at: string;
   followers_count: number;
   following_count: number;

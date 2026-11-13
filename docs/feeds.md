@@ -32,6 +32,11 @@ list feeds (a boost row has no content of its own); hashtag feeds never
 match them because boost rows carry no tags. Replies are included —
 a feed is "latest public posts", not the web UI's "posts" tab.
 
+Items by authors with `users.indexable = false` (the search-engine
+opt-out) are dropped from the public profile and hashtag feeds — a
+feed document is an indexing surface. List feeds are unaffected: they
+are token-gated owner views, not public documents.
+
 ## Feed contents
 
 Each item/entry carries: `id` (the status URI), `link` (`url`, else

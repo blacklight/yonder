@@ -103,6 +103,19 @@ read them without running the app — the SPA renders fields
 client-side. Remote handles, unknown/suspended accounts and lookup
 errors inject nothing; the page is still served.
 
+Accounts with `users.indexable = false` (the profile settings'
+search-engine opt-out, surfaced as `noindex` on the Account entity)
+additionally get `<meta name="robots" content="noindex">` injected
+into the served `index.html` for every page presenting their content:
+`/@{user}` profile pages (and `/@{user}/followers|following`),
+`/accounts/{id}`, and status permalinks (`/statuses/{id}[…]` and
+`/@{acct}/{id}` — resolved by status id, since the acct segment is
+decorative). The SPA sets the same tag client-side while a noindex
+profile, follow list, status or embed page is open, for
+JS-rendering crawlers. Public RSS/Atom feeds skip the author's items
+and the outgoing-webmention `h-entry`/`u-like-of` source documents
+carry the tag too.
+
 For **remote** accounts the same column is populated at ingest: the
 actor document's `attachment[]` `PropertyValue` entries (any spelling —
 plain, `schema:`-prefixed, or the schema.org IRI; a missing `type` also

@@ -58,6 +58,7 @@ import StatusCardSkeleton from "@/components/status/StatusCardSkeleton.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
 import { useInfiniteScroll } from "@/composables/useInfiniteScroll";
 import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
+import { useRobotsNoindex } from "@/utils/robots";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -68,6 +69,8 @@ const instance = useInstanceStore();
 const toasts = useToastsStore();
 
 const account = ref<Account | null>(null);
+// `indexable = false` → robots noindex while this profile is open.
+useRobotsNoindex(() => Boolean(account.value?.noindex));
 const rel = ref<Relationship | null>(null);
 const state = ref<"loading" | "ok" | "not-found" | "sign-in" | "error">(
   "loading",

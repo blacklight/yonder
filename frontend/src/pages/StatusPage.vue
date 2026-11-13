@@ -17,11 +17,15 @@ import {
   statusMatchesId,
 } from "@/utils/statusStream";
 import { compareIds } from "@/utils/ids";
+import { statusNoindex, useRobotsNoindex } from "@/utils/robots";
 
 const props = defineProps<{ id: string }>();
 const { t } = useI18n();
 const router = useRouter();
 const status = ref<Status | null>(null);
+// A noindex author (or quoted/boosted noindex content) → robots
+// noindex while this status is open.
+useRobotsNoindex(() => statusNoindex(status.value));
 const ancestors = ref<Status[]>([]);
 const descendants = ref<Status[]>([]);
 const error = ref<number | null>(null);

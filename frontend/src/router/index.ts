@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { i18n } from "@/i18n";
+import { clearRobotsNoindex } from "@/utils/robots";
 import { useAuthStore } from "@/stores/auth";
 import { useInstanceStore } from "@/stores/instance";
 import HomePage from "@/pages/HomePage.vue";
@@ -548,6 +549,11 @@ router.beforeEach(async (to) => {
 });
 
 router.afterEach((to) => {
+  // A robots noindex tag belongs to the page that set it (the backend
+  // injects it into the shell for noindex profiles/statuses; content
+  // pages set it client-side) — drop it before the next page's own
+  // watchers decide, so it can't go stale on client-side navigation.
+  clearRobotsNoindex();
   if (to.meta.dynamicTitle) return;
   const key = `route.${String(to.name ?? "home")}.title`;
   const app = i18n.global.t("app.name");

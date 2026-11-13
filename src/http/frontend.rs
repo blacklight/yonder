@@ -31,6 +31,10 @@ const PLACEHOLDER: &str = include_str!("placeholder.html");
 /// Cache policy for hashed build artifacts under `/assets/`.
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
+/// `<head>` markup marking a page's content as off-limits to search
+/// engines — injected for accounts with `users.indexable = false`.
+const NOINDEX_META: &str = "<meta name=\"robots\" content=\"noindex\" />";
+
 /// Cookie mirroring `users.frontend` into page loads. Navigations
 /// carry no bearer token, so the settings API writes the choice here
 /// and [`fallback`]/[`spa_entry`] read it back — this is the only
@@ -141,7 +145,9 @@ pub async fn fallback(
     // feed-backed pages get their `<link rel="alternate">` discovery
     // tags injected into `<head>` so scrapers and feed readers can
     // find the RSS/Atom endpoints on the raw HTML too; profile pages
-    // also carry `<link rel="me">` for each link-valued field.
+    // also carry `<link rel="me">` for each link-valued field, and
+    // pages presenting a `users.indexable = false` account's content
+    // get `<meta name="robots" content="noindex">`.
     let mut head_extra = feed_discovery(&config.instance.domain, uri.path());
     if let Some(links) = rel_me_links(&state, uri.path()).await {
         head_extra = Some(match head_extra {
@@ -151,6 +157,16 @@ pub async fn fallback(
                 extra
             }
             None => links,
+        });
+    }
+    if page_is_noindex(&state, uri.path()).await {
+        head_extra = Some(match head_extra {
+            Some(mut extra) => {
+                extra.push('\n');
+                extra.push_str(NOINDEX_META);
+                extra
+            }
+            None => NOINDEX_META.to_string(),
         });
     }
     let response = if rel.as_os_str().is_empty() {
@@ -308,7 +324,14 @@ fn local_profile_username(local_domain: &str, path: &str) -> Option<String> {
     if rest.is_empty() || rest.contains('/') {
         return None;
     }
-    let decoded = percent_encoding::percent_decode_str(rest)
+    local_acct_username(local_domain, rest)
+}
+
+/// Decode one percent-encoded acct segment (`user` or
+/// `user@this-domain`) to a local username — `None` for remote
+/// handles and empty segments.
+fn local_acct_username(local_domain: &str, acct: &str) -> Option<String> {
+    let decoded = percent_encoding::percent_decode_str(acct)
         .decode_utf8()
         .ok()?;
     // `user@domain` handles are only local when the domain is this
@@ -319,6 +342,102 @@ fn local_profile_username(local_domain: &str, path: &str) -> Option<String> {
         None => decoded.as_ref(),
     };
     (!username.is_empty()).then(|| username.to_string())
+}
+
+/// What content a web path presents, for the `noindex` decision:
+/// profile pages resolve by username, `/accounts/{id}` by account id,
+/// and status permalinks by status id — `/@acct/{id}` included, where
+/// the acct segment is decorative and the id authoritative.
+#[derive(Debug)]
+enum PageTarget {
+    Username(String),
+    AccountId(i64),
+    StatusId(i64),
+}
+
+/// Classify `path` (percent-encoded, as received) into the account or
+/// status whose `indexable` flag decides `noindex`. Unknown shapes —
+/// remote profiles, feeds, API-ish paths, non-page routes — get
+/// `None`.
+fn page_target(local_domain: &str, path: &str) -> Option<PageTarget> {
+    let mut segments = path.split('/').filter(|s| !s.is_empty());
+    match segments.next()? {
+        "accounts" => numeric_id(segments.next()?).map(PageTarget::AccountId),
+        "statuses" => numeric_id(segments.next()?).map(PageTarget::StatusId),
+        acct if acct.starts_with('@') => {
+            let acct = &acct[1..];
+            match segments.next() {
+                // `/@user`, `/@user/followers`, `/@user/following`.
+                None => local_acct_username(local_domain, acct).map(PageTarget::Username),
+                Some("followers" | "following") if segments.next().is_none() => {
+                    local_acct_username(local_domain, acct).map(PageTarget::Username)
+                }
+                // `/@acct/{id}` — the id is authoritative.
+                Some(rest) => numeric_id(rest).map(PageTarget::StatusId),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A positive numeric path segment (`123`), rejecting signs, decimals
+/// and non-ASCII digits.
+fn numeric_id(segment: &str) -> Option<i64> {
+    if segment.is_empty() || !segment.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    segment.parse().ok()
+}
+
+/// Whether `path` presents a `users.indexable = false` account's
+/// content — the SPA shell gets `<meta name="robots" content="noindex">`
+/// so crawlers that render the page honour the opt-out. Lookup
+/// failures serve the page without the tag (the setting only ever
+/// *adds* the meta; a missing tag is the historical default).
+async fn page_is_noindex(state: &AppState, path: &str) -> bool {
+    let Some(target) = page_target(&state.config().instance.domain, path) else {
+        return false;
+    };
+    match target {
+        PageTarget::Username(username) => {
+            match crate::users::account::load_local_by_username(&state.db, &username).await {
+                Ok(Some(account)) => account.indexable == Some(false),
+                Ok(None) => false,
+                Err(e) => {
+                    tracing::warn!(error = %e, "noindex profile lookup failed; serving without tag");
+                    false
+                }
+            }
+        }
+        PageTarget::AccountId(id) => match crate::users::account::load(&state.db, id).await {
+            Ok(Some(account)) => account.indexable == Some(false),
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(error = %e, "noindex account lookup failed; serving without tag");
+                false
+            }
+        },
+        PageTarget::StatusId(id) => match status_author_indexable(&state.db, id).await {
+            Some(indexable) => !indexable,
+            None => false,
+        },
+    }
+}
+
+/// `users.indexable` for a status's author — `COALESCE(true)` covers
+/// remote statuses (no `users` row) and `None` a missing status.
+async fn status_author_indexable(db: &sqlx::PgPool, status_id: i64) -> Option<bool> {
+    sqlx::query_scalar(
+        "SELECT COALESCE(u.indexable, true) \
+         FROM statuses s JOIN accounts a ON a.id = s.account_id \
+         LEFT JOIN users u ON u.account_id = a.id \
+         WHERE s.id = $1",
+    )
+    .bind(status_id)
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten()
 }
 
 /// `<link rel="me">` tags for a local profile page — one per
@@ -523,6 +642,57 @@ mod tests {
             "/about",
         ] {
             assert!(feed_discovery("example.com", path).is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn page_target_maps_content_paths() {
+        // Profile pages resolve by local username.
+        for path in [
+            "/@alice",
+            "/@alice@example.com",
+            "/@alice/followers",
+            "/@alice/following",
+        ] {
+            match page_target("example.com", path) {
+                Some(PageTarget::Username(u)) => assert_eq!(u, "alice", "{path}"),
+                other => panic!("{path} → {other:?}"),
+            }
+        }
+        // Status permalinks resolve by id — the acct is decorative.
+        for (path, id) in [
+            ("/statuses/42", 42),
+            ("/statuses/42/embed", 42),
+            ("/statuses/42/boosts", 42),
+            ("/@alice/42", 42),
+            ("/@remote@elsewhere.tld/42", 42),
+        ] {
+            match page_target("example.com", path) {
+                Some(PageTarget::StatusId(got)) => assert_eq!(got, id, "{path}"),
+                other => panic!("{path} → {other:?}"),
+            }
+        }
+        match page_target("example.com", "/accounts/7") {
+            Some(PageTarget::AccountId(7)) => {}
+            other => panic!("/accounts/7 → {other:?}"),
+        }
+    }
+
+    #[test]
+    fn page_target_skips_non_content_paths() {
+        for path in [
+            "/",                      // landing
+            "/@remote@elsewhere.tld", // remote profile — origin's call
+            "/@alice/notes",          // not a defined sub-page
+            "/@alice/42x",            // not a bare id
+            "/statuses/abc",          // non-numeric
+            "/statuses/-1",           // signs rejected
+            "/tags/rust",             // tag pages aggregate, not one user
+            "/lists/3",
+            "/users/alice.atom", // feed documents — filtered server-side
+            "/api/v1/accounts/1",
+        ] {
+            assert!(page_target("example.com", path).is_none(), "{path}");
         }
     }
 

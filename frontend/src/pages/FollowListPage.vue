@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import { followers, following, lookup } from "@/api/accounts";
 import { ApiError } from "@/api/errors";
 import type { Account } from "@/api/entities";
+import { useRobotsNoindex } from "@/utils/robots";
 import Avatar from "@/components/ui/Avatar.vue";
 import EmojiText from "@/components/ui/EmojiText.vue";
 import AccountRowSkeleton from "@/components/ui/AccountRowSkeleton.vue";
@@ -17,6 +18,8 @@ const route = useRoute();
 const router = useRouter();
 
 const account = ref<Account | null>(null);
+// `indexable = false` → robots noindex while this list is open.
+useRobotsNoindex(() => Boolean(account.value?.noindex));
 const members = ref<Account[]>([]);
 const membersLoading = ref(false);
 const nextCursor = ref<string | undefined>();

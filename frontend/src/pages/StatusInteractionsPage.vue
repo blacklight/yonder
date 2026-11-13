@@ -28,6 +28,7 @@ import {
   patchStatusList,
   statusMatchesId,
 } from "@/utils/statusStream";
+import { statusNoindex, useRobotsNoindex } from "@/utils/robots";
 
 type Kind = "boosts" | "quotes" | "likes";
 const props = defineProps<{ id: string; kind: Kind }>();
@@ -35,6 +36,8 @@ const { t } = useI18n();
 const router = useRouter();
 
 const status = ref<Status | null>(null);
+// The interacted-with status's author opted out of indexing.
+useRobotsNoindex(() => statusNoindex(status.value));
 const accounts = ref<Account[]>([]);
 const quotes = ref<Status[]>([]);
 const listLoading = ref(false);

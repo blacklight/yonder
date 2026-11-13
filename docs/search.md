@@ -106,8 +106,10 @@ Every query composes:
 - **Discoverability**: `accounts.discoverable = false` and
   `users.indexable = false` hide accounts from text search — except
   accounts the caller follows and exact FQN/URL matches.
-- **Author opt-out**: `users.include_public_posts_in_search = false`
-  hides that author's statuses from everyone but the author themself.
+- **Author opt-out**: `users.indexable = false` keeps the author's
+  statuses out of status text search entirely, and
+  `users.include_public_posts_in_search = false` hides that author's
+  public posts — both stay findable to the author themself.
 - **Visibility**: anonymous callers see `public`/`unlisted` only;
   viewers additionally see `local` posts and `followers_only`/`private`
   from authors they follow and `direct` posts that mention them.

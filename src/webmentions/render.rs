@@ -22,6 +22,9 @@ pub struct AuthorCard {
     pub photo: Option<String>,
     /// Bare username (used to build the status permalink).
     pub username: String,
+    /// `users.indexable = false` — the document gets a robots
+    /// `noindex` meta so crawlers honour the author's opt-out.
+    pub noindex: bool,
 }
 
 /// The remote permalinks a status interacts with, rendered as the
@@ -83,6 +86,12 @@ pub fn render_source_page(
             "<link rel=\"webmention\" href=\"{}\" />",
             esc(endpoint_url)
         ),
+        // The author's search-engine opt-out applies to this document
+        // too — it carries their content verbatim.
+        author
+            .filter(|a| a.noindex)
+            .map(|_| "<meta name=\"robots\" content=\"noindex\" />".to_string())
+            .unwrap_or_default(),
         format!("<title>{}</title>", esc(&summary.chars().take(80).collect::<String>())),
         "</head><body>".to_string(),
         "<article class=\"h-entry\">".to_string(),
@@ -172,6 +181,7 @@ pub fn render_like_page(
     format!(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\" />\
          <link rel=\"webmention\" href=\"{}\" />\
+         {}\
          <title>{} liked {}</title></head><body>\
          <article class=\"h-entry\">\
          <span class=\"p-author h-card\">{photo}\
@@ -181,6 +191,11 @@ pub fn render_like_page(
          <time class=\"dt-published\" datetime=\"{}\"></time>\
          </article></body></html>",
         esc(endpoint_url),
+        if liker.noindex {
+            "<meta name=\"robots\" content=\"noindex\" />"
+        } else {
+            ""
+        },
         esc(&liker.name),
         esc(target_url),
         esc(&liker.profile_url),

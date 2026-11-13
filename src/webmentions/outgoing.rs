@@ -133,9 +133,12 @@ async fn author_card(
     base_url: &str,
     account_id: i64,
 ) -> Result<render::AuthorCard> {
-    let (username, display_name, avatar): (String, Option<String>, Option<String>) =
+    let (username, display_name, avatar, noindex): (String, Option<String>, Option<String>, bool) =
         sqlx::query_as(
-            "SELECT username, display_name, avatar_remote_url FROM accounts WHERE id = $1",
+            "SELECT a.username, a.display_name, a.avatar_remote_url, \
+             COALESCE(u.indexable, true) = false \
+             FROM accounts a LEFT JOIN users u ON u.account_id = a.id \
+             WHERE a.id = $1",
         )
         .bind(account_id)
         .fetch_one(db)
@@ -145,6 +148,7 @@ async fn author_card(
         name: display_name.unwrap_or_else(|| username.clone()),
         photo: avatar.filter(|a| !a.is_empty()),
         username,
+        noindex,
     })
 }
 

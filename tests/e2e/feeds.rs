@@ -252,6 +252,47 @@ async fn profile_feed_atom_and_rss() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn noindex_author_is_dropped_from_public_feeds() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice", "a@x.com").await;
+    let bob = register(&env.app, "bob", "b@x.com").await;
+    post(
+        &env.app,
+        &alice,
+        json!({"status": "noindex feed post #rust", "visibility": "public"}),
+    )
+    .await;
+    post(
+        &env.app,
+        &bob,
+        json!({"status": "indexable feed post #rust", "visibility": "public"}),
+    )
+    .await;
+    let alice_id = account_id(&env.state.db, "alice").await;
+    sqlx::query("UPDATE users SET indexable = false WHERE account_id = $1")
+        .bind(alice_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    // Alice's own profile feed carries nothing — her content opted
+    // out of indexing surfaces.
+    let (code, _, body) = get(&env.app, "/users/alice.atom", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(!body.contains("noindex feed post"), "{body}");
+    assert_eq!(body.matches("<entry>").count(), 0, "{body}");
+
+    // The tag feed keeps bob's post but drops alice's.
+    let (code, _, body) = get(&env.app, "/tags/rust.atom", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(body.contains("indexable feed post"), "{body}");
+    assert!(!body.contains("noindex feed post"), "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn profile_feed_lookup_and_404s() {
     let _permit = harness::acquire().await;
     let Some(env) = test_env(Config::default()).await else {

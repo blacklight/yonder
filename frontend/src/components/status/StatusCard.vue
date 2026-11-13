@@ -91,7 +91,8 @@ const articleBody = computed(() => {
   const a = article.value;
   if (!a?.title || !shown.value.account.acct.includes("@")) return html;
   const esc = (s: string) =>
-    s.replace(/&/g, "&amp;")
+    s
+      .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
@@ -715,10 +716,7 @@ async function onReact(emoji: string) {
         <h2 v-if="article.title" class="status-card__article-title">
           <EmojiText :text="article.title" :emojis="shown.emojis" />
         </h2>
-        <p
-          v-if="article.summary"
-          class="status-card__article-summary"
-        >
+        <p v-if="article.summary" class="status-card__article-summary">
           <EmojiText :text="article.summary" :emojis="shown.emojis" />
         </p>
       </div>

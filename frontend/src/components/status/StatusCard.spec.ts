@@ -995,8 +995,7 @@ describe("StatusCard", () => {
 
   it("keeps a matching folded prefix on local posts (no remote strip)", () => {
     const s = status({
-      content:
-        "<p><strong>Local Title</strong></p><p>real body</p>",
+      content: "<p><strong>Local Title</strong></p><p>real body</p>",
       yonder: {
         article: { title: "Local Title", summary: null, cover: null },
       },

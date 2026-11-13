@@ -189,11 +189,7 @@ export interface EmojiReaction {
 }
 
 export type StatusVisibility =
-  | "public"
-  | "unlisted"
-  | "private"
-  | "direct"
-  | "local";
+  "public" | "unlisted" | "private" | "direct" | "local";
 
 /** `posts::entity::status_entity` — the Status entity. */
 export interface Status {

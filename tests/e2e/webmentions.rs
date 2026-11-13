@@ -33,6 +33,12 @@ use crate::harness;
 
 const BASE: &str = "http://127.0.0.1:4000";
 
+/// Wall-clock budget for job-pipeline assertions. The worker drains
+/// real queues end to end; on the shared CI host (coverage-
+/// instrumented, many tests in parallel) the enqueue→drain→persist
+/// chain can lag far past a few seconds, so waits get minutes.
+const ASYNC_BUDGET: Duration = Duration::from_secs(120);
+
 struct Env {
     app: Router,
     state: Arc<AppState>,
@@ -44,6 +50,12 @@ async fn test_env() -> Option<Env> {
     let slug = harness::test_slug();
     let pool = harness::provision_db(infra, &slug).await;
     let mut config = Config::default();
+    // The worker's blocking consumers each hold a pooled Redis
+    // connection for the duration of `XREADGROUP BLOCK`; the default
+    // pool (10) is smaller than `queues × concurrency`, so enqueues
+    // and pub/sub queue behind readers. Size the pool for the extra
+    // consumers below.
+    config.redis.pool_size = 64;
     let redis_handle = harness::scoped_redis(infra, &mut config.redis, &slug).await;
     for bucket in [
         &mut config.rate_limit.authentication,
@@ -58,6 +70,10 @@ async fn test_env() -> Option<Env> {
         };
     }
     config.jobs.poll_interval_ms = 50;
+    // More consumers per queue than the default 4 — these tests run
+    // several dependent jobs back to back and every second of drain
+    // latency counts against `ASYNC_BUDGET` on a loaded CI host.
+    config.jobs.concurrency = 8;
     // A failed delivery retries after `backoff_base ^ attempt`
     // seconds — keep the base tiny so a transient hiccup re-runs the
     // job well inside the assertions' wait windows instead of
@@ -332,7 +348,7 @@ async fn incoming_webmention_materializes_reply() {
     let db = env.state.db.clone();
     let src = source.clone();
     let tgt2 = target.clone();
-    let materialized = wait_for(Duration::from_secs(20), move || {
+    let materialized = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         let src = src.clone();
         let tgt = tgt2.clone();
@@ -365,7 +381,7 @@ async fn incoming_webmention_materializes_reply() {
     // window for the shared CI host, where enqueue→drain→insert can
     // lag well past a few seconds under load.
     let db = env.state.db.clone();
-    let notified = wait_for(Duration::from_secs(30), move || {
+    let notified = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         async move {
             sqlx::query_scalar::<_, bool>(
@@ -379,7 +395,14 @@ async fn incoming_webmention_materializes_reply() {
         }
     })
     .await;
-    assert!(notified, "mention notification not emitted");
+    if !notified {
+        let rows: Vec<(String, Option<i64>)> =
+            sqlx::query_as("SELECT type, status_id FROM notifications ORDER BY id")
+                .fetch_all(&env.state.db)
+                .await
+                .unwrap_or_default();
+        panic!("mention notification not emitted; notifications: {rows:?}");
+    }
     cancel.cancel();
     worker.await.unwrap().unwrap();
 
@@ -467,7 +490,7 @@ async fn incoming_webmention_materializes_reply() {
     let (cancel, worker) = start_worker(&env);
     let db = env.state.db.clone();
     let src = source.clone();
-    let reprocessed = wait_for(Duration::from_secs(20), move || {
+    let reprocessed = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         let src = src.clone();
         async move {
@@ -516,7 +539,7 @@ async fn outgoing_webmention_delivers() {
     let status_id = post_status(&env.app, &token, &format!("check this out {target_page}")).await;
 
     let (cancel, worker) = start_worker(&env);
-    let delivered = wait_for(Duration::from_secs(20), {
+    let delivered = wait_for(ASYNC_BUDGET, {
         let captured = captured.clone();
         move || {
             let captured = captured.clone();
@@ -531,7 +554,7 @@ async fn outgoing_webmention_delivers() {
     // response completes — poll it instead of racing the write, and
     // keep the worker alive so a failed store can retry.
     let expected_source = format!("{BASE}/webmentions/source/{status_id}");
-    let stored = wait_for(Duration::from_secs(20), {
+    let stored = wait_for(ASYNC_BUDGET, {
         let db = env.state.db.clone();
         let expected_source = expected_source.clone();
         let target_page = target_page.clone();
@@ -701,7 +724,7 @@ async fn interaction_backfeed() {
     let (cancel, worker) = start_worker(&env);
     let db = env.state.db.clone();
     let src = source.clone();
-    let wm_reply_id = wait_for(Duration::from_secs(30), move || {
+    let wm_reply_id = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         let src = src.clone();
         async move {
@@ -736,7 +759,7 @@ async fn interaction_backfeed() {
     )
     .await;
     let db = env.state.db.clone();
-    let delivered = wait_for(Duration::from_secs(30), {
+    let delivered = wait_for(ASYNC_BUDGET, {
         let captured = captured.clone();
         let source = source.clone();
         move || {
@@ -792,7 +815,7 @@ async fn interaction_backfeed() {
     .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let like_source = format!("{BASE}/webmentions/like/{wm_reply_id}/{my_account_id}");
-    let delivered = wait_for(Duration::from_secs(30), {
+    let delivered = wait_for(ASYNC_BUDGET, {
         let captured = captured.clone();
         let like_source = like_source.clone();
         move || {
@@ -845,7 +868,7 @@ async fn interaction_backfeed() {
     assert_eq!(status, StatusCode::OK);
     let db = env.state.db.clone();
     let like_source2 = like_source.clone();
-    let retracted = wait_for(Duration::from_secs(30), move || {
+    let retracted = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         let like_source = like_source2.clone();
         async move {
@@ -925,7 +948,7 @@ async fn incoming_webmention_to_embed_url_materializes_reply() {
     let db = env.state.db.clone();
     let src = source.clone();
     let tgt2 = target.clone();
-    let materialized = wait_for(Duration::from_secs(20), move || {
+    let materialized = wait_for(ASYNC_BUDGET, move || {
         let db = db.clone();
         let src = src.clone();
         let tgt = tgt2.clone();

@@ -578,6 +578,25 @@ describe("ComposeBox", () => {
     expect(wrapper.find(".compose__private").exists()).toBe(true);
   });
 
+  it("options selects are captioned and their choices carry icons", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const visOptions = wrapper
+      .get("[data-testid='visibility']")
+      .findAll("option")
+      .map((o) => o.text());
+    expect(visOptions[0]).toContain("🌐");
+    expect(visOptions[0]).toContain("Public");
+    expect(visOptions[4]).toContain("✉️");
+    expect(visOptions[4]).toContain("Direct");
+    const ptOptions = wrapper
+      .get("[data-testid='post-type']")
+      .findAll("option")
+      .map((o) => o.text());
+    expect(ptOptions[0]).toContain("📝");
+    expect(ptOptions[1]).toContain("📄");
+  });
+
   it("account defaults never clobber a seeded direct draft", async () => {
     // The old bug: an empty seeded DM draft took `default_visibility`
     // on mount and silently flipped to public.

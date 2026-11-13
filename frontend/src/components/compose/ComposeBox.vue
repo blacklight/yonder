@@ -195,6 +195,19 @@ const VISIBILITIES: StatusVisibility[] = [
 ];
 const CONTENT_TYPES = ["text/plain", "text/markdown"];
 const POST_TYPES = ["note", "article"];
+// `<option>` can't carry SVG icons — emoji glyphs stand in so the
+// choices are still visually distinguished inside the native picker.
+const VISIBILITY_OPTION_ICONS: Record<StatusVisibility, string> = {
+  public: "🌐",
+  unlisted: "🔓",
+  private: "🔒",
+  local: "🏠",
+  direct: "✉️",
+};
+const POST_TYPE_OPTION_ICONS: Record<string, string> = {
+  note: "📝",
+  article: "📄",
+};
 const TITLE_MAX = 500; // mirrors the server-side `name` bound
 const SUMMARY_MAX = 2000; // mirrors the server-side `summary` bound
 
@@ -947,7 +960,9 @@ async function submit() {
           :class="{ 'compose__ctl--on': d.poll }"
           :aria-label="t('compose.pollAdd')"
           :disabled="media.length > 0 || isArticle"
-          :title="isArticle ? t('compose.pollArticleHint') : t('compose.pollAdd')"
+          :title="
+            isArticle ? t('compose.pollArticleHint') : t('compose.pollAdd')
+          "
           data-testid="poll-toggle"
           @click="togglePoll"
         >
@@ -1032,88 +1047,109 @@ async function submit() {
           <FontAwesomeIcon icon="lock" />
           {{ t("compose.vis_direct") }}
         </span>
-        <span v-else class="compose__select">
-          <select
-            :value="d.visibility"
-            :aria-label="t('compose.visibility')"
-            :title="t('compose.visibility')"
-            data-testid="visibility"
-            @change="
-              compose.update({
-                visibility: ($event.target as HTMLSelectElement)
-                  .value as StatusVisibility,
-              })
-            "
-          >
-            <option v-for="v in VISIBILITIES" :key="v" :value="v">
-              {{ t(`compose.vis_${v}`) }}
-            </option>
-          </select>
-          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
-        </span>
-        <span class="compose__select">
-          <select
-            :value="d.language ?? ''"
-            :aria-label="t('compose.language')"
-            :title="t('compose.language')"
-            @change="
-              compose.update({
-                language: ($event.target as HTMLSelectElement).value || null,
-              })
-            "
-          >
-            <option v-for="l in LANGUAGES" :key="l.code" :value="l.code">
-              {{ l.label.startsWith("compose.") ? t(l.label) : l.label }}
-            </option>
-          </select>
-          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
-        </span>
-        <span class="compose__select">
-          <select
-            :value="d.postType"
-            :aria-label="t('compose.postType')"
-            :title="t('compose.postType')"
-            data-testid="post-type"
-            @change="
-              (() => {
-                const v = ($event.target as HTMLSelectElement).value;
-                compose.update(
-                  v === 'article'
-                    ? // Articles can't carry polls — drop the draft.
-                      { postType: v, poll: null }
-                    : {
-                        postType: v,
-                        title: '',
-                        summary: '',
-                        coverMediaId: null,
-                      },
-                );
-              })()
-            "
-          >
-            <option v-for="pt in POST_TYPES" :key="pt" :value="pt">
-              {{ t(`compose.postType_${pt}`) }}
-            </option>
-          </select>
-          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
-        </span>
-        <span class="compose__select">
-          <select
-            :value="d.contentType"
-            :aria-label="t('compose.contentType')"
-            :title="t('compose.contentType')"
-            @change="
-              compose.update({
-                contentType: ($event.target as HTMLSelectElement).value,
-              })
-            "
-          >
-            <option v-for="ct in CONTENT_TYPES" :key="ct" :value="ct">
-              {{ ct }}
-            </option>
-          </select>
-          <FontAwesomeIcon icon="chevron-down" class="compose__select-caret" />
-        </span>
+        <label v-else class="compose__field">
+          <span class="compose__select">
+            <select
+              :value="d.visibility"
+              :aria-label="t('compose.visibility')"
+              :title="t('compose.visibility')"
+              data-testid="visibility"
+              @change="
+                compose.update({
+                  visibility: ($event.target as HTMLSelectElement)
+                    .value as StatusVisibility,
+                })
+              "
+            >
+              <option v-for="v in VISIBILITIES" :key="v" :value="v">
+                {{ VISIBILITY_OPTION_ICONS[v] }} {{ t(`compose.vis_${v}`) }}
+              </option>
+            </select>
+            <FontAwesomeIcon
+              icon="chevron-down"
+              class="compose__select-caret"
+            />
+          </span>
+        </label>
+        <label class="compose__field">
+          <span class="compose__select">
+            <select
+              :value="d.language ?? ''"
+              :aria-label="t('compose.language')"
+              :title="t('compose.language')"
+              @change="
+                compose.update({
+                  language: ($event.target as HTMLSelectElement).value || null,
+                })
+              "
+            >
+              <option v-for="l in LANGUAGES" :key="l.code" :value="l.code">
+                {{ l.label.startsWith("compose.") ? t(l.label) : l.label }}
+              </option>
+            </select>
+            <FontAwesomeIcon
+              icon="chevron-down"
+              class="compose__select-caret"
+            />
+          </span>
+        </label>
+        <label class="compose__field">
+          <span class="compose__select">
+            <select
+              :value="d.postType"
+              :aria-label="t('compose.postType')"
+              :title="t('compose.postType')"
+              data-testid="post-type"
+              @change="
+                (() => {
+                  const v = ($event.target as HTMLSelectElement).value;
+                  compose.update(
+                    v === 'article'
+                      ? // Articles can't carry polls — drop the draft.
+                        { postType: v, poll: null }
+                      : {
+                          postType: v,
+                          title: '',
+                          summary: '',
+                          coverMediaId: null,
+                        },
+                  );
+                })()
+              "
+            >
+              <option v-for="pt in POST_TYPES" :key="pt" :value="pt">
+                {{ POST_TYPE_OPTION_ICONS[pt] }}
+                {{ t(`compose.postType_${pt}`) }}
+              </option>
+            </select>
+            <FontAwesomeIcon
+              icon="chevron-down"
+              class="compose__select-caret"
+            />
+          </span>
+        </label>
+        <label class="compose__field">
+          <span class="compose__select">
+            <select
+              :value="d.contentType"
+              :aria-label="t('compose.contentType')"
+              :title="t('compose.contentType')"
+              @change="
+                compose.update({
+                  contentType: ($event.target as HTMLSelectElement).value,
+                })
+              "
+            >
+              <option v-for="ct in CONTENT_TYPES" :key="ct" :value="ct">
+                {{ ct }}
+              </option>
+            </select>
+            <FontAwesomeIcon
+              icon="chevron-down"
+              class="compose__select-caret"
+            />
+          </span>
+        </label>
 
         <div v-if="scheduleVisible" class="compose__schedule">
           <label>
@@ -1381,6 +1417,7 @@ async function submit() {
 }
 .compose__counter {
   margin-inline-start: auto;
+  margin-inline-end: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
@@ -1389,9 +1426,31 @@ async function submit() {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-2) var(--space-3);
   font-size: var(--text-sm);
   color: var(--text-muted);
+}
+/* Caption-over-select field. Stacking keeps each control narrow, so
+   the caption stays readable even on narrow viewports. */
+.compose__field {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.compose__field-icon {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+.compose__field-text {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+@media (max-width: 767px) {
+  .compose__select select {
+    max-width: 8rem;
+  }
 }
 /* Static "Private" label standing in for the hidden visibility
    picker on DM drafts — same footprint as a select row. */

@@ -1383,57 +1383,8 @@
             </p>
           </div>
 
-          <div class="compare">
-            <table>
-              <thead>
-                <tr>
-                  <th>Feature</th>
-                  <th>Yonder</th>
-                  <th>Mastodon</th>
-                  <th>Akkoma</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>⚙️ Runtime Stack</td>
-                  <td>Single Rust binary + PostgreSQL + Redis</td>
-                  <td>
-                    Ruby on Rails + Node + PostgreSQL + Redis (+ Elasticsearch)
-                  </td>
-                  <td>Elixir/OTP + PostgreSQL</td>
-                </tr>
-                <tr>
-                  <td>🔌 Client API</td>
-                  <td>Mastodon client API v1 + v2</td>
-                  <td>Reference implementation</td>
-                  <td>Mastodon client API + MastoFE/PleromaFE</td>
-                </tr>
-                <tr>
-                  <td>🔁 Account Migrations</td>
-                  <td>
-                    Moves in and out, follower migration with retries,
-                    Mastodon-compatible archives or remote OAuth-based of posts,
-                    favourites, bookmarks and follows from the remote instance —
-                    with original timestamps respected
-                  </td>
-                  <td>Moves in and out, CSV/archive import/export</td>
-                  <td>Moves in and out, CSV/archive import/export</td>
-                </tr>
-                <tr>
-                  <td>🔓 Right to access your data</td>
-                  <td>Export access even while suspended</td>
-                  <td>No export while suspended</td>
-                  <td>No export while suspended</td>
-                </tr>
-                <tr>
-                  <td>👥 Webmentions</td>
-                  <td>Webmentions in both directions</td>
-                  <td>—</td>
-                  <td>—</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <iframe src="https://s3.fabiomanganiello.com/fabio/fedicompare/yonder.html"
+            width="100%" height="700" frameborder="0"></iframe>
         </div>
       </section>
 

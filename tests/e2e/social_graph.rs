@@ -1395,8 +1395,28 @@ async fn remote_network_listings_sync_from_remote_collections() {
     .await
     .unwrap();
 
-    // Followers — the embedded first page plus its `next` page are
-    // materialized and remote order is preserved.
+    // Followers — the first read claims the sync and serves the stored
+    // edges (empty on first sight) while a `remote_network_sync` job
+    // does the remote fetch; running that job materializes the
+    // embedded first page plus its `next` page in remote order.
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}/followers"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert!(list.as_array().unwrap().is_empty(), "{list}");
+    let sync =
+        social::jobs::RemoteNetworkSyncJob::new(env.state.ap.as_ref().unwrap().clone());
+    sync.run(
+        &job_ctx(&env.state),
+        &json!({"account_id": carol_id, "direction": "followers"}),
+    )
+    .await
+    .unwrap();
     let (code, list) = request(
         &env.app,
         "GET",
@@ -1445,7 +1465,24 @@ async fn remote_network_listings_sync_from_remote_collections() {
             .unwrap();
     assert_eq!(followers_count, 3);
 
-    // Following — `first` is a page URL, fetched one hop deeper.
+    // Following — `first` is a page URL, fetched one hop deeper. Same
+    // claim-then-enqueue shape as followers.
+    let (code, list) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/accounts/{carol_id}/following"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{list}");
+    assert!(list.as_array().unwrap().is_empty(), "{list}");
+    sync.run(
+        &job_ctx(&env.state),
+        &json!({"account_id": carol_id, "direction": "following"}),
+    )
+    .await
+    .unwrap();
     let (code, list) = request(
         &env.app,
         "GET",

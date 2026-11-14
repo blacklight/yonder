@@ -74,6 +74,13 @@ pub enum JobCommand {
     /// `"refresh": true` to re-fetch an already-materialized row.
     #[command(name = "remote_status_fetch")]
     RemoteStatusFetch(JobArgs),
+    /// Refresh one remote account's cached followers/following edges.
+    ///
+    /// Payload: `{"account_id": <id>, "direction": "followers"|
+    /// "following"}` — enqueued by `accounts/{id}/followers|following`
+    /// reads.
+    #[command(name = "remote_network_sync")]
+    RemoteNetworkSync(JobArgs),
     /// Fan one notification out to its recipients.
     ///
     /// Internal kind — `{"type", "from_account_id", "account_id",
@@ -255,6 +262,7 @@ impl JobCommand {
             Self::RemoteMediaFetch(a) => (JobKind::RemoteMediaFetch, a),
             Self::RemoteActorFetch(a) => (JobKind::RemoteActorFetch, a),
             Self::RemoteStatusFetch(a) => (JobKind::RemoteStatusFetch, a),
+            Self::RemoteNetworkSync(a) => (JobKind::RemoteNetworkSync, a),
             Self::NotificationFanout(a) => (JobKind::NotificationFanout, a),
             Self::WebPushSend(a) => (JobKind::WebPushSend, a),
             Self::EmailSend(a) => (JobKind::EmailSend, a),

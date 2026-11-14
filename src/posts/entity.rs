@@ -599,19 +599,6 @@ impl StatusBatch {
             .await
             .map_err(to_err)
         };
-        let votes_f = async {
-            if poll_ids.is_empty() {
-                return Ok(Vec::new());
-            }
-            sqlx::query_as::<_, (i64, i64)>(
-                "SELECT poll_id, count(*)::bigint FROM poll_votes \
-                 WHERE poll_id = ANY($1) GROUP BY poll_id",
-            )
-            .bind(&poll_ids)
-            .fetch_all(db)
-            .await
-            .map_err(to_err)
-        };
         let voters_f = async {
             if poll_ids.is_empty() {
                 return Ok(Vec::new());
@@ -719,7 +706,6 @@ impl StatusBatch {
             pin_rows,
             poll_rows,
             option_rows,
-            vote_rows,
             voter_rows,
             own_rows,
             mention_seen_ids,
@@ -732,7 +718,6 @@ impl StatusBatch {
             pins_f,
             polls_f,
             options_f,
-            votes_f,
             voters_f,
             own_f,
             mention_f,
@@ -761,7 +746,6 @@ impl StatusBatch {
                 .or_default()
                 .push((idx, title, votes_count));
         }
-        let votes_by_poll: HashMap<i64, i64> = vote_rows.into_iter().collect();
         let voters_by_poll: HashMap<i64, i64> = voter_rows.into_iter().collect();
         let mut own_by_poll: HashMap<i64, Vec<i32>> = HashMap::new();
         for (pid, idx) in own_rows {
@@ -776,15 +760,27 @@ impl StatusBatch {
             let show_totals = !hide_totals || expired;
             let own_votes = own_by_poll.remove(&pid).unwrap_or_default();
             let options = options_by_poll.remove(&pid).unwrap_or_default();
+            // `votes_count` is the sum of the option tallies — for
+            // remote polls they carry the origin's `replies.totalItems`
+            // (plus local votes); `poll_votes` rows exist only for
+            // local ballots, so counting them would report 0. The
+            // locally-known voter count only surfaces on `multiple`
+            // polls (`voters_count` is null otherwise, like Mastodon).
+            let multiple: bool = pr.get("multiple");
+            let votes_count: i64 = options.iter().map(|(_, _, v)| *v as i64).sum();
             polls.insert(
                 pid,
                 json!({
                     "id": pid.to_string(),
                     "expires_at": expires_at.map(|e| e.to_rfc3339()),
                     "expired": expired,
-                    "multiple": pr.get::<bool, _>("multiple"),
-                    "votes_count": votes_by_poll.get(&pid).copied().unwrap_or(0),
-                    "voters_count": voters_by_poll.get(&pid).copied().unwrap_or(0),
+                    "multiple": multiple,
+                    "votes_count": votes_count,
+                    "voters_count": if multiple {
+                        Value::from(voters_by_poll.get(&pid).copied().unwrap_or(0))
+                    } else {
+                        Value::Null
+                    },
                     "voted": !own_votes.is_empty(),
                     "own_votes": own_votes,
                     "options": options.iter().map(|(_, title, votes_count)| json!({

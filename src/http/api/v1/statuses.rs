@@ -122,6 +122,15 @@ pub async fn show(
                 }
             }
         }
+        // A remote poll's tallies self-heal on read — the refresh
+        // re-ingests the Question, so `votes_count` picks up votes the
+        // origin collected since ingest (the lazy counterpart of the
+        // likes/shares/quotes counter refresh).
+        if !status.local && status.poll_id.is_some() {
+            if let Err(e) = posts::remote::enqueue_poll_refresh(&ap.core, uri).await {
+                tracing::warn!(status_id = status.id, error = %e, "poll refresh enqueue failed");
+            }
+        }
     }
     Ok(Json(entity::status_entity(&ctx, &status, viewer).await?))
 }

@@ -1366,7 +1366,10 @@ async fn mentions_account(
 }
 
 /// Materialize a remote `Question`: `oneOf`/`anyOf` options and
-/// `endTime`; `replies.totalItems` seeds `votes_count`.
+/// `endTime`; `replies.totalItems` seeds `votes_count`. On re-ingest
+/// the option tally becomes the fresh remote total *plus* this
+/// instance's own `poll_votes` rows — votes never federate, so they
+/// are strictly local, and a refresh must not erase them.
 async fn sync_poll(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     status_id: i64,
@@ -1415,7 +1418,8 @@ async fn sync_poll(
         sqlx::query(
             "INSERT INTO poll_options (poll_id, idx, title, votes_count) VALUES ($1,$2,$3,$4) \
              ON CONFLICT (poll_id, idx) DO UPDATE SET title = EXCLUDED.title, \
-                 votes_count = EXCLUDED.votes_count",
+                 votes_count = EXCLUDED.votes_count + (SELECT count(*)::int FROM poll_votes pv \
+                     WHERE pv.poll_id = poll_options.poll_id AND pv.option_idx = poll_options.idx)",
         )
         .bind(poll_id)
         .bind(idx as i32)
@@ -1527,6 +1531,15 @@ fn media_refresh_marker_key(uri: &str) -> String {
     )
 }
 
+/// Redis marker key for poll-tally refreshes — same namespace split:
+/// a settled quote/media marker must not suppress a tally refresh.
+fn poll_refresh_marker_key(uri: &str) -> String {
+    format!(
+        "statusfetch-poll:{}",
+        &hex::encode(Sha256::digest(uri.as_bytes()))[..32]
+    )
+}
+
 /// A media-heal refresh backs off a week per row: a successful one
 /// lands the attachment (or the object type) and stops the gate, a
 /// failed one retries at most weekly per viewed status.
@@ -1553,6 +1566,29 @@ pub async fn enqueue_media_refresh(core: &ApCore, uri: &str) -> Result<()> {
     let _ = cache
         .set(&key, &json!({"s": "queued"}), MEDIA_REFRESH_TTL)
         .await;
+    Ok(())
+}
+
+/// Enqueue a `RemoteStatusFetch` refresh for a remote poll a local
+/// viewer just read — the re-ingest re-seeds `poll_options.votes_count`
+/// from the Question's `replies.totalItems`, the lazy counterpart of
+/// the likes/shares/quotes counter refresh. Deduped by the poll marker
+/// for `remote_context.counts_grace_seconds`, so repeat reads don't
+/// pile up fetches.
+pub async fn enqueue_poll_refresh(core: &ApCore, uri: &str) -> Result<()> {
+    let cache = RedisCache::new(core.redis.clone());
+    let key = poll_refresh_marker_key(uri);
+    if cache.get(&key).await.ok().flatten().is_some() {
+        return Ok(());
+    }
+    core.dispatcher
+        .enqueue(
+            JobKind::RemoteStatusFetch,
+            json!({"uri": uri, "refresh": true}),
+        )
+        .await?;
+    let ttl = Duration::from_secs(core.config.remote_context.counts_grace_seconds.max(60));
+    let _ = cache.set(&key, &json!({"s": "queued"}), ttl).await;
     Ok(())
 }
 

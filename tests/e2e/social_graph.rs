@@ -1409,8 +1409,7 @@ async fn remote_network_listings_sync_from_remote_collections() {
     .await;
     assert_eq!(code, StatusCode::OK, "{list}");
     assert!(list.as_array().unwrap().is_empty(), "{list}");
-    let sync =
-        social::jobs::RemoteNetworkSyncJob::new(env.state.ap.as_ref().unwrap().clone());
+    let sync = social::jobs::RemoteNetworkSyncJob::new(env.state.ap.as_ref().unwrap().clone());
     sync.run(
         &job_ctx(&env.state),
         &json!({"account_id": carol_id, "direction": "followers"}),

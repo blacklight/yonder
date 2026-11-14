@@ -106,6 +106,28 @@ pub async fn status_visible(ctx: &PostContext, poll_id: i64, viewer: Option<i64>
     }
 }
 
+/// Self-heal for poll reads on remote statuses — enqueue a tally
+/// refresh (deduped) so the next render sees votes the origin
+/// collected since ingest, the lazy counterpart of the
+/// likes/shares/quotes counter refresh. Local polls and
+/// federation-off contexts are no-ops; failures only log.
+pub async fn refresh_remote(ctx: &PostContext, poll_id: i64) {
+    let Some(ap) = &ctx.ap else {
+        return;
+    };
+    let Ok(Some(status)) = owning_status(ctx, poll_id).await else {
+        return;
+    };
+    if status.local {
+        return;
+    }
+    if let Some(uri) = &status.uri {
+        if let Err(e) = super::remote::enqueue_poll_refresh(&ap.core, uri).await {
+            tracing::warn!(poll_id, error = %e, "poll tally refresh enqueue failed");
+        }
+    }
+}
+
 /// `POST /api/v1/polls/{id}/votes` — dedupe the submitted choices,
 /// then vote atomically under the poll row lock: poll exists and is
 /// unexpired, voter ≠ author, arity matches `multiple`, every index in
@@ -216,15 +238,31 @@ pub async fn entity(ctx: &PostContext, poll_id: i64, viewer: Option<i64>) -> Res
     .bind(poll_id)
     .fetch_all(&ctx.db)
     .await?;
-    let votes_count: i64 = sqlx::query_scalar("SELECT count(*) FROM poll_votes WHERE poll_id = $1")
-        .bind(poll_id)
-        .fetch_one(&ctx.db)
-        .await?;
-    let voters_count: i64 =
-        sqlx::query_scalar("SELECT count(DISTINCT account_id) FROM poll_votes WHERE poll_id = $1")
+    // `votes_count` is the sum of the option tallies — the source of
+    // truth. For remote polls the tallies carry the origin's
+    // `replies.totalItems` (plus local votes); counting `poll_votes`
+    // rows would report 0 (or just the local votes) since remote
+    // ballots never materialize rows.
+    let votes_count: i64 = options
+        .iter()
+        .map(|o| o.get::<i32, _>("votes_count") as i64)
+        .sum();
+    // `voters_count` is Mastodon's `multiple`-only field, and remote
+    // Questions carry no distinct-voter total either — emit the
+    // locally-known voter count for multiple polls, null otherwise.
+    let multiple: bool = poll.get("multiple");
+    let voters_count: Value = if multiple {
+        Value::from(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(DISTINCT account_id) FROM poll_votes WHERE poll_id = $1",
+            )
             .bind(poll_id)
             .fetch_one(&ctx.db)
-            .await?;
+            .await?,
+        )
+    } else {
+        Value::Null
+    };
     let own_votes: Vec<i32> = match viewer {
         Some(account_id) => {
             sqlx::query_scalar(
@@ -247,7 +285,7 @@ pub async fn entity(ctx: &PostContext, poll_id: i64, viewer: Option<i64>) -> Res
         "id": poll_id.to_string(),
         "expires_at": expires_at.map(|e| e.to_rfc3339()),
         "expired": expired,
-        "multiple": poll.get::<bool, _>("multiple"),
+        "multiple": multiple,
         "votes_count": votes_count,
         "voters_count": voters_count,
         "voted": !own_votes.is_empty(),

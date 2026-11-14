@@ -40,6 +40,7 @@ pub async fn show(
     if !polls::status_visible(&ctx, id, viewer).await? {
         return Err(crate::Error::NotFound("poll".into()));
     }
+    polls::refresh_remote(&ctx, id).await;
     Ok(Json(polls::entity(&ctx, id, viewer).await?))
 }
 
@@ -79,6 +80,7 @@ pub async fn vote(
         })
         .unwrap_or_default();
     polls::vote(&ctx, id, auth.account_id, &choices).await?;
+    polls::refresh_remote(&ctx, id).await;
     Ok(Json(polls::entity(&ctx, id, Some(auth.account_id)).await?))
 }
 

@@ -1494,6 +1494,126 @@ async fn remote_math_formulas_render_and_update() {
     assert_eq!(status_media_count(&env.state.db, uri).await, 0);
 }
 
+/// A remote `Question`'s `replies.totalItems` seeds the option
+/// tallies, and the entity's `votes_count` is their sum — counting
+/// only local `poll_votes` rows would report 0 (remote ballots never
+/// materialize rows). A tally re-ingest keeps local votes on top:
+/// ballots never federate, so the stored count is remote tally +
+/// local votes. `voters_count` is `multiple`-only (Mastodon parity).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_poll_tallies_sum_and_refresh_preserves_local_votes() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let voter = register(&env.app, "gwen", "gwen@example.com").await;
+    let question = |a: i64, b: i64| {
+        json!({
+            "id": "https://remote.test/objects/poll1",
+            "type": "Question",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": "<p>pick one</p>",
+            "endTime": "2099-01-01T00:00:00Z",
+            "oneOf": [
+                {"name": "a", "replies": {"type": "Collection", "totalItems": a}},
+                {"name": "b", "replies": {"type": "Collection", "totalItems": b}},
+            ],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        })
+    };
+    ingest_create(&core, "poll1", question(3, 5)).await;
+
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/poll1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (s, _, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&voter),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["poll"]["votes_count"], 8);
+    assert_eq!(body["poll"]["options"][0]["votes_count"], 3);
+    assert_eq!(body["poll"]["options"][1]["votes_count"], 5);
+    assert_eq!(body["poll"]["voters_count"], Value::Null);
+
+    // A local ballot lands on top of the remote tally.
+    let poll_id = body["poll"]["id"].as_str().unwrap().to_string();
+    let (s, _, poll) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/polls/{poll_id}/votes"),
+        Some(&voter),
+        Some(json!({"choices": [1]})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{poll}");
+    assert_eq!(poll["votes_count"], 9);
+    assert_eq!(poll["options"][1]["votes_count"], 6);
+
+    // A re-ingest with fresh remote tallies keeps the local vote.
+    ingest_create(&core, "poll1", question(10, 20)).await;
+    let (s, _, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&voter),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["poll"]["votes_count"], 31);
+    assert_eq!(body["poll"]["options"][0]["votes_count"], 10);
+    assert_eq!(body["poll"]["options"][1]["votes_count"], 21);
+
+    // `multiple` (`anyOf`) polls surface the locally-known voter
+    // count — `voters_count` is only null for single-choice.
+    ingest_create(
+        &core,
+        "poll2",
+        json!({
+            "id": "https://remote.test/objects/poll2",
+            "type": "Question",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": "<p>pick many</p>",
+            "endTime": "2099-01-01T00:00:00Z",
+            "anyOf": [
+                {"name": "x", "replies": {"type": "Collection", "totalItems": 7}},
+                {"name": "y", "replies": {"type": "Collection", "totalItems": 11}},
+            ],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    )
+    .await;
+    let status_id2: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/poll2'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (s, _, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id2}"),
+        Some(&voter),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["poll"]["multiple"], true);
+    assert_eq!(body["poll"]["votes_count"], 18);
+    assert_eq!(body["poll"]["voters_count"], 0);
+}
+
 async fn ingest_create(core: &yonder::activitypub::ApCore, id: &str, object: Value) {
     let activity = pubby_sdk::Activity {
         id: format!("{BASE}/ap/activities/{id}"),

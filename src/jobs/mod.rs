@@ -95,6 +95,11 @@ pub enum JobKind {
     /// resolves pending quote targets whose servers never federate
     /// with us.
     RemoteStatusFetch,
+    /// Refresh one remote account's cached followers/following edges
+    /// (`{"account_id": …, "direction": "followers"|"following"}`) —
+    /// enqueued by `accounts/{id}/followers|following` reads instead of
+    /// syncing inline.
+    RemoteNetworkSync,
     /// Fan a notification out to its recipients.
     NotificationFanout,
     /// Deliver one notification to the recipient's Web Push
@@ -189,6 +194,7 @@ impl JobKind {
         JobKind::RemoteMediaFetch,
         JobKind::RemoteActorFetch,
         JobKind::RemoteStatusFetch,
+        JobKind::RemoteNetworkSync,
         JobKind::NotificationFanout,
         JobKind::WebPushSend,
         JobKind::EmailSend,
@@ -227,6 +233,7 @@ impl JobKind {
             JobKind::RemoteMediaFetch => "remote_media_fetch",
             JobKind::RemoteActorFetch => "remote_actor_fetch",
             JobKind::RemoteStatusFetch => "remote_status_fetch",
+            JobKind::RemoteNetworkSync => "remote_network_sync",
             JobKind::NotificationFanout => "notification_fanout",
             JobKind::WebPushSend => "web_push_send",
             JobKind::EmailSend => "email_send",

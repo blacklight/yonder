@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::{
-        password::{hash_password, MIN_PASSWORD_LENGTH},
+        password::{hash_password_async, MIN_PASSWORD_LENGTH},
         registration,
         scopes::{require_moderator_scope, require_scope},
     },
@@ -179,7 +179,7 @@ pub async fn create(
             "password must be at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let password_hash = hash_password(&body.password)?;
+    let password_hash = hash_password_async(&body.password).await?;
     let registered = registration::create_admin_account(
         &state,
         &registration::AdminCreateParams {

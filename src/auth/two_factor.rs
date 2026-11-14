@@ -683,7 +683,11 @@ pub async fn require_password(pool: &sqlx::PgPool, user_id: i64, password: &str)
         .fetch_optional(pool)
         .await?
         .flatten();
-    if hash.is_some_and(|h| crate::auth::password::verify_password(password, &h)) {
+    let ok = match hash {
+        Some(h) => crate::auth::password::verify_password_async(password, &h).await,
+        None => false,
+    };
+    if ok {
         Ok(())
     } else {
         Err(Error::Forbidden("incorrect password"))

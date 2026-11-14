@@ -31,6 +31,26 @@ pub fn verify_password(password: &str, stored: &str) -> bool {
         .is_ok()
 }
 
+/// Async [`verify_password`] — argon2id is deliberately slow (hundreds
+/// of ms of pure CPU); on a runtime worker it would stall unrelated
+/// requests, so async callers go through the blocking pool. A join
+/// failure (panic) denies the login rather than faulting the request.
+pub async fn verify_password_async(password: &str, stored: &str) -> bool {
+    let password = password.to_owned();
+    let stored = stored.to_owned();
+    tokio::task::spawn_blocking(move || verify_password(&password, &stored))
+        .await
+        .unwrap_or(false)
+}
+
+/// Async [`hash_password`] — same blocking-pool reasoning.
+pub async fn hash_password_async(password: &str) -> Result<String> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || hash_password(&password))
+        .await
+        .map_err(|e| crate::Error::Internal(format!("password hashing task failed: {e}")))?
+}
+
 /// `POST /api/v1/yonder/account/password` — re-authenticate with the
 /// current password, then rotate `users.password_hash` and revoke
 /// every other access token (with its refresh tokens and session
@@ -60,10 +80,10 @@ pub async fn change_password(
     let Some(hash) = stored else {
         return Err(crate::Error::Forbidden("incorrect password"));
     };
-    if !verify_password(current_password, &hash) {
+    if !verify_password_async(current_password, &hash).await {
         return Err(crate::Error::Forbidden("incorrect password"));
     }
-    let new_hash = hash_password(new_password)?;
+    let new_hash = hash_password_async(new_password).await?;
 
     let mut tx = pool.begin().await?;
     sqlx::query("UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1")

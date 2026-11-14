@@ -30,7 +30,18 @@ pub mod visibility;
 
 pub use crate::users::relationships::{FollowOpts, FollowOutcome};
 
-/// Register epic-14 job handlers.
-pub fn register_jobs(registry: &mut crate::jobs::Registry) {
+/// Register epic-14 job handlers. `RemoteNetworkSync` needs the AP
+/// context (remote collection fetches), so it only registers when
+/// federation is enabled — same gate as the reads that enqueue it.
+pub fn register_jobs(
+    registry: &mut crate::jobs::Registry,
+    ap: Option<&crate::activitypub::ApContext>,
+) {
     registry.register(crate::jobs::JobKind::FollowEvent, jobs::FollowEventJob);
+    if let Some(ap) = ap {
+        registry.register(
+            crate::jobs::JobKind::RemoteNetworkSync,
+            jobs::RemoteNetworkSyncJob::new(ap.clone()),
+        );
+    }
 }

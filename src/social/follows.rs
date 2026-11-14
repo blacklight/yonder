@@ -10,8 +10,10 @@ use sqlx::{PgPool, Row};
 
 use crate::{
     activitypub::{lookup, moderation, ApContext},
+    config::Config,
     http::{paginate::Page, AppState},
     interactions::emit_notification_event,
+    jobs::Dispatcher,
     users::relationships::{self, Ctx},
     Error, Result,
 };
@@ -207,49 +209,49 @@ const REMOTE_NETWORK_FETCH_CONCURRENCY: usize = 8;
 
 /// Whether `account_id` is a remote account — and, when its cached
 /// `direction` (`"followers"`/`"following"`) listing is stale or
-/// missing, refresh it inline from the remote collection. Never fails
-/// the caller: every error degrades to "serve what's stored".
+/// missing, enqueue a [`JobKind::RemoteNetworkSync`] refresh and serve
+/// whatever edges are already stored. Never fails the caller: every
+/// error degrades to "serve what's stored".
 pub async fn ensure_remote_network(
     state: &AppState,
     account_id: i64,
     direction: &'static str,
 ) -> bool {
-    let row = sqlx::query(
-        "SELECT actor_id, actor_data FROM accounts \
+    let row = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM accounts \
          WHERE id = $1 AND domain IS NOT NULL AND deleted_at IS NULL",
     )
     .bind(account_id)
     .fetch_optional(&state.db)
     .await;
-    let (actor_id, actor_data) = match row {
-        Ok(Some(r)) => (
-            r.get::<String, _>("actor_id"),
-            r.get::<Value, _>("actor_data"),
-        ),
+    if !matches!(row, Ok(Some(_))) {
         // Local/missing account (caller falls back to `follows`) or a
         // DB error — report "not remote" either way; the real error
         // surfaces when the caller runs its own query.
-        _ => return false,
-    };
-    let Some(ap) = state.ap.as_ref() else {
+        return false;
+    }
+    // Federation off → no remote collections to sync; the caller's
+    // `remote_edge_*` fallback serves the local `follows` page.
+    if state.ap.is_none() {
         return true;
-    };
+    }
     match claim_network_sync(&state.db, account_id, direction).await {
         Ok(true) => {
-            match sync_remote_network(state, ap, account_id, direction, &actor_id, actor_data).await
+            // The claim stamped the marker up front, so concurrent
+            // reads don't pile on — hand the fetch to the worker and
+            // answer from the stored edges (empty on first sight).
+            let payload = serde_json::json!({
+                "account_id": account_id,
+                "direction": direction,
+            });
+            if let Err(e) = state
+                .dispatcher
+                .enqueue(crate::jobs::JobKind::RemoteNetworkSync, payload)
+                .await
             {
-                Ok(true) => {}
-                Ok(false) => {
-                    // The remote fetch failed or returned nothing readable —
-                    // backdate the marker so the next read retries soon
-                    // instead of waiting out the full TTL on an empty list.
-                    if let Err(e) = mark_sync_retry_soon(&state.db, account_id, direction).await {
-                        tracing::warn!(account_id, direction, error = %e, "network retry stamp failed");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(account_id, direction, error = %e, "remote network sync failed");
-                    let _ = mark_sync_retry_soon(&state.db, account_id, direction).await;
+                tracing::warn!(account_id, direction, error = %e, "remote network enqueue failed");
+                if let Err(e) = mark_sync_retry_soon(&state.db, account_id, direction).await {
+                    tracing::warn!(account_id, direction, error = %e, "network retry stamp failed");
                 }
             }
         }
@@ -259,6 +261,50 @@ pub async fn ensure_remote_network(
         }
     }
     true
+}
+
+/// `JobKind::RemoteNetworkSync` entry point — re-loads the actor row
+/// (it may have changed or been deleted since the read claimed the
+/// sync) and runs [`sync_remote_network`]. A failed or empty fetch
+/// backdates the marker so the next read re-enqueues soon; a hard
+/// error also retries through the queue's backoff.
+pub(crate) async fn run_remote_network_sync(
+    db: &PgPool,
+    config: &Config,
+    dispatcher: &Dispatcher,
+    ap: &ApContext,
+    account_id: i64,
+    direction: &str,
+) -> Result<()> {
+    let direction: &'static str = match direction {
+        "followers" => "followers",
+        "following" => "following",
+        _ => return Ok(()),
+    };
+    let row = sqlx::query(
+        "SELECT actor_id, actor_data FROM accounts \
+         WHERE id = $1 AND domain IS NOT NULL AND deleted_at IS NULL",
+    )
+    .bind(account_id)
+    .fetch_optional(db)
+    .await?;
+    let Some(row) = row else {
+        return Ok(());
+    };
+    let actor_id: String = row.get("actor_id");
+    let actor_data: Value = row.get("actor_data");
+    match sync_remote_network(
+        db, config, dispatcher, ap, account_id, direction, &actor_id, actor_data,
+    )
+    .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => mark_sync_retry_soon(db, account_id, direction).await,
+        Err(e) => {
+            let _ = mark_sync_retry_soon(db, account_id, direction).await;
+            Err(e)
+        }
+    }
 }
 
 /// Roll a claimed sync marker back so the next read re-claims it
@@ -333,7 +379,9 @@ fn collection_member_uris(doc: &Value) -> Option<Vec<String>> {
 /// items — the caller backdates the sync marker so the next read
 /// retries soon instead of waiting out the full TTL.
 async fn sync_remote_network(
-    state: &AppState,
+    db: &PgPool,
+    config: &Config,
+    dispatcher: &Dispatcher,
     ap: &ApContext,
     account_id: i64,
     direction: &'static str,
@@ -349,13 +397,8 @@ async fn sync_remote_network(
         if let Ok(Some(doc)) =
             tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&url)).await
         {
-            crate::activitypub::storage::upsert_remote_actor_row(
-                &state.db,
-                &state.config(),
-                actor_id,
-                &doc,
-            )
-            .await?;
+            crate::activitypub::storage::upsert_remote_actor_row(db, config, actor_id, &doc)
+                .await?;
             collection = lookup::actor_collection_uri(&doc, direction);
         }
     }
@@ -386,7 +429,7 @@ async fn sync_remote_network(
         sqlx::query(&format!("UPDATE accounts SET {col} = $2 WHERE id = $1"))
             .bind(account_id)
             .bind(total as i32)
-            .execute(&state.db)
+            .execute(db)
             .await?;
     }
     let mut page = match doc.get("first") {
@@ -427,7 +470,7 @@ async fn sync_remote_network(
 
     // 3. Drop suspended domains and duplicate URIs (order preserved),
     // then cap the persisted page.
-    let blocked: HashSet<String> = moderation::blocked_domains(&state.db, state.config().as_ref())
+    let blocked: HashSet<String> = moderation::blocked_domains(db, config)
         .await?
         .into_iter()
         .collect();
@@ -451,7 +494,7 @@ async fn sync_remote_network(
         "SELECT id, actor_id FROM accounts WHERE actor_id = ANY($1) AND deleted_at IS NULL",
     )
     .bind(&uris)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
     let mut ids: HashMap<String, i64> = rows
         .iter()
@@ -467,9 +510,9 @@ async fn sync_remote_network(
     let handler = ap.multi.instance.clone();
     let fetched: Vec<(String, i64)> = futures_util::stream::iter(fetch_now.to_vec())
         .map(|uri| {
-            let db = state.db.clone();
-            let dispatcher = state.dispatcher.clone();
-            let config = state.config();
+            let db = db.clone();
+            let dispatcher = dispatcher.clone();
+            let config = config;
             let handler = handler.clone();
             async move {
                 let u = uri.clone();
@@ -477,7 +520,7 @@ async fn sync_remote_network(
                     tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&u)).await;
                 let id = match doc {
                     Ok(Some(doc)) => {
-                        match crate::activitypub::storage::upsert_remote_actor_row(&db, &config, &uri, &doc)
+                        match crate::activitypub::storage::upsert_remote_actor_row(&db, config, &uri, &doc)
                             .await
                         {
                             Ok(id) => id,
@@ -493,7 +536,7 @@ async fn sync_remote_network(
                     Some(id) => Some((uri, id)),
                     // Still list the member — a bare row renders
                     // username+domain and the job enriches it.
-                    None => match lookup::upsert_remote_stub(&db, &dispatcher, &config, &uri).await {
+                    None => match lookup::upsert_remote_stub(&db, &dispatcher, config, &uri).await {
                         Ok(id) => Some((uri, id)),
                         Err(e) => {
                             tracing::warn!(actor = %uri, error = %e, "remote member stub failed");
@@ -514,9 +557,9 @@ async fn sync_remote_network(
     // stale-actor refresh on their next profile read.
     for (i, uri) in stub_later.iter().enumerate() {
         let stub = if i < REMOTE_NETWORK_STUB_JOBS {
-            lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), uri).await
+            lookup::upsert_remote_stub(db, dispatcher, config, uri).await
         } else {
-            lookup::upsert_remote_stub_row(&state.db, &state.config(), uri).await
+            lookup::upsert_remote_stub_row(db, config, uri).await
         };
         match stub {
             Ok(id) => {
@@ -547,7 +590,7 @@ async fn sync_remote_network(
     .bind(account_id)
     .bind(&uris)
     .bind(REMOTE_NETWORK_CAP as i64)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
 
     // 6. Replace the stored edge list atomically — remote order first,
@@ -568,7 +611,7 @@ async fn sync_remote_network(
     }
     let member_ids: Vec<i64> = edges.iter().map(|e| e.0).collect();
     let positions: Vec<i32> = edges.iter().map(|e| e.1).collect();
-    let mut tx = state.db.begin().await?;
+    let mut tx = db.begin().await?;
     sqlx::query("DELETE FROM remote_network_edges WHERE account_id = $1 AND direction = $2")
         .bind(account_id)
         .bind(direction)

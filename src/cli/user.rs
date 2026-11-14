@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::{
-        password::{hash_password, MIN_PASSWORD_LENGTH},
+        password::{hash_password_async, MIN_PASSWORD_LENGTH},
         registration, tokens,
     },
     moderation::{actions, audit},
@@ -299,7 +299,7 @@ async fn create(
             "password must be at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let password_hash = hash_password(&password)?;
+    let password_hash = hash_password_async(&password).await?;
     let ctx = context::load_runtime(path, true).await?;
     let actor_id = context::resolve_audit_actor(&ctx.pool, actor).await?;
     let registered = registration::create_admin_account(

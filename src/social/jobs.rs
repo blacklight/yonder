@@ -10,6 +10,7 @@
 use serde_json::Value;
 
 use crate::{
+    activitypub::ApContext,
     interactions::emit_notification_event,
     jobs::{Dispatcher, JobContext, JobHandler},
     Result,
@@ -65,5 +66,41 @@ impl JobHandler for FollowEventJob {
         let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
         emit_notification_event(&ctx.db, &dispatcher, &kind, from_id, None, to_id).await;
         Ok(())
+    }
+}
+
+/// `RemoteNetworkSync` — refresh one remote account's cached
+/// followers/following edges. Enqueued by `accounts/{id}/followers` /
+/// `following` reads (which serve the stored edges immediately) so the
+/// remote collection fetch never sits on the request path.
+pub struct RemoteNetworkSyncJob {
+    ap: ApContext,
+}
+
+impl RemoteNetworkSyncJob {
+    /// Create the handler.
+    pub fn new(ap: ApContext) -> Self {
+        RemoteNetworkSyncJob { ap }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RemoteNetworkSyncJob {
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let Some(account_id) = payload.get("account_id").and_then(Value::as_i64) else {
+            return Ok(());
+        };
+        let Some(direction) = payload.get("direction").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        super::follows::run_remote_network_sync(
+            &ctx.db,
+            &ctx.config,
+            &self.ap.core.dispatcher,
+            &self.ap,
+            account_id,
+            direction,
+        )
+        .await
     }
 }

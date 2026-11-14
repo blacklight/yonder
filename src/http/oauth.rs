@@ -230,7 +230,8 @@ async fn password_grant(
         ));
     };
     use sqlx::Row;
-    if !crate::auth::password::verify_password(&password, row.get("password_hash")) {
+    let password_hash: String = row.get("password_hash");
+    if !crate::auth::password::verify_password_async(&password, &password_hash).await {
         return Err(invalid_grant(
             "The provided authorization grant is invalid, expired or revoked.",
         ));

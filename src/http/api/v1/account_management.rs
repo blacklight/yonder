@@ -190,7 +190,7 @@ pub async fn delete_account(
     let Some(hash) = password_hash else {
         return Err(crate::Error::Forbidden("incorrect password"));
     };
-    if !crate::auth::password::verify_password(&params.password, &hash) {
+    if !crate::auth::password::verify_password_async(&params.password, &hash).await {
         return Err(crate::Error::Forbidden("incorrect password"));
     }
     let delay = std::time::Duration::from_secs(

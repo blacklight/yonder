@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## Unreleased
+
+### Fixed
+
+- `accounts`: Serve cached remote followers/following edges immediately
+  and refresh them via a new `remote_network_sync` job instead of
+  fetching the remote collection inline — profile network reads no
+  longer block on the remote instance (previously seconds, up to ~13s)
+- `auth`: Run argon2id password hashing/verification on tokio's blocking
+  pool (`verify_password_async`/`hash_password_async`) — login,
+  registration, password change/reset, account move/cancel and 2FA
+  re-auth no longer occupy runtime worker threads for hundreds of ms
+  per attempt
+
 ## 1.0.8
 
 ### Fixed

@@ -13,7 +13,7 @@ use sqlx::PgPool;
 
 use crate::{
     activitypub::{self, actors::sync_call, delivery, ApContext},
-    auth::password::verify_password,
+    auth::password::verify_password_async,
     http::AppState,
     jobs::{JobContext, JobHandler, JobKind},
     users::relationships::{self, Ctx, FollowOpts},
@@ -171,7 +171,7 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
     let Some(hash) = password_hash else {
         return Err(Error::Forbidden("incorrect password"));
     };
-    if !verify_password(password, &hash) {
+    if !verify_password_async(password, &hash).await {
         return Err(Error::Forbidden("incorrect password"));
     }
     if let Some(at) = moved_at {
@@ -697,7 +697,7 @@ pub async fn cancel_move(state: &AppState, account_id: i64, password: &str) -> R
     let Some(hash) = password_hash else {
         return Err(Error::Forbidden("incorrect password"));
     };
-    if !verify_password(password, &hash) {
+    if !verify_password_async(password, &hash).await {
         return Err(Error::Forbidden("incorrect password"));
     }
     sqlx::query("UPDATE accounts SET moved_to_account_id = NULL, updated_at = now() WHERE id = $1")

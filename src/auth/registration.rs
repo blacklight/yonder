@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::{
     activitypub::{self, actors::provision_local_conn},
     auth::{
-        password::{hash_password, MIN_PASSWORD_LENGTH},
+        password::{hash_password_async, MIN_PASSWORD_LENGTH},
         scopes::requires_email_verification,
         tokens::{self, random_secret},
     },
@@ -350,7 +350,7 @@ pub async fn register(
             "password must be at least {MIN_PASSWORD_LENGTH} characters"
         )));
     }
-    let password_hash = hash_password(&params.password)?;
+    let password_hash = hash_password_async(&params.password).await?;
     // The registration `locale` feeds `users.locale` — the same
     // supported set the settings API validates against (epic 10).
     let locale = params

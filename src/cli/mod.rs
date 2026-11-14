@@ -311,7 +311,7 @@ pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
     }
     // Epic-14 social jobs (FollowEvent settle — local work regardless
     // of the federation gate).
-    crate::social::register_jobs(&mut registry);
+    crate::social::register_jobs(&mut registry, ap);
     // Epic-15 timeline jobs (fan-out + backfill).
     crate::timelines::register_jobs(&mut registry);
     // Epic-16 notifications (fan-out + email enqueue).

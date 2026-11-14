@@ -86,7 +86,8 @@ impl JobHandler for FederationIncomingJob {
                 Some(&body),
                 false,
             )
-        });
+        })
+        .await;
         match result {
             Err(e) if permanent_inbound_error(&e) => {
                 // Signature and other permanent verification failures
@@ -696,7 +697,7 @@ async fn ensure_move_target(ctx: &ApContext, actor_id: &str, doc: &Value) {
     }
     let handler = ctx.multi.instance.clone();
     let url = target.clone();
-    let Some(target_doc) = sync_call(move || handler.outbox.fetch_actor(&url)) else {
+    let Some(target_doc) = sync_call(move || handler.outbox.fetch_actor(&url)).await else {
         tracing::info!(actor = %actor_id, target = %target, "movedTo target fetch failed");
         return;
     };

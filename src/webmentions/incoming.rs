@@ -147,7 +147,8 @@ impl JobHandler for IncomingJob {
         let (source_owned, target_owned) = (source.to_string(), target.to_string());
         let outcome = crate::activitypub::actors::sync_call(move || {
             handler.process_incoming_webmention(Some(&source_owned), Some(&target_owned))
-        });
+        })
+        .await;
         match outcome {
             // Verified + stored — materialize the reply.
             Ok(Some(mention)) => materialize(ctx, self.ap.as_ref(), &mention).await,

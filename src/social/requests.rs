@@ -67,7 +67,7 @@ pub async fn authorize(state: &AppState, target_id: i64, requester_id: i64) -> R
     let promoted = if requester_remote {
         let (core, target_actor) = require_ap(state, target_id).await?;
         let storage = core.storage_trait();
-        let request = fetch_request(&core, &requester_actor, &target_actor)?;
+        let request = fetch_request(&core, &requester_actor, &target_actor).await?;
         let options = response_options(&core);
         sync_call(move || {
             pubby_sdk::follows::accept_follow_request(
@@ -78,6 +78,7 @@ pub async fn authorize(state: &AppState, target_id: i64, requester_id: i64) -> R
                 Some(&core.doc_cache),
             )
         })
+        .await
         .map_err(crate::Error::Federation)?;
         true
     } else {
@@ -122,7 +123,7 @@ pub async fn reject(state: &AppState, target_id: i64, requester_id: i64) -> Resu
     if requester_remote {
         let (core, target_actor) = require_ap(state, target_id).await?;
         let storage = core.storage_trait();
-        let request = fetch_request(&core, &requester_actor, &target_actor)?;
+        let request = fetch_request(&core, &requester_actor, &target_actor).await?;
         let options = response_options(&core);
         sync_call(move || {
             pubby_sdk::follows::reject_follow_request(
@@ -132,6 +133,7 @@ pub async fn reject(state: &AppState, target_id: i64, requester_id: i64) -> Resu
                 &options,
             )
         })
+        .await
         .map_err(crate::Error::Federation)?;
     } else {
         sqlx::query("DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2")
@@ -184,7 +186,7 @@ async fn require_ap(
 /// Load the stored `FollowRequest` through the storage adapter (the
 /// same view pubby wrote it with). 404s when the row vanished between
 /// the pending check and this fetch.
-fn fetch_request(
+async fn fetch_request(
     core: &Arc<crate::activitypub::ApCore>,
     requester_actor_id: &str,
     target_actor_id: &str,
@@ -193,6 +195,7 @@ fn fetch_request(
     let requester = requester_actor_id.to_string();
     let target = target_actor_id.to_string();
     sync_call(move || storage.get_follow_request(&requester, &target))
+        .await
         .map_err(crate::Error::Federation)?
         .ok_or_else(|| Error::NotFound("follow request".into()))
 }

@@ -485,6 +485,7 @@ async fn fetch_card(ctx: &PostContext, status_id: i64) -> Result<()> {
     );
     let page_url = url.clone();
     let response = crate::activitypub::actors::sync_call(move || http.get(&page_url, &headers))
+        .await
         .map_err(Error::Federation)?;
     if !response.is_success() {
         return Err(Error::Internal(format!(
@@ -709,7 +710,9 @@ async fn fetch_image(
         "User-Agent".to_string(),
         preview_user_agent(&ctx.config.federation.user_agent, &ctx.base_url()),
     );
-    let response = crate::activitypub::actors::sync_call(move || http.get(&url, &headers)).ok()?;
+    let response = crate::activitypub::actors::sync_call(move || http.get(&url, &headers))
+        .await
+        .ok()?;
     if !response.is_success() || response.body.len() as u64 > MAX_IMAGE {
         return None;
     }

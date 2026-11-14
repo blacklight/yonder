@@ -38,7 +38,8 @@ pub(crate) async fn resolve_actor_url(
     let fallback = format!("https://{domain}/@{username}");
     let url = sync_call(move || {
         pubby_sdk::webfinger::resolve_actor_url_with_client(&username, &domain, &http)
-    });
+    })
+    .await;
     Ok((url != fallback).then_some(url))
 }
 
@@ -398,5 +399,6 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
                 }
             }
         }
-    }))
+    })
+    .await)
 }

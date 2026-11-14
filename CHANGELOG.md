@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- `federation`: Run synchronous pubby calls (`dispatch_multi`,
+  `process_inbox_activity`, actor/object fetches, deliveries) on tokio's
+  blocking pool via `spawn_blocking` instead of `block_in_place` — enough
+  concurrent blocking remote fetches could occupy every runtime worker
+  thread and freeze `serve`/`worker` until restart
 - `search`: Scope the `indexable = false` opt-out to search-engine
   indexing surfaces only — it no longer hides the account or its
   statuses from the instance's own search; account discovery is

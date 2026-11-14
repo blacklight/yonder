@@ -450,7 +450,7 @@ pub async fn publish_create(
     let obj = object_for_activity(&doc);
     let handler = crate::activitypub::handler_for_username(ap, &username)?
         .ok_or_else(|| Error::NotFound(format!("actor {username}")))?;
-    let mut activity = sync_call(move || handler.outbox.build_create_activity(&obj));
+    let mut activity = sync_call(move || handler.outbox.build_create_activity(&obj)).await;
     // Inject the fields `Object::to_json` can't carry.
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
@@ -474,7 +474,7 @@ pub async fn publish_update(
     let obj = object_for_activity(&doc);
     let handler = crate::activitypub::handler_for_username(ap, &username)?
         .ok_or_else(|| Error::NotFound(format!("actor {username}")))?;
-    let mut activity = sync_call(move || handler.outbox.build_update_activity_obj(&obj));
+    let mut activity = sync_call(move || handler.outbox.build_update_activity_obj(&obj)).await;
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
     }
@@ -490,7 +490,7 @@ pub async fn publish_delete(ap: &ApContext, ctx: &PostContext, status: &StatusRo
     };
     let handler = crate::activitypub::handler_for_username(ap, &username)?
         .ok_or_else(|| Error::NotFound(format!("actor {username}")))?;
-    let activity = sync_call(move || handler.outbox.build_delete_activity_obj(&uri));
+    let activity = sync_call(move || handler.outbox.build_delete_activity_obj(&uri)).await;
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
 }
@@ -707,7 +707,9 @@ pub(crate) async fn verify_signature(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| uri.path().to_string());
-    sync_call(move || handler.verify_fetch_signature("GET", &target, &map)).ok()
+    sync_call(move || handler.verify_fetch_signature("GET", &target, &map))
+        .await
+        .ok()
 }
 
 fn json_response(doc: Value) -> Response {

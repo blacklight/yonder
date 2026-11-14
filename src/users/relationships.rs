@@ -375,7 +375,8 @@ pub async fn resolve_account(ctx: Ctx<'_>, input: &str) -> Result<i64> {
                 let domain = domain.to_string();
                 let actor_url = sync_call(move || {
                     pubby_sdk::webfinger::resolve_actor_url_with_client(&user, &domain, &client)
-                });
+                })
+                .await;
                 fetch_remote_actor(ctx, &actor_url).await
             }
         }
@@ -401,6 +402,7 @@ async fn fetch_remote_actor(ctx: Ctx<'_>, actor_url: &str) -> Result<i64> {
     let handler = ap.multi.instance.clone();
     let url = actor_url.to_string();
     let doc = sync_call(move || handler.outbox.fetch_actor(&url))
+        .await
         .ok_or_else(|| Error::NotFound(format!("remote actor {actor_url}")))?;
     activitypub::storage::upsert_remote_actor_row(ctx.db, ctx.config, actor_url, &doc)
         .await?

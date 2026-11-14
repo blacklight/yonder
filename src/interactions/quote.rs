@@ -94,7 +94,8 @@ pub async fn send_quote_request(
             Some(&new_activity_id(&actor_id)),
             None,
         )
-    });
+    })
+    .await;
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
 }

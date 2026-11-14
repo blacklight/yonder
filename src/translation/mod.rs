@@ -10,8 +10,9 @@
 //! | `deepl`          | `deepl_api_key` (+ optional `deepl_api_url`) | `/v2/translate` JSON              |
 //! | `libretranslate` | `libretranslate_url` (+ optional key)     | `{url}/translate` JSON               |
 //!
-//! Calls run on pubby's sync `HttpClient` inside `block_in_place`
-//! (same pattern as link-preview fetches) — relaxed, since every
+//! Calls run on pubby's sync `HttpClient` inside `sync_call`
+//! (spawn_blocking — same pattern as link-preview fetches) — relaxed,
+//! since every
 //! target is either a hardcoded public host or an admin-configured
 //! URL that legitimately lives on a LAN.
 
@@ -86,12 +87,21 @@ pub async fn translate_all(config: &Config, items: &[Item], target: &str) -> Res
         return Err(Error::Internal(format!("{provider} is not configured")));
     }
     let http = HttpClient::new_relaxed(TIMEOUT);
+    let target = target.to_string();
     let mut texts = Vec::with_capacity(items.len());
     let mut detected = None;
     for item in items {
-        let (text, lang) = crate::activitypub::actors::sync_call(|| {
-            translate_one(&http, backend, content, item, target)
+        let item = Item {
+            text: item.text.clone(),
+            format: item.format,
+        };
+        let http = http.clone();
+        let content = content.clone();
+        let target = target.clone();
+        let (text, lang) = crate::activitypub::actors::sync_call(move || {
+            translate_one(&http, backend, &content, &item, &target)
         })
+        .await
         .map_err(|e| Error::Internal(format!("{provider}: {e}")))?;
         if detected.is_none() {
             detected = lang;

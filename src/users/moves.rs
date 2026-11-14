@@ -237,9 +237,11 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
             .await?;
         let handler = ap.multi.instance.clone();
         let url = target_actor_id.clone();
-        let doc = sync_call(move || handler.outbox.fetch_actor(&url)).ok_or_else(|| {
-            Error::Validation(format!("could not fetch target actor {target_actor_id}"))
-        })?;
+        let doc = sync_call(move || handler.outbox.fetch_actor(&url))
+            .await
+            .ok_or_else(|| {
+                Error::Validation(format!("could not fetch target actor {target_actor_id}"))
+            })?;
         crate::activitypub::storage::upsert_remote_actor_row(
             &state.db,
             &state.config(),
@@ -1303,7 +1305,7 @@ async fn migrate_remote(
                     .await?;
                 let handler = ap.multi.instance.clone();
                 let url = target.to_string();
-                let doc = sync_call(move || handler.outbox.fetch_actor(&url));
+                let doc = sync_call(move || handler.outbox.fetch_actor(&url)).await;
                 match doc {
                     Some(doc) => {
                         if !str_list(doc.get("alsoKnownAs")).iter().any(|u| u == origin) {
@@ -1343,7 +1345,7 @@ async fn migrate_remote(
             let origin_doc = {
                 let handler = ap.multi.instance.clone();
                 let url = origin.to_string();
-                sync_call(move || handler.outbox.fetch_actor(&url))
+                sync_call(move || handler.outbox.fetch_actor(&url)).await
             };
             if let Some(doc) = origin_doc {
                 let _ = activitypub::storage::upsert_remote_actor_row(

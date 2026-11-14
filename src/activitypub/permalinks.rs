@@ -162,7 +162,7 @@ async fn actor(
     };
     // Actors are public documents — same contract as the /ap/* fallback.
     super::edge::apply(
-        adapter::dispatch(state, &dreq),
+        adapter::dispatch(state, &dreq).await,
         true,
         super::edge::anonymous(headers),
     )

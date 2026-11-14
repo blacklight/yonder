@@ -596,8 +596,17 @@ pub(crate) fn sync_block<F: std::future::Future>(f: F) -> F::Output {
 
 /// Run a synchronous pubby call (`dispatch_multi`,
 /// `process_inbox_activity`, `publish_activity`, `fetch_actor`) on the
-/// current worker while freeing the runtime slot — the call itself may
-/// block on network/storage. Multi-thread runtime required.
-pub(crate) fn sync_call<T>(f: impl FnOnce() -> T) -> T {
-    tokio::task::block_in_place(f)
+/// blocking pool while the async caller awaits — the call itself may
+/// block on network/storage for seconds, which must not occupy a
+/// runtime worker thread (`block_in_place` still needs a free worker
+/// to take over the core, and enough concurrent blocking calls starve
+/// the runtime entirely).
+pub(crate) async fn sync_call<T>(f: impl FnOnce() -> T + Send + 'static) -> T
+where
+    T: Send + 'static,
+{
+    match tokio::task::spawn_blocking(f).await {
+        Ok(v) => v,
+        Err(e) => std::panic::resume_unwind(e.into_panic()),
+    }
 }

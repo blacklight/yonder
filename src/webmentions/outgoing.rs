@@ -407,7 +407,8 @@ impl JobHandler for OutgoingJob {
         let log_source = source.clone();
         let result = crate::activitypub::actors::sync_call(move || {
             handler.process_outgoing_webmentions(&source, Some(&doc), Some(ContentTextFormat::Html))
-        });
+        })
+        .await;
         match result {
             // Per-target failures surface through the observing
             // fetcher/storage rather than the return value: report

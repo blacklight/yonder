@@ -189,7 +189,8 @@ impl JobHandler for RemoteMediaFetchJob {
                 pubby_sdk::http::HttpClient::new(timeout)
             };
             client.get(&url, &HashMap::new())
-        });
+        })
+        .await;
         let response = match response {
             Ok(response) => response,
             Err(e) => return Err(Error::Internal(format!("remote media fetch: {e}"))),

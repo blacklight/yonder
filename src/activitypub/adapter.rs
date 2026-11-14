@@ -99,14 +99,14 @@ pub async fn serve(state: Arc<AppState>, req: Request) -> Response {
     };
     // dispatch_multi only serves public documents — private objects
     // go through `posts::serve_named_object`.
-    super::edge::apply(dispatch(&state, &dreq), true, anonymous)
+    super::edge::apply(dispatch(&state, &dreq).await, true, anonymous)
 }
 
 /// Fan a [`DispatchRequest`] into `dispatch_multi` with the standard
 /// options. Shared with `permalinks` — web permalinks route a
 /// synthesized request on the canonical `/ap/*` path while
 /// `request_target` keeps the signed web path for authorized-fetch.
-pub(crate) fn dispatch(state: &Arc<AppState>, dreq: &DispatchRequest) -> Response {
+pub(crate) async fn dispatch(state: &Arc<AppState>, dreq: &DispatchRequest) -> Response {
     let Some(ap) = &state.ap else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -118,6 +118,7 @@ pub(crate) fn dispatch(state: &Arc<AppState>, dreq: &DispatchRequest) -> Respons
         ..DispatchOptions::default()
     };
     let multi = ap.multi.clone();
-    let resp = sync_call(move || dispatch_multi(&multi, dreq, "/ap", &options));
+    let dreq = dreq.clone();
+    let resp = sync_call(move || dispatch_multi(&multi, &dreq, "/ap", &options)).await;
     into_response(resp)
 }

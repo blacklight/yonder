@@ -165,7 +165,9 @@ pub async fn publish(ctx: &ApContext, username: &str, activity: &Value) -> Resul
         .map_err(|e| crate::Error::Internal(format!("resolver failed: {e}")))?
         .ok_or_else(|| crate::Error::NotFound(format!("actor {username}")))?;
     let activity = activity.clone();
-    actors::sync_call(move || handler.publish_activity(&activity)).map_err(crate::Error::Federation)
+    actors::sync_call(move || handler.publish_activity(&activity))
+        .await
+        .map_err(crate::Error::Federation)
 }
 
 /// Publish an actor `Update` after a profile change (epic 09): drop
@@ -183,6 +185,7 @@ pub async fn publish_actor_update(ctx: &ApContext, username: &str) -> Result<Val
         .ok_or_else(|| crate::Error::NotFound(format!("actor {username}")))?;
     let doc = handler.get_actor_document();
     actors::sync_call(move || handler.publish_actor_update(Some(&doc)))
+        .await
         .map_err(crate::Error::Federation)
 }
 
@@ -316,7 +319,8 @@ impl crate::jobs::JobHandler for FederationDeliveryJob {
                 scheme,
                 ed25519.as_ref(),
             )
-        });
+        })
+        .await;
 
         match attempt {
             Ok(status) if (200..300).contains(&status) => {

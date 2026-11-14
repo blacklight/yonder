@@ -307,7 +307,8 @@ impl ImportPublishJob {
                     .ok_or_else(|| Error::NotFound(format!("actor {username}")))?;
                 let mut activity = activitypub::actors::sync_call(move || {
                     handler.outbox.build_create_activity(&obj)
-                });
+                })
+                .await;
                 if let Some(object) = activity.get_mut("object") {
                     activitypub::posts::merge_object_extras(object, &doc);
                 }
@@ -347,7 +348,8 @@ impl ImportPublishJob {
                     handler
                         .outbox
                         .build_announce_activity(&object_uri, Some(&aid), pub_v.as_ref())
-                });
+                })
+                .await;
                 // Unlisted boosts must not be promoted to `as:Public`
                 // by the builder's default audience.
                 if visibility == "unlisted" {

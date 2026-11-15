@@ -13,6 +13,9 @@
   registration, password change/reset, account move/cancel and 2FA
   re-auth no longer occupy runtime worker threads for hundreds of ms
   per attempt
+- `federation`: Settle outbound follows from unaddressed shared-inbox
+  `Accept`/`Reject` activities — remotes that omit local `to`/`cc`
+  (e.g. Flipboard) previously left requests pending forever
 
 ## 1.0.8
 

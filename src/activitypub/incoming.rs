@@ -189,9 +189,10 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
         // Interactions (epic 13): Like/Announce/EmojiReact normalize
         // into favourites/boost/reaction rows + counters; EmojiReact
         // answers Handled (pubby's dispatch ignores unknown types).
+        // Accept/Reject pass through after follow-response settlement.
         if matches!(
             activity.activity_type.as_str(),
-            "Like" | "Announce" | "EmojiReact" | "Undo" | "Accept"
+            "Like" | "Announce" | "EmojiReact" | "Undo" | "Accept" | "Reject"
         ) {
             return crate::interactions::inbound::handle(&core, activity, raw);
         }

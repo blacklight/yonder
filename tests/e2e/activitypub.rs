@@ -12,8 +12,8 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use pubby_sdk::{
-    Activity, ActivityPubStorage, FollowRequest, Follower, Interaction, InteractionStatus,
-    InteractionType,
+    Activity, ActivityDisposition, ActivityPubStorage, FollowRequest, Follower, Interaction,
+    InteractionStatus, InteractionType,
 };
 use redis::AsyncCommands;
 use serde_json::{json, Map, Value};
@@ -775,6 +775,174 @@ async fn incoming_signature_failure_releases_dedupe_row() {
             .await
             .unwrap();
     assert!(!exists);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_follow_response_settles_unaddressed_outbound_follow() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
+        return;
+    };
+    let alice = seed_actor(&state.db, "alice").await;
+    let bob = seed_actor(&state.db, "bob").await;
+    let accepted_target = "https://remote.example/users/spacecom";
+    let rejected_target = "https://remote.example/users/refused";
+    seed_remote(&state.db, accepted_target, "spacecom").await;
+    seed_remote(&state.db, rejected_target, "refused").await;
+    let core = state.ap.as_ref().unwrap().core.clone();
+
+    for (local, remote) in [
+        (&alice.actor_id, accepted_target),
+        (&bob.actor_id, rejected_target),
+    ] {
+        sqlx::query(
+            "INSERT INTO follow_requests (account_id, target_account_id, activity) \
+             SELECT la.id, ra.id, $3 FROM accounts la, accounts ra \
+             WHERE la.actor_id = $1 AND ra.actor_id = $2",
+        )
+        .bind(local)
+        .bind(remote)
+        .bind(json!({
+            "id": format!("{local}#follows/test"),
+            "type": "Follow",
+            "actor": local,
+            "object": remote,
+        }))
+        .execute(&state.db)
+        .await
+        .unwrap();
+    }
+
+    let follow = json!({
+        "id": format!("{}#follows/test", alice.actor_id),
+        "type": "Follow",
+        "actor": alice.actor_id,
+        "object": accepted_target,
+        "to": accepted_target,
+    });
+    let accept = json!({
+        "id": format!("{accepted_target}#accepts/follows/"),
+        "type": "Accept",
+        "actor": accepted_target,
+        "object": follow,
+    });
+    let activity = Activity::from_json(&accept);
+    let disposition = yonder::interactions::inbound::handle(&core, &activity, &accept).unwrap();
+    assert!(matches!(disposition, ActivityDisposition::Handled));
+
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM follow_requests fr \
+         JOIN accounts la ON la.id = fr.account_id \
+         JOIN accounts ra ON ra.id = fr.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&alice.actor_id)
+    .bind(accepted_target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0);
+    let following: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM follows f \
+         JOIN accounts la ON la.id = f.account_id \
+         JOIN accounts ra ON ra.id = f.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2)",
+    )
+    .bind(&alice.actor_id)
+    .bind(accepted_target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(following);
+
+    let follow = json!({
+        "id": format!("{}#follows/test", bob.actor_id),
+        "type": "Follow",
+        "actor": bob.actor_id,
+        "object": rejected_target,
+    });
+    let reject = json!({
+        "id": format!("{rejected_target}#rejects/follows/test"),
+        "type": "Reject",
+        "actor": rejected_target,
+        "object": follow,
+    });
+    let activity = Activity::from_json(&reject);
+    let disposition = yonder::interactions::inbound::handle(&core, &activity, &reject).unwrap();
+    assert!(matches!(disposition, ActivityDisposition::Handled));
+
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM follow_requests fr \
+         JOIN accounts la ON la.id = fr.account_id \
+         JOIN accounts ra ON ra.id = fr.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&bob.actor_id)
+    .bind(rejected_target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0);
+    let following: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM follows f \
+         JOIN accounts la ON la.id = f.account_id \
+         JOIN accounts ra ON ra.id = f.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2)",
+    )
+    .bind(&bob.actor_id)
+    .bind(rejected_target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(!following);
+
+    // A response actor that doesn't match the embedded Follow's target
+    // is dropped — it must not settle (or forge) another follow.
+    let carol = seed_actor(&state.db, "carol").await;
+    let mallory = "https://remote.example/users/mallory";
+    seed_remote(&state.db, mallory, "mallory").await;
+    sqlx::query(
+        "INSERT INTO follow_requests (account_id, target_account_id, activity) \
+         SELECT la.id, ra.id, $3 FROM accounts la, accounts ra \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&carol.actor_id)
+    .bind(mallory)
+    .bind(json!({
+        "id": format!("{}#follows/test", carol.actor_id),
+        "type": "Follow",
+        "actor": carol.actor_id,
+        "object": mallory,
+    }))
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let spoofed = json!({
+        "id": format!("{mallory}#accepts/follows/spoofed"),
+        "type": "Accept",
+        "actor": mallory,
+        "object": {
+            "id": format!("{}#follows/test", carol.actor_id),
+            "type": "Follow",
+            "actor": carol.actor_id,
+            "object": accepted_target,
+        },
+    });
+    let activity = Activity::from_json(&spoofed);
+    let disposition = yonder::interactions::inbound::handle(&core, &activity, &spoofed).unwrap();
+    assert!(matches!(disposition, ActivityDisposition::Handled));
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM follow_requests fr \
+         JOIN accounts la ON la.id = fr.account_id \
+         JOIN accounts ra ON ra.id = fr.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&carol.actor_id)
+    .bind(mallory)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

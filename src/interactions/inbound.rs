@@ -11,6 +11,8 @@
 //! `Undo(EmojiReact)` which pubby's Undo arm would silently drop.
 //! `Accept` answers carrying a `QuoteAuthorization` (the reply to our
 //! outbound FEP-044f `QuoteRequest`) are recorded and `Handled`.
+//! `Accept`/`Reject` wrapping a `Follow` settle outbound follow requests
+//! here so unaddressed shared-inbox responses still resolve.
 //!
 //! Guards: every arm only touches *local* statuses (remote-to-remote
 //! interactions are not our business) and actors blocked by the
@@ -69,6 +71,7 @@ async fn inner(
         }
         "Undo" => undo_inbound(core, activity, raw).await,
         "Accept" => accept_inbound(core, raw).await,
+        "Reject" => reject_inbound(core, raw).await,
         _ => Ok(ActivityDisposition::PassThrough),
     }
 }
@@ -411,19 +414,20 @@ async fn undo_react_inbound(core: &ApCore, activity: &Activity, inner: &Value) -
 /// (future consent-gating reads it); no quote is withheld today.
 async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDisposition> {
     let object = raw.get("object").cloned().unwrap_or(Value::Null);
-    let is_quote_accept = matches!(
-        object.get("type").and_then(|v| v.as_str()),
-        Some("QuoteRequest")
-    );
-    if !is_quote_accept {
-        // An `Accept` wrapping a `Follow` settles our outbound follow:
-        // pubby's dispatch writes the `follows` row, so the home-feed
-        // backfill runs delayed — same deferral as `FollowEvent`.
-        if object.get("type").and_then(|v| v.as_str()) == Some("Follow") {
+    if is_follow_object(&object) {
+        if let Some(remote_actor) = follow_response_remote_actor(raw, &object) {
+            settle_outbound_follow(core, &object, &remote_actor, true).await?;
             if let Err(e) = follow_accept_backfill(core, &object).await {
                 tracing::warn!(error = %e, "follow-accept backfill enqueue failed");
             }
         }
+        return Ok(ActivityDisposition::Handled);
+    }
+    let is_quote_accept = object
+        .get("type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.eq_ignore_ascii_case("QuoteRequest"));
+    if !is_quote_accept {
         return Ok(ActivityDisposition::PassThrough);
     }
     let Some(result_id) = raw
@@ -476,14 +480,92 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
     Ok(ActivityDisposition::Handled)
 }
 
+async fn reject_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDisposition> {
+    let object = raw.get("object").cloned().unwrap_or(Value::Null);
+    if is_follow_object(&object) {
+        if let Some(remote_actor) = follow_response_remote_actor(raw, &object) {
+            settle_outbound_follow(core, &object, &remote_actor, false).await?;
+        }
+        return Ok(ActivityDisposition::Handled);
+    }
+    Ok(ActivityDisposition::PassThrough)
+}
+
+fn is_follow_object(object: &Value) -> bool {
+    object
+        .get("type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t.eq_ignore_ascii_case("Follow"))
+}
+
+/// The remote followee an `Accept`/`Reject` answers for — only when the
+/// response actor is the same actor the embedded `Follow` targeted.
+fn follow_response_remote_actor(raw: &Value, object: &Value) -> Option<String> {
+    let actor = object_uri(raw.get("actor"))?;
+    let target = object_uri(object.get("object"))?;
+    (actor == target).then_some(target)
+}
+
+/// Settle a local→remote `Follow` from an `Accept`/`Reject`. Shared
+/// inboxes can deliver these without a local addressee, so the resolved
+/// handler may be the instance actor and pubby's own settlement never
+/// runs; the pending row's direction (`account_id` local, target remote)
+/// keeps inbound `follow_requests` untouched.
+async fn settle_outbound_follow(
+    core: &ApCore,
+    object: &Value,
+    remote_actor: &str,
+    accepted: bool,
+) -> Result<()> {
+    let Some(local_actor) = object_uri(object.get("actor")) else {
+        return Ok(());
+    };
+    let Some(local_id) = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NULL",
+    )
+    .bind(&local_actor)
+    .fetch_optional(&core.db)
+    .await?
+    else {
+        return Ok(());
+    };
+    let mut tx = core.db.begin().await?;
+    let target_id: Option<i64> = sqlx::query_scalar(
+        "DELETE FROM follow_requests \
+         WHERE account_id = $1 \
+           AND target_account_id = ( \
+               SELECT id FROM accounts WHERE actor_id = $2 AND domain IS NOT NULL \
+           ) \
+         RETURNING target_account_id",
+    )
+    .bind(local_id)
+    .bind(remote_actor)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(target_id) = target_id else {
+        return Ok(());
+    };
+    if accepted {
+        sqlx::query(
+            "INSERT INTO follows (account_id, target_account_id) VALUES ($1, $2) \
+             ON CONFLICT (account_id, target_account_id) DO NOTHING",
+        )
+        .bind(local_id)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Resolve a `Follow` `Accept`'s actor pair — the inner `Follow`'s
 /// `actor` is our local follower, its `object` the remote followee —
-/// and enqueue the follower's home-feed backfill delayed (pubby's
-/// dispatch lands the `follows` row only after this hook returns,
-/// same deferral as `FollowEvent`).
+/// and enqueue the follower's home-feed backfill delayed (the `follows`
+/// row lands around this hook, same deferral as `FollowEvent`).
 async fn follow_accept_backfill(core: &ApCore, object: &Value) -> Result<()> {
     const BACKFILL_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
-    let Some(local_actor) = object.get("actor").and_then(|v| v.as_str()) else {
+    let Some(local_actor) = object_uri(object.get("actor")) else {
         return Ok(());
     };
     let Some(remote_actor) = object_uri(object.get("object")) else {

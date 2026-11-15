@@ -335,8 +335,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     };
     Router::new()
         // POST inboxes: custom durable pipeline (not dispatch_multi —
-        // pubby would process inline on the runtime thread).
+        // pubby would process inline on the runtime thread). The
+        // unprefixed aliases match software that assumes the AP inbox
+        // lives at `https://domain/inbox` (e.g. BirdsiteLive posts
+        // Accept/Reject there).
         .route("/ap/inbox", post(inbox::post_shared))
+        .route("/inbox", post(inbox::post_shared))
         .route("/ap/users/{username}/inbox", post(inbox::post_per_user))
         .route_layer(crate::http::middleware::ratelimit::layer(
             state,

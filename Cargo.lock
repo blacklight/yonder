@@ -4031,9 +4031,9 @@ dependencies = [
 
 [[package]]
 name = "pubby-sdk"
-version = "0.6.14"
+version = "0.6.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "853142d42df8256c7bc12e6e424784fc4d98282e2ad42044da65882cea657ec2"
+checksum = "2d53e2fc2c71db67f4e0ef3ca2999d1f476735f5b6c5568002384f751fda2f15"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -4054,6 +4054,7 @@ dependencies = [
  "sha1 0.10.7",
  "sha2 0.10.9",
  "thiserror 2.0.21",
+ "tokio",
  "tower",
  "ureq",
  "url",

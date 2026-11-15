@@ -1281,6 +1281,25 @@ async fn local_follow_primitive_publishes_real_activities() {
     .await
     .unwrap();
     assert!(undo);
+
+    // The Undo's inner Follow carries the id of the Follow it undoes —
+    // remotes (e.g. bird.makeup) match on it.
+    let follow_id: String = sqlx::query_scalar(
+        "SELECT activity_id FROM activities WHERE type = 'Follow' AND local \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let undo_doc: serde_json::Value = sqlx::query_scalar(
+        "SELECT a.object FROM deliveries d JOIN activities a ON a.id = d.activity_id \
+         WHERE d.inbox_url = $1 AND a.type = 'Undo' LIMIT 1",
+    )
+    .bind("https://remote.example/users/them/inbox")
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(undo_doc["object"]["id"], json!(follow_id));
 }
 
 /// Request-time row counting: the header row is excluded and the 20k

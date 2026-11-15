@@ -243,6 +243,18 @@ pub async fn unfollow(ctx: Ctx<'_>, follower_id: i64, target_id: i64) -> Result<
             .await?
             .rows_affected()
             > 0;
+    // Capture the pending Follow's id before deleting the row — the
+    // Undo must reference it so the remote can match the undo to the
+    // exact follow (bird.makeup ignores id-less inner Follows).
+    let pending_follow_id: Option<String> = sqlx::query_scalar(
+        "SELECT activity->>'id' FROM follow_requests \
+         WHERE account_id = $1 AND target_account_id = $2",
+    )
+    .bind(follower_id)
+    .bind(target_id)
+    .fetch_optional(ctx.db)
+    .await?
+    .flatten();
     let removed_request =
         sqlx::query("DELETE FROM follow_requests WHERE account_id = $1 AND target_account_id = $2")
             .bind(follower_id)
@@ -265,16 +277,40 @@ pub async fn unfollow(ctx: Ctx<'_>, follower_id: i64, target_id: i64) -> Result<
             let follower = account_row(ctx.db, follower_id).await?;
             let target = account_row(ctx.db, target_id).await?;
             if let (Some(follower), Some(target)) = (follower, target) {
+                // The inner Follow should carry the id of the Follow
+                // being undone. A still-pending request knows it
+                // exactly; an already-accepted follow falls back to the
+                // latest Follow activity we published for the pair.
+                let follow_id = match pending_follow_id {
+                    Some(id) => Some(id),
+                    None => {
+                        sqlx::query_scalar::<_, String>(
+                            "SELECT activity_id FROM activities \
+                         WHERE local AND type = 'Follow' \
+                           AND object->>'actor' = $1 AND object->>'object' = $2 \
+                         ORDER BY created_at DESC LIMIT 1",
+                        )
+                        .bind(&follower.actor_id)
+                        .bind(&target.actor_id)
+                        .fetch_optional(ctx.db)
+                        .await?
+                    }
+                };
+                let mut inner = json!({
+                    "type": "Follow",
+                    "actor": follower.actor_id,
+                    "object": target.actor_id,
+                    "to": [target.actor_id],
+                });
+                if let Some(id) = follow_id {
+                    inner["id"] = json!(id);
+                }
                 let activity = json!({
                     "@context": "https://www.w3.org/ns/activitystreams",
                     "id": format!("{}#unfollows/{}", follower.actor_id, uuid::Uuid::new_v4()),
                     "type": "Undo",
                     "actor": follower.actor_id,
-                    "object": {
-                        "type": "Follow",
-                        "actor": follower.actor_id,
-                        "object": target.actor_id,
-                    },
+                    "object": inner,
                     "to": [target.actor_id],
                 });
                 if let Err(e) = delivery::publish(ap, &follower.username, &activity).await {

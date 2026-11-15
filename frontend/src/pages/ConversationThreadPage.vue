@@ -39,13 +39,25 @@ function seedComposer(latest: Status) {
     compose.openDirectReply(latest);
     return;
   }
+  // A CW still equal to the inherited seed follows the new reply
+  // target; one the user changed is kept as their own.
+  const cwSeedOnly =
+    compose.draft.spoilerText === compose.draft.seededSpoiler &&
+    compose.draft.cwEnabled === Boolean(compose.draft.seededSpoiler);
   compose.update({
     inReplyToId: latest.id,
     replyToAcct: latest.account.acct,
     quoteId: null,
     quotedAcct: null,
     seededText: "",
+    seededSpoiler: latest.spoiler_text || "",
     visibility: "direct",
+    ...(cwSeedOnly
+      ? {
+          cwEnabled: Boolean(latest.spoiler_text),
+          spoilerText: latest.spoiler_text || "",
+        }
+      : {}),
   });
   compose.contextIsLive = true;
 }

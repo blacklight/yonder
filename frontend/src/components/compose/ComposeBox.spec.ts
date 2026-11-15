@@ -243,6 +243,23 @@ describe("ComposeBox", () => {
     expect(body.status).toBe("@bob ");
   });
 
+  it("a reply to a CW'd post inherits the warning", async () => {
+    const spy = mockPost();
+    const compose = useComposeStore();
+    compose.openReply({
+      id: "42",
+      account: { acct: "bob" },
+      spoiler_text: "nsfw",
+    } as never);
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.spoiler_text).toBe("nsfw");
+    expect(body.sensitive).toBe(true);
+  });
+
   it("scheduled posts carry scheduled_at", async () => {
     const spy = mockPost();
     const { wrapper } = mountWith(ComposeBox);

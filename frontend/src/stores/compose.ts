@@ -36,6 +36,11 @@ export interface ComposeDraft {
   sensitive: boolean;
   spoilerText: string;
   cwEnabled: boolean;
+  /** The CW warning an `openReply`/`openDirectReply` seed inherited
+   *  from the parent (`""` when none). Like `seededText`, it marks
+   *  context rather than user input, so an untouched reply still
+   *  counts as a seed for the dirty/untouched checks. */
+  seededSpoiler: string;
   /** Uploaded attachment ids, in order. */
   mediaIds: string[];
   poll: PollDraft | null;
@@ -70,6 +75,7 @@ function emptyDraft(): ComposeDraft {
     sensitive: false,
     spoilerText: "",
     cwEnabled: false,
+    seededSpoiler: "",
     mediaIds: [],
     poll: null,
     inReplyToId: null,
@@ -159,7 +165,8 @@ export const useComposeStore = defineStore("compose", {
     isDirty: (s) =>
       Boolean(
         s.draft.text.trim() ||
-        s.draft.spoilerText.trim() ||
+        (s.draft.spoilerText.trim() &&
+          s.draft.spoilerText !== s.draft.seededSpoiler) ||
         s.draft.title.trim() ||
         s.draft.summary.trim() ||
         s.draft.coverMediaId !== null ||
@@ -173,8 +180,8 @@ export const useComposeStore = defineStore("compose", {
       Boolean(
         s.draft.seededText &&
         s.draft.text === s.draft.seededText &&
-        !s.draft.spoilerText.trim() &&
-        !s.draft.cwEnabled &&
+        s.draft.spoilerText === s.draft.seededSpoiler &&
+        s.draft.cwEnabled === Boolean(s.draft.seededSpoiler) &&
         !s.draft.mediaIds.length &&
         !s.draft.poll,
       ),
@@ -210,15 +217,25 @@ export const useComposeStore = defineStore("compose", {
     clearContext() {
       const d = this.draft;
       const seedOnly = Boolean(d.seededText) && d.text === d.seededText;
+      // A CW still equal to the inherited seed is context too — it
+      // collapses with a seed-only shell. Anything the user changed
+      // survives, adopted as their own (`seededSpoiler` cleared).
+      const cwSeedOnly =
+        d.spoilerText === d.seededSpoiler &&
+        d.cwEnabled === Boolean(d.seededSpoiler);
       this.update({
         inReplyToId: null,
         replyToAcct: null,
         quoteId: null,
         quotedAcct: null,
         seededText: "",
+        seededSpoiler: "",
         text: seedOnly ? "" : d.text,
         visibility:
           d.visibility === "direct" && seedOnly ? "public" : d.visibility,
+        ...(seedOnly && cwSeedOnly
+          ? { cwEnabled: false, spoilerText: "" }
+          : {}),
       });
       this.contextIsLive = false;
     },
@@ -237,6 +254,11 @@ export const useComposeStore = defineStore("compose", {
         replyToAcct: target.account.acct,
         text: seed,
         seededText: seed,
+        // A CW'd parent warns the reply too — inherited as part of
+        // the seed so an untouched reply still reseeds cleanly.
+        cwEnabled: Boolean(target.spoiler_text),
+        spoilerText: target.spoiler_text || "",
+        seededSpoiler: target.spoiler_text || "",
       });
       this.replyTargetId = target.id;
       this.contextIsLive = true;
@@ -300,6 +322,9 @@ export const useComposeStore = defineStore("compose", {
         text: seed,
         seededText: seed,
         visibility: "direct",
+        cwEnabled: Boolean(target.spoiler_text),
+        spoilerText: target.spoiler_text || "",
+        seededSpoiler: target.spoiler_text || "",
       });
       this.contextIsLive = true;
       this.openSignal++;

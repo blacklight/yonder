@@ -80,6 +80,59 @@ describe("compose store", () => {
     expect(c.draft.replyToAcct).toBe("carol");
   });
 
+  it("openReply inherits the parent's CW as part of the seed", () => {
+    const c = useComposeStore();
+    const parent = {
+      id: "10",
+      account: { acct: "bob@x.test" },
+      spoiler_text: "nsfw",
+    } as Status;
+    c.openReply(parent);
+    expect(c.draft.cwEnabled).toBe(true);
+    expect(c.draft.spoilerText).toBe("nsfw");
+    expect(c.draft.seededSpoiler).toBe("nsfw");
+    // Still an untouched seed — reseeding checks ignore it.
+    expect(c.isUntouchedSeed).toBe(true);
+  });
+
+  it("openReply to a CW'd own post with no mentions seeds only the CW", () => {
+    useAuthStore().account = { acct: "me" } as never;
+    const c = useComposeStore();
+    c.openReply({
+      id: "9",
+      account: { acct: "me" },
+      spoiler_text: "cw",
+    } as Status);
+    expect(c.draft.text).toBe("");
+    expect(c.draft.cwEnabled).toBe(true);
+    // The inherited warning alone is context, not user work.
+    expect(c.isDirty).toBe(false);
+  });
+
+  it("openReply without a parent CW leaves CW off", () => {
+    const c = useComposeStore();
+    c.openReply({
+      id: "10",
+      account: { acct: "bob" },
+      spoiler_text: "",
+    } as Status);
+    expect(c.draft.cwEnabled).toBe(false);
+    expect(c.draft.spoilerText).toBe("");
+    expect(c.draft.seededSpoiler).toBe("");
+  });
+
+  it("editing the inherited CW counts as user input", () => {
+    const c = useComposeStore();
+    c.openReply({
+      id: "10",
+      account: { acct: "bob" },
+      spoiler_text: "nsfw",
+    } as Status);
+    expect(c.isUntouchedSeed).toBe(true);
+    c.update({ spoilerText: "my own warning" });
+    expect(c.isUntouchedSeed).toBe(false);
+  });
+
   it("openQuote sets quote_id and opens the modal on the target", () => {
     const c = useComposeStore();
     c.openQuote(status("7", "dan"));
@@ -184,6 +237,19 @@ describe("compose store", () => {
     expect(c.draft.text).toBe("@alice@x.test @bob@y.test ");
   });
 
+  it("openDirectReply inherits the parent's CW as part of the seed", () => {
+    const c = useComposeStore();
+    c.openDirectReply({
+      id: "42",
+      account: { acct: "frank@y.test" },
+      spoiler_text: "nsfw",
+    } as Status);
+    expect(c.draft.cwEnabled).toBe(true);
+    expect(c.draft.spoilerText).toBe("nsfw");
+    expect(c.draft.seededSpoiler).toBe("nsfw");
+    expect(c.isUntouchedSeed).toBe(true);
+  });
+
   it("isUntouchedSeed tracks seed vs typed text", () => {
     const c = useComposeStore();
     c.openDirectReply(status("42", "frank@y.test"));
@@ -286,6 +352,33 @@ describe("context hygiene + drafts", () => {
     expect(c.draft.text).toBe("");
     expect(c.draft.visibility).toBe("public");
     expect(c.hasContext).toBe(false);
+  });
+
+  it("clearContext drops an untouched inherited CW with the seed", () => {
+    const c = useComposeStore();
+    c.openReply({
+      id: "10",
+      account: { acct: "bob@x.test" },
+      spoiler_text: "nsfw",
+    } as Status);
+    c.clearContext();
+    expect(c.draft.cwEnabled).toBe(false);
+    expect(c.draft.spoilerText).toBe("");
+    expect(c.draft.seededSpoiler).toBe("");
+  });
+
+  it("clearContext keeps a CW the user changed, as their own", () => {
+    const c = useComposeStore();
+    c.openReply({
+      id: "10",
+      account: { acct: "bob@x.test" },
+      spoiler_text: "nsfw",
+    } as Status);
+    c.update({ spoilerText: "mine" });
+    c.clearContext();
+    expect(c.draft.cwEnabled).toBe(true);
+    expect(c.draft.spoilerText).toBe("mine");
+    expect(c.draft.seededSpoiler).toBe("");
   });
 
   it("open* actions mark context live; reset clears it", () => {

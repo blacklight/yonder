@@ -270,6 +270,7 @@ onMounted(async () => {
         quoteId: null,
         quotedAcct: null,
         seededText: "",
+        seededSpoiler: "",
         refId: null,
       });
       return;

@@ -189,6 +189,64 @@ describe("notifications store", () => {
     expect(useToastsStore().items).toHaveLength(1);
   });
 
+  it("follow filters admit only their own notification type", () => {
+    const store = start();
+    store.activeFilter = "followers";
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("10", "follow"),
+    });
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("11", "follow_request"),
+    });
+    expect(store.items.map((n) => n.id)).toEqual(["10"]);
+
+    store.activeFilter = "follow_requests";
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("12", "follow_request"),
+    });
+    latest().emit({
+      stream: ["user:notification"],
+      event: "notification",
+      payload: notif("13", "follow"),
+    });
+    expect(store.items.map((n) => n.id)).toEqual(["12", "10"]);
+  });
+
+  it("maps follow filters to backend notification types", async () => {
+    const store = start();
+    await flushPromises();
+    vi.mocked(globalThis.fetch).mockImplementation(() =>
+      Promise.resolve(new Response("[]", { status: 200 })),
+    );
+
+    store.setFilter("followers");
+    await flushPromises();
+    let urls = vi.mocked(globalThis.fetch).mock.calls.map((c) => String(c[0]));
+    expect(
+      urls.some(
+        (u) =>
+          u.includes("/notifications?") && u.endsWith("types%5B%5D=follow"),
+      ),
+    ).toBe(true);
+
+    store.setFilter("follow_requests");
+    await flushPromises();
+    urls = vi.mocked(globalThis.fetch).mock.calls.map((c) => String(c[0]));
+    expect(
+      urls.some(
+        (u) =>
+          u.includes("/notifications?") &&
+          u.endsWith("types%5B%5D=follow_request"),
+      ),
+    ).toBe(true);
+  });
+
   it("fires a native notification when granted and the tab is hidden", () => {
     FakeNotification.permission = "granted";
     vi.stubGlobal("Notification", FakeNotification);

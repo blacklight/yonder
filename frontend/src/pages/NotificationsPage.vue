@@ -51,14 +51,25 @@ useStatusEvents({
   },
 });
 
-// Computed, not constant — `auth.isStaff` can arrive after mount via
-// `auth.restore()`, and the reports tab must appear when it does.
+// Computed, not constant — `auth.isStaff`/`auth.account` can arrive
+// after mount via `auth.restore()`, and the reports/follow-request
+// tabs must appear when they do.
 const tabs = computed(() =>
   (
     Object.keys(FILTERS).filter(
-      (f) => f !== "reports" || auth.isStaff,
+      (f) =>
+        (f !== "reports" || auth.isStaff) &&
+        (f !== "follow_requests" || auth.account?.locked === true),
     ) as NotificationFilter[]
   ).map((f) => ({ key: f, label: t(`notifications.filter.${f}`) })),
+);
+watch(
+  () => auth.account?.locked,
+  (locked) => {
+    if (locked !== true && store.activeFilter === "follow_requests") {
+      store.setFilter("all");
+    }
+  },
 );
 const actionError = ref<string | null>(null);
 const acting = ref<Set<string>>(new Set());

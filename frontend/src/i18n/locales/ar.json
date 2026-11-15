@@ -1059,6 +1059,8 @@
       "boosts": "التعزيزات",
       "quotes": "الاقتباسات",
       "mentions": "الإشارات",
+      "followers": "المتابعون",
+      "follow_requests": "طلبات المتابعة",
       "reports": "البلاغات"
     },
     "type": {

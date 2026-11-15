@@ -1059,6 +1059,8 @@
       "boosts": "Condivisioni",
       "quotes": "Citazioni",
       "mentions": "Menzioni",
+      "followers": "Follower",
+      "follow_requests": "Richieste di follow",
       "reports": "Segnalazioni"
     },
     "type": {

@@ -183,6 +183,66 @@ describe("NotificationsPage", () => {
     expect(urls.some((u) => u.includes("max_id=99"))).toBe(true);
   });
 
+  it("shows Followers always and Follow requests only for locked accounts", async () => {
+    setup([]);
+    const auth = useAuthStore();
+    auth.account = { locked: false } as never;
+    const { wrapper } = mountWith(NotificationsPage);
+    await flushPromises();
+    const labels = () => wrapper.findAll(".tabs button").map((b) => b.text());
+
+    expect(labels()).toContain("Followers");
+    expect(labels()).not.toContain("Follow requests");
+
+    auth.account = { locked: true } as never;
+    await nextTick();
+    expect(labels()).toContain("Follow requests");
+  });
+
+  it("maps the follow filters to backend types[]", async () => {
+    setup([]);
+    const auth = useAuthStore();
+    auth.account = { locked: true } as never;
+    const { wrapper } = mountWith(NotificationsPage);
+    await flushPromises();
+
+    async function clickAndRequestUrl(label: string) {
+      vi.mocked(globalThis.fetch).mockClear();
+      await wrapper
+        .findAll(".tabs button")
+        .find((b) => b.text() === label)!
+        .trigger("click");
+      await flushPromises();
+      return vi
+        .mocked(globalThis.fetch)
+        .mock.calls.map((c) => String(c[0]))
+        .find((u) => u.includes("/notifications?"));
+    }
+
+    expect(await clickAndRequestUrl("Followers")).toMatch(
+      /types%5B%5D=follow$/,
+    );
+    expect(await clickAndRequestUrl("Follow requests")).toMatch(
+      /types%5B%5D=follow_request$/,
+    );
+  });
+
+  it("returns to All when manual follower approval is turned off", async () => {
+    setup([]);
+    const auth = useAuthStore();
+    auth.account = { locked: true } as never;
+    mountWith(NotificationsPage);
+    await flushPromises();
+    const store = useNotificationsStore();
+    store.setFilter("follow_requests");
+    await flushPromises();
+
+    auth.account = { locked: false } as never;
+    await nextTick();
+    await flushPromises();
+    expect(store.activeFilter).toBe("all");
+  });
+
   it("mark-all button posts {all:true}, flips rows and hides itself", async () => {
     setup([notif()]);
     const { wrapper } = mountWith(NotificationsPage);

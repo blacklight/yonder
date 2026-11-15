@@ -25,6 +25,8 @@ export const FILTERS = {
   boosts: ["reblog"],
   quotes: ["quote"],
   mentions: ["mention"],
+  followers: ["follow"],
+  follow_requests: ["follow_request"],
   reports: ["admin.report"],
 } as const;
 export type NotificationFilter = keyof typeof FILTERS;

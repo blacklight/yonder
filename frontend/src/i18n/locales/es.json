@@ -1059,6 +1059,8 @@
       "boosts": "Impulsos",
       "quotes": "Citas",
       "mentions": "Menciones",
+      "followers": "Seguidores",
+      "follow_requests": "Solicitudes de seguimiento",
       "reports": "Informes"
     },
     "type": {

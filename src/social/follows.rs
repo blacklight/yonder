@@ -378,6 +378,7 @@ fn collection_member_uris(doc: &Value) -> Option<Vec<String>> {
 /// Returns `false` when the remote fetch failed or yielded no readable
 /// items — the caller backdates the sync marker so the next read
 /// retries soon instead of waiting out the full TTL.
+#[allow(clippy::too_many_arguments)]
 async fn sync_remote_network(
     db: &PgPool,
     config: &Config,
@@ -512,7 +513,6 @@ async fn sync_remote_network(
         .map(|uri| {
             let db = db.clone();
             let dispatcher = dispatcher.clone();
-            let config = config;
             let handler = handler.clone();
             async move {
                 let u = uri.clone();

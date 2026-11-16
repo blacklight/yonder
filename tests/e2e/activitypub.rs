@@ -946,6 +946,87 @@ async fn inbound_follow_response_settles_unaddressed_outbound_follow() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_follow_response_settles_referenced_follow() {
+    let _permit = harness::acquire().await;
+    let Some(state) = test_state().await else {
+        return;
+    };
+    let alice = seed_actor(&state.db, "alice").await;
+    let target = "https://remote.example/users/tagspub";
+    seed_remote(&state.db, target, "tagspub").await;
+    let core = state.ap.as_ref().unwrap().core.clone();
+
+    let follow_id = format!("{}#follows/ref1", alice.actor_id);
+    let follow = json!({
+        "id": follow_id,
+        "type": "Follow",
+        "actor": alice.actor_id,
+        "object": target,
+        "to": target,
+    });
+    // What publishing stores: the outbound Follow lands in `activities`
+    // (local) and `follow_requests` carries the same document.
+    sqlx::query(
+        "INSERT INTO activities (activity_id, type, actor_id, object, local) \
+         VALUES ($1,'Follow',$2,$3,true)",
+    )
+    .bind(&follow_id)
+    .bind(&alice.actor_id)
+    .bind(&follow)
+    .execute(&state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO follow_requests (account_id, target_account_id, activity) \
+         SELECT la.id, ra.id, $3 FROM accounts la, accounts ra \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&alice.actor_id)
+    .bind(target)
+    .bind(&follow)
+    .execute(&state.db)
+    .await
+    .unwrap();
+
+    // tags.pub-style Accept: `object` is the Follow's id, not an
+    // embedded document.
+    let accept = json!({
+        "id": format!("{target}#accepts/follows/ref1"),
+        "type": "Accept",
+        "actor": target,
+        "object": follow_id,
+    });
+    let activity = Activity::from_json(&accept);
+    let disposition = yonder::interactions::inbound::handle(&core, &activity, &accept).unwrap();
+    assert!(matches!(disposition, ActivityDisposition::Handled));
+
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM follow_requests fr \
+         JOIN accounts la ON la.id = fr.account_id \
+         JOIN accounts ra ON ra.id = fr.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2",
+    )
+    .bind(&alice.actor_id)
+    .bind(target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(pending, 0);
+    let following: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM follows f \
+         JOIN accounts la ON la.id = f.account_id \
+         JOIN accounts ra ON ra.id = f.target_account_id \
+         WHERE la.actor_id = $1 AND ra.actor_id = $2)",
+    )
+    .bind(&alice.actor_id)
+    .bind(target)
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(following);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_flag_reports_resolvable_objects() {
     let _permit = harness::acquire().await;
     let Some(state) = test_state().await else {

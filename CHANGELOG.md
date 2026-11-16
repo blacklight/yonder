@@ -16,6 +16,11 @@
 - `federation`: Settle outbound follows from unaddressed shared-inbox
   `Accept`/`Reject` activities — remotes that omit local `to`/`cc`
   (e.g. Flipboard) previously left requests pending forever
+- `federation`: Settle outbound follows when `Accept`/`Reject` reference
+  the `Follow` by id instead of embedding it (e.g. tags.pub) — the
+  reference is resolved against locally published activities only
+- `deps`: Upgraded pubby-sdk to 0.6.19 (RFC 9421 `@target-uri`
+  signatures, standalone `CryptographicKey` keyIds, non-canonical PEM)
 
 ## 1.0.8
 

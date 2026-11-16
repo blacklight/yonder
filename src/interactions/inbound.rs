@@ -413,8 +413,7 @@ async fn undo_react_inbound(core: &ApCore, activity: &Activity, inner: &Value) -
 /// our outbound `QuoteRequest`. Recorded in `quote_authorizations`
 /// (future consent-gating reads it); no quote is withheld today.
 async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDisposition> {
-    let object = raw.get("object").cloned().unwrap_or(Value::Null);
-    if is_follow_object(&object) {
+    if let Some(object) = follow_response_object(core, raw).await? {
         if let Some(remote_actor) = follow_response_remote_actor(raw, &object) {
             settle_outbound_follow(core, &object, &remote_actor, true).await?;
             if let Err(e) = follow_accept_backfill(core, &object).await {
@@ -423,6 +422,7 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
         }
         return Ok(ActivityDisposition::Handled);
     }
+    let object = raw.get("object").cloned().unwrap_or(Value::Null);
     let is_quote_accept = object
         .get("type")
         .and_then(|v| v.as_str())
@@ -481,14 +481,35 @@ async fn accept_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDispositio
 }
 
 async fn reject_inbound(core: &ApCore, raw: &Value) -> Result<ActivityDisposition> {
-    let object = raw.get("object").cloned().unwrap_or(Value::Null);
-    if is_follow_object(&object) {
+    if let Some(object) = follow_response_object(core, raw).await? {
         if let Some(remote_actor) = follow_response_remote_actor(raw, &object) {
             settle_outbound_follow(core, &object, &remote_actor, false).await?;
         }
         return Ok(ActivityDisposition::Handled);
     }
     Ok(ActivityDisposition::PassThrough)
+}
+
+/// The `Follow` an `Accept`/`Reject` answers — either embedded in
+/// `object` or referenced by id. Referenced Follows are resolved
+/// against our own published activities only; a remote object is
+/// never fetched for this.
+async fn follow_response_object(core: &ApCore, raw: &Value) -> Result<Option<Value>> {
+    let object = raw.get("object").cloned().unwrap_or(Value::Null);
+    if is_follow_object(&object) {
+        return Ok(Some(object));
+    }
+    let Some(uri) = object_uri(Some(&object)) else {
+        return Ok(None);
+    };
+    let doc: Option<Value> = sqlx::query_scalar(
+        "SELECT object FROM activities \
+         WHERE activity_id = $1 AND local AND type = 'Follow'",
+    )
+    .bind(&uri)
+    .fetch_optional(&core.db)
+    .await?;
+    Ok(doc.filter(|d| is_follow_object(d)))
 }
 
 fn is_follow_object(object: &Value) -> bool {

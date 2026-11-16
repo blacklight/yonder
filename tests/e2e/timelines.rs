@@ -1614,6 +1614,87 @@ async fn remote_poll_tallies_sum_and_refresh_preserves_local_votes() {
     assert_eq!(body["poll"]["voters_count"], 0);
 }
 
+/// A federated poll answer (Mastodon-shaped `Create` of a content-less
+/// `Note` naming an option, `inReplyTo` the poll) is tallied as a vote
+/// and never materializes as a reply; a second single-choice ballot
+/// from the same voter is consumed without changing the tally.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_poll_answers_are_tallied_not_stored_as_replies() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let voter = register(&env.app, "gwen", "gwen@example.com").await;
+    ingest_create(
+        &core,
+        "poll3",
+        json!({
+            "id": "https://remote.test/objects/poll3",
+            "type": "Question",
+            "attributedTo": "https://remote.test/users/eve",
+            "content": "<p>pick one</p>",
+            "endTime": "2099-01-01T00:00:00Z",
+            "oneOf": [
+                {"name": "a", "replies": {"type": "Collection", "totalItems": 3}},
+                {"name": "b", "replies": {"type": "Collection", "totalItems": 5}},
+            ],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+    )
+    .await;
+    let vote = |id: &str, title: &str| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/{id}"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/users/mallory".into(),
+        object: json!({
+            "id": format!("https://remote.test/users/mallory#votes/{id}"),
+            "type": "Note",
+            "name": title,
+            "inReplyTo": "https://remote.test/objects/poll3",
+            "to": ["https://remote.test/users/eve"],
+        }),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    for (id, title) in [("v1", "b"), ("v2", "a")] {
+        let activity = vote(id, title);
+        assert!(
+            yonder::posts::remote::handle(&core, &activity, &activity.to_json()).await,
+            "{id} was not consumed"
+        );
+    }
+
+    let replies: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM statuses WHERE uri LIKE 'https://remote.test/users/mallory#votes/%'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(replies, 0);
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/objects/poll3'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let (s, _, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&voter),
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["poll"]["votes_count"], 9);
+    assert_eq!(body["poll"]["options"][0]["votes_count"], 3);
+    assert_eq!(body["poll"]["options"][1]["votes_count"], 6);
+}
+
 async fn ingest_create(core: &yonder::activitypub::ApCore, id: &str, object: Value) {
     let activity = pubby_sdk::Activity {
         id: format!("{BASE}/ap/activities/{id}"),

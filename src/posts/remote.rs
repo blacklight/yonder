@@ -69,6 +69,11 @@ pub(crate) async fn handle_as(
             if !NOTE_TYPES.contains(&object_type) {
                 return false;
             }
+            if activity.activity_type == "Create"
+                && super::polls::ingest_remote_vote(core, &activity.actor, &object).await
+            {
+                return true;
+            }
             match upsert(core, activity, &object).await {
                 Err(e) => tracing::warn!(error = %e, "remote status upsert failed"),
                 Ok(outcome) => {

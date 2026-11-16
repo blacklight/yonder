@@ -221,6 +221,101 @@ pub async fn vote(
     tx.commit().await.map_err(Error::Database)
 }
 
+/// Federated poll answer: a `Create` of a content-less `Note` whose
+/// `name` is one option title and whose `inReplyTo` is a stored poll
+/// status. Records the ballot in `poll_votes` (tallies bumped in the
+/// same transaction) instead of materializing a reply. Returns `true`
+/// when the object was consumed as a vote.
+pub(crate) async fn ingest_remote_vote(
+    core: &crate::activitypub::ApCore,
+    actor: &str,
+    object: &Value,
+) -> bool {
+    let has_content = object
+        .get("content")
+        .and_then(Value::as_str)
+        .is_some_and(|c| !c.trim().is_empty());
+    let (Some(title), Some(parent), false) = (
+        object.get("name").and_then(Value::as_str),
+        object.get("inReplyTo").and_then(Value::as_str),
+        has_content,
+    ) else {
+        return false;
+    };
+    match record_remote_vote(core, actor, title, parent).await {
+        Ok(consumed) => consumed,
+        Err(e) => {
+            tracing::warn!(actor, error = %e, "remote poll vote ingest failed");
+            false
+        }
+    }
+}
+
+async fn record_remote_vote(
+    core: &crate::activitypub::ApCore,
+    actor: &str,
+    title: &str,
+    parent_uri: &str,
+) -> Result<bool> {
+    let Some(row) = sqlx::query(
+        "SELECT p.id AS poll_id, p.expires_at, p.multiple, s.account_id AS author_id, o.idx \
+         FROM statuses s JOIN polls p ON p.id = s.poll_id \
+         JOIN poll_options o ON o.poll_id = p.id \
+         WHERE s.uri = $1 AND o.title = $2",
+    )
+    .bind(parent_uri)
+    .bind(title)
+    .fetch_optional(&core.db)
+    .await?
+    else {
+        return Ok(false);
+    };
+    let poll_id: i64 = row.get("poll_id");
+    let idx: i32 = row.get("idx");
+    let multiple: bool = row.get("multiple");
+    let expires_at: Option<chrono::DateTime<chrono::Utc>> = row.get("expires_at");
+    let voter = super::remote::ensure_account(core, actor).await?;
+    if row.get::<i64, _>("author_id") == voter
+        || expires_at.is_some_and(|e| e <= chrono::Utc::now())
+    {
+        return Ok(true);
+    }
+
+    let mut tx = core.db.begin().await?;
+    sqlx::query("SELECT 1 FROM polls WHERE id = $1 FOR UPDATE")
+        .bind(poll_id)
+        .execute(&mut *tx)
+        .await?;
+    // Single-choice: one ballot per voter. Multiple-choice: one per option.
+    let duplicate: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM poll_votes WHERE poll_id = $1 AND account_id = $2 \
+         AND ($3 OR option_idx = $4))",
+    )
+    .bind(poll_id)
+    .bind(voter)
+    .bind(!multiple)
+    .bind(idx)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !duplicate {
+        sqlx::query("INSERT INTO poll_votes (poll_id, account_id, option_idx) VALUES ($1, $2, $3)")
+            .bind(poll_id)
+            .bind(voter)
+            .bind(idx)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE poll_options SET votes_count = votes_count + 1 WHERE poll_id = $1 AND idx = $2",
+        )
+        .bind(poll_id)
+        .bind(idx)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// The Mastodon Poll entity for `poll_id` as seen by `viewer`
 /// (`voted`/`own_votes` only when authenticated).
 pub async fn entity(ctx: &PostContext, poll_id: i64, viewer: Option<i64>) -> Result<Value> {

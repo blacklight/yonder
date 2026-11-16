@@ -242,13 +242,15 @@ pub(crate) async fn ingest_remote_vote(
     ) else {
         return false;
     };
-    match record_remote_vote(core, actor, title, parent).await {
-        Ok(consumed) => consumed,
-        Err(e) => {
+    // Consumed even on failure: materializing a ballot as a reply would
+    // name the voter in the thread and notify the poll author. The raw
+    // activity stays in `activities` for a later re-tally.
+    record_remote_vote(core, actor, title, parent)
+        .await
+        .unwrap_or_else(|e| {
             tracing::warn!(actor, error = %e, "remote poll vote ingest failed");
-            false
-        }
-    }
+            true
+        })
 }
 
 async fn record_remote_vote(

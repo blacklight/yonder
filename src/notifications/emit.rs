@@ -35,6 +35,19 @@ pub async fn emit_for_status(
     dispatcher: &Dispatcher,
     status: &StatusRow,
 ) -> Result<()> {
+    // A poll answer (contentless reply to a poll) is a ballot, not a
+    // conversation — it must neither notify nor name the voter.
+    if status.content.is_empty() {
+        let answers_poll: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM statuses p WHERE p.id = $1 AND p.poll_id IS NOT NULL)",
+        )
+        .bind(status.in_reply_to_id)
+        .fetch_one(db)
+        .await?;
+        if answers_poll {
+            return Ok(());
+        }
+    }
     let mentioned = sqlx::query_scalar::<_, i64>(
         "SELECT sm.account_id FROM status_mentions sm \
          JOIN accounts a ON a.id = sm.account_id AND a.domain IS NULL \

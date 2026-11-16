@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use pubby_sdk::ActivityPubError;
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -297,6 +298,23 @@ pub(crate) async fn fetch_remote_object(ap: &ApContext, url: &str) -> Result<Opt
     })
 }
 
+/// Transport failures that mean the host itself is gone or can't
+/// present a valid identity: the name no longer resolves, or its TLS
+/// certificate is expired, mismatched or from an unknown issuer.
+/// pubby flattens `ureq` errors into strings, so this matches the
+/// rendered message; retries can't fix these, a later read will
+/// re-enqueue once the stale-actor window passes.
+pub(crate) fn unreachable_host_error(e: &ActivityPubError) -> bool {
+    let ActivityPubError::General(m) = e else {
+        return false;
+    };
+    m.starts_with("HTTP error: io: failed to lookup address information")
+        || (m.starts_with("HTTP error: io: invalid peer certificate")
+            && ["expired", "not valid for name", "UnknownIssuer"]
+                .iter()
+                .any(|reason| m.contains(reason)))
+}
+
 /// Signed GET of a remote ActivityPub document (actor, Note, …) —
 /// the instance actor signs, so `authorized_fetch` servers answer
 /// too. `RemoteFetch::Failed` when the instance actor lacks key
@@ -390,7 +408,7 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
             Err(e) => {
                 // The SSRF guard's refusal is permanent — the URL can
                 // never be fetched, same as a 410 on the wire.
-                if super::delivery::permanent_delivery_error(&e) {
+                if super::delivery::permanent_delivery_error(&e) || unreachable_host_error(&e) {
                     tracing::warn!(error = %e, url = %url, "remote object unfetchable");
                     RemoteFetch::Gone
                 } else {
@@ -401,4 +419,46 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
         }
     })
     .await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn transport(m: &str) -> ActivityPubError {
+        ActivityPubError::General(format!("HTTP error: {m}"))
+    }
+
+    #[test]
+    fn unresolvable_hosts_are_unreachable() {
+        assert!(unreachable_host_error(&transport(
+            "io: failed to lookup address information: Name or service not known"
+        )));
+    }
+
+    #[test]
+    fn broken_tls_identities_are_unreachable() {
+        for m in [
+            "io: invalid peer certificate: certificate expired: verification time 1 (UNIX)",
+            "io: invalid peer certificate: certificate not valid for name \"x\"; certificate is only valid for DnsName(\"y\")",
+            "io: invalid peer certificate: UnknownIssuer",
+        ] {
+            assert!(unreachable_host_error(&transport(m)), "{m}");
+        }
+    }
+
+    #[test]
+    fn transient_transport_failures_still_retry() {
+        for m in [
+            "timeout: connect",
+            "timeout: global",
+            "io: connection reset by peer",
+            "io: invalid peer certificate: something else entirely",
+        ] {
+            assert!(!unreachable_host_error(&transport(m)), "{m}");
+        }
+        assert!(!unreachable_host_error(&ActivityPubError::InvalidValue(
+            "failed to lookup address information".into()
+        )));
+    }
 }

@@ -228,9 +228,10 @@ Jobs persist in **Redis Streams** so they survive process restarts.
 Duplicate delivery is tolerated — handlers must be idempotent. The
 module provides:
 
-- a typed registry of job kinds, each routed to one of three queues
-  (`default` / `federation` / `bulk`) mirroring the latency-vs-bulk
-  trade-off;
+- a typed registry of job kinds, each routed to one of five queues
+  (`default` / `federation` / `bulk` / `cleanup` / `timeline`)
+  mirroring the latency-vs-bulk trade-off; home-timeline fan-out gets
+  `timeline` so it never queues behind remote fetches;
 - the worker loop (claim → execute → ack, with retry and dead-letter
   semantics);
 - a cron scheduler that only *triggers* — scheduled jobs enqueue through

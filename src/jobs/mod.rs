@@ -50,6 +50,10 @@ pub enum Queue {
     /// Scheduled cleanup sweeps — kept off `bulk` so a long-running
     /// cleanup can't starve per-item fan-out work.
     Cleanup,
+    /// Home-timeline index writes — a post that lands minutes late in
+    /// every follower's feed is stale, so it never waits behind
+    /// remote fetches on `default`.
+    Timeline,
 }
 
 impl Queue {
@@ -59,15 +63,17 @@ impl Queue {
         Queue::Federation,
         Queue::Bulk,
         Queue::Cleanup,
+        Queue::Timeline,
     ];
 
-    /// Stream suffix: `default` / `federation` / `bulk`.
+    /// Stream suffix: `default` / `federation` / `bulk` / `cleanup` / `timeline`.
     pub fn as_str(&self) -> &'static str {
         match self {
             Queue::Default => "default",
             Queue::Federation => "federation",
             Queue::Bulk => "bulk",
             Queue::Cleanup => "cleanup",
+            Queue::Timeline => "timeline",
         }
     }
 }
@@ -286,6 +292,7 @@ impl JobKind {
             | JobKind::AuditLogCleanup
             | JobKind::ImportSweep
             | JobKind::DeleteMediaObject => Queue::Cleanup,
+            JobKind::TimelineFanOut => Queue::Timeline,
             _ => Queue::Default,
         }
     }
@@ -454,6 +461,14 @@ mod tests {
         assert_eq!(JobKind::CleanupRemoteActivities.queue(), Queue::Cleanup);
         assert_eq!(JobKind::Export.queue(), Queue::Bulk);
         assert_eq!(JobKind::CleanupRemoteMedia.queue(), Queue::Cleanup);
+    }
+
+    #[test]
+    fn timeline_fan_out_is_isolated_from_remote_fetches() {
+        assert_eq!(JobKind::TimelineFanOut.queue(), Queue::Timeline);
+        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Default);
+        assert!(Queue::ALL.contains(&Queue::Timeline));
+        assert_eq!(Queue::Timeline.as_str(), "timeline");
     }
 
     #[test]

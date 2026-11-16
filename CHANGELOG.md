@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- `timelines`: Home-timeline fan-out runs on its own `timeline` queue
+  instead of behind remote actor fetches on `default`, so new posts no
+  longer appear minutes late when remote fetches back up
+- `federation`: Remote actor fetches whose host doesn't resolve or
+  presents an expired/mismatched/unknown-issuer TLS certificate are
+  treated as gone instead of retried for the full retry budget
 - `accounts`: Serve cached remote followers/following edges immediately
   and refresh them via a new `remote_network_sync` job instead of
   fetching the remote collection inline — profile network reads no

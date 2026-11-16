@@ -176,6 +176,18 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
             activity.activity_type.as_str(),
             "Create" | "Update" | "Delete"
         ) {
+            // A poll ballot is consumed here: pubby's `handle_create`
+            // would otherwise store it as a reply interaction and fan
+            // out a mention notification to the poll author.
+            if activity.activity_type == "Create"
+                && sync_block(crate::posts::polls::ingest_remote_vote(
+                    &core,
+                    &activity.actor,
+                    raw.get("object").unwrap_or(&Value::Null),
+                ))
+            {
+                return Ok(ActivityDisposition::Handled);
+            }
             // `handle` logs its own failures and never errors the
             // hook — PassThrough keeps pubby's dispatch intact.
             sync_block(crate::posts::remote::handle(&core, activity, raw));

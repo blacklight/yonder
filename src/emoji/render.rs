@@ -252,7 +252,10 @@ pub fn substitute(html: &str, map: &EmojiMap) -> String {
                 continue;
             }
         }
-        let end = html[pos..].find('<').map(|e| pos + e).unwrap_or(html.len());
+        // An unterminated `<` is text: search past it, or a search from
+        // `pos` finds the same `<` again and never advances.
+        let search = if bytes[pos] == b'<' { pos + 1 } else { pos };
+        let end = html[search..].find('<').map_or(html.len(), |e| search + e);
         let segment = &html[pos..end];
         if skip_depth == 0 {
             out.push_str(&substitute_segment(segment, map));
@@ -376,6 +379,19 @@ mod tests {
         assert!(html.contains("<img class=\"emoji\""));
         assert!(html.contains("alt=\":blobcat:\""));
         assert!(!html.contains(":blobcat: bye"));
+    }
+
+    #[test]
+    fn bare_angle_bracket_without_close_terminates() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(substitute("é a <3 :blobcat: and <b", &map()));
+        });
+        let html = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("substitute never returned: unterminated '<' spins forever");
+        assert!(html.contains("<img class=\"emoji\""));
+        assert!(html.ends_with("<b"));
     }
 
     #[test]

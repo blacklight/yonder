@@ -651,8 +651,11 @@ pub fn enhance_html(
                 continue;
             }
         }
-        // Text run up to the next tag.
-        let end = html[pos..].find('<').map(|e| pos + e).unwrap_or(html.len());
+        // Text run up to the next tag. An unterminated `<` is text:
+        // search past it, or the same `<` is found again and the loop
+        // never advances.
+        let search = if bytes[pos] == b'<' { pos + 1 } else { pos };
+        let end = html[search..].find('<').map_or(html.len(), |e| search + e);
         let segment = &html[pos..end];
         if skip_depth == 0 {
             let (rendered, found) = enhance_segment(segment, mentions, hashtag_url, config);
@@ -887,6 +890,19 @@ mod tests {
 
     fn cfg() -> Config {
         Config::default()
+    }
+
+    #[test]
+    fn enhance_html_bare_angle_bracket_terminates() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (html, _) = enhance_html("a <3 #Rust and <b", &[], &|t| t.to_string(), &cfg());
+            let _ = tx.send(html);
+        });
+        let html = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("enhance_html never returned: unterminated '<' spins forever");
+        assert!(html.ends_with("<b"));
     }
 
     #[test]

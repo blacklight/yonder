@@ -509,7 +509,7 @@ async fn follow_response_object(core: &ApCore, raw: &Value) -> Result<Option<Val
     .bind(&uri)
     .fetch_optional(&core.db)
     .await?;
-    Ok(doc.filter(|d| is_follow_object(d)))
+    Ok(doc.filter(is_follow_object))
 }
 
 fn is_follow_object(object: &Value) -> bool {

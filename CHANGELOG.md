@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- `emoji`, `posts`: A stray `<` with no closing `>` in a note or post
+  body no longer spins forever in the emoji and mention/hashtag
+  rendering pass, which pinned a server worker thread per request
 - `timelines`: Home-timeline fan-out runs on its own `timeline` queue
   instead of behind remote actor fetches on `default`, so new posts no
   longer appear minutes late when remote fetches back up

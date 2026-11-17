@@ -2,34 +2,65 @@
 
 ## Unreleased
 
+### Added
+
+- `notifications`: Add Followers and Follow Requests filters to the
+  notifications page; the requests tab only appears for locked accounts
+  ([`3fb843d`](https://git.platypush.tech/blacklight/yonder/commit/3fb843ddad11a7fe149eeb019928e77c6b0bd08a)).
+- `cli`: Add a `remote_network_sync` job command for running remote
+  follower/following syncs on demand
+  ([`44a72dd`](https://git.platypush.tech/blacklight/yonder/commit/44a72dda19b02358b8cc56b62bbeda48068543b5)).
+
 ### Fixed
 
 - `emoji`, `posts`: A stray `<` with no closing `>` in a note or post
   body no longer spins forever in the emoji and mention/hashtag
   rendering pass, which pinned a server worker thread per request
+  ([`f7a1176`](https://git.platypush.tech/blacklight/yonder/commit/f7a117660b3eeebb181d0069c375f9315224bbd9)).
 - `timelines`: Home-timeline fan-out runs on its own `timeline` queue
   instead of behind remote actor fetches on `default`, so new posts no
   longer appear minutes late when remote fetches back up
+  ([`3109294`](https://git.platypush.tech/blacklight/yonder/commit/31092949c155097a7c3205880b22cb31a8084085)).
 - `federation`: Remote actor fetches whose host doesn't resolve or
   presents an expired/mismatched/unknown-issuer TLS certificate are
   treated as gone instead of retried for the full retry budget
+  ([`3109294`](https://git.platypush.tech/blacklight/yonder/commit/31092949c155097a7c3205880b22cb31a8084085)).
 - `accounts`: Serve cached remote followers/following edges immediately
   and refresh them via a new `remote_network_sync` job instead of
   fetching the remote collection inline — profile network reads no
   longer block on the remote instance (previously seconds, up to ~13s)
+  ([`7a6d468`](https://git.platypush.tech/blacklight/yonder/commit/7a6d468d8cd0d4fbd17a843383a1a30ca94da83a)).
 - `auth`: Run argon2id password hashing/verification on tokio's blocking
   pool (`verify_password_async`/`hash_password_async`) — login,
   registration, password change/reset, account move/cancel and 2FA
   re-auth no longer occupy runtime worker threads for hundreds of ms
   per attempt
+  ([`7a6d468`](https://git.platypush.tech/blacklight/yonder/commit/7a6d468d8cd0d4fbd17a843383a1a30ca94da83a)).
 - `federation`: Settle outbound follows from unaddressed shared-inbox
   `Accept`/`Reject` activities — remotes that omit local `to`/`cc`
   (e.g. Flipboard) previously left requests pending forever
+  ([`a3913bb`](https://git.platypush.tech/blacklight/yonder/commit/a3913bb4f5489511735eea7f91d7f2507141d0da)).
 - `federation`: Settle outbound follows when `Accept`/`Reject` reference
   the `Follow` by id instead of embedding it (e.g. tags.pub) — the
   reference is resolved against locally published activities only
+  ([`3f79f80`](https://git.platypush.tech/blacklight/yonder/commit/3f79f80637ae4977273b6fa88d30ba3b505e6553)).
 - `deps`: Upgraded pubby-sdk to 0.6.19 (RFC 9421 `@target-uri`
   signatures, standalone `CryptographicKey` keyIds, non-canonical PEM)
+  ([`3f79f80`](https://git.platypush.tech/blacklight/yonder/commit/3f79f80637ae4977273b6fa88d30ba3b505e6553)).
+- `activitypub`: Route `POST /inbox` to the shared inbox handler and
+  include the `Follow` activity id in `Undo` activities, so unfollows
+  reference the original follow
+  ([`a98898e`](https://git.platypush.tech/blacklight/yonder/commit/a98898ebdc1304993385496658a28cdcaae27d0a)).
+- `compose`: Seed replies with the parent's content warning and track
+  it in the draft, preserving user edits across reseeds
+  ([`5ac80d7`](https://git.platypush.tech/blacklight/yonder/commit/5ac80d7799853bfdc3750d6aec00465b556dbd54)).
+- `polls`: Ingest remote poll votes from `Create` activities and
+  self-heal tallies — votes are summed from option tallies, local
+  votes survive remote re-ingest, and ballots no longer emit
+  notifications
+  ([`4573083`](https://git.platypush.tech/blacklight/yonder/commit/45730830cfb57fa6a9940a2458dbe90bda46257c),
+  [`c15e092`](https://git.platypush.tech/blacklight/yonder/commit/c15e09291e6f1c8a87b70b3f97be1c585f2473ac),
+  [`f458253`](https://git.platypush.tech/blacklight/yonder/commit/f4582533597a996bf0ba02f805228e9f144d60c3)).
 
 ## 1.0.8
 

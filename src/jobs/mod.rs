@@ -32,8 +32,7 @@ use crate::{cache::Redis, config::Config, Result};
 
 /// Queue names — one Redis stream each.
 ///
-/// - `default`: interactive / low-volume work (email, notifications,
-///   remote fetches).
+/// - `default`: interactive / low-volume work (email, remote fetches).
 /// - `federation`: latency-sensitive delivery — a remote inbox answer
 ///   minutes late is worthless, so it never waits behind bulk work.
 /// - `bulk`: high-volume per-item jobs (imports, exports, cleanup
@@ -54,6 +53,9 @@ pub enum Queue {
     /// every follower's feed is stale, so it never waits behind
     /// remote fetches on `default`.
     Timeline,
+    /// Notification fan-out — a notification that lands minutes late
+    /// is stale, so it never waits behind remote fetches on `default`.
+    Notifications,
 }
 
 impl Queue {
@@ -64,9 +66,10 @@ impl Queue {
         Queue::Bulk,
         Queue::Cleanup,
         Queue::Timeline,
+        Queue::Notifications,
     ];
 
-    /// Stream suffix: `default` / `federation` / `bulk` / `cleanup` / `timeline`.
+    /// Stream suffix: `default` / `federation` / `bulk` / `cleanup` / `timeline` / `notifications`.
     pub fn as_str(&self) -> &'static str {
         match self {
             Queue::Default => "default",
@@ -74,6 +77,7 @@ impl Queue {
             Queue::Bulk => "bulk",
             Queue::Cleanup => "cleanup",
             Queue::Timeline => "timeline",
+            Queue::Notifications => "notifications",
         }
     }
 }
@@ -293,6 +297,7 @@ impl JobKind {
             | JobKind::ImportSweep
             | JobKind::DeleteMediaObject => Queue::Cleanup,
             JobKind::TimelineFanOut => Queue::Timeline,
+            JobKind::NotificationFanout => Queue::Notifications,
             _ => Queue::Default,
         }
     }
@@ -457,7 +462,7 @@ mod tests {
     fn kind_queue_routing() {
         assert_eq!(JobKind::FederationDelivery.queue(), Queue::Federation);
         assert_eq!(JobKind::EmailSend.queue(), Queue::Default);
-        assert_eq!(JobKind::NotificationFanout.queue(), Queue::Default);
+        assert_eq!(JobKind::NotificationFanout.queue(), Queue::Notifications);
         assert_eq!(JobKind::CleanupRemoteActivities.queue(), Queue::Cleanup);
         assert_eq!(JobKind::Export.queue(), Queue::Bulk);
         assert_eq!(JobKind::CleanupRemoteMedia.queue(), Queue::Cleanup);
@@ -469,6 +474,14 @@ mod tests {
         assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Default);
         assert!(Queue::ALL.contains(&Queue::Timeline));
         assert_eq!(Queue::Timeline.as_str(), "timeline");
+    }
+
+    #[test]
+    fn notification_fanout_is_isolated_from_remote_fetches() {
+        assert_eq!(JobKind::NotificationFanout.queue(), Queue::Notifications);
+        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Default);
+        assert!(Queue::ALL.contains(&Queue::Notifications));
+        assert_eq!(Queue::Notifications.as_str(), "notifications");
     }
 
     #[test]

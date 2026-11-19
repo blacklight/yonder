@@ -255,6 +255,41 @@ impl Worker {
                 return;
             }
         };
+        // Stale-lane reroute: entries enqueued before a kind's routing
+        // changed (or promoted from a delayed retry that predates it)
+        // still sit on the old stream. Move them to `kind.queue()` —
+        // rewriting `envelope.queue` so subsequent retries promote to
+        // the right lane — instead of executing remote work on a
+        // latency-sensitive queue without its permits. The dedupe
+        // claim rides along in the envelope; pushing raw (not via the
+        // Dispatcher) keeps the job id and avoids a second claim.
+        let target = envelope.kind.queue();
+        if target != queue_name {
+            let mut moved = envelope.clone();
+            moved.queue = target;
+            match queue::push(&self.ctx.redis, target, &moved).await {
+                Ok(()) => {
+                    tracing::info!(
+                        job = %envelope.id,
+                        kind = envelope.kind.as_str(),
+                        from = queue_name.as_str(),
+                        to = target.as_str(),
+                        "rerouted stale job to its kind's queue"
+                    );
+                    if let Err(e) = queue::ack(&self.ctx.redis, queue_name, stream_id).await {
+                        tracing::warn!(stream_id, error = %e, "rerouted job ack failed");
+                    }
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        job = %envelope.id,
+                        error = %e,
+                        "queue reroute push failed; dispatching in place"
+                    );
+                }
+            }
+        }
         let Some(handler) = self.registry.handler(envelope.kind) else {
             tracing::warn!(
                 kind = envelope.kind.as_str(),

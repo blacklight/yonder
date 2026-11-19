@@ -344,6 +344,63 @@ async fn remote_enqueue_dedupes_identical_payloads() {
     );
 }
 
+/// A job sitting on a stale lane (enqueued before its kind's routing
+/// changed, or promoted from a pre-refactor delayed retry) must be
+/// moved to `kind.queue()` by the worker instead of executing on the
+/// wrong queue — the remote lane then runs it under its own permits.
+#[tokio::test]
+async fn stale_lane_job_reroutes_to_kind_queue() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut registry = Registry::default();
+    registry.register(JobKind::RemoteActorFetch, CountHandler(counter.clone()));
+
+    let jobs_config = test_jobs();
+    let dispatcher = Dispatcher::new(&redis, &jobs_config);
+    // `enqueue_on` bypasses `kind.queue()` — exactly the stale-lane
+    // shape left behind by a routing change.
+    dispatcher
+        .enqueue_on(
+            Queue::Default,
+            JobKind::RemoteActorFetch,
+            json!({"actor_url": "https://example.com/@carol"}),
+        )
+        .await
+        .unwrap();
+
+    let worker = worker_for(&test_ctx(&redis), registry, jobs_config);
+    let cancel = worker.cancel_token();
+    let handle = tokio::spawn(async move { worker.run().await });
+
+    let counter_ref = counter.clone();
+    assert!(
+        wait_for(Duration::from_secs(10), move || {
+            let counter_ref = counter_ref.clone();
+            async move { counter_ref.load(Ordering::SeqCst) >= 1 }
+        })
+        .await,
+        "rerouted job was not executed"
+    );
+    cancel.cancel();
+    handle.await.unwrap().unwrap();
+
+    // Both streams drained: the stale entry acked out of `default`,
+    // the rerouted copy consumed from `remote`.
+    assert_eq!(pending_count(&redis, Queue::Default).await, 0);
+    assert_eq!(pending_count(&redis, Queue::Remote).await, 0);
+    let mut conn = redis.conn().await.unwrap();
+    for name in [Queue::Default, Queue::Remote] {
+        let len: u64 =
+            redis::AsyncCommands::xlen(&mut *conn, redis.key(&format!("queue:{}", name.as_str())))
+                .await
+                .unwrap();
+        assert_eq!(len, 0, "{} stream should be empty", name.as_str());
+    }
+}
+
 /// The per-domain enqueue budget allows up to the configured count
 /// per minute and then denies; other domains and unparseable URLs are
 /// unaffected.

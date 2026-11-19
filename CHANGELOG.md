@@ -17,7 +17,8 @@
   and stop `upsert_remote_stub` from enqueueing `RemoteActorFetch` for
   accounts that already carry an actor document — a cache hit no longer
   leaves a bare stub profile, and routine remote activity can't flood
-  the default queue with redundant actor fetches.
+  the default queue with redundant actor fetches
+  ([`9a66dcc`](https://git.platypush.tech/blacklight/yonder/commit/9a66dcc828cc086efb221ee503c72306857a67f5)).
 - `emoji`, `posts`: A stray `<` with no closing `>` in a note or post
   body no longer spins forever in the emoji and mention/hashtag
   rendering pass, which pinned a server worker thread per request
@@ -65,7 +66,18 @@
   notifications
   ([`4573083`](https://git.platypush.tech/blacklight/yonder/commit/45730830cfb57fa6a9940a2458dbe90bda46257c),
   [`c15e092`](https://git.platypush.tech/blacklight/yonder/commit/c15e09291e6f1c8a87b70b3f97be1c585f2473ac),
-  [`f458253`](https://git.platypush.tech/blacklight/yonder/commit/f4582533597a996bf0ba02f805228e9f144d60c3)).
+  [`f458253`](https://git.platypush.tech/blacklight/yonder/commit/f4582533597a996bf0ba02f805228e9f144d60c3),
+  [`67f8f2a`](https://git.platypush.tech/blacklight/yonder/commit/67f8f2a59c38270250e5cab53f62d1126063931b)).
+- `jobs`: Notification fan-out runs on its own `notifications` queue
+  instead of sharing `default` with remote actor and network fetches,
+  so a backlog of slow remote jobs no longer delays notifications by
+  hours
+  ([`e624076`](https://git.platypush.tech/blacklight/yonder/commit/e624076d7adb70803515df9734b755104125dacd)).
+- `notifications`: Notifications linked to a status are now deleted
+  when the status is deleted — local and remote deletes, unreblogs and
+  webmention retractions no longer leave recipients with notifications
+  pointing at a gone post
+  ([`b4f4986`](https://git.platypush.tech/blacklight/yonder/commit/b4f49867219ee610f89927dc48401e4de185be29)).
 
 ## 1.0.8
 

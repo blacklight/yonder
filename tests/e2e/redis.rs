@@ -415,10 +415,18 @@ async fn remote_gate_budget_limits_per_domain() {
         ..Default::default()
     };
     let domain = Some("budget-test.example");
-    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await);
-    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await);
+    let bulk = yonder::jobs::remote_gate::GateClass::Bulk;
     assert!(
-        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await,
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await
+    );
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await
+    );
+    assert!(
+        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await,
         "third enqueue within the minute must be denied"
     );
     assert!(
@@ -426,11 +434,107 @@ async fn remote_gate_budget_limits_per_domain() {
             &redis,
             &jobs,
             Some("other-budget-test.example"),
+            bulk,
             "actor_fetch"
         )
         .await
     );
-    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, None, "actor_fetch").await);
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, None, bulk, "actor_fetch").await
+    );
+}
+
+/// The budget and circuit are namespaced by [`GateClass`]: an open
+/// bulk circuit (or an exhausted bulk budget) must not deny
+/// user-visible status fetches for the same domain, and status-fetch
+/// failures must not trip the bulk circuit.
+#[tokio::test]
+async fn remote_gate_classes_are_isolated() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let jobs = JobsConfig {
+        remote_enqueue_per_domain_per_minute: 1,
+        remote_circuit_failure_threshold: 1,
+        remote_circuit_cooldown_seconds: 60,
+        ..Default::default()
+    };
+    let domain = Some("gate-class-test.example");
+    let bulk = yonder::jobs::remote_gate::GateClass::Bulk;
+    let status = yonder::jobs::remote_gate::GateClass::Status;
+
+    // Trip the bulk circuit — the status class must stay open.
+    assert!(
+        yonder::jobs::remote_gate::record_failure(&redis, &jobs, "gate-class-test.example", bulk)
+            .await
+    );
+    assert!(yonder::jobs::remote_gate::circuit_open(&redis, "gate-class-test.example", bulk).await);
+    assert!(
+        !yonder::jobs::remote_gate::circuit_open(&redis, "gate-class-test.example", status).await,
+        "bulk failures must not open the status circuit"
+    );
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, status, "status_fetch")
+            .await,
+        "status fetches must not be denied by an open bulk circuit"
+    );
+    assert!(
+        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await,
+        "the bulk circuit still denies bulk enqueues"
+    );
+
+    // Exhaust the bulk budget — the status budget is separate. A
+    // fresh domain keeps the per-minute counters from part one out of
+    // the way.
+    let domain = Some("gate-class-budget-test.example");
+    let jobs = JobsConfig {
+        remote_enqueue_per_domain_per_minute: 1,
+        remote_circuit_failure_threshold: 0,
+        ..Default::default()
+    };
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await
+    );
+    assert!(
+        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, bulk, "actor_fetch")
+            .await,
+        "second bulk enqueue within the minute must be denied"
+    );
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, status, "status_fetch")
+            .await,
+        "bulk budget exhaustion must not deny status fetches"
+    );
+
+    // Status-fetch failures trip only the status circuit — again on
+    // a fresh domain, since part one already opened the bulk circuit
+    // for `gate-class-test.example`.
+    let jobs = JobsConfig {
+        remote_circuit_failure_threshold: 1,
+        remote_circuit_cooldown_seconds: 60,
+        ..Default::default()
+    };
+    assert!(
+        yonder::jobs::remote_gate::record_failure(
+            &redis,
+            &jobs,
+            "gate-class-status-test.example",
+            status
+        )
+        .await
+    );
+    assert!(
+        yonder::jobs::remote_gate::circuit_open(&redis, "gate-class-status-test.example", status)
+            .await
+    );
+    assert!(
+        !yonder::jobs::remote_gate::circuit_open(&redis, "gate-class-status-test.example", bulk)
+            .await,
+        "status failures must not open the bulk circuit"
+    );
 }
 
 /// The circuit breaker opens after the configured number of
@@ -448,14 +552,21 @@ async fn remote_gate_circuit_trips_and_resets() {
         ..Default::default()
     };
     let domain = "circuit-test.example";
-    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
-    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain).await);
-    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
-    assert!(yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain).await);
-    assert!(yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
+    let bulk = yonder::jobs::remote_gate::GateClass::Bulk;
+    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain, bulk).await);
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain, bulk).await);
+    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain, bulk).await);
+    assert!(yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain, bulk).await);
+    assert!(yonder::jobs::remote_gate::circuit_open(&redis, domain, bulk).await);
     assert!(
-        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, Some(domain), "actor_fetch")
-            .await,
+        !yonder::jobs::remote_gate::enqueue_allowed(
+            &redis,
+            &jobs,
+            Some(domain),
+            bulk,
+            "actor_fetch"
+        )
+        .await,
         "open circuit must deny enqueues"
     );
     assert!(
@@ -463,6 +574,7 @@ async fn remote_gate_circuit_trips_and_resets() {
             &redis,
             &jobs,
             Some("other-circuit-test.example"),
+            bulk,
             "actor_fetch"
         )
         .await
@@ -471,11 +583,11 @@ async fn remote_gate_circuit_trips_and_resets() {
     // A success resets the streak: after one failure + one success,
     // a single further failure must not reach the threshold of two.
     let domain2 = "circuit-reset-test.example";
-    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2).await);
-    yonder::jobs::remote_gate::record_success(&redis, domain2).await;
-    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2).await);
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2, bulk).await);
+    yonder::jobs::remote_gate::record_success(&redis, domain2, bulk).await;
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2, bulk).await);
     assert!(
-        !yonder::jobs::remote_gate::circuit_open(&redis, domain2).await,
+        !yonder::jobs::remote_gate::circuit_open(&redis, domain2, bulk).await,
         "a success must reset the consecutive-failure streak"
     );
 }

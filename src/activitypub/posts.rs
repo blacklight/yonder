@@ -31,9 +31,11 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pubby_sdk::Object;
 
@@ -679,12 +681,103 @@ async fn serve_object_inner(
     }
 }
 
+/// How long a failed signature-time actor lookup suppresses retries.
+/// Pubby caches only *successful* actor fetches, so without a negative
+/// marker every signed request from an unreachable actor pays the full
+/// remote-fetch timeout again — the `/ap/` tail latency. Short enough
+/// that a recovered origin verifies again quickly.
+const SIG_FETCH_NEGATIVE_TTL: Duration = Duration::from_secs(300);
+
+/// Cache key for [`SIG_FETCH_NEGATIVE_TTL`] markers — hashed like the
+/// other URI markers so arbitrary actor URLs stay key-safe.
+fn sig_fetch_negative_key(actor_url: &str) -> String {
+    format!(
+        "sigfetch-neg:{}",
+        &hex::encode(Sha256::digest(actor_url.as_bytes()))[..32]
+    )
+}
+
+/// The actor URL a signature's key-id parameter points at — the
+/// document pubby fetches (and caches) to verify. Handles both
+/// draft-cavage (`keyId` on `Signature`) and RFC 9421 (`keyid` inside
+/// `Signature-Input` parameters). `None` when no parseable `http(s)`
+/// key id is present — verification will fail on its own, and a
+/// garbage extraction must never gate it early.
+fn signature_actor_url(headers: &HashMap<String, String>) -> Option<String> {
+    for name in ["signature", "signature-input"] {
+        let Some(value) = headers.get(name) else {
+            continue;
+        };
+        let lower = value.to_lowercase();
+        let Some(pos) = lower.find("keyid=") else {
+            continue;
+        };
+        let rest = value[pos + "keyid=".len()..].trim_start();
+        let id = if let Some(quoted) = rest.strip_prefix('"') {
+            quoted.find('"').map(|end| &quoted[..end])
+        } else {
+            let end = rest
+                .find(|c: char| c == ';' || c == ',' || c.is_whitespace())
+                .unwrap_or(rest.len());
+            Some(&rest[..end])
+        }?;
+        let actor = id.split('#').next().unwrap_or(id).trim();
+        if actor.starts_with("https://") || actor.starts_with("http://") {
+            return Some(actor.to_string());
+        }
+    }
+    None
+}
+
+/// Whether `actor_url` has a fresh positive `actor_cache` row — the
+/// same 24h window pubby's `fetch_actor` reads. A negative marker must
+/// not outlive a cache write from another path (e.g. a queued
+/// `RemoteActorFetch` that succeeded after the signature-time fetch
+/// failed), or a verifiable signature would be treated as absent.
+async fn sig_actor_cached(db: &sqlx::PgPool, actor_url: &str) -> bool {
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM actor_cache WHERE actor_id = $1 \
+         AND fetched_at > now() - interval '24 hours')",
+    )
+    .bind(actor_url)
+    .fetch_one(db)
+    .await
+    .unwrap_or(false)
+}
+
+/// Whether a verification error means the signer's actor document
+/// couldn't be fetched at all (unreachable origin, invalid doc) — the
+/// only failure worth negative-caching. Bad signatures, missing keys
+/// and ownership mismatches say nothing about fetchability.
+fn is_actor_fetch_failure(e: &pubby_sdk::ActivityPubError) -> bool {
+    match e {
+        pubby_sdk::ActivityPubError::SignatureVerification(m) => m.contains("Cannot fetch"),
+        _ => false,
+    }
+}
+
+/// Whether the signer's domain has an open *bulk* remote-gate circuit —
+/// actor fetches to it are already failing, so the signature-time
+/// fetch will almost certainly time out too. Status-class circuits
+/// don't apply: they track `RemoteStatusFetch`, a different workload.
+async fn bulk_circuit_open(state: &AppState, actor_url: &str) -> bool {
+    let Some(domain) = super::moderation::actor_domain(actor_url) else {
+        return false;
+    };
+    crate::jobs::remote_gate::circuit_open(
+        &state.redis,
+        &domain,
+        crate::jobs::remote_gate::GateClass::Bulk,
+    )
+    .await
+}
+
 /// Verify the HTTP signature when present — `Some(actor_url)` on
 /// success. `verify_fetch_signature` returns the signer's actor URL
 /// (resolved from `keyId`). `pub(crate)` — the featured collection
 /// gates on it too.
 pub(crate) async fn verify_signature(
-    _state: &Arc<AppState>,
+    state: &Arc<AppState>,
     ap: &ApContext,
     username: &str,
     headers: &HeaderMap,
@@ -707,9 +800,46 @@ pub(crate) async fn verify_signature(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| uri.path().to_string());
-    sync_call(move || handler.verify_fetch_signature("GET", &target, &map))
-        .await
-        .ok()
+
+    // Negative cache: a marker hit — or an open bulk circuit for the
+    // signer's domain, meaning actor fetches there are already failing
+    // — produces the same outcome as the failed fetch (no verified
+    // signer) without paying the remote timeout on every request. A
+    // fresh positive `actor_cache` row overrides both: pubby would
+    // verify from cache without any fetch at all.
+    let signer_actor = signature_actor_url(&map);
+    let mut neg_key = None;
+    if let Some(actor) = &signer_actor {
+        let key = sig_fetch_negative_key(actor);
+        let marked = state.cache.get(&key).await.ok().flatten().is_some();
+        let circuit_open = !marked && bulk_circuit_open(state, actor).await;
+        if (marked || circuit_open) && !sig_actor_cached(&state.db, actor).await {
+            if circuit_open {
+                let _ = state
+                    .cache
+                    .set(&key, &json!({"s": "neg"}), SIG_FETCH_NEGATIVE_TTL)
+                    .await;
+            }
+            return None;
+        }
+        neg_key = Some(key);
+    }
+
+    let result = sync_call(move || handler.verify_fetch_signature("GET", &target, &map)).await;
+    match result {
+        Ok(actor) => Some(actor),
+        Err(e) => {
+            if let Some(key) = neg_key {
+                if is_actor_fetch_failure(&e) {
+                    let _ = state
+                        .cache
+                        .set(&key, &json!({"s": "neg"}), SIG_FETCH_NEGATIVE_TTL)
+                        .await;
+                }
+            }
+            None
+        }
+    }
 }
 
 fn json_response(doc: Value) -> Response {
@@ -721,4 +851,62 @@ fn json_response(doc: Value) -> Response {
         Json(doc),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn signature_actor_url_parses_draft_cavage_keyid() {
+        // The production scheme: `keyId` first among comma-separated
+        // quoted params on `Signature`.
+        let map = headers(&[(
+            "signature",
+            "keyId=\"https://remote.example/users/alice#main-key\",algorithm=\"rsa-sha256\",signature=\"abc\"",
+        )]);
+        assert_eq!(
+            signature_actor_url(&map).as_deref(),
+            Some("https://remote.example/users/alice")
+        );
+    }
+
+    #[test]
+    fn signature_actor_url_parses_rfc9421_keyid() {
+        // RFC 9421: covered components then `;`-separated params on
+        // `Signature-Input`.
+        let map = headers(&[(
+            "signature-input",
+            "sig1=(\"@method\" \"@authority\");created=1700000000;keyid=\"https://remote.example/ap/users/bob#ed25519-key\";alg=\"ed25519\"",
+        )]);
+        assert_eq!(
+            signature_actor_url(&map).as_deref(),
+            Some("https://remote.example/ap/users/bob")
+        );
+    }
+
+    #[test]
+    fn signature_actor_url_rejects_garbage() {
+        // No key id at all and a non-URL key id both yield `None` —
+        // never a bogus cache key.
+        assert_eq!(
+            signature_actor_url(&headers(&[("signature", "algorithm=\"rsa-sha256\"")])),
+            None
+        );
+        let map = headers(&[("signature", "keyId=\"not-a-url#k\"")]);
+        assert_eq!(signature_actor_url(&map), None);
+        // A key id without a fragment still resolves to the actor.
+        let map = headers(&[("signature", "keyId=\"https://x.example/a\"")]);
+        assert_eq!(
+            signature_actor_url(&map).as_deref(),
+            Some("https://x.example/a")
+        );
+    }
 }

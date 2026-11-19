@@ -241,6 +241,7 @@ pub async fn ensure_remote_network(
         &state.redis,
         &config.jobs,
         domain.as_deref(),
+        crate::jobs::remote_gate::GateClass::Bulk,
         "network_sync",
     )
     .await

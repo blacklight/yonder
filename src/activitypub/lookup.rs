@@ -250,6 +250,7 @@ pub(crate) async fn upsert_remote_stub(
         dispatcher.redis(),
         &config.jobs,
         domain.as_deref(),
+        crate::jobs::remote_gate::GateClass::Bulk,
         "actor_fetch",
     )
     .await

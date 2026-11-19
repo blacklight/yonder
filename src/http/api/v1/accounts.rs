@@ -284,6 +284,7 @@ async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::Accoun
         &state.redis,
         &config.jobs,
         domain.as_deref(),
+        crate::jobs::remote_gate::GateClass::Bulk,
         "actor_fetch",
     )
     .await

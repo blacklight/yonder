@@ -539,6 +539,7 @@ impl RemoteActorFetchJob {
                 dispatcher.redis(),
                 &ctx.config.jobs,
                 domain.as_deref(),
+                crate::jobs::remote_gate::GateClass::Bulk,
                 "actor_fetch",
             )
             .await
@@ -571,7 +572,13 @@ impl JobHandler for RemoteActorFetchJob {
         // duplicate is enqueued. Acking here would drop the refresh
         // until some later read happened to re-enqueue it.
         if let Some(domain) = domain.as_deref() {
-            if crate::jobs::remote_gate::circuit_open(&ctx.redis, domain).await {
+            if crate::jobs::remote_gate::circuit_open(
+                &ctx.redis,
+                domain,
+                crate::jobs::remote_gate::GateClass::Bulk,
+            )
+            .await
+            {
                 tracing::debug!(actor = %actor_url, domain, "remote circuit open — deferring actor fetch");
                 return Err(crate::Error::Internal(format!(
                     "remote actor fetch deferred: circuit open for {domain}"
@@ -582,11 +589,21 @@ impl JobHandler for RemoteActorFetchJob {
         if let Some(domain) = domain.as_deref() {
             match &result {
                 Ok(FetchOutcome::Remote) => {
-                    crate::jobs::remote_gate::record_success(&ctx.redis, domain).await
+                    crate::jobs::remote_gate::record_success(
+                        &ctx.redis,
+                        domain,
+                        crate::jobs::remote_gate::GateClass::Bulk,
+                    )
+                    .await
                 }
                 Ok(FetchOutcome::FetchFailed(_)) => {
-                    crate::jobs::remote_gate::record_failure(&ctx.redis, &ctx.config.jobs, domain)
-                        .await;
+                    crate::jobs::remote_gate::record_failure(
+                        &ctx.redis,
+                        &ctx.config.jobs,
+                        domain,
+                        crate::jobs::remote_gate::GateClass::Bulk,
+                    )
+                    .await;
                 }
                 // Errors never reach the breaker (see `FetchOutcome`).
                 Err(_) => {}

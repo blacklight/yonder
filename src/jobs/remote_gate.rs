@@ -15,9 +15,37 @@
 //!   consecutive *remote fetch* failures per domain (local DB or
 //!   validation errors must not count); [`enqueue_allowed`] and the job
 //!   handlers skip work while a domain's circuit is open.
+//!
+//! Both controls are namespaced by [`GateClass`]: user-visible status
+//! fetches (`RemoteStatusFetch`) get their own budget and circuit so a
+//! bulk remote backlog — actor fetches, network syncs — failing against
+//! a domain can't starve the status fetches a reader is waiting on, and
+//! status-fetch failures don't pause bulk work for the same domain.
 
 use crate::cache::Redis;
 use crate::config::JobsConfig;
+
+/// Which remote-gate namespace a check uses. The budget and circuit
+/// keys are per `(class, domain)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateClass {
+    /// User-visible `RemoteStatusFetch` work — a status stays a stub
+    /// until these run, so they must not queue behind bulk remote
+    /// churn on the same domain.
+    Status,
+    /// Bulk remote work — actor fetches, network syncs, and anything
+    /// else whose latency isn't directly user-visible.
+    Bulk,
+}
+
+impl GateClass {
+    fn as_str(self) -> &'static str {
+        match self {
+            GateClass::Status => "status",
+            GateClass::Bulk => "bulk",
+        }
+    }
+}
 
 /// Increment a counter and give it a TTL atomically — a plain
 /// `INCR` followed by `EXPIRE` can leave a key without a TTL if the
@@ -43,23 +71,24 @@ async fn incr_with_ttl(redis: &Redis, key: &str, ttl_seconds: u64) -> Option<u64
         .ok()
 }
 
-fn enqueue_key(redis: &Redis, domain: &str) -> String {
-    redis.key(&format!("remote-gate:enqueue:{domain}"))
+fn enqueue_key(redis: &Redis, class: GateClass, domain: &str) -> String {
+    redis.key(&format!("remote-gate:{}:enqueue:{domain}", class.as_str()))
 }
 
-fn fail_key(redis: &Redis, domain: &str) -> String {
-    redis.key(&format!("remote-gate:fail:{domain}"))
+fn fail_key(redis: &Redis, class: GateClass, domain: &str) -> String {
+    redis.key(&format!("remote-gate:{}:fail:{domain}", class.as_str()))
 }
 
-fn open_key(redis: &Redis, domain: &str) -> String {
-    redis.key(&format!("remote-gate:open:{domain}"))
+fn open_key(redis: &Redis, class: GateClass, domain: &str) -> String {
+    redis.key(&format!("remote-gate:{}:open:{domain}", class.as_str()))
 }
 
 /// Whether a new remote job of `kind` for `domain` may be enqueued or
-/// executed. `domain = None` (unparseable URL) always allows — the
-/// job's own fetch will fail fast. When the per-domain budget is `0`
-/// the limiter is disabled; an open circuit always denies. Denials are
-/// logged at `debug` with the `kind` so budget pressure is visible.
+/// executed under `class`'s budget and circuit. `domain = None`
+/// (unparseable URL) always allows — the job's own fetch will fail
+/// fast. When the per-domain budget is `0` the limiter is disabled; an
+/// open circuit always denies. Denials are logged at `debug` with the
+/// `kind` so budget pressure is visible.
 ///
 /// Redis trouble fails open: the queue's own dedupe still applies, and
 /// a cache outage must not wedge federation.
@@ -67,16 +96,18 @@ pub async fn enqueue_allowed(
     redis: &Redis,
     jobs: &JobsConfig,
     domain: Option<&str>,
+    class: GateClass,
     kind: &str,
 ) -> bool {
     let Some(domain) = domain else { return true };
     let limit = jobs.remote_enqueue_per_domain_per_minute;
     if limit > 0 {
-        let full = enqueue_key(redis, domain);
+        let full = enqueue_key(redis, class, domain);
         match incr_with_ttl(redis, &full, 60).await {
             Some(count) if count > u64::from(limit) => {
                 tracing::debug!(
                     domain,
+                    class = class.as_str(),
                     kind,
                     count,
                     limit,
@@ -89,22 +120,28 @@ pub async fn enqueue_allowed(
             None => {}
         }
     }
-    if circuit_open(redis, domain).await {
-        tracing::debug!(domain, kind, "remote circuit open — skipping");
+    if circuit_open(redis, domain, class).await {
+        tracing::debug!(
+            domain,
+            class = class.as_str(),
+            kind,
+            "remote circuit open — skipping"
+        );
         return false;
     }
     true
 }
 
-/// Whether `domain`'s circuit is currently open. Best-effort: Redis
-/// errors read as closed so a cache outage can't wedge federation.
-pub async fn circuit_open(redis: &Redis, domain: &str) -> bool {
+/// Whether `domain`'s circuit is currently open for `class`.
+/// Best-effort: Redis errors read as closed so a cache outage can't
+/// wedge federation.
+pub async fn circuit_open(redis: &Redis, domain: &str, class: GateClass) -> bool {
     let mut conn = match redis.conn().await {
         Ok(conn) => conn,
         Err(_) => return false,
     };
     let exists: bool = redis::cmd("EXISTS")
-        .arg(open_key(redis, domain))
+        .arg(open_key(redis, class, domain))
         .query_async(&mut *conn)
         .await
         .unwrap_or(false);
@@ -119,30 +156,42 @@ fn fail_ttl_seconds(jobs: &JobsConfig) -> u64 {
         .max(60)
 }
 
-/// Record a successful remote fetch for `domain` — resets the
-/// consecutive-failure counter so the next failure streak starts fresh.
-pub async fn record_success(redis: &Redis, domain: &str) {
+/// Record a successful remote fetch for `domain` under `class` —
+/// resets that class's consecutive-failure counter so the next failure
+/// streak starts fresh.
+pub async fn record_success(redis: &Redis, domain: &str, class: GateClass) {
     let mut conn = match redis.conn().await {
         Ok(conn) => conn,
         Err(_) => return,
     };
     let _: redis::RedisResult<()> = redis::cmd("DEL")
-        .arg(fail_key(redis, domain))
+        .arg(fail_key(redis, class, domain))
         .query_async(&mut *conn)
         .await;
 }
 
-/// Record a failed **remote fetch** for `domain`. Returns `true` when
-/// this failure tripped the circuit (failures reached
-/// `remote_circuit_failure_threshold`). Best-effort like the rest of
-/// the gate — Redis errors are swallowed. Local errors (DB, validation)
-/// must not reach this function: they say nothing about the remote.
-pub async fn record_failure(redis: &Redis, jobs: &JobsConfig, domain: &str) -> bool {
+/// Record a failed **remote fetch** for `domain` under `class`.
+/// Returns `true` when this failure tripped the class's circuit
+/// (failures reached `remote_circuit_failure_threshold`). Best-effort
+/// like the rest of the gate — Redis errors are swallowed. Local
+/// errors (DB, validation) must not reach this function: they say
+/// nothing about the remote.
+pub async fn record_failure(
+    redis: &Redis,
+    jobs: &JobsConfig,
+    domain: &str,
+    class: GateClass,
+) -> bool {
     let threshold = jobs.remote_circuit_failure_threshold;
     if threshold == 0 {
         return false;
     }
-    let Some(count) = incr_with_ttl(redis, &fail_key(redis, domain), fail_ttl_seconds(jobs)).await
+    let Some(count) = incr_with_ttl(
+        redis,
+        &fail_key(redis, class, domain),
+        fail_ttl_seconds(jobs),
+    )
+    .await
     else {
         return false;
     };
@@ -155,7 +204,7 @@ pub async fn record_failure(redis: &Redis, jobs: &JobsConfig, domain: &str) -> b
     };
     let cooldown = jobs.remote_circuit_cooldown_seconds.max(1);
     let _: redis::RedisResult<()> = redis::cmd("SET")
-        .arg(open_key(redis, domain))
+        .arg(open_key(redis, class, domain))
         .arg("1")
         .arg("EX")
         .arg(cooldown)

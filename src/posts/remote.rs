@@ -1637,7 +1637,14 @@ async fn status_fetch_allowed(
     uri: &str,
 ) -> bool {
     let domain = moderation::actor_domain(uri);
-    crate::jobs::remote_gate::enqueue_allowed(redis, jobs, domain.as_deref(), "status_fetch").await
+    crate::jobs::remote_gate::enqueue_allowed(
+        redis,
+        jobs,
+        domain.as_deref(),
+        crate::jobs::remote_gate::GateClass::Status,
+        "status_fetch",
+    )
+    .await
 }
 
 /// Shared dedup + enqueue for `RemoteStatusFetch` — the marker keeps
@@ -1722,11 +1729,21 @@ impl JobHandler for RemoteStatusFetchJob {
         if let Some(domain) = domain.as_deref() {
             match result {
                 Ok(FetchOutcome::Remote) => {
-                    crate::jobs::remote_gate::record_success(&ctx.redis, domain).await
+                    crate::jobs::remote_gate::record_success(
+                        &ctx.redis,
+                        domain,
+                        crate::jobs::remote_gate::GateClass::Status,
+                    )
+                    .await
                 }
                 Ok(FetchOutcome::FetchFailed(_)) => {
-                    crate::jobs::remote_gate::record_failure(&ctx.redis, &ctx.config.jobs, domain)
-                        .await;
+                    crate::jobs::remote_gate::record_failure(
+                        &ctx.redis,
+                        &ctx.config.jobs,
+                        domain,
+                        crate::jobs::remote_gate::GateClass::Status,
+                    )
+                    .await;
                 }
                 Ok(FetchOutcome::Local) | Err(_) => {}
             }
@@ -1800,7 +1817,13 @@ impl RemoteStatusFetchJob {
         // while the domain's circuit is open (the local checks
         // above already ran).
         if let Some(open_domain) = moderation::actor_domain(uri) {
-            if crate::jobs::remote_gate::circuit_open(&ctx.redis, &open_domain).await {
+            if crate::jobs::remote_gate::circuit_open(
+                &ctx.redis,
+                &open_domain,
+                crate::jobs::remote_gate::GateClass::Status,
+            )
+            .await
+            {
                 tracing::debug!(uri, domain = %open_domain, "remote circuit open — skipping status fetch");
                 return Ok(FetchOutcome::Local);
             }

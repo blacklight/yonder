@@ -82,3 +82,12 @@ watch(
     </Button>
   </main>
 </template>
+
+<style scoped>
+.page {
+  margin: 0 calc(var(--space-4) * -1);
+}
+h1 {
+  margin: var(--space-2);
+}
+</style>

@@ -13,6 +13,11 @@
 
 ### Fixed
 
+- `federation`: Project cached remote actor documents into `accounts`
+  and stop `upsert_remote_stub` from enqueueing `RemoteActorFetch` for
+  accounts that already carry an actor document — a cache hit no longer
+  leaves a bare stub profile, and routine remote activity can't flood
+  the default queue with redundant actor fetches.
 - `emoji`, `posts`: A stray `<` with no closing `>` in a note or post
   body no longer spins forever in the emoji and mention/hashtag
   rendering pass, which pinned a server worker thread per request

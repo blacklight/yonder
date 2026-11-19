@@ -214,7 +214,8 @@ pub(crate) async fn free_username(
 /// `upsert_remote_stub_row` + a `RemoteActorFetch` job to enrich it —
 /// skipped while the actor's failure/gone markers are fresh, so a dead
 /// actor reappearing in remote collections doesn't keep spawning
-/// fetch jobs.
+/// fetch jobs, and skipped once the row already carries a usable actor
+/// document so routine remote activity can't flood the queue.
 pub(crate) async fn upsert_remote_stub(
     db: &PgPool,
     dispatcher: &Dispatcher,
@@ -228,6 +229,20 @@ pub(crate) async fn upsert_remote_stub(
     }
     let id = upsert_remote_stub_row(db, config, actor_url).await?;
     if super::storage::fetch_markers_fresh(db, id).await {
+        return Ok(id);
+    }
+    // Partial docs (e.g. follower-record stubs carrying only
+    // `id`/`type`) don't count — only a document with actor endpoints
+    // or a claimed username marks the row as enriched.
+    let has_actor_document = sqlx::query_scalar::<_, bool>(
+        "SELECT COALESCE(actor_data->>'inbox', '') <> '' \
+         OR COALESCE(actor_data->>'preferredUsername', '') <> '' \
+         FROM accounts WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await?;
+    if has_actor_document {
         return Ok(id);
     }
     dispatcher

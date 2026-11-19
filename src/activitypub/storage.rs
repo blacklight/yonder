@@ -1204,6 +1204,15 @@ impl ActivityPubStorage for PgActivityPubStorage {
             .execute(&self.pool)
             .await
             .map_err(db_err)?;
+            // Pubby also uses this cache for signature and delivery
+            // actor lookups; project the document into `accounts` so a
+            // cache hit can't leave the profile as a bare stub until
+            // the queued `RemoteActorFetch` runs.
+            if let Err(e) =
+                upsert_remote_account(&self.pool, &self.config, actor_id, actor_data).await
+            {
+                tracing::warn!(actor = %actor_id, error = %e, "cached actor account upsert failed");
+            }
             Ok(())
         })
     }

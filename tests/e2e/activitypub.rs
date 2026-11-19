@@ -332,6 +332,18 @@ async fn storage_actor_cache_and_quote_authorizations() {
         .unwrap()
         .expect("fresh cache entry");
     assert_eq!(cached["type"], "Person");
+
+    // The cache write also projects the document into `accounts` — a
+    // cache hit must not leave the profile as a bare stub waiting on
+    // `RemoteActorFetch`.
+    let (username, actor_data): (String, Value) =
+        sqlx::query_as("SELECT username, actor_data FROM accounts WHERE actor_id = $1")
+            .bind("https://remote.example/ap/users/greg")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(username, "greg");
+    assert_eq!(actor_data["type"], "Person");
     // A zero max-age always misses.
     assert!(storage
         .get_cached_actor("https://remote.example/ap/users/greg", 0.0)

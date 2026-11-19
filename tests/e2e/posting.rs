@@ -954,6 +954,87 @@ async fn remote_note_materializes() {
     assert!(!html.contains("hacked"), "spoofed update must be dropped");
 }
 
+/// A bare remote stub still gets one `RemoteActorFetch`, but once
+/// `accounts.actor_data` holds a real document the stub is already
+/// enriched — later activities must not re-enqueue the job (regression:
+/// active remote actors flooded `yonder:queue:default` with redundant
+/// fetches).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enriched_remote_actor_does_not_refetch() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let actor = "https://remote.test/users/eve";
+    let note = |n: i64| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/eve-{n}"),
+        activity_type: "Create".into(),
+        actor: actor.into(),
+        object: json!({
+            "id": format!("https://remote.test/objects/eve-{n}"),
+            "type": "Note",
+            "attributedTo": actor,
+            "content": format!("<p>note {n}</p>"),
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "published": "2025-01-01T00:00:00Z",
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+
+    let create = note(1);
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::RemoteActorFetch)
+            .count(),
+        1,
+        "{jobs:?}"
+    );
+
+    // Simulate the enrichment job having landed — a full actor
+    // document, not a partial follower-record stub.
+    sqlx::query(
+        "UPDATE accounts SET actor_data = jsonb_build_object( \
+             'id', $1::text, 'type', 'Person', 'preferredUsername', 'eve', \
+             'inbox', $1::text || '/inbox') WHERE actor_id = $1",
+    )
+    .bind(actor)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let create = note(2);
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert!(
+        !jobs.iter().any(|j| j.kind == JobKind::RemoteActorFetch),
+        "enriched actor re-enqueued RemoteActorFetch: {jobs:?}"
+    );
+
+    // A partial doc (`id`/`type` only, as follower records carry) is
+    // not enrichment — the fetch must still be enqueued.
+    sqlx::query("UPDATE accounts SET actor_data = '{\"id\":\"x\",\"type\":\"Person\"}'::jsonb WHERE actor_id = $1")
+        .bind(actor)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let create = note(3);
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+    let jobs = drain_default_queue(&env).await;
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::RemoteActorFetch)
+            .count(),
+        1,
+        "partial actor_data suppressed RemoteActorFetch: {jobs:?}"
+    );
+}
+
 /// WriteFreely `Article`s put the headline in `name`, an HTML teaser
 /// (header image + `[…]`) in `summary`, the body in `content` and the
 /// permalink in `url`. Mastodon converts this to title + teaser +

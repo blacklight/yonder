@@ -465,25 +465,28 @@ async fn move_state_endpoint_reports_progress() {
     );
 }
 
-/// Drain pending `queue:default` envelopes and run the fanout jobs —
-/// the test stands in for the worker, like `notifications` does.
+/// Drain pending `default`/`notifications` envelopes and run the
+/// fanout jobs — the test stands in for the worker, like `notifications`
+/// does.
 async fn run_pending_fanouts(env: &Env) {
-    let key = env.state.redis.key("queue:default");
-    let mut conn = env.state.redis.conn().await.unwrap();
-    let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
     let ctx = job_ctx(&env.state);
-    for entry in reply.ids {
-        if let Some(v) = entry.map.get("job") {
-            let body: String = redis::from_redis_value(v).unwrap();
-            let envelope: JobEnvelope = queue::decode(&body).unwrap();
-            if envelope.kind == JobKind::NotificationFanout {
-                NotificationFanoutJob
-                    .run(&ctx, &envelope.payload)
-                    .await
-                    .unwrap();
+    for name in ["default", "notifications"] {
+        let key = env.state.redis.key(&format!("queue:{name}"));
+        let mut conn = env.state.redis.conn().await.unwrap();
+        let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
+        for entry in reply.ids {
+            if let Some(v) = entry.map.get("job") {
+                let body: String = redis::from_redis_value(v).unwrap();
+                let envelope: JobEnvelope = queue::decode(&body).unwrap();
+                if envelope.kind == JobKind::NotificationFanout {
+                    NotificationFanoutJob
+                        .run(&ctx, &envelope.payload)
+                        .await
+                        .unwrap();
+                }
             }
+            let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
         }
-        let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
     }
 }
 

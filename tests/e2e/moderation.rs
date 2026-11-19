@@ -182,9 +182,9 @@ fn job_ctx(env: &Env) -> JobContext {
     }
 }
 
-/// Drain the `default` job stream (the test stands in for the worker).
-async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
-    let key = env.state.redis.key("queue:default");
+/// Drain one job stream (the test stands in for the worker).
+async fn drain_queue(env: &Env, name: &str) -> Vec<JobEnvelope> {
+    let key = env.state.redis.key(&format!("queue:{name}"));
     let mut conn = env.state.redis.conn().await.unwrap();
     let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
     let mut out = Vec::new();
@@ -195,6 +195,13 @@ async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
         }
         let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
     }
+    out
+}
+
+/// Drain the `default` and `notifications` job streams.
+async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
+    let mut out = drain_queue(env, "default").await;
+    out.extend(drain_queue(env, "notifications").await);
     out
 }
 

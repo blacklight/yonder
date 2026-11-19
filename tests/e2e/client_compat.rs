@@ -420,30 +420,33 @@ async fn conversation_mute_hides_notifications() {
     assert_eq!(code, StatusCode::OK);
 
     // Notifications generate via the `NotificationFanout` job — no
-    // worker runs in the test env, so drain the stream manually.
-    let key = env.state.redis.key("queue:default");
+    // worker runs in the test env, so drain the streams manually
+    // (fan-out rides `notifications`, its products `default`).
     let mut conn = env.state.redis.conn().await.unwrap();
-    let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
-    for entry in reply.ids {
-        if let Some(v) = entry.map.get("job") {
-            let body: String = redis::from_redis_value(v).unwrap();
-            let envelope = yonder::jobs::queue::decode(&body).unwrap();
-            if envelope.kind == yonder::jobs::JobKind::NotificationFanout {
-                yonder::notifications::fanout::NotificationFanoutJob
-                    .run(
-                        &yonder::jobs::JobContext {
-                            db: env.state.db.clone(),
-                            redis: env.state.redis.clone(),
-                            config: env.state.config().clone(),
-                            media: env.state.media.clone(),
-                        },
-                        &envelope.payload,
-                    )
-                    .await
-                    .unwrap();
+    for name in ["notifications", "default"] {
+        let key = env.state.redis.key(&format!("queue:{name}"));
+        let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
+        for entry in reply.ids {
+            if let Some(v) = entry.map.get("job") {
+                let body: String = redis::from_redis_value(v).unwrap();
+                let envelope = yonder::jobs::queue::decode(&body).unwrap();
+                if envelope.kind == yonder::jobs::JobKind::NotificationFanout {
+                    yonder::notifications::fanout::NotificationFanoutJob
+                        .run(
+                            &yonder::jobs::JobContext {
+                                db: env.state.db.clone(),
+                                redis: env.state.redis.clone(),
+                                config: env.state.config().clone(),
+                                media: env.state.media.clone(),
+                            },
+                            &envelope.payload,
+                        )
+                        .await
+                        .unwrap();
+                }
             }
+            let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
         }
-        let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
     }
     let (_, _, body) = request(&env.app, "GET", "/api/v1/notifications", Some(&alice), None).await;
     assert_eq!(body.as_array().unwrap().len(), 1, "{body}");

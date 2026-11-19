@@ -151,9 +151,9 @@ async fn counts(db: &PgPool, id: i64) -> (i32, i32) {
     .unwrap()
 }
 
-/// `NotificationFanout` event kinds on the default queue.
+/// `NotificationFanout` event kinds across the job streams (fan-out
+/// rides `notifications`; scan `default` too for older enqueues).
 async fn fanout_kinds(env: &Env) -> Vec<String> {
-    let key = env.state.redis.key("queue:default");
     let mut conn = env
         .state
         .redis
@@ -161,25 +161,31 @@ async fn fanout_kinds(env: &Env) -> Vec<String> {
         .get_multiplexed_async_connection()
         .await
         .unwrap();
-    let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
-        .arg(&key)
-        .arg("-")
-        .arg("+")
-        .query_async(&mut conn)
-        .await
-        .unwrap();
-    raw.iter()
-        .flat_map(|(_, fields)| {
-            fields
-                .chunks(2)
-                .filter(|pair| pair[0] == "job")
-                .map(|pair| pair[1].clone())
-                .collect::<Vec<_>>()
-        })
-        .filter_map(|job| serde_json::from_str::<Value>(&job).ok())
-        .filter(|env| env["kind"] == "notification_fanout")
-        .filter_map(|env| env["payload"]["type"].as_str().map(str::to_string))
-        .collect()
+    let mut out = Vec::new();
+    for name in ["notifications", "default"] {
+        let key = env.state.redis.key(&format!("queue:{name}"));
+        let raw: Vec<(String, Vec<String>)> = redis::cmd("XRANGE")
+            .arg(&key)
+            .arg("-")
+            .arg("+")
+            .query_async(&mut conn)
+            .await
+            .unwrap();
+        out.extend(
+            raw.iter()
+                .flat_map(|(_, fields)| {
+                    fields
+                        .chunks(2)
+                        .filter(|pair| pair[0] == "job")
+                        .map(|pair| pair[1].clone())
+                        .collect::<Vec<_>>()
+                })
+                .filter_map(|job| serde_json::from_str::<Value>(&job).ok())
+                .filter(|env| env["kind"] == "notification_fanout")
+                .filter_map(|env| env["payload"]["type"].as_str().map(str::to_string)),
+        );
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

@@ -1410,17 +1410,23 @@ async fn cleanup_prunes_context_only_rows() {
 // ancestor-path job; a stranger's doesn't.
 // ---------------------------------------------------------------------------
 
-/// Decode every job envelope on the `default` stream.
+/// Decode every job envelope on every queue — remote work is spread
+/// across dedicated lanes (`ThreadPath` rides `remote_bulk`).
 async fn default_queue(env: &Env) -> Vec<yonder::jobs::JobEnvelope> {
     use redis::AsyncCommands;
-    let key = env.state.redis.key("queue:default");
     let mut conn = env.state.redis.conn().await.unwrap();
-    let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
     let mut out = Vec::new();
-    for entry in reply.ids {
-        if let Some(v) = entry.map.get("job") {
-            let body: String = redis::from_redis_value(v).unwrap();
-            out.push(yonder::jobs::queue::decode(&body).unwrap());
+    for queue_name in yonder::jobs::Queue::ALL {
+        let key = env
+            .state
+            .redis
+            .key(&format!("queue:{}", queue_name.as_str()));
+        let reply: redis::streams::StreamRangeReply = conn.xrange(&key, "-", "+").await.unwrap();
+        for entry in reply.ids {
+            if let Some(v) = entry.map.get("job") {
+                let body: String = redis::from_redis_value(v).unwrap();
+                out.push(yonder::jobs::queue::decode(&body).unwrap());
+            }
         }
     }
     out

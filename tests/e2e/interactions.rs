@@ -22,7 +22,7 @@ use yonder::{
     config::{Config, RateLimit},
     http::{build_router, AppState},
     interactions,
-    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
+    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind, Queue},
     posts::remote,
 };
 
@@ -1288,7 +1288,7 @@ async fn quote_authorization_accept_stamps_and_publishes_update() {
 
     // The Accept only queues the stamp+Update job — nothing is stamped
     // until the federation worker runs it.
-    let jobs: Vec<JobEnvelope> = queued_jobs_on(&env, "federation")
+    let jobs: Vec<JobEnvelope> = queued_jobs_on(&env, "publish")
         .await
         .into_iter()
         .filter(|j| j.kind == JobKind::QuoteAuthorization)
@@ -1632,9 +1632,14 @@ async fn queued_jobs_on(env: &Env, queue: &str) -> Vec<JobEnvelope> {
         .collect()
 }
 
-/// Every pending envelope on the `default` queue (non-draining).
+/// Every pending envelope on every queue (non-draining) — remote work
+/// is spread across dedicated lanes, so callers filter by kind.
 async fn queued_jobs(env: &Env) -> Vec<JobEnvelope> {
-    queued_jobs_on(env, "default").await
+    let mut out = Vec::new();
+    for queue_name in Queue::ALL {
+        out.extend(queued_jobs_on(env, queue_name.as_str()).await);
+    }
+    out
 }
 
 /// A loopback AP origin serving one Note at `/objects/n1` — `id` and
@@ -1849,11 +1854,24 @@ async fn pending_quote_self_heal_and_failure_markers() {
     .fetch_one(&env.state.db)
     .await
     .unwrap();
-    // Simulate the pre-job row: drop the ingest-time enqueue and its
-    // marker.
-    let key = env.state.redis.key("queue:default");
+    // Simulate the pre-job row: drop the ingest-time enqueue (remote
+    // fetches ride `remote_status` now), its dedupe claim and its
+    // marker — a held claim would suppress the self-heal enqueue.
+    let key = env.state.redis.key("queue:remote_status");
     let mut conn = env.state.redis.conn().await.unwrap();
     let _: i64 = conn.del(&key).await.unwrap();
+    let mut cursor = conn
+        .scan_match::<_, String>(env.state.redis.key("jobs:dedupe:*"))
+        .await
+        .unwrap();
+    let mut doomed = Vec::new();
+    while let Some(k) = cursor.next_item().await {
+        doomed.push(k);
+    }
+    drop(cursor);
+    if !doomed.is_empty() {
+        let _: usize = conn.del(&doomed).await.unwrap();
+    }
     let cache = yonder::cache::RedisCache::new(env.state.redis.clone());
     let _ = cache.delete_pattern("statusfetch:*").await;
 

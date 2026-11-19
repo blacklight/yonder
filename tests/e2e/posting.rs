@@ -22,7 +22,7 @@ use yonder::{
     activitypub,
     config::{Config, RateLimit},
     http::{build_router, AppState},
-    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind},
+    jobs::{queue, JobContext, JobEnvelope, JobHandler, JobKind, Queue},
     posts::{self, jobs::StatusDeletionJob, preview::FetchLinkPreviewJob, remote, PostContext},
 };
 
@@ -1565,10 +1565,16 @@ async fn remote_video_synthesizes_attachment() {
     );
 }
 
-/// Drain every pending entry from the `default` job stream and return
-/// the decoded envelopes — the test stands in for the worker.
+/// Drain every pending entry from every job stream and return the
+/// decoded envelopes — the test stands in for the worker. Remote work
+/// is spread across dedicated lanes, and drained remote envelopes
+/// release their dedupe claims like a real ack would.
 async fn drain_default_queue(env: &Env) -> Vec<JobEnvelope> {
-    drain_queue(env, "default").await
+    let mut out = Vec::new();
+    for queue_name in Queue::ALL {
+        out.extend(drain_queue(env, queue_name.as_str()).await);
+    }
+    out
 }
 
 /// Same drain for any queue name — the preview sweep fans out on
@@ -1581,7 +1587,11 @@ async fn drain_queue(env: &Env, queue: &str) -> Vec<JobEnvelope> {
     for entry in reply.ids {
         if let Some(v) = entry.map.get("job") {
             let body: String = redis::from_redis_value(v).unwrap();
-            out.push(queue::decode(&body).unwrap());
+            let envelope = queue::decode(&body).unwrap();
+            if let Some(dedupe) = &envelope.dedupe_key {
+                queue::release_dedupe(&env.state.redis, dedupe, &envelope.id).await;
+            }
+            out.push(envelope);
         }
         let _: i64 = conn.xdel(&key, &[entry.id]).await.unwrap();
     }

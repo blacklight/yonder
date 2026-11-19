@@ -1022,10 +1022,10 @@ async fn get_json_authed(
     (status, serde_json::from_slice(&body).unwrap_or(json!(null)))
 }
 
-/// Parsed `job` envelopes on the default queue — the stream both
+/// Parsed `job` envelopes on the remote queue — the stream both
 /// `RemoteActorFetch` and `RemoteMediaFetch` land on.
 async fn default_queue_jobs(env: &Env) -> Vec<serde_json::Value> {
-    let key = env.state.redis.key("queue:default");
+    let key = env.state.redis.key("queue:remote");
     let mut conn = env
         .state
         .redis
@@ -1303,7 +1303,7 @@ async fn remote_profile_refresh_flag_cleared_on_enqueue_failure() {
     };
     let remote = remote_account(&env.state.db, "http://remote.test/u/r").await;
     let flag = env.state.redis.key("actor-refresh:http://remote.test/u/r");
-    let stream = env.state.redis.key("queue:default");
+    let stream = env.state.redis.key("queue:remote");
     let mut conn = env
         .state
         .redis

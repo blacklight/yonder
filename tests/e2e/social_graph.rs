@@ -1833,7 +1833,7 @@ async fn remote_actor_fetch_marks_gone_actor() {
     .await;
     assert_eq!(code, StatusCode::OK, "{entity}");
     assert!(
-        !queued_actor_fetches(&env, "default").await.contains(&gone),
+        !queued_actor_fetches(&env, "remote").await.contains(&gone),
         "gone actor re-enqueued"
     );
 
@@ -1849,7 +1849,7 @@ async fn remote_actor_fetch_marks_gone_actor() {
     .await
     .unwrap();
     job.run(&job_ctx(&env.state), &json!({})).await.unwrap();
-    let urls = queued_actor_fetches(&env, "bulk").await;
+    let urls = queued_actor_fetches(&env, "remote").await;
     assert!(urls.contains(&live.to_string()), "{urls:?}");
     assert!(!urls.contains(&gone), "{urls:?}");
 }
@@ -1992,12 +1992,12 @@ async fn remote_profile_fields_backfill_and_refresh_sweep() {
     assert!(fields[0]["verified_at"].is_null());
 
     // Sweep mode: the stale remote actor (no actor_cache row) gets a
-    // per-actor fetch on the bulk queue.
+    // per-actor fetch on the remote queue.
     let job =
         activitypub::incoming::RemoteActorFetchJob::new(env.state.ap.as_ref().unwrap().clone());
     job.run(&job_ctx(&env.state), &json!({})).await.unwrap();
 
-    let key = env.state.redis.key("queue:bulk");
+    let key = env.state.redis.key("queue:remote");
     let mut conn = env
         .state
         .redis

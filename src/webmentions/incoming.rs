@@ -516,6 +516,7 @@ async fn retract(
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
+    crate::notifications::delete_for_status(&ctx.db, status.id).await?;
     sqlx::query(
         "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",
     )

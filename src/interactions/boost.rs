@@ -198,6 +198,7 @@ pub async fn unreblog_row(ctx: &PostContext, boost: &StatusRow) -> Result<Status
         .bind(target_id)
         .execute(&mut *tx)
         .await?;
+        crate::notifications::delete_for_status(&mut *tx, boost.id).await?;
     }
     tx.commit().await?;
 

@@ -1412,6 +1412,7 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
+    crate::notifications::delete_for_status(&ctx.db, status.id).await?;
     // The deletion releases the author's post counter; a deleted reply
     // releases its parent's counter; same for a deleted quote post's
     // target.

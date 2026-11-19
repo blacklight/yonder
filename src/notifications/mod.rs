@@ -269,6 +269,20 @@ pub async fn insert_move(
     .map_err(Into::into)
 }
 
+/// Tombstone counterpart of the `status_id` FK cascade: deleted
+/// activities keep their `statuses` row, so the cascade never fires —
+/// every tombstone site must drop the notifications pointing at it.
+pub async fn delete_for_status<'e, E>(db: E, status_id: i64) -> Result<()>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query("DELETE FROM notifications WHERE status_id = $1")
+        .bind(status_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
 /// One notification owned by `account_id`.
 pub async fn get(db: &PgPool, account_id: i64, id: i64) -> Result<Option<NotificationRow>> {
     sqlx::query(&format!(

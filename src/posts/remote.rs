@@ -1466,6 +1466,7 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .bind(existing.id)
     .execute(&core.db)
     .await?;
+    crate::notifications::delete_for_status(&core.db, existing.id).await?;
     // The deletion releases the author's post counter; a deleted reply
     // releases its parent's counter; same for a deleted quote post's
     // target.

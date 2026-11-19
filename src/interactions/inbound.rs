@@ -314,6 +314,7 @@ async fn undo_announce_inbound(core: &ApCore, activity: &Activity, inner: &Value
             .execute(&mut *tx)
             .await?;
         }
+        crate::notifications::delete_for_status(&mut *tx, boost.id).await?;
     }
     tx.commit().await?;
     if tombstoned > 0 {

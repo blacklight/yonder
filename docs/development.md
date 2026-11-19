@@ -78,11 +78,23 @@ by default).
   `get_or_load` request coalescing. `cache::Redis` also exposes the raw
   `redis::Client` so Pubby's `RedisDocumentStore` can share the
   connection for ActivityPub document caching (epic 06).
-- **Queue** — one Redis stream per queue: `default` (interactive work),
-  `federation` (latency-sensitive delivery) and `bulk` (high-volume
-  fan-out). Jobs persist across restarts; delivery is at-least-once, so
-  **handlers must be idempotent**. Failures retry with exponential
-  backoff (`jobs.backoff_*`) up to `jobs.max_attempts`, then land on
+- **Queue** — one Redis stream per queue: `default` (interactive
+  work), `publish` (scheduled posts, quote authorization),
+  `federation` (latency-sensitive delivery), `bulk` (high-volume
+  per-item jobs), `cleanup` (sweeps), `timeline` (home-feed fan-out),
+  `notifications`, `remote_status` (user-visible remote object
+  fetches), `remote` (actor/network/media/Webmention fetches) and
+  `remote_bulk` (large remote walks). Remote lanes are isolated so
+  slow federation remotes can't starve interactive work; each lane's
+  consumer count is `jobs.concurrency` unless a per-queue
+  `jobs.*_concurrency` override is set (`remote` defaults to 2×).
+  Jobs persist across restarts; delivery is at-least-once, so
+  **handlers must be idempotent**. Remote-queue enqueues are deduped
+  per `(kind, payload)` in Redis and gated per-domain
+  (`jobs.remote_enqueue_per_domain_per_minute`,
+  `jobs.remote_circuit_*`) so one broken remote can't flood the
+  queues. Failures retry with exponential backoff (`jobs.backoff_*`)
+  up to `jobs.max_attempts`, then land on
   `{prefix}:queue:{name}:dead`. Delayed jobs are parked in a sorted set
   until due; `XAUTOCLAIM` reclaims work abandoned by dead workers.
 - **Cron** — cleanup schedules are read from
@@ -99,7 +111,9 @@ runs with `jobs.enabled = false` (see *Docker deployment* in the README).
 
 1. Add the variant to `jobs::JobKind` and route it to a `Queue` in
    `JobKind::queue()` — pick `federation` only for latency-sensitive
-   delivery, `bulk` for high-volume fan-out.
+   delivery, `bulk` for high-volume fan-out, `remote_status` for
+   user-visible remote object fetches, `remote` for other remote
+   fetches/syncs and `remote_bulk` for large remote walks.
 2. Implement `jobs::JobHandler` (`async fn run(&self, ctx, payload)`)
    and `registry.register(kind, handler)` at startup, replacing the
    stub registered by `jobs::stub::register_all`.

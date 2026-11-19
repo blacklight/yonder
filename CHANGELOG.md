@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## Unreleased
+
+### Added
+
+- `jobs`: Split remote-fetch work off `default` into dedicated
+  `remote_status` (quote/pin/media refresh fetches), `remote`
+  (actor/network/media/Webmention fetches) and `remote_bulk` (large
+  remote walks) queues, and give status publishing its own `publish`
+  lane — slow or broken federation remotes can no longer starve
+  user-visible quote resolution, scheduled posts or interactive work.
+- `jobs`: Per-queue consumer counts (`jobs.*_concurrency` overrides;
+  `remote` defaults to 2× `concurrency`), an optional global
+  in-flight cap for remote queues (`jobs.remote_max_in_flight`),
+  periodic queue-depth logging, and Redis dedupe of identical
+  remote-queue jobs so repeated read/ingest triggers can't stack
+  duplicates.
+- `jobs`: Source-side backpressure for remote work — a per-domain
+  enqueue budget (`jobs.remote_enqueue_per_domain_per_minute`) and a
+  per-domain circuit breaker
+  (`jobs.remote_circuit_failure_threshold` /
+  `jobs.remote_circuit_cooldown_seconds`) that pauses fetches to a
+  domain after consecutive failures.
+
 ## 1.0.9
 
 ### Added

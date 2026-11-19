@@ -148,6 +148,37 @@ impl Config {
                     .to_string(),
             ));
         }
+        // A remote job reclaimed from the pending list may wait for a
+        // permit before its handler runs; that wait plus the full
+        // handler run must still fit inside the reclaim window, or the
+        // entry would be re-dispatched while running.
+        let margin_s = crate::jobs::worker::RECLAIM_SAFETY_MARGIN_MS / 1000;
+        if self.jobs.reclaim_idle_seconds
+            < self.jobs.handler_timeout_seconds.saturating_add(margin_s)
+        {
+            return Err(crate::Error::Validation(
+                "jobs.reclaim_idle_seconds must exceed jobs.handler_timeout_seconds \
+                 by at least the remote-permit safety margin (otherwise a remote job \
+                 waiting for a permit can be reclaimed and executed twice)"
+                    .to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("publish_concurrency", self.jobs.publish_concurrency),
+            (
+                "remote_status_concurrency",
+                self.jobs.remote_status_concurrency,
+            ),
+            ("remote_concurrency", self.jobs.remote_concurrency),
+            ("remote_bulk_concurrency", self.jobs.remote_bulk_concurrency),
+            ("bulk_concurrency", self.jobs.bulk_concurrency),
+        ] {
+            if value == Some(0) {
+                return Err(crate::Error::Validation(format!(
+                    "jobs.{name} must be > 0 when set (0 would leave the lane with no consumers)"
+                )));
+            }
+        }
         if self.admin.account_deletion_grace_days > 365 {
             return Err(crate::Error::Validation(
                 "admin.account_deletion_grace_days must be <= 365".to_string(),
@@ -156,6 +187,15 @@ impl Config {
         if self.jobs.poll_interval_ms == 0 {
             return Err(crate::Error::Validation(
                 "jobs.poll_interval_ms must be > 0".to_string(),
+            ));
+        }
+        if self.jobs.remote_circuit_failure_threshold > 0
+            && self.jobs.remote_circuit_cooldown_seconds == 0
+        {
+            return Err(crate::Error::Validation(
+                "jobs.remote_circuit_cooldown_seconds must be > 0 when \
+                 jobs.remote_circuit_failure_threshold is enabled"
+                    .to_string(),
             ));
         }
         if !(1..=200).contains(&self.content.max_feed_items) {
@@ -1322,6 +1362,34 @@ pub struct JobsConfig {
     pub enabled: bool,
     /// Worker tasks draining each queue concurrently.
     pub concurrency: u32,
+    /// Consumer override for the `publish` queue (scheduled status
+    /// publishes, quote authorization). Unset uses `concurrency`.
+    pub publish_concurrency: Option<u32>,
+    /// Consumer override for the `remote_status` queue (quote/pin/media
+    /// refresh fetches). Unset uses `concurrency`.
+    pub remote_status_concurrency: Option<u32>,
+    /// Consumer override for the `remote` queue (actor/network/media/
+    /// Webmention fetches). Unset uses `concurrency * 2`.
+    pub remote_concurrency: Option<u32>,
+    /// Consumer override for the `remote_bulk` queue (large remote
+    /// walks). Unset uses `concurrency`.
+    pub remote_bulk_concurrency: Option<u32>,
+    /// Consumer override for the `bulk` queue. Unset uses `concurrency`.
+    pub bulk_concurrency: Option<u32>,
+    /// Global cap on concurrently executing remote-queue jobs across
+    /// `remote_status`, `remote` and `remote_bulk`. Unset/`0` disables
+    /// the cap — remote lanes are still isolated from critical queues.
+    pub remote_max_in_flight: Option<u32>,
+    /// Per-domain enqueue budget for remote fetch/sync jobs, in jobs per
+    /// minute. `0` disables the limiter. Protects against one broken or
+    /// hostile domain filling the remote queues.
+    pub remote_enqueue_per_domain_per_minute: u32,
+    /// Consecutive remote-job failures to one domain before fetches to
+    /// that domain pause for `remote_circuit_cooldown_seconds`.
+    /// `0` disables the circuit breaker.
+    pub remote_circuit_failure_threshold: u32,
+    /// How long a tripped remote-domain circuit stays open, in seconds.
+    pub remote_circuit_cooldown_seconds: u64,
     /// Delivery attempts before a job is dead-lettered. The default
     /// keeps a failing job retrying for roughly a day — federation
     /// delivery must survive remote deploys and outages.
@@ -1350,6 +1418,15 @@ impl Default for JobsConfig {
         Self {
             enabled: true,
             concurrency: 4,
+            publish_concurrency: None,
+            remote_status_concurrency: None,
+            remote_concurrency: None,
+            remote_bulk_concurrency: None,
+            bulk_concurrency: None,
+            remote_max_in_flight: None,
+            remote_enqueue_per_domain_per_minute: 120,
+            remote_circuit_failure_threshold: 5,
+            remote_circuit_cooldown_seconds: 900,
             max_attempts: 16,
             backoff_base_seconds: 10,
             backoff_max_seconds: 3600,

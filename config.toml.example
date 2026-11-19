@@ -47,8 +47,33 @@ key_prefix = "yonder"
 # Run the background worker in-process with `serve`; set false to run
 # the dedicated `yonder worker` binary instead.
 enabled = true
-# Worker tasks draining each queue concurrently.
+# Worker tasks draining each queue concurrently. Per-lane overrides
+# below fall back to this value when unset.
 concurrency = 4
+# Consumer override for the publish queue (scheduled posts, quote
+# authorization). Unset uses `concurrency`.
+# publish_concurrency = 4
+# Consumer override for the remote_status queue (quote/pin/media fetch
+# jobs). Unset uses `concurrency`.
+# remote_status_concurrency = 4
+# Consumer override for the remote queue (actor/network/media/
+# Webmention fetches). Unset uses `concurrency * 2`.
+# remote_concurrency = 8
+# Consumer override for the remote_bulk queue (large remote walks).
+# Unset uses `concurrency`.
+# remote_bulk_concurrency = 4
+# Consumer override for the bulk queue. Unset uses `concurrency`.
+# bulk_concurrency = 4
+# Global cap on concurrently executing remote-queue jobs across
+# remote_status/remote/remote_bulk. Unset disables the cap.
+# remote_max_in_flight = 24
+# Per-domain enqueue budget for remote jobs, in jobs/minute (0
+# disables). Protects the queues from one broken/hostile domain.
+remote_enqueue_per_domain_per_minute = 120
+# Consecutive remote-job failures to one domain before fetches to it
+# pause for remote_circuit_cooldown_seconds (0 disables).
+remote_circuit_failure_threshold = 5
+remote_circuit_cooldown_seconds = 900
 # Delivery attempts before a job is dead-lettered. The default keeps a
 # failing job retrying for roughly a day.
 max_attempts = 16

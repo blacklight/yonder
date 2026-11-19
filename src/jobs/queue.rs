@@ -35,7 +35,8 @@ redis.call('XADD', KEYS[2], '*', 'job', ARGV[1])
 return 1
 "#;
 
-fn stream_key(redis: &Redis, queue: Queue) -> String {
+/// Full Redis key of `queue`'s stream (already namespaced).
+pub fn stream_key(redis: &Redis, queue: Queue) -> String {
     redis.key(&format!("queue:{}", queue.as_str()))
 }
 
@@ -45,6 +46,36 @@ fn dead_key(redis: &Redis, queue: Queue) -> String {
 
 fn delayed_key(redis: &Redis) -> String {
     redis.key("jobs:delayed")
+}
+
+fn dedupe_key(redis: &Redis, key: &str) -> String {
+    redis.key(&format!("jobs:dedupe:{key}"))
+}
+
+/// Release a remote-job dedupe claim — but only when it still points at
+/// `job_id`, so a stale release can't free a newer claim for the same
+/// work. Best-effort by design: callers log-and-continue.
+pub async fn release_dedupe(redis: &Redis, key: &str, job_id: &str) {
+    let mut conn = match redis.conn().await {
+        Ok(conn) => conn,
+        Err(_) => return,
+    };
+    let _: redis::RedisResult<u32> = Script::new(
+        "if redis.call('GET', KEYS[1]) == ARGV[1] then \
+             return redis.call('DEL', KEYS[1]) \
+         else return 0 end",
+    )
+    .key(dedupe_key(redis, key))
+    .arg(job_id)
+    .invoke_async(&mut *conn)
+    .await;
+}
+
+/// Current stream length — for periodic queue-depth logging.
+pub async fn depth(redis: &Redis, queue: Queue) -> Result<u64> {
+    let mut conn = redis.conn().await?;
+    let len: u64 = conn.xlen(stream_key(redis, queue)).await?;
+    Ok(len)
 }
 
 fn now_ms() -> u64 {
@@ -213,6 +244,9 @@ pub async fn fail(
             attempts = envelope.attempts,
             "job dead-lettered"
         );
+        if let Some(key) = &envelope.dedupe_key {
+            release_dedupe(redis, key, &envelope.id).await;
+        }
     }
     ack(redis, queue, stream_id).await
 }

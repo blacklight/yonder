@@ -277,6 +277,19 @@ async fn maybe_refresh_remote(state: &AppState, account: &account_mapper::Accoun
     if crate::activitypub::storage::fetch_markers_fresh(&state.db, account.id).await {
         return;
     }
+    let domain = crate::activitypub::moderation::actor_domain(&account.actor_id)
+        .or_else(|| account.domain.clone());
+    let config = state.config();
+    if !crate::jobs::remote_gate::enqueue_allowed(
+        &state.redis,
+        &config.jobs,
+        domain.as_deref(),
+        "actor_fetch",
+    )
+    .await
+    {
+        return;
+    }
     if !claim_refresh_slot(state, &account.actor_id).await {
         return;
     }

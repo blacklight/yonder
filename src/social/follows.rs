@@ -217,22 +217,36 @@ pub async fn ensure_remote_network(
     account_id: i64,
     direction: &'static str,
 ) -> bool {
-    let row = sqlx::query_scalar::<_, i64>(
-        "SELECT id FROM accounts \
+    let row = sqlx::query_as::<_, (Option<String>, String)>(
+        "SELECT domain, actor_id FROM accounts \
          WHERE id = $1 AND domain IS NOT NULL AND deleted_at IS NULL",
     )
     .bind(account_id)
     .fetch_optional(&state.db)
     .await;
-    if !matches!(row, Ok(Some(_))) {
+    let Ok(Some((domain, actor_id))) = row else {
         // Local/missing account (caller falls back to `follows`) or a
         // DB error — report "not remote" either way; the real error
         // surfaces when the caller runs its own query.
         return false;
-    }
+    };
     // Federation off → no remote collections to sync; the caller's
     // `remote_edge_*` fallback serves the local `follows` page.
     if state.ap.is_none() {
+        return true;
+    }
+    let domain = moderation::actor_domain(&actor_id).or(domain);
+    let config = state.config();
+    if !crate::jobs::remote_gate::enqueue_allowed(
+        &state.redis,
+        &config.jobs,
+        domain.as_deref(),
+        "network_sync",
+    )
+    .await
+    {
+        // Per-domain budget exhausted or circuit open — serve the
+        // stored edges; the next read after the window retries.
         return true;
     }
     match claim_network_sync(&state.db, account_id, direction).await {

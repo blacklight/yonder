@@ -24,7 +24,13 @@ use crate::harness;
 /// Per-test namespace on the shared Redis — see `harness`.
 async fn test_redis() -> Option<Redis> {
     let infra = harness::infra().await?;
-    let mut config = RedisConfig::default();
+    // Every queue consumer holds a pooled connection across its
+    // blocking read — 9 lanes plus the delayed/reclaim/depth loops
+    // need more than the default pool of 10.
+    let mut config = RedisConfig {
+        pool_size: 64,
+        ..Default::default()
+    };
     Some(harness::scoped_redis(infra, &mut config, &harness::test_slug()).await)
 }
 
@@ -47,7 +53,8 @@ fn test_jobs() -> Arc<JobsConfig> {
     Arc::new(JobsConfig {
         concurrency: 1,
         poll_interval_ms: 50,
-        reclaim_idle_seconds: 30,
+        handler_timeout_seconds: 20,
+        reclaim_idle_seconds: 90,
         ..Default::default()
     })
 }
@@ -232,6 +239,188 @@ async fn enqueue_execute_ack() {
 
     // Awaiting shutdown before checking the PEL keeps this deterministic.
     assert_eq!(pending_count(&redis, Queue::Default).await, 0);
+}
+
+/// Remote-queue enqueues dedupe on `(kind, payload)`: a repeat trigger
+/// returns the existing job id instead of stacking a second stream
+/// entry, while a different payload still enqueues.
+#[tokio::test]
+async fn remote_enqueue_dedupes_identical_payloads() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let jobs_config = test_jobs();
+    let dispatcher = Dispatcher::new(&redis, &jobs_config);
+    let payload = json!({"actor_url": "https://example.com/@alice"});
+
+    let first = dispatcher
+        .enqueue(JobKind::RemoteActorFetch, payload.clone())
+        .await
+        .unwrap();
+    let second = dispatcher
+        .enqueue(JobKind::RemoteActorFetch, payload)
+        .await
+        .unwrap();
+    assert_eq!(
+        first, second,
+        "duplicate remote enqueue must reuse the job id"
+    );
+
+    let other = dispatcher
+        .enqueue(
+            JobKind::RemoteActorFetch,
+            json!({"actor_url": "https://example.com/@bob"}),
+        )
+        .await
+        .unwrap();
+    assert_ne!(first, other);
+
+    // The dedupe claim lives until the job settles: read the two
+    // entries into the pending list under a throwaway consumer,
+    // dead-letter the first (which releases its claim — the worker's
+    // ack path calls the same `release_dedupe`), and confirm a fresh
+    // enqueue of that payload is no longer deduped.
+    queue::ensure_group(&redis, Queue::Remote).await.unwrap();
+    let mut conn = redis.conn().await.unwrap();
+    let stream = redis.key(&format!("queue:{}", Queue::Remote.as_str()));
+    let reply: redis::streams::StreamReadReply = redis::AsyncCommands::xread_options(
+        &mut *conn,
+        &[stream.as_str()],
+        &[">"],
+        &redis::streams::StreamReadOptions::default()
+            .group(queue::GROUP, "dedupe-test")
+            .count(10),
+    )
+    .await
+    .unwrap();
+    let entries: Vec<(String, JobEnvelope)> = reply
+        .keys
+        .into_iter()
+        .flat_map(|k| k.ids)
+        .filter_map(|i| {
+            let body: String = redis::from_redis_value(i.map.get("job")?).ok()?;
+            let env: JobEnvelope = queue::decode(&body).ok()?;
+            Some((i.id, env))
+        })
+        .collect();
+    assert_eq!(
+        entries.len(),
+        2,
+        "expected exactly two distinct remote jobs"
+    );
+    let (stream_id, mut envelope) = entries
+        .into_iter()
+        .find(|(_, env)| env.id == first)
+        .expect("first job entry present in stream");
+    assert!(
+        envelope.dedupe_key.is_some(),
+        "remote job must carry a dedupe claim"
+    );
+    drop(conn);
+
+    envelope.attempts = envelope.max_attempts;
+    queue::fail(
+        &redis,
+        Queue::Remote,
+        &stream_id,
+        envelope,
+        "test dead-letter",
+        &jobs_config,
+    )
+    .await
+    .unwrap();
+
+    let third = dispatcher
+        .enqueue(
+            JobKind::RemoteActorFetch,
+            json!({"actor_url": "https://example.com/@alice"}),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        first, third,
+        "settling the job must release the dedupe claim so work can be re-enqueued"
+    );
+}
+
+/// The per-domain enqueue budget allows up to the configured count
+/// per minute and then denies; other domains and unparseable URLs are
+/// unaffected.
+#[tokio::test]
+async fn remote_gate_budget_limits_per_domain() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let jobs = JobsConfig {
+        remote_enqueue_per_domain_per_minute: 2,
+        ..Default::default()
+    };
+    let domain = Some("budget-test.example");
+    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await);
+    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await);
+    assert!(
+        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, domain, "actor_fetch").await,
+        "third enqueue within the minute must be denied"
+    );
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(
+            &redis,
+            &jobs,
+            Some("other-budget-test.example"),
+            "actor_fetch"
+        )
+        .await
+    );
+    assert!(yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, None, "actor_fetch").await);
+}
+
+/// The circuit breaker opens after the configured number of
+/// consecutive fetch failures, blocks enqueues meanwhile, and a
+/// success resets the streak.
+#[tokio::test]
+async fn remote_gate_circuit_trips_and_resets() {
+    let _permit = harness::acquire().await;
+    let Some(redis) = test_redis().await else {
+        return;
+    };
+    let jobs = JobsConfig {
+        remote_circuit_failure_threshold: 2,
+        remote_circuit_cooldown_seconds: 60,
+        ..Default::default()
+    };
+    let domain = "circuit-test.example";
+    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain).await);
+    assert!(!yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
+    assert!(yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain).await);
+    assert!(yonder::jobs::remote_gate::circuit_open(&redis, domain).await);
+    assert!(
+        !yonder::jobs::remote_gate::enqueue_allowed(&redis, &jobs, Some(domain), "actor_fetch")
+            .await,
+        "open circuit must deny enqueues"
+    );
+    assert!(
+        yonder::jobs::remote_gate::enqueue_allowed(
+            &redis,
+            &jobs,
+            Some("other-circuit-test.example"),
+            "actor_fetch"
+        )
+        .await
+    );
+
+    // A success resets the streak: after one failure + one success,
+    // a single further failure must not reach the threshold of two.
+    let domain2 = "circuit-reset-test.example";
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2).await);
+    yonder::jobs::remote_gate::record_success(&redis, domain2).await;
+    assert!(!yonder::jobs::remote_gate::record_failure(&redis, &jobs, domain2).await);
+    assert!(
+        !yonder::jobs::remote_gate::circuit_open(&redis, domain2).await,
+        "a success must reset the consecutive-failure streak"
+    );
 }
 
 /// Deleting a queue's stream destroys its consumer group — the state

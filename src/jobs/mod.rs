@@ -4,8 +4,9 @@
 //! duplicate delivery is tolerated, so **handlers must be idempotent**.
 //!
 //! - [`JobKind`] — the typed registry of job kinds, each routed to a
-//!   [`Queue`] (`default` / `federation` / `bulk`, mirroring Songhive's
-//!   queue taxonomy).
+//!   [`Queue`] (`default` / `publish` / `federation` / `bulk` /
+//!   `cleanup` / `timeline` / `notifications` / `remote_status` /
+//!   `remote` / `remote_bulk`).
 //! - [`JobHandler`] — implement it and [`Registry::register`] it to plug
 //!   a real implementation in (later epics); [`stub`] registers
 //!   placeholder handlers so the machinery works end-to-end today.
@@ -16,6 +17,7 @@
 //!   cleanup job kinds.
 
 pub mod queue;
+pub mod remote_gate;
 pub mod scheduler;
 pub mod stub;
 pub mod worker;
@@ -24,24 +26,40 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use crate::{cache::Redis, config::Config, Result};
 
 /// Queue names — one Redis stream each.
 ///
-/// - `default`: interactive / low-volume work (email, remote fetches).
+/// - `default`: interactive / low-volume work that must not wait behind
+///   remote fetches.
+/// - `publish`: status publishing work — scheduled publishes and quote
+///   authorization updates are user-visible and get their own lane.
 /// - `federation`: latency-sensitive delivery — a remote inbox answer
 ///   minutes late is worthless, so it never waits behind bulk work.
-/// - `bulk`: high-volume per-item jobs (imports, exports, cleanup
-///   fan-out) that would otherwise starve everything else.
+/// - `bulk`: high-volume per-item jobs (imports, exports, link
+///   previews, thread expansion) that would otherwise starve
+///   everything else.
+/// - `cleanup`: scheduled sweeps.
+/// - `timeline`: home-timeline index writes.
+/// - `notifications`: notification fan-out.
+/// - `remote_status`: user-visible remote object fetches (quote/pin
+///   targets, media/poll refreshes) — isolated from bulk remote work.
+/// - `remote`: remote fetches and syncs that are allowed to lag
+///   (actors, networks, media, incoming Webmentions).
+/// - `remote_bulk`: large remote walks that can lag furthest behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Queue {
     /// Interactive, low-volume jobs.
     Default,
+    /// Status publishing jobs.
+    Publish,
     /// Latency-sensitive federation delivery.
     Federation,
     /// High-volume per-item jobs.
@@ -56,29 +74,70 @@ pub enum Queue {
     /// Notification fan-out — a notification that lands minutes late
     /// is stale, so it never waits behind remote fetches on `default`.
     Notifications,
+    /// User-visible remote status fetches.
+    RemoteStatus,
+    /// Remote actor/network/media/Webmention work.
+    Remote,
+    /// Large remote ancestor walks.
+    RemoteBulk,
 }
 
 impl Queue {
     /// Every queue the worker drains.
     pub const ALL: &'static [Queue] = &[
         Queue::Default,
+        Queue::Publish,
         Queue::Federation,
         Queue::Bulk,
         Queue::Cleanup,
         Queue::Timeline,
         Queue::Notifications,
+        Queue::RemoteStatus,
+        Queue::Remote,
+        Queue::RemoteBulk,
     ];
 
-    /// Stream suffix: `default` / `federation` / `bulk` / `cleanup` / `timeline` / `notifications`.
+    /// Stream suffix.
     pub fn as_str(&self) -> &'static str {
         match self {
             Queue::Default => "default",
+            Queue::Publish => "publish",
             Queue::Federation => "federation",
             Queue::Bulk => "bulk",
             Queue::Cleanup => "cleanup",
             Queue::Timeline => "timeline",
             Queue::Notifications => "notifications",
+            Queue::RemoteStatus => "remote_status",
+            Queue::Remote => "remote",
+            Queue::RemoteBulk => "remote_bulk",
         }
+    }
+
+    /// Consumer tasks this queue gets. Per-queue overrides live in
+    /// `jobs.*_concurrency`; unset lanes fall back to `jobs.concurrency`,
+    /// with `remote` defaulting to double so slow remote fetches drain
+    /// faster without stealing slots from latency-sensitive lanes.
+    pub fn consumer_count(&self, jobs: &crate::config::JobsConfig) -> u32 {
+        let base = jobs.concurrency.max(1);
+        match self {
+            Queue::Publish => jobs.publish_concurrency.unwrap_or(base),
+            Queue::RemoteStatus => jobs.remote_status_concurrency.unwrap_or(base),
+            Queue::Remote => jobs
+                .remote_concurrency
+                .unwrap_or_else(|| base.saturating_mul(2)),
+            Queue::RemoteBulk => jobs.remote_bulk_concurrency.unwrap_or(base),
+            Queue::Bulk => jobs.bulk_concurrency.unwrap_or(base),
+            _ => base,
+        }
+    }
+
+    /// Whether this queue carries remote-fetch work covered by the
+    /// remote in-flight cap and enqueue dedupe.
+    pub fn is_remote(&self) -> bool {
+        matches!(
+            self,
+            Queue::RemoteStatus | Queue::Remote | Queue::RemoteBulk
+        )
     }
 }
 
@@ -280,14 +339,23 @@ impl JobKind {
             JobKind::FederationDelivery
             | JobKind::FederationIncoming
             | JobKind::FederationDeliverySweep
-            | JobKind::PublishMove
-            | JobKind::QuoteAuthorization => Queue::Federation,
+            | JobKind::PublishMove => Queue::Federation,
+            JobKind::ScheduledStatusPublish | JobKind::QuoteAuthorization => Queue::Publish,
+            JobKind::RemoteStatusFetch => Queue::RemoteStatus,
+            JobKind::RemoteMediaFetch
+            | JobKind::RemoteActorFetch
+            | JobKind::RemoteNetworkSync
+            | JobKind::WebmentionIncoming
+            | JobKind::WebmentionOutgoing => Queue::Remote,
+            JobKind::ThreadPath => Queue::RemoteBulk,
             JobKind::Import
             | JobKind::Export
             | JobKind::VerifyProfileLinks
             | JobKind::MigrateFollowers
             | JobKind::StatusDeletion
-            | JobKind::ImportPublish => Queue::Bulk,
+            | JobKind::ImportPublish
+            | JobKind::FetchLinkPreview
+            | JobKind::ThreadExpand => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
             | JobKind::AccountDeletion
@@ -324,6 +392,11 @@ pub struct JobEnvelope {
     /// Error from the last failed attempt.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Redis dedupe key claimed at enqueue time for remote queues —
+    /// released when the job acks or dead-letters, retained across
+    /// retries so a queued/retrying job can't be duplicated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedupe_key: Option<String>,
 }
 
 impl JobEnvelope {
@@ -340,6 +413,7 @@ impl JobEnvelope {
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
             last_error: None,
+            dedupe_key: None,
         }
     }
 }
@@ -389,6 +463,63 @@ impl Registry {
     }
 }
 
+/// How long a remote-job dedupe claim lives. It must outlast the
+/// worst-case queue delay plus the retry budget; expiry only matters
+/// if the job vanished without ack/dead-letter (a lost stream), where
+/// a duplicate is safer than a permanently suppressed fetch.
+///
+/// Trade-off: if the process dies between a successful ack and the
+/// best-effort `release_dedupe`, the claim survives until this TTL
+/// and suppresses re-enqueues of the same `(kind, payload)` — for
+/// `RemoteStatusFetch{uri}` that means a legitimate re-fetch waits up
+/// to a day. The window is small (one Redis round-trip) and the
+/// alternative (no dedupe) reintroduces the retry storms this fixes.
+const REMOTE_JOB_DEDUPE_TTL_SECONDS: u64 = 24 * 3600;
+
+/// Canonical JSON for dedupe hashing — `serde_json`'s
+/// `preserve_order` feature keeps insertion order, so sort object keys
+/// recursively before hashing.
+fn canonical_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(b.0));
+            let mut out = serde_json::Map::new();
+            for (key, child) in entries {
+                out.insert(key.clone(), canonical_json(child));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical_json).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Stable dedupe key for a remote job: kind + canonical payload. Two
+/// enqueues of the same work collide; different payloads (e.g. a
+/// `RemoteStatusFetch` resolve vs `refresh`, or a `ThreadExpand` round)
+/// stay distinct.
+fn remote_dedupe_key(kind: JobKind, payload: &Value) -> String {
+    let canonical = canonical_json(payload);
+    let body = serde_json::to_vec(&canonical).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(kind.as_str().as_bytes());
+    hasher.update([0]);
+    hasher.update(body);
+    hex::encode(hasher.finalize())[..32].to_string()
+}
+
+/// Outcome of claiming a remote-job dedupe slot.
+enum DedupeClaim {
+    /// This caller owns the slot and may enqueue.
+    Claimed,
+    /// An identical job is already queued/delayed/retrying — its id.
+    Duplicate(String),
+    /// The claim couldn't be made (key vanished mid-check); enqueue
+    /// without dedupe rather than fail the caller.
+    Unavailable,
+}
+
 /// Enqueue jobs for immediate or delayed execution.
 #[derive(Clone)]
 pub struct Dispatcher {
@@ -406,17 +537,20 @@ impl Dispatcher {
         }
     }
 
+    /// The Redis handle — for callers that need a dedupe/throttle check
+    /// before enqueueing through this dispatcher.
+    pub fn redis(&self) -> &Redis {
+        &self.redis
+    }
+
     /// Enqueue `kind` on its default queue.
     pub async fn enqueue(&self, kind: JobKind, payload: Value) -> Result<String> {
-        self.enqueue_on(kind.queue(), kind, payload).await
+        self.dispatch(kind.queue(), kind, payload, None).await
     }
 
     /// Enqueue `kind` on `queue` explicitly.
     pub async fn enqueue_on(&self, queue: Queue, kind: JobKind, payload: Value) -> Result<String> {
-        let envelope = JobEnvelope::new(kind, queue, payload, self.max_attempts);
-        let id = envelope.id.clone();
-        queue::push(&self.redis, queue, &envelope).await?;
-        Ok(id)
+        self.dispatch(queue, kind, payload, None).await
     }
 
     /// Enqueue `kind` to fire no earlier than `delay` from now.
@@ -426,14 +560,80 @@ impl Dispatcher {
         payload: Value,
         delay: std::time::Duration,
     ) -> Result<String> {
-        let envelope = JobEnvelope::new(kind, kind.queue(), payload, self.max_attempts);
+        self.dispatch(kind.queue(), kind, payload, Some(delay))
+            .await
+    }
+
+    /// Shared claim → push path for every enqueue variant. Remote
+    /// queues first claim a dedupe slot for `(kind, payload)`; a held
+    /// slot short-circuits to the existing job id. The claim is
+    /// released if the push itself fails.
+    async fn dispatch(
+        &self,
+        queue: Queue,
+        kind: JobKind,
+        payload: Value,
+        delay: Option<std::time::Duration>,
+    ) -> Result<String> {
+        let mut envelope = JobEnvelope::new(kind, queue, payload, self.max_attempts);
+        let dedupe_key = queue
+            .is_remote()
+            .then(|| remote_dedupe_key(kind, &envelope.payload));
+        if let Some(key) = dedupe_key {
+            match self.claim_dedupe(&key, &envelope.id).await? {
+                DedupeClaim::Duplicate(id) => return Ok(id),
+                DedupeClaim::Claimed => envelope.dedupe_key = Some(key),
+                DedupeClaim::Unavailable => {}
+            }
+        }
         let id = envelope.id.clone();
-        let run_at_ms = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64 + delay.as_millis() as u64)
-            .unwrap_or_else(|_| delay.as_millis() as u64);
-        queue::push_delayed(&self.redis, &envelope, run_at_ms).await?;
+        let pushed = match delay {
+            None => queue::push(&self.redis, queue, &envelope).await,
+            Some(delay) => {
+                let run_at_ms = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64 + delay.as_millis() as u64)
+                    .unwrap_or_else(|_| delay.as_millis() as u64);
+                queue::push_delayed(&self.redis, &envelope, run_at_ms).await
+            }
+        };
+        if let Err(e) = pushed {
+            if let Some(key) = &envelope.dedupe_key {
+                queue::release_dedupe(&self.redis, key, &id).await;
+            }
+            return Err(e);
+        }
         Ok(id)
+    }
+
+    /// Claim `jobs:dedupe:{key}` for `job_id`. `SET NX EX` is the
+    /// atomic gate; on contention the stored job id is returned so the
+    /// caller can report the existing job instead of a new one. Only
+    /// the "key vanished between SET NX and GET" race falls back to
+    /// [`DedupeClaim::Unavailable`]; Redis errors propagate and fail
+    /// the enqueue (the push would fail on the same outage anyway).
+    async fn claim_dedupe(&self, key: &str, job_id: &str) -> Result<DedupeClaim> {
+        let full = self.redis.key(&format!("jobs:dedupe:{key}"));
+        for _ in 0..2 {
+            let mut conn = self.redis.conn().await?;
+            let claimed: Option<String> = redis::cmd("SET")
+                .arg(&full)
+                .arg(job_id)
+                .arg("NX")
+                .arg("EX")
+                .arg(REMOTE_JOB_DEDUPE_TTL_SECONDS)
+                .query_async(&mut *conn)
+                .await?;
+            if claimed.is_some() {
+                return Ok(DedupeClaim::Claimed);
+            }
+            let existing: Option<String> = conn.get(&full).await?;
+            if let Some(id) = existing {
+                return Ok(DedupeClaim::Duplicate(id));
+            }
+            // The key expired between SET NX and GET — retry the claim.
+        }
+        Ok(DedupeClaim::Unavailable)
     }
 }
 
@@ -469,9 +669,100 @@ mod tests {
     }
 
     #[test]
+    fn remote_work_is_isolated_from_the_default_queue() {
+        // User-visible remote object fetches get their own lane…
+        assert_eq!(JobKind::RemoteStatusFetch.queue(), Queue::RemoteStatus);
+        // …bulk remote fetches/syncs another…
+        for kind in [
+            JobKind::RemoteMediaFetch,
+            JobKind::RemoteActorFetch,
+            JobKind::RemoteNetworkSync,
+            JobKind::WebmentionIncoming,
+            JobKind::WebmentionOutgoing,
+        ] {
+            assert_eq!(kind.queue(), Queue::Remote, "{kind:?}");
+        }
+        // …and large remote walks the furthest-out lane.
+        assert_eq!(JobKind::ThreadPath.queue(), Queue::RemoteBulk);
+        // Best-effort remote-adjacent work rides `bulk`, never `default`.
+        assert_eq!(JobKind::FetchLinkPreview.queue(), Queue::Bulk);
+        assert_eq!(JobKind::ThreadExpand.queue(), Queue::Bulk);
+        // Nothing remote-dependent may land on `default` again.
+        for kind in JobKind::ALL {
+            if kind.queue() == Queue::Default {
+                assert!(!kind.as_str().starts_with("remote_"), "{kind:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn publish_work_gets_its_own_lane() {
+        assert_eq!(JobKind::ScheduledStatusPublish.queue(), Queue::Publish);
+        assert_eq!(JobKind::QuoteAuthorization.queue(), Queue::Publish);
+        assert!(Queue::ALL.contains(&Queue::Publish));
+        assert_eq!(Queue::Publish.as_str(), "publish");
+    }
+
+    #[test]
+    fn new_queues_are_registered() {
+        for queue in [Queue::RemoteStatus, Queue::Remote, Queue::RemoteBulk] {
+            assert!(Queue::ALL.contains(&queue));
+            assert!(queue.is_remote());
+        }
+        assert_eq!(Queue::RemoteStatus.as_str(), "remote_status");
+        assert_eq!(Queue::Remote.as_str(), "remote");
+        assert_eq!(Queue::RemoteBulk.as_str(), "remote_bulk");
+        assert!(!Queue::Default.is_remote());
+        assert!(!Queue::Publish.is_remote());
+    }
+
+    #[test]
+    fn remote_dedupe_key_is_payload_sensitive() {
+        let resolve = remote_dedupe_key(
+            JobKind::RemoteStatusFetch,
+            &serde_json::json!({"uri": "https://example.com/1"}),
+        );
+        let refresh = remote_dedupe_key(
+            JobKind::RemoteStatusFetch,
+            &serde_json::json!({"uri": "https://example.com/1", "refresh": true}),
+        );
+        let other_uri = remote_dedupe_key(
+            JobKind::RemoteStatusFetch,
+            &serde_json::json!({"uri": "https://example.com/2"}),
+        );
+        assert_ne!(resolve, refresh);
+        assert_ne!(resolve, other_uri);
+        // Object key order must not change the key.
+        let reordered = remote_dedupe_key(
+            JobKind::RemoteStatusFetch,
+            &serde_json::json!({"refresh": true, "uri": "https://example.com/1"}),
+        );
+        assert_eq!(refresh, reordered);
+    }
+
+    #[test]
+    fn consumer_count_uses_per_queue_overrides() {
+        let mut jobs = crate::config::JobsConfig {
+            concurrency: 4,
+            ..Default::default()
+        };
+        assert_eq!(Queue::Default.consumer_count(&jobs), 4);
+        assert_eq!(Queue::Publish.consumer_count(&jobs), 4);
+        assert_eq!(Queue::RemoteStatus.consumer_count(&jobs), 4);
+        assert_eq!(Queue::Remote.consumer_count(&jobs), 8);
+        assert_eq!(Queue::RemoteBulk.consumer_count(&jobs), 4);
+        jobs.remote_concurrency = Some(3);
+        jobs.bulk_concurrency = Some(2);
+        jobs.remote_status_concurrency = Some(6);
+        assert_eq!(Queue::Remote.consumer_count(&jobs), 3);
+        assert_eq!(Queue::Bulk.consumer_count(&jobs), 2);
+        assert_eq!(Queue::RemoteStatus.consumer_count(&jobs), 6);
+    }
+
+    #[test]
     fn timeline_fan_out_is_isolated_from_remote_fetches() {
         assert_eq!(JobKind::TimelineFanOut.queue(), Queue::Timeline);
-        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Default);
+        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Remote);
         assert!(Queue::ALL.contains(&Queue::Timeline));
         assert_eq!(Queue::Timeline.as_str(), "timeline");
     }
@@ -479,7 +770,7 @@ mod tests {
     #[test]
     fn notification_fanout_is_isolated_from_remote_fetches() {
         assert_eq!(JobKind::NotificationFanout.queue(), Queue::Notifications);
-        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Default);
+        assert_eq!(JobKind::RemoteActorFetch.queue(), Queue::Remote);
         assert!(Queue::ALL.contains(&Queue::Notifications));
         assert_eq!(Queue::Notifications.as_str(), "notifications");
     }

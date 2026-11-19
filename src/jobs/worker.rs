@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -18,6 +19,22 @@ use crate::{
     Result,
 };
 
+/// Slack kept between `handler_timeout_seconds` and
+/// `reclaim_idle_seconds` so a permit wait plus a full handler run
+/// never lets `XAUTOCLAIM` re-dispatch a still-running remote job.
+pub const RECLAIM_SAFETY_MARGIN_MS: u64 = 60_000;
+
+/// Outcome of waiting for a remote permit on an already-claimed job.
+enum PermitWait {
+    /// A slot was acquired; run the job holding it.
+    Acquired(tokio::sync::OwnedSemaphorePermit),
+    /// No cap applies (non-remote queue, cap disabled, semaphore
+    /// closed) — run without a permit.
+    NotRequired,
+    /// No slot within the safe window — leave the job pending.
+    TimedOut,
+}
+
 /// A worker draining every [`Queue`] plus the delayed-job ZSET.
 #[derive(Clone)]
 pub struct Worker {
@@ -26,6 +43,9 @@ pub struct Worker {
     jobs: Arc<JobsConfig>,
     consumer: String,
     cancel: CancellationToken,
+    /// Global cap on concurrently executing remote-queue jobs
+    /// (`jobs.remote_max_in_flight`; `None` = unlimited).
+    remote_permits: Option<Arc<Semaphore>>,
 }
 
 impl Worker {
@@ -37,12 +57,17 @@ impl Worker {
         jobs: Arc<JobsConfig>,
         consumer: impl Into<String>,
     ) -> Self {
+        let remote_permits = jobs
+            .remote_max_in_flight
+            .filter(|n| *n > 0)
+            .map(|n| Arc::new(Semaphore::new(n as usize)));
         Worker {
             ctx,
             registry,
             jobs,
             consumer: consumer.into(),
             cancel: CancellationToken::new(),
+            remote_permits,
         }
     }
 
@@ -60,7 +85,7 @@ impl Worker {
         }
         let mut set = JoinSet::new();
         for queue_name in Queue::ALL {
-            for _ in 0..self.jobs.concurrency {
+            for _ in 0..queue_name.consumer_count(self.jobs.as_ref()) {
                 let worker = self.clone();
                 set.spawn(async move { worker.consumer_loop(*queue_name).await });
             }
@@ -69,6 +94,8 @@ impl Worker {
         set.spawn(async move { delayed.delayed_loop().await });
         let reclaimer = self.clone();
         set.spawn(async move { reclaimer.reclaim_loop().await });
+        let depths = self.clone();
+        set.spawn(async move { depths.depth_loop().await });
         self.cancel.cancelled().await;
         // Drain instead of aborting: each task observes the token at
         // its loop boundary, so a dispatch in flight runs to
@@ -81,6 +108,100 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    /// Remote-queue permit for `queue_name`, if the global cap is
+    /// configured. Acquired **before** a job is claimed from the
+    /// stream: a job sitting in the consumer's pending list while it
+    /// waits for a permit would look abandoned to `XAUTOCLAIM` and be
+    /// re-dispatched while still waiting.
+    async fn acquire_remote_permit(
+        &self,
+        queue_name: Queue,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        if !queue_name.is_remote() {
+            return None;
+        }
+        let sem = self.remote_permits.as_ref()?;
+        tokio::select! {
+            _ = self.cancel.cancelled() => None,
+            permit = sem.clone().acquire_owned() => permit.ok(),
+        }
+    }
+
+    /// Permit for a job the reclaimer already pulled into the pending
+    /// list: its idle clock started at the reclaim, so the wait is
+    /// bounded well inside `reclaim_idle_seconds` and the pending idle
+    /// time is refreshed (via `XPENDING IDLE`) while waiting. On
+    /// timeout the job is left pending for the next reclaim pass
+    /// rather than dispatched without a slot.
+    async fn wait_remote_permit(
+        &self,
+        queue_name: Queue,
+        stream_id: &str,
+        reclaim_idle_ms: u64,
+    ) -> PermitWait {
+        let Some(sem) = self.remote_permits.as_ref() else {
+            return PermitWait::NotRequired;
+        };
+        if !queue_name.is_remote() {
+            return PermitWait::NotRequired;
+        }
+        // Budget: handler timeout + this wait + slack must stay below
+        // the reclaim window (validated in `Config::validate`). The
+        // wait is also capped at half the idle window so a fresh
+        // reclaim always gets at least that long.
+        let budget = self
+            .jobs
+            .reclaim_idle_seconds
+            .saturating_mul(1000)
+            .saturating_sub(self.jobs.handler_timeout_seconds.saturating_mul(1000))
+            .saturating_sub(RECLAIM_SAFETY_MARGIN_MS)
+            .max(1_000)
+            .min(reclaim_idle_ms / 2);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(budget);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                tracing::debug!(
+                    queue = queue_name.as_str(),
+                    "remote permit wait timed out; leaving job pending"
+                );
+                return PermitWait::TimedOut;
+            }
+            let step = remaining.min(Duration::from_secs(10));
+            tokio::select! {
+                _ = self.cancel.cancelled() => return PermitWait::TimedOut,
+                permit = tokio::time::timeout(step, sem.clone().acquire_owned()) => {
+                    match permit {
+                        Ok(Ok(p)) => return PermitWait::Acquired(p),
+                        Ok(Err(_)) => return PermitWait::NotRequired, // semaphore closed
+                        Err(_) => {}
+                    }
+                }
+            }
+            self.refresh_pending_idle(queue_name, stream_id).await;
+        }
+    }
+
+    /// Reset the pending idle clock for one entry — best-effort; a
+    /// failure just means the reclaimer may pick the entry up again
+    /// sooner.
+    async fn refresh_pending_idle(&self, queue_name: Queue, stream_id: &str) {
+        let mut conn = match self.ctx.redis.conn().await {
+            Ok(conn) => conn,
+            Err(_) => return,
+        };
+        let _: redis::RedisResult<()> = redis::cmd("XPENDING")
+            .arg(queue::stream_key(&self.ctx.redis, queue_name))
+            .arg(queue::GROUP)
+            .arg(self.consumer.as_str())
+            .arg("IDLE")
+            .arg(0u64)
+            .arg(stream_id)
+            .arg(stream_id)
+            .query_async(&mut *conn)
+            .await;
     }
 
     /// `XREADGROUP BLOCK` loop for a single queue.
@@ -97,7 +218,14 @@ impl Worker {
                         if self.cancel.is_cancelled() {
                             return;
                         }
-                        self.dispatch(queue_name, &stream_id, &body).await;
+                        // One permit per job, and only after the claim —
+                        // waiting here keeps the entry idle for at most
+                        // one dispatch, far below `reclaim_idle_seconds`.
+                        let permit = self.acquire_remote_permit(queue_name).await;
+                        if self.cancel.is_cancelled() {
+                            return;
+                        }
+                        self.dispatch(queue_name, &stream_id, &body, permit).await;
                     }
                 }
                 Err(e) => {
@@ -109,8 +237,16 @@ impl Worker {
     }
 
     /// Execute one claimed entry: decode, find the handler, run, ack or
-    /// fail with retry/dead-letter semantics.
-    async fn dispatch(&self, queue_name: Queue, stream_id: &str, body: &str) {
+    /// fail with retry/dead-letter semantics. `permit` is the remote
+    /// slot already held by the caller (see [`Self::consumer_loop`]).
+    async fn dispatch(
+        &self,
+        queue_name: Queue,
+        stream_id: &str,
+        body: &str,
+        permit: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) {
+        let _remote_permit = permit;
         let envelope = match queue::decode(body) {
             Ok(envelope) => envelope,
             Err(e) => {
@@ -165,6 +301,8 @@ impl Worker {
             Ok(()) => {
                 if let Err(e) = queue::ack(&self.ctx.redis, queue_name, stream_id).await {
                     tracing::warn!(stream_id, error = %e, "job ack failed");
+                } else if let Some(key) = &envelope.dedupe_key {
+                    queue::release_dedupe(&self.ctx.redis, key, &envelope.id).await;
                 }
             }
             Err(e) => {
@@ -185,6 +323,29 @@ impl Worker {
                 .await
                 {
                     tracing::warn!(stream_id, error = %e, "job failure bookkeeping failed");
+                }
+            }
+        }
+    }
+
+    /// Periodic stream-length log so queue starvation is visible before
+    /// it becomes a user-visible bug. Non-empty queues only; one line
+    /// per minute keeps it cheap to scan.
+    async fn depth_loop(&self) {
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(60)) => {}
+                _ = self.cancel.cancelled() => return,
+            }
+            for queue_name in Queue::ALL {
+                match queue::depth(&self.ctx.redis, *queue_name).await {
+                    Ok(len) if len > 0 => {
+                        tracing::info!(queue = queue_name.as_str(), depth = len, "queue depth");
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(queue = queue_name.as_str(), error = %e, "queue depth read failed");
+                    }
                 }
             }
         }
@@ -229,7 +390,27 @@ impl Worker {
                                 return;
                             }
                             tracing::info!(stream_id, "reclaimed abandoned job");
-                            self.dispatch(*queue_name, &stream_id, &body).await;
+                            // The entry is already in the pending list
+                            // (idle clock running from the reclaim), so
+                            // a permit wait here must stay well inside
+                            // `reclaim_idle_seconds` — refresh the idle
+                            // clock while waiting.
+                            match self
+                                .wait_remote_permit(*queue_name, &stream_id, idle_ms)
+                                .await
+                            {
+                                PermitWait::Acquired(p) => {
+                                    self.dispatch(*queue_name, &stream_id, &body, Some(p)).await;
+                                }
+                                PermitWait::NotRequired => {
+                                    self.dispatch(*queue_name, &stream_id, &body, None).await;
+                                }
+                                // No slot within the safe window — leave
+                                // the entry pending; the next reclaim
+                                // pass tries again. Never run a capped
+                                // remote job without its permit.
+                                PermitWait::TimedOut => continue,
+                            }
                         }
                     }
                     Err(e) => {

@@ -570,8 +570,13 @@ async fn queue_publication(
 /// else fetches it).
 async fn request_status_fetch(ctx: &JobContext, uri: &str) {
     let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
-    if let Err(e) =
-        crate::posts::remote::enqueue_status_fetch_deduped(&ctx.redis, &dispatcher, uri).await
+    if let Err(e) = crate::posts::remote::enqueue_status_fetch_deduped(
+        &ctx.redis,
+        &dispatcher,
+        &ctx.config.jobs,
+        uri,
+    )
+    .await
     {
         tracing::warn!(uri, error = %e, "remote status fetch enqueue failed");
     }

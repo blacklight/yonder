@@ -1563,10 +1563,13 @@ pub async fn enqueue_media_refresh(core: &ApCore, uri: &str) -> Result<()> {
     if cache.get(&key).await.ok().flatten().is_some() {
         return Ok(());
     }
+    if !status_fetch_allowed(&core.redis, &core.config.jobs, uri).await {
+        return Ok(());
+    }
     core.dispatcher
         .enqueue(
             JobKind::RemoteStatusFetch,
-            json!({"uri": uri, "refresh": true}),
+            json!({"uri": uri, "refresh": true, "via": "media"}),
         )
         .await?;
     let _ = cache
@@ -1587,10 +1590,13 @@ pub async fn enqueue_poll_refresh(core: &ApCore, uri: &str) -> Result<()> {
     if cache.get(&key).await.ok().flatten().is_some() {
         return Ok(());
     }
+    if !status_fetch_allowed(&core.redis, &core.config.jobs, uri).await {
+        return Ok(());
+    }
     core.dispatcher
         .enqueue(
             JobKind::RemoteStatusFetch,
-            json!({"uri": uri, "refresh": true}),
+            json!({"uri": uri, "refresh": true, "via": "poll"}),
         )
         .await?;
     let ttl = Duration::from_secs(core.config.remote_context.counts_grace_seconds.max(60));
@@ -1622,10 +1628,22 @@ pub async fn enqueue_pin_resolve(core: &ApCore, uri: &str) -> Result<()> {
     enqueue_status_fetch(core, uri).await
 }
 
+/// Per-domain gate for `RemoteStatusFetch` enqueues — the remote
+/// queue's circuit breaker and enqueue budget apply to quote/pin
+/// resolution too, but a denied enqueue must not fail the read.
+async fn status_fetch_allowed(
+    redis: &crate::cache::Redis,
+    jobs: &crate::config::JobsConfig,
+    uri: &str,
+) -> bool {
+    let domain = moderation::actor_domain(uri);
+    crate::jobs::remote_gate::enqueue_allowed(redis, jobs, domain.as_deref(), "status_fetch").await
+}
+
 /// Shared dedup + enqueue for `RemoteStatusFetch` — the marker keeps
 /// repeat ingest/read triggers from piling up jobs for one URI.
 async fn enqueue_status_fetch(core: &ApCore, uri: &str) -> Result<()> {
-    enqueue_status_fetch_deduped(&core.redis, &core.dispatcher, uri).await
+    enqueue_status_fetch_deduped(&core.redis, &core.dispatcher, &core.config.jobs, uri).await
 }
 
 /// [`enqueue_status_fetch`] without an [`ApCore`] — for paths that
@@ -1634,11 +1652,15 @@ async fn enqueue_status_fetch(core: &ApCore, uri: &str) -> Result<()> {
 pub(crate) async fn enqueue_status_fetch_deduped(
     redis: &crate::cache::Redis,
     dispatcher: &crate::jobs::Dispatcher,
+    jobs: &crate::config::JobsConfig,
     uri: &str,
 ) -> Result<()> {
     let cache = RedisCache::new(redis.clone());
     let key = fetch_marker_key(uri);
     if cache.get(&key).await.ok().flatten().is_some() {
+        return Ok(());
+    }
+    if !status_fetch_allowed(redis, jobs, uri).await {
         return Ok(());
     }
     dispatcher
@@ -1670,14 +1692,59 @@ impl RemoteStatusFetchJob {
     }
 }
 
+/// How a [`RemoteStatusFetchJob`] run ended, for the per-domain
+/// circuit breaker: only an actual remote fetch outcome (success or
+/// fetch failure) may move it — local DB errors say nothing about
+/// the remote.
+enum FetchOutcome {
+    /// Settled without a remote call (already materialized, marker
+    /// hit, suspended domain, missing inputs) or a local error.
+    Local,
+    /// The remote answered (doc materialized, or a definitive Gone).
+    Remote,
+    /// The remote fetch itself failed (transport error / throttling);
+    /// carries the error the job should retry with.
+    FetchFailed(crate::Error),
+}
+
 #[async_trait::async_trait]
 impl JobHandler for RemoteStatusFetchJob {
     async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let domain = payload
+            .get("uri")
+            .and_then(Value::as_str)
+            .and_then(moderation::actor_domain);
+        // The cheap local checks run before the circuit gate so an
+        // open circuit never blocks linking an already-materialized
+        // target (the quote would otherwise stay pending until the
+        // cooldown ends).
+        let result = self.execute(ctx, payload).await;
+        if let Some(domain) = domain.as_deref() {
+            match result {
+                Ok(FetchOutcome::Remote) => {
+                    crate::jobs::remote_gate::record_success(&ctx.redis, domain).await
+                }
+                Ok(FetchOutcome::FetchFailed(_)) => {
+                    crate::jobs::remote_gate::record_failure(&ctx.redis, &ctx.config.jobs, domain)
+                        .await;
+                }
+                Ok(FetchOutcome::Local) | Err(_) => {}
+            }
+        }
+        match result {
+            Ok(FetchOutcome::FetchFailed(e)) => Err(e),
+            other => other.map(|_| ()),
+        }
+    }
+}
+
+impl RemoteStatusFetchJob {
+    async fn execute(&self, ctx: &JobContext, payload: &Value) -> Result<FetchOutcome> {
         let Some(uri) = payload.get("uri").and_then(Value::as_str) else {
-            return Ok(());
+            return Ok(FetchOutcome::Local);
         };
         let Some(ap) = &self.ap else {
-            return Ok(());
+            return Ok(FetchOutcome::Local);
         };
         // `refresh` jobs deliberately re-fetch a materialized row (the
         // media self-heal) — skip the already-cached and
@@ -1711,13 +1778,13 @@ impl JobHandler for RemoteStatusFetchJob {
                         tracing::warn!(uri, error = %e, "pending boost drain failed");
                     }
                     let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
-                    return Ok(());
+                    return Ok(FetchOutcome::Local);
                 }
             }
             if let Some(marker) = cache.get(&key).await.ok().flatten() {
                 // A previous run already settled this URI.
                 if let Some("ok" | "fail") = marker.get("s").and_then(Value::as_str) {
-                    return Ok(());
+                    return Ok(FetchOutcome::Local);
                 }
             }
         }
@@ -1727,78 +1794,93 @@ impl JobHandler for RemoteStatusFetchJob {
                 .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
                 .await;
             fail_pending_boost_import(&ctx.db, uri).await;
-            return Ok(());
+            return Ok(FetchOutcome::Local);
         }
-        match lookup::fetch_remote_object_detailed(ap, uri).await? {
+        // Only now does the job need the network: skip the fetch
+        // while the domain's circuit is open (the local checks
+        // above already ran).
+        if let Some(open_domain) = moderation::actor_domain(uri) {
+            if crate::jobs::remote_gate::circuit_open(&ctx.redis, &open_domain).await {
+                tracing::debug!(uri, domain = %open_domain, "remote circuit open — skipping status fetch");
+                return Ok(FetchOutcome::Local);
+            }
+        }
+        let fetched = match lookup::fetch_remote_object_detailed(ap, uri).await? {
             lookup::RemoteFetch::Gone => {
                 let _ = cache
                     .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
                     .await;
                 fail_pending_boost_import(&ctx.db, uri).await;
-                Ok(())
+                return Ok(FetchOutcome::Remote);
             }
             // Transport-level failure or remote throttling — retry
-            // through the queue's backoff budget.
-            lookup::RemoteFetch::RateLimited | lookup::RemoteFetch::Failed => Err(
-                crate::Error::Internal(format!("remote status fetch failed: {uri}")),
-            ),
-            lookup::RemoteFetch::Doc(fetched) => {
-                match crate::search::resolve::materialize_remote(
+            // through the queue's backoff budget. The "dead" marker
+            // suppresses read-path re-enqueues (any marker blocks
+            // `enqueue_status_fetch_deduped`) without tripping this
+            // handler's `ok|fail` early-return, so the job's own
+            // retries still run; after dead-letter the marker keeps
+            // reads from spawning a fresh cycle for
+            // [`FAIL_MARKER_TTL`].
+            lookup::RemoteFetch::RateLimited | lookup::RemoteFetch::Failed => {
+                let _ = cache
+                    .set(&key, &json!({"s": "dead"}), FAIL_MARKER_TTL)
+                    .await;
+                return Ok(FetchOutcome::FetchFailed(crate::Error::Internal(format!(
+                    "remote status fetch failed: {uri}"
+                ))));
+            }
+            lookup::RemoteFetch::Doc(fetched) => fetched,
+        };
+        match crate::search::resolve::materialize_remote(&ctx.db, ap, &fetched.url, &fetched.doc)
+            .await?
+        {
+            // The fetched doc's `id` can differ from the URI the
+            // quoter stored (e.g. `quoteUrl` vs `id`), so back-fill
+            // by the requested URI explicitly — the ingest-side CTE
+            // only matches `object_id`.
+            Some(crate::search::resolve::ResolvedHit::Status(id)) => {
+                backfill_pending_quotes(&ctx.db, id, uri).await?;
+                backfill_pending_pins(&ctx.db, id, uri).await?;
+                let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+                if let Err(e) = crate::users::transfer::restore::backfill_pending_boosts(
                     &ctx.db,
-                    ap,
-                    &fetched.url,
-                    &fetched.doc,
+                    &dispatcher,
+                    id,
+                    uri,
                 )
-                .await?
+                .await
                 {
-                    // The fetched doc's `id` can differ from the URI
-                    // the quoter stored (e.g. `quoteUrl` vs `id`), so
-                    // back-fill by the requested URI explicitly — the
-                    // ingest-side CTE only matches `object_id`.
-                    Some(crate::search::resolve::ResolvedHit::Status(id)) => {
-                        backfill_pending_quotes(&ctx.db, id, uri).await?;
-                        backfill_pending_pins(&ctx.db, id, uri).await?;
-                        let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
-                        if let Err(e) = crate::users::transfer::restore::backfill_pending_boosts(
-                            &ctx.db,
-                            &dispatcher,
-                            id,
-                            uri,
+                    tracing::warn!(uri, error = %e, "pending boost drain failed");
+                }
+                // Refresh re-materializes an existing row, so the
+                // ingest-side `is_new`/Update gate skipped the
+                // preview enqueue — run it here or self-healed
+                // statuses never get their card.
+                if refresh {
+                    if let Ok(Some(status)) = super::load(&ctx.db, id).await {
+                        let media_ids: Vec<i64> = sqlx::query_scalar(
+                            "SELECT id FROM media_attachments WHERE status_id = $1",
                         )
+                        .bind(id)
+                        .fetch_all(&ctx.db)
                         .await
-                        {
-                            tracing::warn!(uri, error = %e, "pending boost drain failed");
-                        }
-                        // Refresh re-materializes an existing row, so
-                        // the ingest-side `is_new`/Update gate skipped
-                        // the preview enqueue — run it here or
-                        // self-healed statuses never get their card.
-                        if refresh {
-                            if let Ok(Some(status)) = super::load(&ctx.db, id).await {
-                                let media_ids: Vec<i64> = sqlx::query_scalar(
-                                    "SELECT id FROM media_attachments WHERE status_id = $1",
-                                )
-                                .bind(id)
-                                .fetch_all(&ctx.db)
-                                .await
-                                .unwrap_or_default();
-                                let pctx = super::PostContext::from_job(ctx, self.ap.clone());
-                                super::preview::enqueue(&pctx, &status, &media_ids).await;
-                            }
-                        }
-                        let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
-                        Ok(())
-                    }
-                    // Settled but never a status — an actor document,
-                    // an untrusted or rejected Note.
-                    _ => {
-                        let _ = cache
-                            .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
-                            .await;
-                        fail_pending_boost_import(&ctx.db, uri).await;
-                        Ok(())
+                        .unwrap_or_default();
+                        let pctx = super::PostContext::from_job(ctx, self.ap.clone());
+                        super::preview::enqueue(&pctx, &status, &media_ids).await;
                     }
                 }
+                let _ = cache.set(&key, &json!({"s": "ok"}), OK_MARKER_TTL).await;
+                Ok(FetchOutcome::Remote)
+            }
+            // Settled but never a status — an actor document, an
+            // untrusted or rejected Note. The remote answered, so
+            // this is a successful fetch for the circuit breaker.
+            _ => {
+                let _ = cache
+                    .set(&key, &json!({"s": "fail"}), FAIL_MARKER_TTL)
+                    .await;
+                fail_pending_boost_import(&ctx.db, uri).await;
+                Ok(FetchOutcome::Remote)
             }
         }
     }

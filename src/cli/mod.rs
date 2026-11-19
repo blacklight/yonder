@@ -344,7 +344,10 @@ async fn start_worker(
     crate::jobs::worker::Worker,
     tokio_cron_scheduler::JobScheduler,
 )> {
-    let blocking_consumers = config.jobs.concurrency * crate::jobs::Queue::ALL.len() as u32;
+    let blocking_consumers: u32 = crate::jobs::Queue::ALL
+        .iter()
+        .map(|q| q.consumer_count(&config.jobs))
+        .sum();
     let redis = cache::connect(&crate::config::RedisConfig {
         pool_size: config.redis.pool_size.max(blocking_consumers + 4),
         ..config.redis.clone()

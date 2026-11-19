@@ -245,6 +245,17 @@ pub(crate) async fn upsert_remote_stub(
     if has_actor_document {
         return Ok(id);
     }
+    let domain = super::moderation::actor_domain(actor_url);
+    if !crate::jobs::remote_gate::enqueue_allowed(
+        dispatcher.redis(),
+        &config.jobs,
+        domain.as_deref(),
+        "actor_fetch",
+    )
+    .await
+    {
+        return Ok(id);
+    }
     dispatcher
         .enqueue(
             JobKind::RemoteActorFetch,

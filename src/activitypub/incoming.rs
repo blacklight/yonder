@@ -22,7 +22,7 @@ use pubby_sdk::handlers::inbox::{OnActivityReceived, OnInteractionReceived};
 use pubby_sdk::{Activity, ActivityDisposition, ActivityPubStorage, Interaction, InteractionType};
 use serde_json::{json, Value};
 
-use crate::jobs::{Dispatcher, JobContext, JobHandler, JobKind, Queue};
+use crate::jobs::{Dispatcher, JobContext, JobHandler, JobKind};
 use crate::Result;
 
 use super::actors::{sync_block, sync_call};
@@ -505,10 +505,10 @@ impl RemoteActorFetchJob {
 
     /// Sweep mode: fan out one `RemoteActorFetch` per stale remote
     /// account. Per-actor jobs (rather than inline fetches) keep
-    /// retry/dead-letter accounting and parallelism; `Bulk` keeps the
-    /// sweep off the interactive queue. Actors with a fresh
-    /// failure/gone marker are skipped — the fetch job stamps them so
-    /// the sweep can't respawn a retry cycle on every firing.
+    /// retry/dead-letter accounting and parallelism; the `remote`
+    /// queue keeps the sweep off the interactive one. Actors with a
+    /// fresh failure/gone marker are skipped — the fetch job stamps
+    /// them so the sweep can't respawn a retry cycle on every firing.
     async fn sweep(&self, ctx: &JobContext) -> Result<()> {
         let actor_ids: Vec<String> = sqlx::query_scalar(
             "SELECT a.actor_id FROM accounts a \
@@ -534,12 +534,19 @@ impl RemoteActorFetchJob {
         .await?;
         let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
         for actor_id in actor_ids {
+            let domain = super::moderation::actor_domain(&actor_id);
+            if !crate::jobs::remote_gate::enqueue_allowed(
+                dispatcher.redis(),
+                &ctx.config.jobs,
+                domain.as_deref(),
+                "actor_fetch",
+            )
+            .await
+            {
+                continue;
+            }
             dispatcher
-                .enqueue_on(
-                    Queue::Bulk,
-                    JobKind::RemoteActorFetch,
-                    json!({ "actor_url": actor_id }),
-                )
+                .enqueue(JobKind::RemoteActorFetch, json!({ "actor_url": actor_id }))
                 .await?;
         }
         Ok(())
@@ -557,22 +564,69 @@ impl JobHandler for RemoteActorFetchJob {
         else {
             return self.sweep(ctx).await;
         };
-        match super::lookup::fetch_remote_object_detailed(&self.ctx, &actor_url).await? {
+        let domain = super::moderation::actor_domain(&actor_url);
+        // Fail (not ack) while the domain's circuit is open: the
+        // queue's own backoff retries the job until the cooldown ends,
+        // and the dedupe claim is held across those retries so no
+        // duplicate is enqueued. Acking here would drop the refresh
+        // until some later read happened to re-enqueue it.
+        if let Some(domain) = domain.as_deref() {
+            if crate::jobs::remote_gate::circuit_open(&ctx.redis, domain).await {
+                tracing::debug!(actor = %actor_url, domain, "remote circuit open — deferring actor fetch");
+                return Err(crate::Error::Internal(format!(
+                    "remote actor fetch deferred: circuit open for {domain}"
+                )));
+            }
+        }
+        let result = self.fetch_actor(ctx, &actor_url).await;
+        if let Some(domain) = domain.as_deref() {
+            match &result {
+                Ok(FetchOutcome::Remote) => {
+                    crate::jobs::remote_gate::record_success(&ctx.redis, domain).await
+                }
+                Ok(FetchOutcome::FetchFailed(_)) => {
+                    crate::jobs::remote_gate::record_failure(&ctx.redis, &ctx.config.jobs, domain)
+                        .await;
+                }
+                // Errors never reach the breaker (see `FetchOutcome`).
+                Err(_) => {}
+            }
+        }
+        match result {
+            Ok(FetchOutcome::FetchFailed(e)) => Err(e),
+            other => other.map(|_| ()),
+        }
+    }
+}
+
+/// How a [`RemoteActorFetchJob`] fetch ended, for the per-domain
+/// circuit breaker. Errors (`Err`) never reach the breaker — a local
+/// DB/storage failure says nothing about the remote.
+enum FetchOutcome {
+    /// The remote answered (doc upserted, or a definitive Gone).
+    Remote,
+    /// The remote fetch itself failed; carries the retry error.
+    FetchFailed(crate::Error),
+}
+
+impl RemoteActorFetchJob {
+    async fn fetch_actor(&self, ctx: &JobContext, actor_url: &str) -> Result<FetchOutcome> {
+        match super::lookup::fetch_remote_object_detailed(&self.ctx, actor_url).await? {
             super::lookup::RemoteFetch::Doc(fetched) => {
                 let doc = fetched.doc;
                 // Resolve a `movedTo` target we don't know yet before
                 // the upsert — its move sync needs the target row (and
                 // the fresh `alsoKnownAs`) to mark the move.
-                ensure_move_target(&self.ctx, &actor_url, &doc).await;
+                ensure_move_target(&self.ctx, actor_url, &doc).await;
                 self.ctx
                     .core
                     .storage
-                    .cache_remote_actor(&actor_url, &doc, None)
+                    .cache_remote_actor(actor_url, &doc, None)
                     .map_err(crate::Error::Federation)?;
                 let account_id = super::storage::upsert_remote_actor_row(
                     &self.ctx.core.db,
                     &self.ctx.core.config,
-                    &actor_url,
+                    actor_url,
                     &doc,
                 )
                 .await?;
@@ -597,12 +651,12 @@ impl JobHandler for RemoteActorFetchJob {
                         tracing::warn!(actor = %actor_url, error = %e, "profile-link verify enqueue failed");
                     }
                 }
-                refresh_remote_counters(&self.ctx, &actor_url, &doc).await;
+                refresh_remote_counters(&self.ctx, actor_url, &doc).await;
                 if let Some(id) = account_id {
                     refresh_remote_featured(&self.ctx, id, &doc).await;
                 }
-                clear_fetch_markers(&self.ctx.core.db, &actor_url, account_id).await;
-                Ok(())
+                clear_fetch_markers(&self.ctx.core.db, actor_url, account_id).await;
+                Ok(FetchOutcome::Remote)
             }
             super::lookup::RemoteFetch::Gone => {
                 // The remote says the actor doesn't exist (or the URL
@@ -610,22 +664,17 @@ impl JobHandler for RemoteActorFetchJob {
                 // markers so reads and the sweep stop re-enqueueing,
                 // and ack the job instead of dead-lettering it.
                 tracing::info!(actor = %actor_url, "remote actor gone; marking");
-                stamp_fetch_markers(
-                    &self.ctx.core.db,
-                    &actor_url,
-                    None,
-                    &["actor", "actor_gone"],
-                )
-                .await;
-                Ok(())
+                stamp_fetch_markers(&self.ctx.core.db, actor_url, None, &["actor", "actor_gone"])
+                    .await;
+                Ok(FetchOutcome::Remote)
             }
             super::lookup::RemoteFetch::RateLimited | super::lookup::RemoteFetch::Failed => {
                 // Stamp the attempt so reads can't pile fresh jobs on
                 // top of this one's retry cycle.
-                stamp_fetch_markers(&self.ctx.core.db, &actor_url, None, &["actor"]).await;
-                Err(crate::Error::Internal(format!(
+                stamp_fetch_markers(&self.ctx.core.db, actor_url, None, &["actor"]).await;
+                Ok(FetchOutcome::FetchFailed(crate::Error::Internal(format!(
                     "remote actor fetch failed: {actor_url}"
-                )))
+                ))))
             }
         }
     }

@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use crate::{config::Config, http::middleware::auth::AuthContext, Error, Result};
 
 /// Every scope string clients may request — the standard Mastodon set.
-const KNOWN_SCOPES: &[&str] = &[
+pub(crate) const KNOWN_SCOPES: &[&str] = &[
     "read",
     "write",
     "follow",

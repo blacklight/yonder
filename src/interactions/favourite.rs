@@ -94,7 +94,11 @@ pub async fn unfavourite(
         .as_ref()
         .map(|r| r.get::<Option<String>, _>("activity_uri"))
         .unwrap_or(None);
-    if let (Some(ap), Some(activity_uri)) = (&ctx.ap, activity_uri) {
+    // `!status.local`: remote likes always published their `Like`
+    // (that's the only way `activity_uri` got set before C2S minted
+    // synthetic ids for local targets, which never went out on the
+    // wire and must not sprout an `Undo`).
+    if let (Some(ap), false, Some(activity_uri)) = (&ctx.ap, status.local, activity_uri) {
         if let Err(e) = publish_undo_like(ctx, ap, auth.account_id, &status, &activity_uri).await {
             tracing::error!(status_id = status.id, error = %e, "AP Undo(Like) publish failed");
         }

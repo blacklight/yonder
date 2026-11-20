@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRequest, Request, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Form, Json, Router,
@@ -35,6 +35,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // JSON 404 for the `/oauth/*` prefix.
         .route("/oauth/authorize/", post(authorize))
         .route("/oauth/device_code", post(device_code))
+        .route("/oauth/register", post(register))
         .route("/oauth/device", get(device_info))
         .route("/oauth/device/authorize", post(device_authorize))
         // 2FA exchange endpoints share the `authentication` bucket.
@@ -56,6 +57,14 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         // `authentication` bucket and 429 the flow mid-consent.
         .route("/oauth/authorize", get(authorize_info))
         .route("/oauth/authorize/", get(authorize_info))
+        // RFC 8414 authorization-server metadata — ActivityPub C2S
+        // clients (Fedifox) discover the OAuth endpoints here when the
+        // actor document carries no `oauth*Endpoint` fields (pubby
+        // doesn't emit them).
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(server_metadata),
+        )
 }
 
 /// `/oauth/*` clients split on body encoding: browsers and most
@@ -467,6 +476,191 @@ async fn authorize(
         "state": params.state,
         "redirect_to": redirect_to,
     })))
+}
+
+/// `GET /.well-known/oauth-authorization-server` — RFC 8414
+/// authorization-server metadata. This is how ActivityPub C2S clients
+/// (Fedifox) find the authorize/token/registration endpoints when the
+/// actor document doesn't carry `oauth*Endpoint` fields.
+async fn server_metadata(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let base = crate::activitypub::federation_base_url(state.config().as_ref());
+    Json(json!({
+        "issuer": base,
+        "authorization_endpoint": format!("{base}/oauth/authorize"),
+        "token_endpoint": format!("{base}/oauth/token"),
+        "registration_endpoint": format!("{base}/oauth/register"),
+        "scopes_supported": crate::auth::scopes::KNOWN_SCOPES,
+        "response_types_supported": ["code"],
+        "response_modes_supported": ["query"],
+        "grant_types_supported": [
+            "authorization_code",
+            "refresh_token",
+            "client_credentials",
+            "password",
+            "urn:ietf:params:oauth:grant-type:device_code",
+        ],
+        "code_challenge_methods_supported": ["S256", "plain"],
+        "token_endpoint_auth_methods_supported": [
+            "client_secret_post",
+            "client_secret_basic",
+            "none",
+        ],
+    }))
+}
+
+/// RFC 7591 dynamic client registration body. Unknown members
+/// (`software_id`, `software_version`, `client_uri`, …) are ignored.
+#[derive(Debug, Deserialize)]
+pub struct RegisterParams {
+    /// Required by RFC 7591 — the redirect targets the client will
+    /// use (web extensions register `moz-extension://`/`https://*.mozilla.org`).
+    redirect_uris: Vec<String>,
+    client_name: Option<String>,
+    scope: Option<String>,
+    token_endpoint_auth_method: Option<String>,
+    grant_types: Option<Vec<String>>,
+    response_types: Option<Vec<String>>,
+    client_uri: Option<String>,
+}
+
+/// Grant types this server actually issues tokens for.
+const REGISTER_GRANT_TYPES: &[&str] = &[
+    "authorization_code",
+    "refresh_token",
+    "client_credentials",
+    "password",
+    "urn:ietf:params:oauth:grant-type:device_code",
+];
+
+/// `POST /oauth/register` — RFC 7591 dynamic client registration.
+/// `token_endpoint_auth_method: "none"` yields a public client
+/// (PKCE-only, no secret); anything else registers a confidential
+/// client whose secret is returned exactly once.
+async fn register(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+) -> std::result::Result<Response, RegisterError> {
+    let params: RegisterParams = Json::<RegisterParams>::from_request(req, &state)
+        .await
+        .map_err(|e| RegisterError::invalid(&e.body_text()))?
+        .0;
+    if params.redirect_uris.is_empty() {
+        return Err(RegisterError::invalid("redirect_uris is required"));
+    }
+    if let Some(grants) = &params.grant_types {
+        if grants
+            .iter()
+            .any(|g| !REGISTER_GRANT_TYPES.contains(&g.as_str()))
+        {
+            return Err(RegisterError::invalid(
+                "unsupported grant_type in grant_types",
+            ));
+        }
+    }
+    if let Some(types) = &params.response_types {
+        if types.iter().any(|t| t != "code") {
+            return Err(RegisterError::invalid(
+                "unsupported response_type in response_types",
+            ));
+        }
+    }
+    let auth_method = params.token_endpoint_auth_method.as_deref();
+    if let Some(m) = auth_method {
+        if !matches!(m, "none" | "client_secret_post" | "client_secret_basic") {
+            return Err(RegisterError::invalid(
+                "unsupported token_endpoint_auth_method",
+            ));
+        }
+    }
+    let confidential = auth_method != Some("none");
+    let name = params
+        .client_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .unwrap_or("Registered client")
+        .to_string();
+    // RFC 7591: an omitted `scope` means "all scopes the client may
+    // use". C2S clients need `write`; default to the interactive set
+    // rather than the read-only `/api/v1/apps` default.
+    let scopes = params
+        .scope
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("read write")
+        .to_string();
+    let (app, secret) = oauth::create_app(
+        &state,
+        &name,
+        &params.redirect_uris,
+        &scopes,
+        params.client_uri.as_deref(),
+        confidential,
+        None,
+    )
+    .await
+    .map_err(|e| match e {
+        crate::Error::Validation(msg) => RegisterError::invalid(&msg),
+        other => RegisterError::server(&other.to_string()),
+    })?;
+
+    let mut body = json!({
+        "client_id": app.client_id,
+        "client_id_issued_at": chrono::Utc::now().timestamp(),
+        "redirect_uris": app.redirect_uris,
+        "token_endpoint_auth_method": if confidential { "client_secret_post" } else { "none" },
+        "grant_types": params.grant_types.unwrap_or_else(|| vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ]),
+        "response_types": ["code"],
+        "client_name": app.name,
+        "scope": app.scopes,
+    });
+    if confidential {
+        body["client_secret"] = json!(secret);
+        body["client_secret_expires_at"] = json!(0);
+    }
+    Ok((StatusCode::CREATED, Json(body)).into_response())
+}
+
+/// RFC 7591 §3.2.2 error shape (`{"error", "error_description"}`).
+struct RegisterError {
+    status: StatusCode,
+    code: &'static str,
+    description: String,
+}
+
+impl RegisterError {
+    fn invalid(description: &str) -> Self {
+        RegisterError {
+            status: StatusCode::BAD_REQUEST,
+            code: "invalid_client_metadata",
+            description: description.to_string(),
+        }
+    }
+
+    fn server(description: &str) -> Self {
+        RegisterError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            code: "server_error",
+            description: description.to_string(),
+        }
+    }
+}
+
+impl IntoResponse for RegisterError {
+    fn into_response(self) -> Response {
+        (
+            self.status,
+            Json(json!({
+                "error": self.code,
+                "error_description": self.description,
+            })),
+        )
+            .into_response()
+    }
 }
 
 #[derive(Debug, Deserialize)]

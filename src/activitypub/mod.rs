@@ -15,6 +15,7 @@
 
 pub mod actors;
 pub mod adapter;
+pub mod c2s;
 pub mod delivery;
 pub(crate) mod edge;
 pub mod featured;
@@ -342,6 +343,9 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ap/inbox", post(inbox::post_shared))
         .route("/inbox", post(inbox::post_shared))
         .route("/ap/users/{username}/inbox", post(inbox::post_per_user))
+        // C2S outbox — authenticated AP writes (Fedifox). Shares the
+        // inbox bucket: it's the same untrusted-write surface.
+        .route("/ap/users/{username}/outbox", post(c2s::post_outbox))
         .route_layer(crate::http::middleware::ratelimit::layer(
             state,
             "federation_inbox",

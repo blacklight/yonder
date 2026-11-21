@@ -810,6 +810,57 @@ async fn following_param_restricts_accounts() {
     assert_eq!(found, vec!["carol".to_string()], "{found:?}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn domain_shaped_query_matches_instance_exactly() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let alice = register(&env.app, "alice").await;
+    sqlx::query(
+        "INSERT INTO accounts (domain, username, actor_id, url, inbox) VALUES \
+         ('example.com', 'amy', 'https://example.com/ap/users/amy', \
+          'https://example.com/ap/users/amy', ''), \
+         ('example.com', 'ben', 'https://example.com/ap/users/ben', \
+          'https://example.com/ap/users/ben', ''), \
+         ('example.org', 'zed', 'https://example.org/ap/users/zed', \
+          'https://example.org/ap/users/zed', '')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    // A bare plausible domain exact-matches the home instance — it does
+    // not pull in other domains or rely on username/display substrings.
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        "/api/v2/search?q=example.com",
+        Some(&alice),
+        None,
+    )
+    .await;
+    let mut found = names(&body, "accounts");
+    found.sort();
+    assert_eq!(
+        found,
+        vec!["amy".to_string(), "ben".to_string()],
+        "{found:?}"
+    );
+
+    // Without the dot there is no domain match at all: 'example' is not
+    // a username/display substring of any seeded account.
+    let (_, body) = request(
+        &env.app,
+        "GET",
+        "/api/v2/search?q=example",
+        Some(&alice),
+        None,
+    )
+    .await;
+    assert!(names(&body, "accounts").is_empty());
+}
+
 // ---------------------------------------------------------------------------
 // Autocomplete
 // ---------------------------------------------------------------------------

@@ -4,13 +4,14 @@
 
 use sqlx::{PgPool, Row};
 
+use crate::posts::mentions::plausible_domain;
 use crate::social::visibility;
 use crate::timelines::filter::Bind;
 use crate::timelines::query::bind_all;
 use crate::Result;
 
-use super::like_pattern;
 use super::params::{is_prefix_mode, QueryKind, SearchParams};
+use super::{escape_like, like_pattern};
 
 /// Predicates every account match shares: live account, no suspended
 /// instance domain, and the viewer's block/mute/domain-block
@@ -82,12 +83,30 @@ pub async fn search(
         QueryKind::Text(text) => {
             // Mastodon strips a leading '@' from account queries.
             let t = text.strip_prefix('@').unwrap_or(text);
-            let pat = alloc(Bind::Text(like_pattern(t, is_prefix_mode(params, kind))));
-            clauses.push(format!(
-                "(a.username ILIKE {pat} \
-                 OR a.display_name ILIKE {pat} \
-                 OR a.domain ILIKE {pat})"
-            ));
+            let prefix = is_prefix_mode(params, kind);
+            let mut match_clauses = Vec::new();
+            if prefix {
+                // Autocomplete: case-insensitive prefix over username and
+                // display name. `lower(col) LIKE` uses the btree pattern
+                // indexes from migration 0056 — trigram indexes don't
+                // help very short prefixes.
+                let p = alloc(Bind::Text(format!("{}%", escape_like(&t.to_lowercase()))));
+                match_clauses.push(format!("lower(a.username) LIKE {p}"));
+                match_clauses.push(format!("lower(a.display_name) LIKE {p}"));
+            } else {
+                let pat = alloc(Bind::Text(like_pattern(t, false)));
+                match_clauses.push(format!("a.username ILIKE {pat}"));
+                match_clauses.push(format!("a.display_name ILIKE {pat}"));
+                // A bare plausible domain (`example.com`) matches the
+                // actor's home instance exactly. Substring domain search
+                // is deliberately not done: at fediverse scale it matches
+                // hundreds of thousands of cached remote actors.
+                if plausible_domain(t) {
+                    let d = alloc(Bind::Text(t.to_lowercase()));
+                    match_clauses.push(format!("a.domain = {d}"));
+                }
+            }
+            clauses.push(format!("({})", match_clauses.join(" OR ")));
             // Non-exact matches respect the discoverability opt-out —
             // except accounts the caller already follows.
             // `users.indexable` deliberately does not apply: it governs

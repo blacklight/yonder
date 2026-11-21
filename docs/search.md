@@ -117,11 +117,16 @@ Every query composes:
 
 ## Matching details
 
-- **Accounts**: `ILIKE` over `username`, `display_name` **and**
-  `domain` — a domain substring search surfaces a remote instance's
-  known actors. Ranking: exact username first, locals before remotes,
-  then `similarity()` over username + display name. A leading `@` on a
-  text query is stripped (Mastodon's behavior).
+- **Accounts**: substring `ILIKE` over `username` and `display_name`
+  (trigram indexes). A bare plausible domain (`example.com`) also
+  exact-matches `accounts.domain`; domain *substring* matching is
+  deliberately not done — at fediverse scale it matched hundreds of
+  thousands of cached remote actors. Autocomplete (`type=accounts`)
+  uses case-insensitive `lower(...) LIKE 'q%'` prefix matching backed
+  by btree pattern indexes (migration 0056). Ranking: exact username
+  first, locals before remotes, then `similarity()` over username +
+  display name. A leading `@` on a text query is stripped (Mastodon's
+  behavior).
 - **Statuses**: `ILIKE '%q%'` over `content` and `spoiler_text`
   (trigram indexes from migration 0003). `content` holds plain text
   for every row — for remote statuses it's `source.content`, or the

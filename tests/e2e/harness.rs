@@ -363,7 +363,7 @@ pub struct DedicatedRedis {
 enum DedicatedRedisInner {
     // Held only for its Drop (stops/removes the container).
     #[allow(dead_code)]
-    Container(ContainerAsync<RedisImage>),
+    Container(Box<ContainerAsync<RedisImage>>),
     Process(std::process::Child),
 }
 
@@ -403,7 +403,7 @@ pub async fn dedicated_redis(
                 .await
                 .expect("redis port");
             config.url = format!("redis://127.0.0.1:{port}");
-            DedicatedRedisInner::Container(container)
+            DedicatedRedisInner::Container(Box::new(container))
         }
         Err(e) => {
             eprintln!("dedicated redis container failed ({e}); using local redis-server");

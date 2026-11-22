@@ -697,6 +697,82 @@ impl RemoteActorFetchJob {
     }
 }
 
+/// `JobKind::RemoteActorResolve` — WebFinger-resolve `@user@domain`
+/// and stub the actor, the background half of an interactive lookup
+/// whose inline WebFinger attempt missed or timed out
+/// (`{"username": …, "domain": …}`). Resolution itself still goes
+/// through [`lookup::resolve_actor_url`]; the stub +
+/// `RemoteActorFetch` enrichment enqueue is
+/// [`lookup::upsert_remote_stub`], exactly like the synchronous path.
+/// A miss acks — the lookup's negative cache throttles repeats and
+/// the next lookup after it expires enqueues again.
+pub struct RemoteActorResolveJob {
+    ctx: ApContext,
+}
+
+impl RemoteActorResolveJob {
+    /// Create the handler bound to `ctx`.
+    pub fn new(ctx: ApContext) -> Self {
+        RemoteActorResolveJob { ctx }
+    }
+}
+
+#[async_trait::async_trait]
+impl JobHandler for RemoteActorResolveJob {
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let username = payload
+            .get("username")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 64)
+            .ok_or_else(|| {
+                crate::Error::Validation("remote_actor_resolve lacks username".to_string())
+            })?;
+        let domain = payload
+            .get("domain")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && s.len() <= 253)
+            .ok_or_else(|| {
+                crate::Error::Validation("remote_actor_resolve lacks domain".to_string())
+            })?
+            .to_lowercase();
+        // Same gate as the interactive path — a suspended domain
+        // resolves to nothing either way.
+        if crate::search::resolve::domain_suspended(&ctx.db, &domain).await? {
+            return Ok(());
+        }
+        // Fail (not ack) while the domain's circuit is open so the
+        // queue's own backoff retries once the cooldown ends.
+        if crate::jobs::remote_gate::circuit_open(
+            &ctx.redis,
+            &domain,
+            crate::jobs::remote_gate::GateClass::Bulk,
+        )
+        .await
+        {
+            return Err(crate::Error::Internal(format!(
+                "remote actor resolve deferred: circuit open for {domain}"
+            )));
+        }
+        let Some(actor_url) = super::lookup::resolve_actor_url(
+            Some(&self.ctx),
+            username,
+            &domain,
+            std::time::Duration::from_secs(
+                ctx.config.federation.request_timeout_seconds,
+            ),
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+        super::lookup::upsert_remote_stub(&ctx.db, &dispatcher, &ctx.config, &actor_url).await?;
+        Ok(())
+    }
+}
+
 /// Stamp `remote_network_syncs` markers for `actor_id` — the
 /// `(account_id, direction)` timestamp doubles as the "last attempt"
 /// record profile reads and the stale-actor sweep consult before

@@ -68,6 +68,12 @@ pub enum JobCommand {
     /// (`"actor_id"` accepted as an alias); `{}` runs the sweep.
     #[command(name = "remote_actor_fetch")]
     RemoteActorFetch(JobArgs),
+    /// WebFinger-resolve `@user@domain` and stub the actor — the
+    /// background half of an interactive lookup miss.
+    ///
+    /// Payload: `{"username": "alice", "domain": "remote.social"}`.
+    #[command(name = "remote_actor_resolve")]
+    RemoteActorResolve(JobArgs),
     /// Signed-fetch and materialize a remote status object.
     ///
     /// Payload: `{"uri": "https://remote/statuses/1"}`; add
@@ -261,6 +267,7 @@ impl JobCommand {
             Self::FederationDeliverySweep(a) => (JobKind::FederationDeliverySweep, a),
             Self::RemoteMediaFetch(a) => (JobKind::RemoteMediaFetch, a),
             Self::RemoteActorFetch(a) => (JobKind::RemoteActorFetch, a),
+            Self::RemoteActorResolve(a) => (JobKind::RemoteActorResolve, a),
             Self::RemoteStatusFetch(a) => (JobKind::RemoteStatusFetch, a),
             Self::RemoteNetworkSync(a) => (JobKind::RemoteNetworkSync, a),
             Self::NotificationFanout(a) => (JobKind::NotificationFanout, a),

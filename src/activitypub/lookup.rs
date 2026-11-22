@@ -12,7 +12,7 @@ use sqlx::PgPool;
 use crate::jobs::{Dispatcher, JobKind};
 use crate::{Error, Result};
 
-use super::{actors::sync_call, delivery::http_client, ApContext};
+use super::{actors::sync_call, ApContext};
 
 /// WebFinger-resolve `@username@domain` to an actor URL. Blocking
 /// pubby call → `sync_call`; `None` when federation is unavailable
@@ -29,11 +29,12 @@ pub(crate) async fn resolve_actor_url(
     ap: Option<&ApContext>,
     username: &str,
     domain: &str,
+    timeout: std::time::Duration,
 ) -> Result<Option<String>> {
     let Some(ap) = ap else {
         return Ok(None);
     };
-    let http = http_client(ap);
+    let http = super::delivery::http_client_with_timeout(ap, timeout);
     let username = username.to_string();
     let domain = domain.to_string();
     let fallback = format!("https://{domain}/@{username}");
@@ -347,6 +348,23 @@ pub(crate) fn unreachable_host_error(e: &ActivityPubError) -> bool {
 /// too. `RemoteFetch::Failed` when the instance actor lacks key
 /// material or signing fails.
 pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> Result<RemoteFetch> {
+    fetch_remote_object_detailed_bounded(
+        ap,
+        url,
+        std::time::Duration::from_secs(ap.core.config.federation.request_timeout_seconds),
+    )
+    .await
+}
+
+/// [`fetch_remote_object_detailed`] with an explicit per-request
+/// timeout — walk deadlines pass their *remaining* budget so one slow
+/// origin can't overrun the caller's wall clock (the configured
+/// timeout still caps it from above).
+pub(crate) async fn fetch_remote_object_detailed_bounded(
+    ap: &ApContext,
+    url: &str,
+    timeout: std::time::Duration,
+) -> Result<RemoteFetch> {
     let actor = super::actors::load_local_actor(&ap.core.db, super::actors::INSTANCE_USERNAME)
         .await?
         .ok_or_else(|| Error::Internal("instance actor missing".to_string()))?;
@@ -374,7 +392,7 @@ pub(crate) async fn fetch_remote_object_detailed(ap: &ApContext, url: &str) -> R
         });
     let user_agent = ap.core.config.federation.user_agent.clone();
     let scheme = ap.core.config.federation.signature_scheme.into();
-    let http = http_client(ap);
+    let http = super::delivery::http_client_with_timeout(ap, timeout);
     let url = url.to_string();
     Ok(sync_call(move || {
         let base_headers: HashMap<String, String> = [

@@ -316,6 +316,10 @@ pub fn register_handlers(registry: &mut crate::jobs::Registry, ctx: &ApContext) 
         incoming::RemoteActorFetchJob::new(ctx.clone()),
     );
     registry.register(
+        crate::jobs::JobKind::RemoteActorResolve,
+        incoming::RemoteActorResolveJob::new(ctx.clone()),
+    );
+    registry.register(
         crate::jobs::JobKind::FederationDeliverySweep,
         delivery::FederationDeliverySweepJob,
     );

@@ -468,8 +468,21 @@ impl JobHandler for FederationDeliverySweepJob {
 /// A `pubby` `HttpClient` honoring `federation.allow_private_targets`
 /// and the configured timeout.
 pub fn http_client(ctx: &ApContext) -> HttpClient {
-    let timeout =
-        std::time::Duration::from_secs(ctx.core.config.federation.request_timeout_seconds);
+    http_client_with_timeout(
+        ctx,
+        std::time::Duration::from_secs(ctx.core.config.federation.request_timeout_seconds),
+    )
+}
+
+/// [`http_client`] with an explicit per-request timeout, clamped to
+/// `federation.request_timeout_seconds` — callers with a tighter
+/// budget (an inline `/context` walk's remaining deadline, an
+/// interactive lookup) shrink the ureq global timeout instead of
+/// letting one slow origin stall the request past it.
+pub fn http_client_with_timeout(ctx: &ApContext, timeout: std::time::Duration) -> HttpClient {
+    let timeout = timeout.min(std::time::Duration::from_secs(
+        ctx.core.config.federation.request_timeout_seconds,
+    ));
     if ctx.core.config.federation.allow_private_targets {
         HttpClient::new_relaxed(timeout)
     } else {

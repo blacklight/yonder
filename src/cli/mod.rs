@@ -213,9 +213,14 @@ async fn serve(path: Option<&Path>) -> Result<()> {
 
     // The in-process worker runs alongside HTTP when enabled. The
     // scheduler must stay bound for the function's lifetime — dropping
-    // it stops cron firings.
+    // it stops cron firings. The worker gets its own DB pool: job
+    // handlers hold connections for seconds at a time (remote fetches,
+    // bulk imports) and must never starve interactive reads of the
+    // shared `database.max_connections` budget.
     let mut worker_parts = if config.jobs.enabled {
-        let (worker, scheduler) = start_worker(&config, pool, &state.bus).await?;
+        let worker_pool = db::connect(&config.database).await?;
+        let (worker, scheduler) =
+            start_worker(&config, worker_pool, &state.bus).await?;
         let token = worker.cancel_token();
         let join = tokio::spawn(async move { worker.run().await });
         Some((join, token, scheduler))

@@ -160,6 +160,11 @@ pub enum JobKind {
     /// or sweep stale remote actors (`{}` — the
     /// `remote_actor_refresh_schedule` fan-out).
     RemoteActorFetch,
+    /// WebFinger-resolve `@user@domain` and stub the actor
+    /// (`{"username": …, "domain": …}`) — enqueued by interactive
+    /// lookups whose inline WebFinger attempt missed or timed out, so
+    /// resolution completes off the request path.
+    RemoteActorResolve,
     /// Fetch and materialize a remote status object (`{"uri": …}`) —
     /// resolves pending quote targets whose servers never federate
     /// with us.
@@ -262,6 +267,7 @@ impl JobKind {
         JobKind::FederationDeliverySweep,
         JobKind::RemoteMediaFetch,
         JobKind::RemoteActorFetch,
+        JobKind::RemoteActorResolve,
         JobKind::RemoteStatusFetch,
         JobKind::RemoteNetworkSync,
         JobKind::NotificationFanout,
@@ -301,6 +307,7 @@ impl JobKind {
             JobKind::FederationDeliverySweep => "federation_delivery_sweep",
             JobKind::RemoteMediaFetch => "remote_media_fetch",
             JobKind::RemoteActorFetch => "remote_actor_fetch",
+            JobKind::RemoteActorResolve => "remote_actor_resolve",
             JobKind::RemoteStatusFetch => "remote_status_fetch",
             JobKind::RemoteNetworkSync => "remote_network_sync",
             JobKind::NotificationFanout => "notification_fanout",
@@ -344,6 +351,7 @@ impl JobKind {
             JobKind::RemoteStatusFetch => Queue::RemoteStatus,
             JobKind::RemoteMediaFetch
             | JobKind::RemoteActorFetch
+            | JobKind::RemoteActorResolve
             | JobKind::RemoteNetworkSync
             | JobKind::WebmentionIncoming
             | JobKind::WebmentionOutgoing => Queue::Remote,
@@ -676,6 +684,7 @@ mod tests {
         for kind in [
             JobKind::RemoteMediaFetch,
             JobKind::RemoteActorFetch,
+            JobKind::RemoteActorResolve,
             JobKind::RemoteNetworkSync,
             JobKind::WebmentionIncoming,
             JobKind::WebmentionOutgoing,

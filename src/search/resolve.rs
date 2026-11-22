@@ -22,6 +22,14 @@ use crate::Result;
 /// Negative-lookup cache TTL (10 minutes).
 const NEG_TTL: Duration = Duration::from_secs(600);
 
+/// Per-request timeout for the remote I/O an interactive lookup does
+/// inline (WebFinger, object GET). Far below
+/// `federation.request_timeout_seconds`: a healthy remote answers in
+/// well under a second, and anything slower is better served by the
+/// `RemoteActorResolve` background job + a client retry than by
+/// holding the page.
+const INTERACTIVE_LOOKUP_TIMEOUT: Duration = Duration::from_secs(4);
+
 /// AP actor types an object fetch can materialize.
 pub(crate) const ACTOR_TYPES: &[&str] =
     &["Person", "Service", "Application", "Group", "Organization"];
@@ -99,15 +107,52 @@ pub(crate) async fn lookup_fqn(
     };
     // `resolve_actor_url` already filters pubby's fabricated
     // `https://{d}/@{u}` fallback, so `None` here is a genuine miss.
-    match lookup::resolve_actor_url(Some(ap), username, domain).await? {
+    match lookup::resolve_actor_url(
+        Some(ap),
+        username,
+        domain,
+        INTERACTIVE_LOOKUP_TIMEOUT,
+    )
+    .await?
+    {
         Some(actor_url) => Ok(Some(
             lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), &actor_url)
                 .await?,
         )),
         None => {
             remember_miss(state, &key).await?;
+            enqueue_actor_resolve(state, username, domain).await;
             Ok(None)
         }
+    }
+}
+
+/// Best-effort background resolve for a lookup miss — re-runs
+/// WebFinger + stubbing off the request path so a slow or recovering
+/// remote still lands without holding the page. Gated like every
+/// other remote enqueue (per-domain budget + circuit breaker).
+async fn enqueue_actor_resolve(state: &AppState, username: &str, domain: &str) {
+    let domain = domain.to_lowercase();
+    if !crate::jobs::remote_gate::enqueue_allowed(
+        state.dispatcher.redis(),
+        &state.config().jobs,
+        Some(&domain),
+        crate::jobs::remote_gate::GateClass::Bulk,
+        "actor_resolve",
+    )
+    .await
+    {
+        return;
+    }
+    if let Err(e) = state
+        .dispatcher
+        .enqueue(
+            crate::jobs::JobKind::RemoteActorResolve,
+            json!({ "username": username, "domain": domain }),
+        )
+        .await
+    {
+        tracing::debug!(error = %e, "remote actor resolve enqueue failed");
     }
 }
 
@@ -166,7 +211,17 @@ pub(crate) async fn lookup_url(
         return Ok(None);
     }
 
-    let hit = match lookup::fetch_remote_object(ap, url).await? {
+    let fetched = match lookup::fetch_remote_object_detailed_bounded(
+        ap,
+        url,
+        INTERACTIVE_LOOKUP_TIMEOUT,
+    )
+    .await?
+    {
+        lookup::RemoteFetch::Doc(fetched) => Some(fetched),
+        _ => None,
+    };
+    let hit = match fetched {
         // Trust the URL the document was *served from* — domain-split
         // servers redirect web permalinks to their AP domain, and the
         // object's `id` matches the post-redirect origin.

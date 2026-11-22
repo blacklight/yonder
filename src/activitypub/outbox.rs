@@ -162,7 +162,15 @@ async fn release_sync_lock(ap: &ApContext, account_id: i64) {
 pub(crate) async fn fetch_doc(ap: &ApContext, url: &str, deadline: Instant) -> Result<RemoteFetch> {
     let mut attempt = 0usize;
     loop {
-        match lookup::fetch_remote_object_detailed(ap, url).await? {
+        // Bound each GET by the walk's remaining budget: the caller's
+        // deadline is only checked between fetches, so without this a
+        // single slow origin could overrun it by the full configured
+        // request timeout.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(RemoteFetch::Failed);
+        }
+        match lookup::fetch_remote_object_detailed_bounded(ap, url, remaining).await? {
             RemoteFetch::RateLimited | RemoteFetch::Failed if attempt < RETRY_BACKOFF.len() => {
                 let wait =
                     RETRY_BACKOFF[attempt].min(deadline.saturating_duration_since(Instant::now()));

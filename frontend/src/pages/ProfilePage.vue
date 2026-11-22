@@ -444,6 +444,13 @@ const { vInfinite, ioSupported } = useInfiniteScroll(
   () => loadStatuses(true),
 );
 
+// A remote `@user@domain` lookup 404s while the server finishes
+// resolving it in the background (its inline WebFinger attempt
+// missed or timed out) — retry once after a beat so the profile
+// appears without a manual reload. `retriedAcct` caps it at one
+// retry per handle.
+let retriedAcct: string | null = null;
+
 async function resolve(): Promise<void> {
   state.value = "loading";
   actionError.value = null;
@@ -479,9 +486,26 @@ async function resolve(): Promise<void> {
     if (!limitedHidden.value) await Promise.all([loadStatuses(), loadPinned()]);
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) state.value = "sign-in";
-    else if (e instanceof ApiError && (e.status === 404 || e.status === 422))
-      state.value = "not-found";
-    else state.value = "error";
+    else if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
+      const acct =
+        route.name === "profile-acct" ? String(route.params.acct) : null;
+      if (acct?.includes("@") && retriedAcct !== acct) {
+        retriedAcct = acct;
+        // Stay on the loading state — the background resolve job
+        // typically lands within a couple of seconds.
+        setTimeout(() => {
+          if (
+            route.name === "profile-acct" &&
+            String(route.params.acct) === acct &&
+            state.value === "loading"
+          ) {
+            void resolve();
+          }
+        }, 3000);
+      } else {
+        state.value = "not-found";
+      }
+    } else state.value = "error";
   }
 }
 

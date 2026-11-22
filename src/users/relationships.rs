@@ -440,9 +440,15 @@ async fn fetch_remote_actor(ctx: Ctx<'_>, actor_url: &str) -> Result<i64> {
     let doc = sync_call(move || handler.outbox.fetch_actor(&url))
         .await
         .ok_or_else(|| Error::NotFound(format!("remote actor {actor_url}")))?;
-    activitypub::storage::upsert_remote_actor_row(ctx.db, ctx.config, actor_url, &doc)
-        .await?
-        .ok_or_else(|| Error::Internal(format!("upsert failed for {actor_url}")))
+    activitypub::storage::upsert_remote_actor_row(
+        ctx.db,
+        ctx.config,
+        actor_url,
+        &doc,
+        &ap.core.dispatcher,
+    )
+    .await?
+    .ok_or_else(|| Error::Internal(format!("upsert failed for {actor_url}")))
 }
 
 // ---------------------------------------------------------------------------

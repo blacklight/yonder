@@ -308,9 +308,14 @@ async fn handle_actor_update(core: &Arc<ApCore>, activity: &Activity, raw: &Valu
         tracing::warn!(actor = %activity.actor, "spoofed actor Update dropped");
         return Ok(());
     }
-    let account_id =
-        super::storage::upsert_remote_actor_row(&core.db, &core.config, &activity.actor, &object)
-            .await?;
+    let account_id = super::storage::upsert_remote_actor_row(
+        &core.db,
+        &core.config,
+        &activity.actor,
+        &object,
+        &core.dispatcher,
+    )
+    .await?;
     // An actor Update can change `attachment[]` — queue the `rel="me"`
     // pass so changed link fields get verified without waiting for a
     // profile read (unchanged fields keep their stamps via the upsert
@@ -369,7 +374,8 @@ pub async fn handle_flag(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -
     // The shared stub helper absorbs a (domain, username) collision
     // with a stale alias row — a bare `ON CONFLICT (actor_id)` would
     // abort the whole Flag handler.
-    super::lookup::upsert_remote_stub_row(db, &core.config, &activity.actor).await?;
+    super::lookup::upsert_remote_stub_row(db, &core.config, &activity.actor, &core.dispatcher)
+        .await?;
 
     for object_url in str_list(raw.get("object")) {
         let account_id: Option<i64> =
@@ -645,6 +651,7 @@ impl RemoteActorFetchJob {
                     &self.ctx.core.config,
                     actor_url,
                     &doc,
+                    &self.ctx.core.dispatcher,
                 )
                 .await?;
                 // Fields carried by the doc get a `rel="me"`
@@ -759,9 +766,7 @@ impl JobHandler for RemoteActorResolveJob {
             Some(&self.ctx),
             username,
             &domain,
-            std::time::Duration::from_secs(
-                ctx.config.federation.request_timeout_seconds,
-            ),
+            std::time::Duration::from_secs(ctx.config.federation.request_timeout_seconds),
         )
         .await?
         else {
@@ -861,6 +866,7 @@ async fn ensure_move_target(ctx: &ApContext, actor_id: &str, doc: &Value) {
         &ctx.core.config,
         &target,
         &target_doc,
+        &ctx.core.dispatcher,
     )
     .await
     {

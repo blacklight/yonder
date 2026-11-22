@@ -43,7 +43,11 @@ where
     Fut: std::future::Future<Output = Result<T>>,
 {
     let db = state.db.clone();
-    match state.cache.get_or_load(key, ttl, || query(db.clone())).await {
+    match state
+        .cache
+        .get_or_load(key, ttl, || query(db.clone()))
+        .await
+    {
         Ok(value) => Ok(value),
         Err(e) => {
             tracing::warn!(error = %e, key, "instance cache unavailable — querying directly");

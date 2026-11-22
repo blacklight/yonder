@@ -66,7 +66,13 @@ async fn accept_outbound(core: &ApCore, local_actor_id: &str, target_actor_id: &
     // follow target URL is all we may have at this point. The shared
     // stub helper disambiguates a (domain, username) collision with a
     // stale alias row instead of aborting the follow.
-    super::lookup::upsert_remote_stub_row(&core.db, &core.config, target_actor_id).await?;
+    super::lookup::upsert_remote_stub_row(
+        &core.db,
+        &core.config,
+        target_actor_id,
+        &core.dispatcher,
+    )
+    .await?;
 
     sqlx::query(
         r#"

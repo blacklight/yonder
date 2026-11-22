@@ -257,6 +257,15 @@ pub enum JobKind {
     /// Stamp a local quote's FEP-044f `QuoteAuthorization` and publish
     /// the status `Update` (`{"status_id": …, "authorization_uri": …}`).
     QuoteAuthorization,
+    /// Keep the Elasticsearch/OpenSearch search index in sync
+    /// (`{"entity": "status"|"account", "id": …, "op": "index"|"remove"}`)
+    /// — enqueued by the write paths when `search.elasticsearch_url`
+    /// is set; a no-op under the Postgres backend.
+    SearchIndexSync,
+    /// Bulk (re)index statuses/accounts into the ES backend
+    /// (`{"entity": "statuses"|"accounts"|"all", "after_id": …,
+    /// "batch_size": …}`) — cursor-paginates and re-enqueues itself.
+    SearchIndexBackfill,
 }
 
 impl JobKind {
@@ -297,6 +306,8 @@ impl JobKind {
         JobKind::ImportPublish,
         JobKind::ImportSweep,
         JobKind::QuoteAuthorization,
+        JobKind::SearchIndexSync,
+        JobKind::SearchIndexBackfill,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -337,6 +348,8 @@ impl JobKind {
             JobKind::ImportPublish => "import_publish",
             JobKind::ImportSweep => "import_sweep",
             JobKind::QuoteAuthorization => "quote_authorization",
+            JobKind::SearchIndexSync => "search_index_sync",
+            JobKind::SearchIndexBackfill => "search_index_backfill",
         }
     }
 
@@ -363,7 +376,9 @@ impl JobKind {
             | JobKind::StatusDeletion
             | JobKind::ImportPublish
             | JobKind::FetchLinkPreview
-            | JobKind::ThreadExpand => Queue::Bulk,
+            | JobKind::ThreadExpand
+            | JobKind::SearchIndexSync
+            | JobKind::SearchIndexBackfill => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
             | JobKind::AccountDeletion

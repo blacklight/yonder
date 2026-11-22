@@ -981,6 +981,15 @@ pub async fn update_profile(
             .await?;
     }
     tx.commit().await?;
+    // display_name feeds account search — reindex on every profile
+    // update (idempotent; a no-op unless ES is configured).
+    crate::search::index::enqueue_index(
+        &state.dispatcher,
+        &state.config(),
+        "account",
+        auth.account_id,
+    )
+    .await;
 
     // A replaced or cleared profile image is unreferenced the moment
     // the row moves to the new key — but its URL was served with a

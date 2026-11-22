@@ -237,6 +237,8 @@ pub async fn create_admin_account(
         enqueue_verification_email(state, user_id, email).await?;
     }
     tx.commit().await?;
+    crate::search::index::enqueue_index(&state.dispatcher, &state.config(), "account", account_id)
+        .await;
 
     let af = crate::users::auto_follow::AutoFollowCtx {
         db: state.db.clone(),
@@ -443,6 +445,8 @@ pub async fn register(
         enqueue_verification_email(state, user_id, email).await?;
     }
     tx.commit().await?;
+    crate::search::index::enqueue_index(&state.dispatcher, &state.config(), "account", account_id)
+        .await;
 
     // Auto-follow runs once the account is active — invited users are
     // approved at registration, so they qualify too. Fire-and-forget:

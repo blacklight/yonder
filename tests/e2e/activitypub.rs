@@ -35,6 +35,16 @@ async fn test_pool() -> Option<PgPool> {
     Some(harness::provision_db(infra, &harness::test_slug()).await)
 }
 
+/// `PgActivityPubStorage` carries a job `Dispatcher` for the search-index
+/// sync hooks — provision a scoped Redis namespace like `test_state`.
+async fn test_storage(pool: PgPool) -> PgActivityPubStorage {
+    let infra = harness::infra().await.unwrap();
+    let mut config = Config::default();
+    let redis = harness::scoped_redis(infra, &mut config.redis, &harness::test_slug()).await;
+    let dispatcher = Dispatcher::new(&redis, &config.jobs);
+    PgActivityPubStorage::new(pool, Arc::new(config), dispatcher)
+}
+
 /// Seed a provisioned local actor named `username` and return it.
 async fn seed_actor(pool: &PgPool, username: &str) -> actors::LocalActor {
     let id = sqlx::query_scalar::<_, i64>(
@@ -136,7 +146,7 @@ async fn storage_follower_roundtrip_and_scoping() {
     };
     let alice = seed_actor(&pool, "alice").await;
     let bob = seed_actor(&pool, "bob").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
     let remote = "https://remote.example/ap/users/carol";
 
     for target in [&alice.actor_id, &bob.actor_id] {
@@ -177,7 +187,7 @@ async fn storage_get_following_returns_accepted_outbound() {
     let alice = seed_actor(&pool, "alice").await;
     let remote = "https://remote.example/ap/users/dave";
     seed_remote(&pool, remote, "dave").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
 
     assert!(storage
         .get_following(&alice.actor_id, 10, 0)
@@ -205,7 +215,7 @@ async fn storage_follow_request_lifecycle() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
     let remote = "https://remote.example/ap/users/erin";
 
     let request = FollowRequest {
@@ -245,7 +255,7 @@ async fn storage_activities_scoping() {
     };
     let alice = seed_actor(&pool, "alice").await;
     let bob = seed_actor(&pool, "bob").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
 
     storage
         .store_activity(
@@ -276,7 +286,7 @@ async fn storage_interactions_and_mentions() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
 
     let mut i = Interaction::new(
         "https://remote.example/ap/users/fred",
@@ -321,7 +331,7 @@ async fn storage_actor_cache_and_quote_authorizations() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
 
     let doc = json!({"id": "https://remote.example/ap/users/greg", "type": "Person"});
     storage
@@ -391,10 +401,7 @@ async fn local_actor_ed25519_key_is_stable_backfilled_and_advertised() {
         .ed25519_private_key_pem;
     assert_eq!(again.as_deref(), Some(backfilled.as_str()));
 
-    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
-        pool.clone(),
-        Arc::new(Config::default()),
-    ));
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(test_storage(pool.clone()).await);
     let actor = actors::load_local_actor(&pool, "alice")
         .await
         .unwrap()
@@ -426,10 +433,18 @@ async fn ensure_instance_actor_is_idempotent() {
     let Some(pool) = test_pool().await else {
         return;
     };
-    let first = actors::ensure_instance_actor(&pool, BASE).await.unwrap();
+    let mut config = Config::default();
+    let infra = harness::infra().await.unwrap();
+    let redis = harness::scoped_redis(infra, &mut config.redis, &harness::test_slug()).await;
+    let dispatcher = Dispatcher::new(&redis, &config.jobs);
+    let first = actors::ensure_instance_actor(&pool, BASE, &config, &dispatcher)
+        .await
+        .unwrap();
     assert_eq!(first.username, actors::INSTANCE_USERNAME);
     assert!(first.private_key_pem.is_some());
-    let second = actors::ensure_instance_actor(&pool, BASE).await.unwrap();
+    let second = actors::ensure_instance_actor(&pool, BASE, &config, &dispatcher)
+        .await
+        .unwrap();
     assert_eq!(first.private_key_pem, second.private_key_pem);
 }
 
@@ -441,10 +456,7 @@ async fn actor_doc_advertises_per_actor_endpoints() {
     };
     let mut alice = seed_actor(&pool, "alice").await;
     alice.banner_path = Some("headers/test.png".into());
-    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
-        pool.clone(),
-        Arc::new(Config::default()),
-    ));
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(test_storage(pool.clone()).await);
     let handler = actors::handler_for(
         storage,
         &Config::default(),
@@ -494,10 +506,7 @@ async fn actor_doc_links_bio_hashtags_and_emits_tag() {
     // A shortcode used only in a field *name* still needs its `Emoji`
     // tag — remote instances expand `attachment.name` from `tag`.
     alice.profile_fields = json!([{ "name": ":tools: toolbox", "value": "https://tools.example" }]);
-    let storage: Arc<dyn ActivityPubStorage> = Arc::new(PgActivityPubStorage::new(
-        pool.clone(),
-        Arc::new(Config::default()),
-    ));
+    let storage: Arc<dyn ActivityPubStorage> = Arc::new(test_storage(pool.clone()).await);
     let handler = actors::handler_for(
         storage,
         &Config::default(),
@@ -1183,7 +1192,7 @@ async fn store_unhandled_records_interaction() {
         return;
     };
     let alice = seed_actor(&pool, "alice").await;
-    let storage = PgActivityPubStorage::new(pool.clone(), Arc::new(Config::default()));
+    let storage = test_storage(pool.clone()).await;
     let raw = json!({
         "type": "Block",
         "id": "https://remote.example/activities/b9",

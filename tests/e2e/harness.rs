@@ -396,11 +396,7 @@ pub async fn dedicated_redis(
     }
     config.key_prefix = format!("yonder_t:{slug}");
 
-    let inner = match RedisImage::default()
-        .with_tag("7-alpine")
-        .start()
-        .await
-    {
+    let inner = match RedisImage::default().with_tag("7-alpine").start().await {
         Ok(container) => {
             let port = container
                 .get_host_port_ipv4(6379)

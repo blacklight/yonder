@@ -528,6 +528,12 @@ pub async fn purge_account(
     .bind(account_id)
     .execute(&ctx.db)
     .await?;
+    // Search index: the purge hard-deletes the account's statuses and
+    // tombstones the account row — one account remove cascades both
+    // documents out of the ES indices.
+    let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+    crate::search::index::enqueue_remove(&dispatcher, &ctx.config, "account", account_id).await;
+
     tracing::info!(account_id, username, "account deleted");
     Ok(())
 }

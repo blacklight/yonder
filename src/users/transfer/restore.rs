@@ -337,6 +337,20 @@ pub(crate) async fn import_archive(run: ImportRun<'_>) -> Result<()> {
             )
             .await?;
     }
+    // Search index: a restore can add thousands of rows — one
+    // backfill job re-walks both indices in batches (idempotent).
+    // Best-effort: the periodic `reindex_schedule` is the backstop.
+    if crate::search::index::es_enabled(&ctx.config) {
+        if let Err(e) = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs)
+            .enqueue(
+                crate::jobs::JobKind::SearchIndexBackfill,
+                json!({ "entity": "all" }),
+            )
+            .await
+        {
+            tracing::warn!(import_id, error = %e, "search backfill enqueue failed");
+        }
+    }
     finish_import(ctx, import_id, lease, file_key).await
 }
 

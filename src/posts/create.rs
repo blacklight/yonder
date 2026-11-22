@@ -702,6 +702,7 @@ async fn insert_status(
     )
     .await?;
     tx.commit().await?;
+    crate::search::index::enqueue_index(&ctx.dispatcher, &ctx.config, "status", id).await;
     Ok(id)
 }
 
@@ -1319,6 +1320,7 @@ pub async fn edit_status(
         .await?;
     }
     tx.commit().await?;
+    crate::search::index::enqueue_index(&ctx.dispatcher, &ctx.config, "status", status_id).await;
 
     let status = super::load(&ctx.db, status_id)
         .await?
@@ -1412,6 +1414,7 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
+    crate::search::index::enqueue_remove(&ctx.dispatcher, &ctx.config, "status", status.id).await;
     crate::notifications::delete_for_status(&ctx.db, status.id).await?;
     // The deletion releases the author's post counter; a deleted reply
     // releases its parent's counter; same for a deleted quote post's

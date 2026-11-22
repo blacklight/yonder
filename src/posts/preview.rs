@@ -358,6 +358,9 @@ impl FetchLinkPreviewJob {
                     > 0;
             if updated {
                 changed += 1;
+                // `content` feeds status search — reindex the repair.
+                crate::search::index::enqueue_index(dispatcher, &ctx.config, "status", status_id)
+                    .await;
                 dispatcher
                     .enqueue_on(
                         Queue::Bulk,

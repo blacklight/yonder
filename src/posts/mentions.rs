@@ -187,9 +187,7 @@ async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option
                     ctx.ap.as_ref(),
                     &token.username,
                     domain,
-                    std::time::Duration::from_secs(
-                        ctx.config.federation.request_timeout_seconds,
-                    ),
+                    std::time::Duration::from_secs(ctx.config.federation.request_timeout_seconds),
                 )
                 .await?
                 {

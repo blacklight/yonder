@@ -204,6 +204,7 @@ pub async fn build(
     let storage = Arc::new(storage::PgActivityPubStorage::new(
         pool.clone(),
         shared_config.clone(),
+        dispatcher.clone(),
     ));
     let doc_cache = Arc::new(DocumentCache::new(
         Some(Arc::new(pubby_sdk::RedisDocumentStore::with_prefix(
@@ -229,7 +230,7 @@ pub async fn build(
         delivery_watch: DeliveryWatch::default(),
     });
 
-    let instance_actor = actors::ensure_instance_actor(pool, &base_url).await?;
+    let instance_actor = actors::ensure_instance_actor(pool, &base_url, config, dispatcher).await?;
     let mut instance_options = instance_handler_options(&core);
     bind_follow_response(&mut instance_options, &core, &instance_actor.actor_id);
     let instance = actors::handler_for(

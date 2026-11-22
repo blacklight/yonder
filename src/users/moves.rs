@@ -247,6 +247,7 @@ pub async fn move_to(state: &AppState, account_id: i64, acct: &str, password: &s
             &state.config(),
             &target_actor_id,
             &doc,
+            &state.dispatcher,
         )
         .await?;
         str_list(doc.get("alsoKnownAs"))
@@ -1316,6 +1317,7 @@ async fn migrate_remote(
                                 &ctx.config,
                                 target,
                                 &doc,
+                                &crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs),
                             )
                             .await?;
                             true
@@ -1353,6 +1355,7 @@ async fn migrate_remote(
                     &ctx.config,
                     origin,
                     &doc,
+                    &crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs),
                 )
                 .await;
             }

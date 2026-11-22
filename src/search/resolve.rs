@@ -107,14 +107,7 @@ pub(crate) async fn lookup_fqn(
     };
     // `resolve_actor_url` already filters pubby's fabricated
     // `https://{d}/@{u}` fallback, so `None` here is a genuine miss.
-    match lookup::resolve_actor_url(
-        Some(ap),
-        username,
-        domain,
-        INTERACTIVE_LOOKUP_TIMEOUT,
-    )
-    .await?
-    {
+    match lookup::resolve_actor_url(Some(ap), username, domain, INTERACTIVE_LOOKUP_TIMEOUT).await? {
         Some(actor_url) => Ok(Some(
             lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), &actor_url)
                 .await?,
@@ -211,16 +204,13 @@ pub(crate) async fn lookup_url(
         return Ok(None);
     }
 
-    let fetched = match lookup::fetch_remote_object_detailed_bounded(
-        ap,
-        url,
-        INTERACTIVE_LOOKUP_TIMEOUT,
-    )
-    .await?
-    {
-        lookup::RemoteFetch::Doc(fetched) => Some(fetched),
-        _ => None,
-    };
+    let fetched =
+        match lookup::fetch_remote_object_detailed_bounded(ap, url, INTERACTIVE_LOOKUP_TIMEOUT)
+            .await?
+        {
+            lookup::RemoteFetch::Doc(fetched) => Some(fetched),
+            _ => None,
+        };
     let hit = match fetched {
         // Trust the URL the document was *served from* — domain-split
         // servers redirect web permalinks to their AP domain, and the
@@ -273,9 +263,14 @@ pub(crate) async fn materialize_remote(
             .and_then(|v| v.as_str())
             .is_some_and(|id| same_origin(url, id))
     {
-        let id =
-            crate::activitypub::storage::upsert_remote_actor_row(db, &ap.core.config, url, doc)
-                .await?;
+        let id = crate::activitypub::storage::upsert_remote_actor_row(
+            db,
+            &ap.core.config,
+            url,
+            doc,
+            &ap.core.dispatcher,
+        )
+        .await?;
         return Ok(id.map(ResolvedHit::Account));
     }
     if let Some(hit) = materialize_object(db, ap, url, doc).await? {

@@ -1100,6 +1100,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         }
     }
     tx.commit().await?;
+    crate::search::index::enqueue_index(&core.dispatcher, &core.config, "status", status_id).await;
 
     // Epic 20 — record remote `Emoji` tags post-commit, on the pool:
     // a bad row here must never abort ingest (the status is durable).
@@ -1466,6 +1467,8 @@ async fn tombstone(core: &ApCore, activity: &pubby_sdk::Activity, object_id: &st
     .bind(existing.id)
     .execute(&core.db)
     .await?;
+    crate::search::index::enqueue_remove(&core.dispatcher, &core.config, "status", existing.id)
+        .await;
     crate::notifications::delete_for_status(&core.db, existing.id).await?;
     // The deletion releases the author's post counter; a deleted reply
     // releases its parent's counter; same for a deleted quote post's

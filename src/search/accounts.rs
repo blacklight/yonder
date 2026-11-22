@@ -64,6 +64,34 @@ pub async fn search(
     params: &SearchParams,
     kind: &QueryKind,
 ) -> Result<Vec<i64>> {
+    search_inner(db, viewer, params, kind, None).await
+}
+
+/// The ES-backend variant: identical filters and ordering, but the
+/// match clause is replaced by `a.id = ANY(ids)` — the index decided
+/// *what* matches, Postgres decides *who may see it*. Only `Text`
+/// kinds reach here (FQN stays an exact PG match); an empty candidate
+/// set short-circuits without touching the DB.
+pub async fn search_ids(
+    db: &PgPool,
+    viewer: Option<i64>,
+    params: &SearchParams,
+    kind: &QueryKind,
+    ids: &[i64],
+) -> Result<Vec<i64>> {
+    if ids.is_empty() || !matches!(kind, QueryKind::Text(_)) {
+        return Ok(Vec::new());
+    }
+    search_inner(db, viewer, params, kind, Some(ids)).await
+}
+
+async fn search_inner(
+    db: &PgPool,
+    viewer: Option<i64>,
+    params: &SearchParams,
+    kind: &QueryKind,
+    ids: Option<&[i64]>,
+) -> Result<Vec<i64>> {
     let mut binds: Vec<Bind> = Vec::new();
     let mut clauses = base_clauses(viewer, &mut binds);
     let mut alloc = |b: Bind| {
@@ -81,32 +109,38 @@ pub async fn search(
             username.clone()
         }
         QueryKind::Text(text) => {
+            if let Some(ids) = ids {
+                let p = alloc(Bind::I64s(ids.to_vec()));
+                clauses.push(format!("a.id = ANY({p})"));
+            }
             // Mastodon strips a leading '@' from account queries.
             let t = text.strip_prefix('@').unwrap_or(text);
             let prefix = is_prefix_mode(params, kind);
             let mut match_clauses = Vec::new();
-            if prefix {
-                // Autocomplete: case-insensitive prefix over username and
-                // display name. `lower(col) LIKE` uses the btree pattern
-                // indexes from migration 0056 — trigram indexes don't
-                // help very short prefixes.
-                let p = alloc(Bind::Text(format!("{}%", escape_like(&t.to_lowercase()))));
-                match_clauses.push(format!("lower(a.username) LIKE {p}"));
-                match_clauses.push(format!("lower(a.display_name) LIKE {p}"));
-            } else {
-                let pat = alloc(Bind::Text(like_pattern(t, false)));
-                match_clauses.push(format!("a.username ILIKE {pat}"));
-                match_clauses.push(format!("a.display_name ILIKE {pat}"));
-                // A bare plausible domain (`example.com`) matches the
-                // actor's home instance exactly. Substring domain search
-                // is deliberately not done: at fediverse scale it matches
-                // hundreds of thousands of cached remote actors.
-                if plausible_domain(t) {
-                    let d = alloc(Bind::Text(t.to_lowercase()));
-                    match_clauses.push(format!("a.domain = {d}"));
+            if ids.is_none() {
+                if prefix {
+                    // Autocomplete: case-insensitive prefix over username and
+                    // display name. `lower(col) LIKE` uses the btree pattern
+                    // indexes from migration 0056 — trigram indexes don't
+                    // help very short prefixes.
+                    let p = alloc(Bind::Text(format!("{}%", escape_like(&t.to_lowercase()))));
+                    match_clauses.push(format!("lower(a.username) LIKE {p}"));
+                    match_clauses.push(format!("lower(a.display_name) LIKE {p}"));
+                } else {
+                    let pat = alloc(Bind::Text(like_pattern(t, false)));
+                    match_clauses.push(format!("a.username ILIKE {pat}"));
+                    match_clauses.push(format!("a.display_name ILIKE {pat}"));
+                    // A bare plausible domain (`example.com`) matches the
+                    // actor's home instance exactly. Substring domain search
+                    // is deliberately not done: at fediverse scale it matches
+                    // hundreds of thousands of cached remote actors.
+                    if plausible_domain(t) {
+                        let d = alloc(Bind::Text(t.to_lowercase()));
+                        match_clauses.push(format!("a.domain = {d}"));
+                    }
                 }
+                clauses.push(format!("({})", match_clauses.join(" OR ")));
             }
-            clauses.push(format!("({})", match_clauses.join(" OR ")));
             // Non-exact matches respect the discoverability opt-out —
             // except accounts the caller already follows.
             // `users.indexable` deliberately does not apply: it governs

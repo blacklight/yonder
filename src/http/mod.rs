@@ -79,11 +79,18 @@ pub struct AppState {
     pub connections: ws::ConnectionRegistry,
     /// ActivityPub federation context — `Some` when `federation.enabled`.
     pub ap: Option<crate::activitypub::ApContext>,
+    /// Search backend — `PostgresIndex` by default,
+    /// `ElasticsearchIndex` when `search.elasticsearch_url` is set.
+    /// Built once at startup; URL changes need a restart (same as the
+    /// other config-derived structures).
+    pub search_index: std::sync::Arc<dyn crate::search::index::SearchIndex>,
 }
 
 impl AppState {
     /// Assemble shared state from the resolved config and pools.
     pub fn new(config: Config, db: PgPool, redis: Redis) -> Self {
+        crate::search::index::log_backend(&config.search);
+        let search_index = crate::search::index::build_index(&config.search);
         let dispatcher = Dispatcher::new(&redis, &config.jobs);
         let media = crate::media::storage::MediaStore::from_config(&config);
         AppState {
@@ -98,6 +105,7 @@ impl AppState {
             bus: ws::EventBus::default(),
             connections: ws::ConnectionRegistry::default(),
             ap: None,
+            search_index,
         }
     }
 

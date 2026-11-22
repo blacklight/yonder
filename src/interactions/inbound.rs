@@ -184,6 +184,8 @@ async fn announce_inbound(core: &ApCore, activity: &Activity, raw: &Value) -> Re
     }
     tx.commit().await?;
     if let Some(boost_id) = boost_id {
+        crate::search::index::enqueue_index(&core.dispatcher, &core.config, "status", boost_id)
+            .await;
         // A remote Announce is a status row like any other boost —
         // it fans out to the remote actor's local followers.
         crate::timelines::fanout::enqueue(&core.dispatcher, boost_id).await;
@@ -318,6 +320,8 @@ async fn undo_announce_inbound(core: &ApCore, activity: &Activity, inner: &Value
     }
     tx.commit().await?;
     if tombstoned > 0 {
+        crate::search::index::enqueue_remove(&core.dispatcher, &core.config, "status", boost.id)
+            .await;
         crate::timelines::fanout::remove_quiet(
             &core.db,
             &core.redis,

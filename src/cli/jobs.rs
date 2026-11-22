@@ -251,6 +251,22 @@ pub enum JobCommand {
     /// "quoted_uri": "<uri>"}` — enqueued by inbound `Accept`s.
     #[command(name = "quote_authorization")]
     QuoteAuthorization(JobArgs),
+    /// Upsert or delete one search-index document (internal kind —
+    /// enqueued by the write paths when `search.elasticsearch_url` is
+    /// set).
+    ///
+    /// Payload: `{"entity": "status"|"account", "id": <id>,
+    /// "op": "index"|"remove"}`.
+    #[command(name = "search_index_sync")]
+    SearchIndexSync(JobArgs),
+    /// Bulk (re)index statuses/accounts into the Elasticsearch
+    /// backend — cursor-paginates and re-enqueues itself per batch.
+    ///
+    /// Payload: `{"entity": "statuses"|"accounts"|"all",
+    /// "after_id": <id>, "batch_size": <n>}` — `entity` defaults to
+    /// `"all"`.
+    #[command(name = "search_index_backfill")]
+    SearchIndexBackfill(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -297,6 +313,8 @@ impl JobCommand {
             Self::ImportPublish(a) => (JobKind::ImportPublish, a),
             Self::ImportSweep(a) => (JobKind::ImportSweep, a),
             Self::QuoteAuthorization(a) => (JobKind::QuoteAuthorization, a),
+            Self::SearchIndexSync(a) => (JobKind::SearchIndexSync, a),
+            Self::SearchIndexBackfill(a) => (JobKind::SearchIndexBackfill, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

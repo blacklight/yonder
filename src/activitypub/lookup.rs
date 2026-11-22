@@ -106,6 +106,19 @@ pub(crate) async fn upsert_remote_stub_row(
     db: &PgPool,
     config: &crate::config::Config,
     actor_url: &str,
+    dispatcher: &Dispatcher,
+) -> Result<i64> {
+    let id = upsert_remote_stub_row_inner(db, config, actor_url).await?;
+    // The stub's username/domain already feed account search — index
+    // it now; the enrichment upsert re-indexes with the full doc.
+    crate::search::index::enqueue_index(dispatcher, config, "account", id).await;
+    Ok(id)
+}
+
+async fn upsert_remote_stub_row_inner(
+    db: &PgPool,
+    config: &crate::config::Config,
+    actor_url: &str,
 ) -> Result<i64> {
     if let Some(id) = self_actor_account(db, config, actor_url).await? {
         return Ok(id);
@@ -228,7 +241,7 @@ pub(crate) async fn upsert_remote_stub(
     if let Some(id) = self_actor_account(db, config, actor_url).await? {
         return Ok(id);
     }
-    let id = upsert_remote_stub_row(db, config, actor_url).await?;
+    let id = upsert_remote_stub_row(db, config, actor_url, dispatcher).await?;
     if super::storage::fetch_markers_fresh(db, id).await {
         return Ok(id);
     }

@@ -413,8 +413,10 @@ async fn sync_remote_network(
         if let Ok(Some(doc)) =
             tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&url)).await
         {
-            crate::activitypub::storage::upsert_remote_actor_row(db, config, actor_id, &doc)
-                .await?;
+            crate::activitypub::storage::upsert_remote_actor_row(
+                db, config, actor_id, &doc, dispatcher,
+            )
+            .await?;
             collection = lookup::actor_collection_uri(&doc, direction);
         }
     }
@@ -535,7 +537,9 @@ async fn sync_remote_network(
                     tokio::task::spawn_blocking(move || handler.outbox.fetch_actor(&u)).await;
                 let id = match doc {
                     Ok(Some(doc)) => {
-                        match crate::activitypub::storage::upsert_remote_actor_row(&db, config, &uri, &doc)
+                        match crate::activitypub::storage::upsert_remote_actor_row(
+                            &db, config, &uri, &doc, &dispatcher,
+                        )
                             .await
                         {
                             Ok(id) => id,
@@ -574,7 +578,7 @@ async fn sync_remote_network(
         let stub = if i < REMOTE_NETWORK_STUB_JOBS {
             lookup::upsert_remote_stub(db, dispatcher, config, uri).await
         } else {
-            lookup::upsert_remote_stub_row(db, config, uri).await
+            lookup::upsert_remote_stub_row(db, config, uri, dispatcher).await
         };
         match stub {
             Ok(id) => {

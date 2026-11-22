@@ -268,7 +268,12 @@ pub async fn provision_local_conn(
 /// it carries a key — in one transaction, so a failure mid-way can't
 /// leave a keyless row that `handler_for` would then reject at boot.
 /// Returns its [`LocalActor`].
-pub async fn ensure_instance_actor(pool: &PgPool, base_url: &str) -> Result<LocalActor> {
+pub async fn ensure_instance_actor(
+    pool: &PgPool,
+    base_url: &str,
+    config: &crate::config::Config,
+    dispatcher: &crate::jobs::Dispatcher,
+) -> Result<LocalActor> {
     let mut tx = pool.begin().await?;
     let existing: Option<i64> =
         sqlx::query_scalar("SELECT id FROM accounts WHERE username = $1 AND domain IS NULL")
@@ -298,6 +303,7 @@ pub async fn ensure_instance_actor(pool: &PgPool, base_url: &str) -> Result<Loca
         provision_local_conn(&mut tx, base_url, id, INSTANCE_USERNAME).await?;
     }
     tx.commit().await?;
+    crate::search::index::enqueue_index(dispatcher, config, "account", id).await;
     load_local_actor(pool, INSTANCE_USERNAME)
         .await?
         .ok_or_else(|| crate::Error::Internal("instance actor missing after ensure".to_string()))

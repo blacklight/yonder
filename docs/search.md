@@ -140,12 +140,70 @@ Every query composes:
 ## Index backend
 
 `search::index::SearchIndex` is the pluggable seam
-(`search_accounts`/`search_statuses`/`index_*`/`remove_*`).
-`PostgresIndex` delegates to the trigram queries and is the default
-and only shipping backend — the DB *is* the index, so `index_*`/
-`remove_*` are no-ops. Setting `search.elasticsearch_url` logs a
-once-per-process warning and falls back to Postgres until an ES/OS
-implementation lands.
+(`search_accounts`/`search_statuses`/`index_*`/`remove_*`). Two
+backends exist:
+
+- **`PostgresIndex`** (default): delegates to the trigram/`ILIKE`
+  queries above; `index_*`/`remove_*` are no-ops — the DB *is* the
+  index.
+- **`ElasticsearchIndex`**: selected automatically when
+  `search.elasticsearch_url` is set (plain ES or OpenSearch — the wire
+  protocol is identical). It serves `search_accounts`/`search_statuses`
+  by querying ES for candidate ids, then re-running the same Postgres
+  query restricted to `id = ANY($n)` — **Postgres remains the
+  authorization authority**: liveness, visibility, blocks/mutes,
+  domain blocks, discoverability and author opt-out are all enforced
+  there, so the index can never leak a document Postgres would hide.
+  Hashtags always use the Postgres path.
+
+### ES indices
+
+Two indices are created lazily on first use (and by the backfill job):
+
+| Index | Doc id | Text fields |
+|---|---|---|
+| `{prefix}-statuses` | status id | `content`, `spoiler_text` |
+| `{prefix}-accounts` | account id | `username`, `display_name`, `domain` |
+
+`{prefix}` is `search.elasticsearch_index_prefix` (default `yonder`).
+Docs also carry filterable metadata (`account_id`, `visibility`,
+`tombstone`, `reblog_of_id`, `created_at`) for future query tuning.
+
+### Keeping the index in sync
+
+Every committed status/account write enqueues a
+`search_index_sync` job (`{"entity","id","op":"index"|"remove"}`) on
+the `bulk` queue — enqueueing is best-effort and never fails the
+write; the job is idempotent (re-indexing is an upsert, removal of a
+missing doc is a no-op). Covered paths: local create/edit/publish/
+tombstone, remote materialize/update/delete, webmention replies,
+registration, profile updates, remote actor upserts (incl. stubs) and
+account purge. The job is a no-op unless `elasticsearch_url` is set.
+
+### Bulk backfill
+
+`SearchIndexBackfill` (`search_index_backfill`) cursor-paginates
+statuses/accounts in batches of 500 and `_bulk`-indexes them, then
+re-enqueues itself until done. Seed or rebuild with:
+
+```sh
+yonder run-job search_index_backfill --payload '{"entity":"all"}'
+# or one entity at a time:
+yonder run-job search_index_backfill --payload '{"entity":"statuses"}'
+yonder run-job search_index_backfill --payload '{"entity":"accounts"}'
+```
+
+`{"entity":"all"}` is safe to re-run — it is the reconciliation path.
+Set `search.reindex_schedule` (5-field cron, e.g. `"0 5 * * *"`) to
+enqueue a full backfill periodically and catch any write path the
+sync hooks miss (e.g. imports). The schedule is only registered when
+`elasticsearch_url` is configured.
+
+ES is a *candidate pre-filter*, not the result set: matching is
+`multi_match`/`match` scoring capped at `MAX_CANDIDATES` (5000), after
+which Postgres applies all filters and ordering. On a very large
+corpus a query can under-return (candidates are top-N by score) —
+raise it in code if needed; correctness never depends on ES alone.
 
 ## Response shape
 

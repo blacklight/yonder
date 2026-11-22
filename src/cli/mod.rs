@@ -219,8 +219,7 @@ async fn serve(path: Option<&Path>) -> Result<()> {
     // shared `database.max_connections` budget.
     let mut worker_parts = if config.jobs.enabled {
         let worker_pool = db::connect(&config.database).await?;
-        let (worker, scheduler) =
-            start_worker(&config, worker_pool, &state.bus).await?;
+        let (worker, scheduler) = start_worker(&config, worker_pool, &state.bus).await?;
         let token = worker.cancel_token();
         let join = tokio::spawn(async move { worker.run().await });
         Some((join, token, scheduler))
@@ -331,6 +330,9 @@ pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
     // federation gate (it is a separate protocol); `ap` only improves
     // the streaming/fan-out side of materialization.
     crate::webmentions::register_jobs(&mut registry, ap);
+    // Elasticsearch/OpenSearch search index — sync + backfill. The
+    // handlers no-op under the Postgres backend.
+    crate::search::register_jobs(&mut registry);
     registry
 }
 

@@ -840,7 +840,18 @@ pub struct SearchConfig {
     /// locally.
     pub remote_fetch: bool,
     /// Optional Elasticsearch/OpenSearch URL for indexed search.
+    /// When set, an [`crate::search::elasticsearch::ElasticsearchIndex`]
+    /// backend replaces the Postgres trigram path; the index is fed by
+    /// `SearchIndexSync`/`SearchIndexBackfill` jobs.
     pub elasticsearch_url: Option<String>,
+    /// Index-name prefix for the ES backend (`{prefix}-statuses` /
+    /// `{prefix}-accounts`).
+    pub elasticsearch_index_prefix: String,
+    /// Optional cron expression (5-field) that enqueues a full
+    /// `SearchIndexBackfill` — periodic reconciliation for any write
+    /// path the sync hooks don't cover (e.g. imports). Only registered
+    /// when `elasticsearch_url` is set. `""` or unset disables.
+    pub reindex_schedule: Option<String>,
 }
 
 impl Default for SearchConfig {
@@ -849,6 +860,8 @@ impl Default for SearchConfig {
             unauthenticated_enabled: true,
             remote_fetch: true,
             elasticsearch_url: None,
+            elasticsearch_index_prefix: "yonder".to_string(),
+            reindex_schedule: None,
         }
     }
 }

@@ -97,6 +97,9 @@ pub async fn reblog(
     tx.commit().await?;
     // The unique index guarantees a row exists — either the one we
     // just inserted or a concurrent winner's.
+    if let Some(id) = boost_id {
+        crate::search::index::enqueue_index(&ctx.dispatcher, &ctx.config, "status", id).await;
+    }
     let boost_id = match boost_id {
         Some(id) => id,
         None => {
@@ -203,6 +206,8 @@ pub async fn unreblog_row(ctx: &PostContext, boost: &StatusRow) -> Result<Status
     tx.commit().await?;
 
     if tombstoned > 0 {
+        crate::search::index::enqueue_remove(&ctx.dispatcher, &ctx.config, "status", boost.id)
+            .await;
         crate::timelines::fanout::remove_quiet(
             &ctx.db,
             &ctx.redis,

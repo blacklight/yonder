@@ -10,8 +10,10 @@
 //! account/tag matching runs in prefix mode there.
 
 pub mod accounts;
+pub mod elasticsearch;
 pub mod hashtags;
 pub mod index;
+pub mod jobs;
 pub mod params;
 pub mod resolve;
 pub mod statuses;
@@ -93,7 +95,7 @@ pub async fn search(
         None => Vec::new(),
     };
     let hide = crate::filters::apply::hide_clause(&rules);
-    let index = index::build_index(&state.config().search);
+    let index = state.search_index.clone();
     let kind = params::effective_kind(params, params::classify(&params.q));
     let prefix = params::is_prefix_mode(params, &kind);
     let can_resolve = caller.is_some()
@@ -194,6 +196,12 @@ pub async fn search(
         }
     }
     Ok(out)
+}
+
+/// Register the search job handlers (ES index sync + backfill) —
+/// replaces the stubs; called by [`crate::cli::build_registry`].
+pub fn register_jobs(registry: &mut crate::jobs::Registry) {
+    jobs::register(registry);
 }
 
 /// Render [`RawResults`] to the response body. `v1` picks the

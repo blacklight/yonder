@@ -278,8 +278,15 @@ send_account_status = true
 unauthenticated_enabled = true
 # Fetch remote results (actors, posts) when a search doesn't match locally.
 remote_fetch = true
-# Optional Elasticsearch/OpenSearch URL for indexed search.
+# Optional Elasticsearch/OpenSearch URL for indexed search. When set,
+# an ES backend serves search; seed it with
+# `yonder run-job search_index_backfill --payload '{"entity":"all"}'`.
 # elasticsearch_url = "http://localhost:9200"
+# Index-name prefix ({prefix}-statuses / {prefix}-accounts).
+# elasticsearch_index_prefix = "yonder"
+# Optional cron (5-field) enqueuing a full index backfill — periodic
+# reconciliation for write paths the sync hooks miss (e.g. imports).
+# reindex_schedule = "0 5 * * *"
 
 [http]
 # Enable CORS — only with an explicit origin allow-list.

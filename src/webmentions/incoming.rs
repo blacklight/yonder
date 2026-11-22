@@ -467,6 +467,10 @@ async fn materialize(ctx: &JobContext, ap: Option<&ApContext>, mention: &Webment
     .await?;
     tx.commit().await?;
 
+    let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+    crate::search::index::enqueue_index(&dispatcher, &ctx.config, "account", account_id).await;
+    crate::search::index::enqueue_index(&dispatcher, &ctx.config, "status", status_id).await;
+
     let Some(status) = crate::posts::load(&ctx.db, status_id).await? else {
         return Ok(());
     };
@@ -516,6 +520,8 @@ async fn retract(
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
+    let dispatcher = crate::jobs::Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+    crate::search::index::enqueue_remove(&dispatcher, &ctx.config, "status", status.id).await;
     crate::notifications::delete_for_status(&ctx.db, status.id).await?;
     sqlx::query(
         "UPDATE accounts SET statuses_count = GREATEST(statuses_count - 1, 0) WHERE id = $1",

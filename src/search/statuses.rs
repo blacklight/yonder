@@ -83,6 +83,35 @@ pub async fn search(
     kind: &QueryKind,
     hide: Option<&crate::timelines::filter::HideClause>,
 ) -> Result<Vec<StatusRow>> {
+    search_inner(db, viewer, params, kind, hide, None).await
+}
+
+/// The ES-backend variant: identical filters and ordering, but the
+/// text match is replaced by `s.id = ANY(ids)` — the index already
+/// decided *what* matches, Postgres decides *who may see it*.
+/// An empty candidate set short-circuits without touching the DB.
+pub async fn search_ids(
+    db: &PgPool,
+    viewer: Option<i64>,
+    params: &SearchParams,
+    kind: &QueryKind,
+    hide: Option<&crate::timelines::filter::HideClause>,
+    ids: &[i64],
+) -> Result<Vec<StatusRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    search_inner(db, viewer, params, kind, hide, Some(ids)).await
+}
+
+async fn search_inner(
+    db: &PgPool,
+    viewer: Option<i64>,
+    params: &SearchParams,
+    kind: &QueryKind,
+    hide: Option<&crate::timelines::filter::HideClause>,
+    ids: Option<&[i64]>,
+) -> Result<Vec<StatusRow>> {
     let QueryKind::Text(text) = kind else {
         return Ok(Vec::new());
     };
@@ -104,10 +133,18 @@ pub async fn search(
         format!("${}", binds.len())
     };
 
-    let pat = alloc(Bind::Text(like_pattern(text, false)));
-    clauses.push(format!(
-        "(s.content ILIKE {pat} OR s.spoiler_text ILIKE {pat})"
-    ));
+    match ids {
+        Some(ids) => {
+            let p = alloc(Bind::I64s(ids.to_vec()));
+            clauses.push(format!("s.id = ANY({p})"));
+        }
+        None => {
+            let pat = alloc(Bind::Text(like_pattern(text, false)));
+            clauses.push(format!(
+                "(s.content ILIKE {pat} OR s.spoiler_text ILIKE {pat})"
+            ));
+        }
+    }
     // Reblogs carry the original's content — the original is
     // independently searchable, so doubles would be noise.
     clauses.push("s.reblog_of_id IS NULL".to_string());

@@ -51,12 +51,22 @@ fn sync_block<F: Future>(f: F) -> F::Output {
 pub struct PgActivityPubStorage {
     pool: PgPool,
     config: Arc<crate::config::Config>,
+    /// Job enqueue for post-upsert side-effects (search indexing).
+    dispatcher: crate::jobs::Dispatcher,
 }
 
 impl PgActivityPubStorage {
     /// Create the adapter over `pool`.
-    pub fn new(pool: PgPool, config: Arc<crate::config::Config>) -> Self {
-        PgActivityPubStorage { pool, config }
+    pub fn new(
+        pool: PgPool,
+        config: Arc<crate::config::Config>,
+        dispatcher: crate::jobs::Dispatcher,
+    ) -> Self {
+        PgActivityPubStorage {
+            pool,
+            config,
+            dispatcher,
+        }
     }
 
     /// The underlying pool — the rest of the module queries through it.
@@ -219,6 +229,7 @@ async fn upsert_remote_account(
     config: &crate::config::Config,
     actor_id: &str,
     actor_data: &Value,
+    dispatcher: &crate::jobs::Dispatcher,
 ) -> Result<Option<i64>> {
     // A self-domain actor URL binds the local row — never upsert one
     // as remote. A remote collection listing our actor (or a stub
@@ -513,6 +524,12 @@ async fn upsert_remote_account(
     if result.is_ok() {
         sync_remote_move(pool, actor_id, actor_data).await;
     }
+    // Search index: username/display_name/domain feed account
+    // matching — enqueue on every successful upsert (idempotent; a
+    // no-op unless `search.elasticsearch_url` is set).
+    if let Ok(Some(id)) = &result {
+        crate::search::index::enqueue_index(dispatcher, config, "account", *id).await;
+    }
     result
 }
 
@@ -633,9 +650,14 @@ impl ActivityPubStorage for PgActivityPubStorage {
     fn store_follower(&self, follower: &Follower) -> Result<()> {
         sync_block(async {
             let actor_data = map_value(&follower.actor_data);
-            let Some(remote_id) =
-                upsert_remote_account(&self.pool, &self.config, &follower.actor_id, &actor_data)
-                    .await?
+            let Some(remote_id) = upsert_remote_account(
+                &self.pool,
+                &self.config,
+                &follower.actor_id,
+                &actor_data,
+                &self.dispatcher,
+            )
+            .await?
             else {
                 return Ok(());
             };
@@ -798,9 +820,14 @@ impl ActivityPubStorage for PgActivityPubStorage {
         sync_block(async {
             let actor_data = map_value(&request.actor_data);
             let activity = map_value(&request.activity);
-            let Some(remote_id) =
-                upsert_remote_account(&self.pool, &self.config, &request.actor_id, &actor_data)
-                    .await?
+            let Some(remote_id) = upsert_remote_account(
+                &self.pool,
+                &self.config,
+                &request.actor_id,
+                &actor_data,
+                &self.dispatcher,
+            )
+            .await?
             else {
                 return Ok(());
             };
@@ -1208,9 +1235,15 @@ impl ActivityPubStorage for PgActivityPubStorage {
             // actor lookups; project the document into `accounts` so a
             // cache hit can't leave the profile as a bare stub until
             // the queued `RemoteActorFetch` runs.
-            if let Err(e) =
-                upsert_remote_account(&self.pool, &self.config, actor_id, actor_data).await
-            {
+            let upserted = upsert_remote_account(
+                &self.pool,
+                &self.config,
+                actor_id,
+                actor_data,
+                &self.dispatcher,
+            )
+            .await;
+            if let Err(e) = &upserted {
                 tracing::warn!(actor = %actor_id, error = %e, "cached actor account upsert failed");
             }
             Ok(())
@@ -1273,8 +1306,9 @@ pub(crate) async fn upsert_remote_actor_row(
     config: &crate::config::Config,
     actor_id: &str,
     actor_data: &Value,
+    dispatcher: &crate::jobs::Dispatcher,
 ) -> Result<Option<i64>> {
-    upsert_remote_account(pool, config, actor_id, actor_data).await
+    upsert_remote_account(pool, config, actor_id, actor_data, dispatcher).await
 }
 
 /// Whether a `RemoteActorFetch` for `account_id` recently failed (the

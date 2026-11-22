@@ -366,6 +366,7 @@ async fn publish_one(ctx: &PostContext, id: i64) -> Result<()> {
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::search::index::enqueue_index(&ctx.dispatcher, &ctx.config, "status", status_id).await;
 
     let status = super::load(&ctx.db, status_id)
         .await?

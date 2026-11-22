@@ -219,6 +219,7 @@ async fn resolve_outbox_url(
                 &ap.core.config,
                 actor_id,
                 &fetched.doc,
+                &ap.core.dispatcher,
             )
             .await
             {
@@ -600,6 +601,8 @@ async fn ingest_announce(
     let Some(boost_id) = boost_id else {
         return Ok(false);
     };
+    crate::search::index::enqueue_index(&ap.core.dispatcher, &ap.core.config, "status", boost_id)
+        .await;
     crate::timelines::fanout::enqueue(&ap.core.dispatcher, boost_id).await;
     if let Ok(Some(boost)) = posts::load(&ap.core.db, boost_id).await {
         let ctx = crate::timelines::stream::post_ctx_for_core(&ap.core);

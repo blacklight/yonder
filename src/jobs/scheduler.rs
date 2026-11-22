@@ -106,6 +106,16 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.media.orphan_cleanup_schedule.as_deref(),
             JobKind::CleanupOrphanMedia,
         ),
+        // Periodic ES reindex — payload is injected below; only
+        // meaningful with `search.elasticsearch_url` set.
+        (
+            if config.search.elasticsearch_url.is_some() {
+                config.search.reindex_schedule.as_deref()
+            } else {
+                None
+            },
+            JobKind::SearchIndexBackfill,
+        ),
     ];
     for (expression, kind) in schedules {
         let Some(expression) = expression else {
@@ -129,7 +139,13 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
         let job = match Job::new_async(cron, move |_id, _lock| {
             let dispatcher = dispatcher.clone();
             Box::pin(async move {
-                if let Err(e) = dispatcher.enqueue(kind, json!({})).await {
+                // Kinds whose cron shape differs from `{}` carry their
+                // fan-out payload here.
+                let payload = match kind {
+                    JobKind::SearchIndexBackfill => json!({"entity": "all"}),
+                    _ => json!({}),
+                };
+                if let Err(e) = dispatcher.enqueue(kind, payload).await {
                     tracing::warn!(kind = kind.as_str(), error = %e, "scheduled enqueue failed");
                 }
             })

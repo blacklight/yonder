@@ -22,6 +22,37 @@
   (`jobs.remote_circuit_failure_threshold` /
   `jobs.remote_circuit_cooldown_seconds`) that pauses fetches to a
   domain after consecutive failures.
+- `activitypub`: Add a C2S outbox (`POST /ap/users/{username}/outbox`)
+  for Like/Announce/Follow/Create/Undo activities, plus OAuth
+  discovery (RFC 8414) and dynamic client registration (RFC 7591), so
+  compatible clients can publish and interact over ActivityPub
+  ([`11ccece`](https://git.platypush.tech/blacklight/yonder/commit/11ccecec83d82b95356c75297b0a3c1f916824bf)).
+
+### Fixed
+
+- `federation`: Give user-visible status fetches their own remote-gate
+  budget and circuit, and negative-cache failed signature actor
+  lookups — bulk remote churn no longer starves quote/pin resolution,
+  and `/ap` object requests stop paying the full remote-fetch timeout
+  for unreachable actors
+  ([`511946c`](https://git.platypush.tech/blacklight/yonder/commit/511946c5b71a43591b807182cc73f3eb613b2b5f)).
+- Keep timelines, status pages and profiles responsive when federation
+  is slow: bound inline thread-context expansion and account-lookup
+  WebFinger by their real deadlines, resolve missed remote handles in
+  the background via a new `remote_actor_resolve` job, and give the
+  in-process worker its own database pool
+  ([`a9f6893`](https://git.platypush.tech/blacklight/yonder/commit/a9f6893fb8155db6157b225f2c9ea9e6ce11a1a4)).
+
+### Changed
+
+- `search`: Speed up account matching — drop domain substring
+  matching for exact-match plausible domains only, and back
+  username/display-name autocomplete with prefix `LIKE` plus new
+  btree pattern indexes (migration 0056)
+  ([`7281475`](https://git.platypush.tech/blacklight/yonder/commit/7281475d0b0bc4072dbde0797b6f0f93fe2c2b)).
+- `api`: Cache `/api/v1/instance` stats and `/api/v1/instance/peers`
+  in Redis with a database fallback
+  ([`cce6447`](https://git.platypush.tech/blacklight/yonder/commit/cce6447ed52135d7942bd4924d3a08095ec2b15c)).
 
 ## 1.0.9
 

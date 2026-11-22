@@ -292,6 +292,50 @@ pub fn test_slug() -> String {
     )
 }
 
+/// Drop `yonder_t_*` databases whose owning test is gone. A finished
+/// test drops its pool, which closes every connection — so zero rows
+/// in `pg_stat_activity` means no live test can still need the
+/// database (idle pooled connections still count, and `idle_timeout`
+/// is 10min — far longer than any single test).
+///
+/// The 2-minute age floor (`PG_VERSION` mtime ≈ creation time) keeps a
+/// just-provisioned database safe while its first connections spin
+/// up, and lets overlapping `cargo test` runs coexist: a foreign run's
+/// live databases always show connections. Without this sweep every
+/// run leaves ~500 migrated databases behind and the shared Postgres
+/// eventually fills its disk (`53100 No space left on device`).
+async fn sweep_stale_test_dbs(admin: &PgPool, keep: &str) {
+    let stale: Vec<String> = match sqlx::query_scalar(
+        "SELECT d.datname::text FROM pg_database d \
+         WHERE d.datname::text LIKE 'yonder\\_t\\_%' \
+           AND d.datname::text <> $1 \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname) \
+           AND (pg_stat_file('base/' || d.oid || '/PG_VERSION')).modification \
+               < now() - interval '2 minutes'",
+    )
+    .bind(keep)
+    .fetch_all(admin)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            eprintln!("test-db sweep skipped: {e}");
+            return;
+        }
+    };
+    for name in stale {
+        // A connection may have appeared since the check — a plain
+        // DROP then fails harmlessly and the next sweep retries.
+        if let Err(e) = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{name}\""))
+            .execute(admin)
+            .await
+        {
+            eprintln!("stale test db drop failed for {name}: {e}");
+        }
+    }
+}
+
 /// Fresh database `yonder_t_<slug>` on the shared Postgres, migrated
 /// and ready. Returns a small pool — tests run in parallel and share
 /// the container's connection budget.
@@ -304,6 +348,7 @@ pub async fn provision_db(infra: &Infra, slug: &str) -> PgPool {
         .connect(&format!("{}/postgres", infra.pg_url))
         .await
         .expect("postgres admin connection");
+    sweep_stale_test_dbs(&admin, &db).await;
     sqlx::query(&format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)"))
         .execute(&admin)
         .await

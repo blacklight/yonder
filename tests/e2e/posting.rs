@@ -2205,6 +2205,10 @@ async fn link_preview_video_card_embeds() {
         let _: () = conn.set(&v1_key, envelope.to_string()).await.unwrap();
     }
 
+    // The creates above each left a `FetchLinkPreview` envelope on
+    // `bulk` (their queue since the remote-lane split) — drain them so
+    // the sweep assertion below sees only what the rescan fans out.
+    let _ = drain_queue(&env, "bulk").await;
     job.run(&jctx, &json!({})).await.unwrap();
     let scan: i32 =
         sqlx::query_scalar("SELECT scan_version FROM preview_cards WHERE status_id = $1")

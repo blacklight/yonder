@@ -354,30 +354,96 @@ pub async fn scoped_redis(infra: &Infra, config: &mut RedisConfig, slug: &str) -
     redis
 }
 
-/// A dedicated (NOT shared) Redis container for tests that control the
-/// service lifecycle — e.g. dropping the handle to simulate an outage.
+/// Kill handle for [`dedicated_redis`]: dropping it stops the backing
+/// Redis whether that is a container or a local `redis-server` process.
+pub struct DedicatedRedis {
+    inner: DedicatedRedisInner,
+}
+
+enum DedicatedRedisInner {
+    // Held only for its Drop (stops/removes the container).
+    #[allow(dead_code)]
+    Container(ContainerAsync<RedisImage>),
+    Process(std::process::Child),
+}
+
+impl Drop for DedicatedRedis {
+    fn drop(&mut self) {
+        match &mut self.inner {
+            DedicatedRedisInner::Container(_) => {}
+            DedicatedRedisInner::Process(child) => {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+/// A dedicated (NOT shared) Redis for tests that control the service
+/// lifecycle — e.g. dropping the handle to simulate an outage.
 /// Everything else should use [`scoped_redis`].
+///
+/// Prefers a throwaway container; when container networking is
+/// unavailable (e.g. a host whose kernel lacks the `veth` module) it
+/// falls back to a local `redis-server` process on a free port.
 pub async fn dedicated_redis(
     config: &mut RedisConfig,
     slug: &str,
-) -> Option<(cache::Redis, ContainerAsync<RedisImage>)> {
+) -> Option<(cache::Redis, DedicatedRedis)> {
     if !docker_available() {
         eprintln!("skipping: no container runtime reachable");
         return None;
     }
-    let container = RedisImage::default()
+    config.key_prefix = format!("yonder_t:{slug}");
+
+    let inner = match RedisImage::default()
         .with_tag("7-alpine")
         .start()
         .await
-        .expect("redis container");
-    let port = container
-        .get_host_port_ipv4(6379)
-        .await
-        .expect("redis port");
-    config.url = format!("redis://127.0.0.1:{port}");
-    config.key_prefix = format!("yonder_t:{slug}");
+    {
+        Ok(container) => {
+            let port = container
+                .get_host_port_ipv4(6379)
+                .await
+                .expect("redis port");
+            config.url = format!("redis://127.0.0.1:{port}");
+            DedicatedRedisInner::Container(container)
+        }
+        Err(e) => {
+            eprintln!("dedicated redis container failed ({e}); using local redis-server");
+            let port = free_port()?;
+            let child = std::process::Command::new("redis-server")
+                .args([
+                    "--port",
+                    &port.to_string(),
+                    "--bind",
+                    "127.0.0.1",
+                    "--save",
+                    "",
+                    "--appendonly",
+                    "no",
+                    "--daemonize",
+                    "no",
+                ])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("local redis-server");
+            config.url = format!("redis://127.0.0.1:{port}");
+            DedicatedRedisInner::Process(child)
+        }
+    };
+
     let redis = cache::connect(config).await.expect("redis connect");
-    Some((redis, container))
+    Some((redis, DedicatedRedis { inner }))
+}
+
+/// An ephemeral localhost TCP port for the local-redis fallback.
+fn free_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
 }
 
 /// A `[math]` renderer command for tests — a shell script that drains

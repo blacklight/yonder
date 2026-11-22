@@ -1138,6 +1138,9 @@ async fn instance_endpoint() {
         env.state.config().media.max_upload_size
     );
     register_user(&env.app, "kevin", "k@x.com").await;
+    // `instance.stats` is served from a short-lived cache — evict it
+    // so the fresh registration is reflected in the counts.
+    env.state.cache.delete("instance:stats").await.unwrap();
     let (status, body) = request(&env.app, json_req("GET", "/api/v1/instance", json!({}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["stats"]["user_count"], 1);

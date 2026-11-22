@@ -4,6 +4,7 @@
 //! `thumbnail`/`icon` entity fields reference.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     extract::State,
@@ -12,9 +13,93 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{PgPool, Row};
 
 use crate::{config::RegistrationMode, http::AppState, Error, Result};
+
+/// TTL for the cached `stats` counts. `domain_count` is a
+/// `count(DISTINCT domain)` over the whole remote-accounts table — on a
+/// large instance that's a multi-second seq scan + sort, far too slow
+/// for an endpoint clients poll. Counts don't need second accuracy.
+const STATS_TTL: Duration = Duration::from_secs(60);
+
+/// TTL for the cached `peers` domain list — the union scan is likewise
+/// expensive, and the listing doesn't need to reflect accounts that
+/// arrived seconds ago.
+const PEERS_TTL: Duration = Duration::from_secs(300);
+
+/// Serve `key` from Redis via single-flight `get_or_load`, running
+/// `query` on a miss. When the cache is unavailable the query runs
+/// directly so these public endpoints never depend on Redis being up.
+async fn cached_query<T, F, Fut>(
+    state: &Arc<AppState>,
+    key: &str,
+    ttl: Duration,
+    query: F,
+) -> Result<T>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned,
+    F: Fn(PgPool) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let db = state.db.clone();
+    match state.cache.get_or_load(key, ttl, || query(db.clone())).await {
+        Ok(value) => Ok(value),
+        Err(e) => {
+            tracing::warn!(error = %e, key, "instance cache unavailable — querying directly");
+            query(state.db.clone()).await
+        }
+    }
+}
+
+/// Run the counts query directly (cache miss or Redis down).
+async fn load_stats(db: &PgPool) -> Result<(i64, i64, i64)> {
+    let row = sqlx::query(
+        "SELECT \
+            (SELECT count(*) FROM accounts a JOIN users u ON u.account_id = a.id \
+             WHERE a.domain IS NULL AND a.suspended_at IS NULL) AS user_count, \
+            (SELECT count(*) FROM statuses WHERE local) AS status_count, \
+            (SELECT count(DISTINCT domain) FROM accounts WHERE domain IS NOT NULL) AS domain_count",
+    )
+    .fetch_one(db)
+    .await?;
+    Ok((
+        row.get::<i64, _>("user_count"),
+        row.get::<i64, _>("status_count"),
+        row.get::<i64, _>("domain_count"),
+    ))
+}
+
+/// Run the peers union query directly (cache miss or Redis down).
+async fn load_peers(db: &PgPool) -> Result<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT DISTINCT d FROM ( \
+             SELECT domain AS d FROM accounts WHERE domain IS NOT NULL \
+             UNION \
+             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM relays \
+             UNION \
+             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM deliveries \
+         ) sub \
+         WHERE d IS NOT NULL \
+           AND d ~ '^[a-z0-9][a-z0-9.-]*$' \
+           AND NOT EXISTS ( \
+               SELECT 1 FROM domain_blocks b \
+               WHERE b.domain = sub.d AND b.severity IN ('silence', 'suspend') \
+           ) \
+         ORDER BY d",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(Into::into)
+}
+
+/// `(user_count, status_count, domain_count)` for `instance.stats`.
+async fn instance_stats(state: &Arc<AppState>) -> Result<(i64, i64, i64)> {
+    cached_query(state, "instance:stats", STATS_TTL, |db| async move {
+        load_stats(&db).await
+    })
+    .await
+}
 
 /// Mastodon Rule entities for `instance.rules` — clients render the
 /// numbered list on the registration and /about surfaces.
@@ -143,15 +228,7 @@ pub(crate) async fn contact_account(
 pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let config = &state.config();
     let base_url = crate::activitypub::federation_base_url(config);
-    let row = sqlx::query(
-        "SELECT \
-            (SELECT count(*) FROM accounts a JOIN users u ON u.account_id = a.id \
-             WHERE a.domain IS NULL AND a.suspended_at IS NULL) AS user_count, \
-            (SELECT count(*) FROM statuses WHERE local) AS status_count, \
-            (SELECT count(DISTINCT domain) FROM accounts WHERE domain IS NOT NULL) AS domain_count",
-    )
-    .fetch_one(&state.db)
-    .await?;
+    let (user_count, status_count, domain_count) = instance_stats(&state).await?;
 
     let mode = config.auth.registration_mode;
     Ok(Json(json!({
@@ -164,9 +241,9 @@ pub async fn instance(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
         "urls": {"streaming_api": streaming_api_url(config)},
         "thumbnail": asset_url(&base_url, &config.instance.banner_path, "banner"),
         "stats": {
-            "user_count": row.get::<i64, _>("user_count"),
-            "status_count": row.get::<i64, _>("status_count"),
-            "domain_count": row.get::<i64, _>("domain_count"),
+            "user_count": user_count,
+            "status_count": status_count,
+            "domain_count": domain_count,
         },
         "languages": config.instance.languages,
         // Mastodon's v1 Instance entity uses scalar booleans; the
@@ -247,23 +324,9 @@ pub async fn peers(State(state): State<Arc<AppState>>) -> Result<Json<Vec<String
     if !state.config().instance.peers_api_enabled {
         return Err(Error::NotFound("peers".into()));
     }
-    let domains = sqlx::query_scalar::<_, String>(
-        "SELECT DISTINCT d FROM ( \
-             SELECT domain AS d FROM accounts WHERE domain IS NOT NULL \
-             UNION \
-             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM relays \
-             UNION \
-             SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM deliveries \
-         ) sub \
-         WHERE d IS NOT NULL \
-           AND d ~ '^[a-z0-9][a-z0-9.-]*$' \
-           AND NOT EXISTS ( \
-               SELECT 1 FROM domain_blocks b \
-               WHERE b.domain = sub.d AND b.severity IN ('silence', 'suspend') \
-           ) \
-         ORDER BY d",
-    )
-    .fetch_all(&state.db)
+    let domains = cached_query(&state, "instance:peers", PEERS_TTL, |db| async move {
+        load_peers(&db).await
+    })
     .await?;
     Ok(Json(domains))
 }

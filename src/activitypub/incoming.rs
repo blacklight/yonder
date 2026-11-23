@@ -198,14 +198,51 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
             }
             return Ok(ActivityDisposition::PassThrough);
         }
+        // Event RSVPs (FEP-8a8e): Join/Leave/TentativeAccept/Ignore
+        // plus the Accept/Reject branches that answer our Invites or
+        // outbound Joins. Non-event objects return `false` and fall
+        // through to pubby's dispatch.
+        if matches!(
+            activity.activity_type.as_str(),
+            "Join" | "Leave" | "TentativeAccept" | "Ignore"
+        ) {
+            match sync_block(crate::events::inbound::handle_activity(
+                &core, activity, raw,
+            )) {
+                Ok(true) => return Ok(ActivityDisposition::Handled),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "event rsvp handling failed");
+                    return Ok(ActivityDisposition::Handled);
+                }
+            }
+        }
         // Interactions (epic 13): Like/Announce/EmojiReact normalize
         // into favourites/boost/reaction rows + counters; EmojiReact
         // answers Handled (pubby's dispatch ignores unknown types).
-        // Accept/Reject pass through after follow-response settlement.
+        // Accept/Reject pass through after follow-response settlement
+        // — event RSVP branches run first and claim their objects.
         if matches!(
             activity.activity_type.as_str(),
             "Like" | "Announce" | "EmojiReact" | "Undo" | "Accept" | "Reject"
         ) {
+            if matches!(activity.activity_type.as_str(), "Accept" | "Reject") {
+                let kind = if activity.activity_type == "Accept" {
+                    crate::events::rsvp::RemoteResponseKind::Accept
+                } else {
+                    crate::events::rsvp::RemoteResponseKind::Reject
+                };
+                match sync_block(crate::events::inbound::handle_response(
+                    &core, activity, raw, kind,
+                )) {
+                    Ok(true) => return Ok(ActivityDisposition::Handled),
+                    Ok(false) => {}
+                    Err(e) => {
+                        tracing::warn!(error = %e, "event response handling failed");
+                        return Ok(ActivityDisposition::Handled);
+                    }
+                }
+            }
             return crate::interactions::inbound::handle(&core, activity, raw);
         }
         // Friendica/Hubzilla event invitations — materialize the

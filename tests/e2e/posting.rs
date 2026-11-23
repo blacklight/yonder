@@ -4624,3 +4624,532 @@ async fn math_multiline_aligned_survives_markdown_and_plain() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// FEP-8a8e RSVP — inbound Join/Leave on local events and Accept/Reject
+// answers to our outbound Joins on remote events (contract Section 10).
+// ---------------------------------------------------------------------------
+
+/// Flip a posted status into a local event — Section 7's authoring API
+/// doesn't exist yet, so tests set `object_type`/`title` and insert the
+/// `events` side row directly.
+async fn make_local_event(
+    env: &Env,
+    token: &str,
+    join_mode: &str,
+    capacity: Option<i32>,
+) -> (i64, String) {
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(token),
+        Some(json!({"status": "Test event", "visibility": "public"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+    let uri = body["uri"].as_str().unwrap().to_string();
+    sqlx::query("UPDATE statuses SET object_type = 'Event', title = 'Test event' WHERE id = $1")
+        .bind(status_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO events (status_id, start_time, end_time, join_mode, \
+                             maximum_attendee_capacity) \
+         VALUES ($1, now() + interval '1 day', now() + interval '2 days', $2, $3)",
+    )
+    .bind(status_id)
+    .bind(join_mode)
+    .bind(capacity)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    (status_id, uri)
+}
+
+fn join_activity(actor: &str, event_uri: &str) -> (pubby_sdk::Activity, Value) {
+    let object = json!({"id": event_uri, "type": "Event"});
+    let a = pubby_sdk::Activity {
+        id: format!("{actor}/activities/{}", uuid::Uuid::new_v4()),
+        activity_type: "Join".into(),
+        actor: actor.into(),
+        object: object.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let raw = json!({
+        "id": a.id, "type": "Join", "actor": actor, "object": object,
+    });
+    (a, raw)
+}
+
+fn response_activity(ty: &str, actor: &str, object: Value) -> (pubby_sdk::Activity, Value) {
+    let a = pubby_sdk::Activity {
+        id: format!("{actor}/activities/{}", uuid::Uuid::new_v4()),
+        activity_type: ty.into(),
+        actor: actor.into(),
+        object: object.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let raw = json!({
+        "id": a.id, "type": ty, "actor": actor, "object": object,
+    });
+    (a, raw)
+}
+
+async fn participation_state(
+    env: &Env,
+    event_uri: &str,
+    actor_uri: &str,
+) -> Option<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT p.state, p.protocol FROM event_participations p \
+         JOIN statuses s ON s.id = p.status_id \
+         JOIN accounts a ON a.id = p.account_id \
+         WHERE s.uri = $1 AND a.actor_id = $2",
+    )
+    .bind(event_uri)
+    .bind(actor_uri)
+    .fetch_optional(&env.state.db)
+    .await
+    .unwrap()
+}
+
+async fn event_counters(env: &Env, status_id: i64) -> (i32, i32) {
+    sqlx::query_as::<_, (i32, i32)>(
+        "SELECT participants_count, pending_count FROM events WHERE status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap()
+}
+
+async fn outbound_count(env: &Env, ty: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM activities WHERE type = $1")
+        .bind(ty)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap()
+}
+
+/// Remote `Join` on a local free event → accepted participation,
+/// counters, outbound `Accept`; a duplicate Join stays idempotent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_remote_join_accept() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let token = register(&env.app, "alice", "alice@x.com").await;
+    let (status_id, uri) = make_local_event(&env, &token, "free", None).await;
+    let bob = "https://remote.test/@bob";
+
+    let (act, raw) = join_activity(bob, &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+
+    let p = participation_state(&env, &uri, bob).await;
+    assert_eq!(p, Some(("accepted".into(), "join".into())), "{p:?}");
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+    assert!(outbound_count(&env, "Accept").await >= 1);
+
+    // Duplicate Join — still accepted, counters unchanged.
+    let (act, raw) = join_activity(bob, &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+
+    // Leave removes the row and decrements.
+    let object = json!({"id": uri, "type": "Event"});
+    let a = pubby_sdk::Activity {
+        id: format!("{bob}/activities/{}", uuid::Uuid::new_v4()),
+        activity_type: "Leave".into(),
+        actor: bob.into(),
+        object: object.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let raw = json!({"id": a.id, "type": "Leave", "actor": bob, "object": object});
+    assert!(yonder::events::inbound::handle_activity(&core, &a, &raw)
+        .await
+        .unwrap());
+    assert_eq!(participation_state(&env, &uri, bob).await, None);
+    assert_eq!(event_counters(&env, status_id).await, (0, 0));
+}
+
+/// Capacity-full `Join` gets `Reject` and no participation row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_join_capacity_reject() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let token = register(&env.app, "alice", "alice@x.com").await;
+    let (status_id, uri) = make_local_event(&env, &token, "free", Some(1)).await;
+
+    let (act, raw) = join_activity("https://remote.test/@bob", &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+
+    let (act, raw) = join_activity("https://remote.test/@carol", &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+    assert_eq!(
+        participation_state(&env, &uri, "https://remote.test/@carol").await,
+        None,
+        "rejected joiner keeps no row"
+    );
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+    assert!(outbound_count(&env, "Reject").await >= 1);
+}
+
+/// `Accept`/`TentativeAccept`/`Ignore` answering our outbound `Join`
+/// on a remote event; unmatched/spoofed responses are dropped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_join_responses() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let alice_token = register(&env.app, "alice", "alice@x.com").await;
+    let dave_token = register(&env.app, "dave", "dave@x.com").await;
+    let alice_actor = format!("{BASE}/ap/users/alice");
+    let dave_actor = format!("{BASE}/ap/users/dave");
+    let org = "https://remote.test/@org";
+    let event_uri = "https://remote.test/events/700";
+
+    // Remote free event materialized by its organizer.
+    let create = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/ev700"),
+        activity_type: "Create".into(),
+        actor: org.into(),
+        object: json!({
+            "id": event_uri,
+            "type": "Event",
+            "name": "RSVP target",
+            "attributedTo": org,
+            "startTime": "2026-08-01T10:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+
+    let account_id = |actor: &str| {
+        let db = env.state.db.clone();
+        let actor = actor.to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT id FROM accounts WHERE actor_id = $1")
+                .bind(actor)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    // Two pending outbound joins, one per local account.
+    for (token, actor, req) in [
+        (&alice_token, &alice_actor, "req-alice"),
+        (&dave_token, &dave_actor, "req-dave"),
+    ] {
+        let _ = token;
+        let status_id: i64 = sqlx::query_scalar("SELECT id FROM statuses WHERE uri = $1")
+            .bind(event_uri)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO event_participations \
+                 (status_id, account_id, state, protocol, request_activity_uri) \
+             VALUES ($1, $2, 'pending', 'join', $3)",
+        )
+        .bind(status_id)
+        .bind(account_id(actor).await)
+        .bind(format!("https://remote.test/activities/{req}"))
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    }
+
+    // Spoofed Accept from an unrelated host — an embedded Join
+    // echoing alice's actor+event but signed by a third host. Rule 1
+    // misses (object id is not a stored request uri) and rule 2
+    // requires an authorized responder (evil.test is neither the
+    // organizer nor same-host) → dropped.
+    let spoof = json!({
+        "id": "https://evil.test/activities/spoof1",
+        "type": "Accept",
+        "actor": "https://evil.test/@mallory",
+        "object": {
+            "id": "https://remote.test/activities/join-alice",
+            "type": "Join",
+            "actor": alice_actor,
+            "object": event_uri,
+        },
+    });
+    let act = pubby_sdk::Activity {
+        id: spoof["id"].as_str().unwrap().into(),
+        activity_type: "Accept".into(),
+        actor: "https://evil.test/@mallory".into(),
+        object: spoof["object"].clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let _ = yonder::events::inbound::handle_response(
+        &core,
+        &act,
+        &spoof,
+        yonder::events::rsvp::RemoteResponseKind::Accept,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        participation_state(&env, event_uri, &alice_actor).await,
+        Some(("pending".into(), "join".into())),
+        "spoofed embedded-Join Accept dropped"
+    );
+
+    // Legit Accept from the organizer matching alice's stored uri.
+    let (act, raw) = response_activity(
+        "Accept",
+        org,
+        json!("https://remote.test/activities/req-alice"),
+    );
+    assert!(yonder::events::inbound::handle_response(
+        &core,
+        &act,
+        &raw,
+        yonder::events::rsvp::RemoteResponseKind::Accept,
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        participation_state(&env, event_uri, &alice_actor).await,
+        Some(("accepted".into(), "join".into()))
+    );
+
+    // Friendica-style TentativeAccept matching dave's request uri →
+    // tentative.
+    let (act, raw) = response_activity(
+        "TentativeAccept",
+        org,
+        json!("https://remote.test/activities/req-dave"),
+    );
+    assert!(yonder::events::inbound::handle_response(
+        &core,
+        &act,
+        &raw,
+        yonder::events::rsvp::RemoteResponseKind::TentativeAccept,
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        participation_state(&env, event_uri, &dave_actor).await,
+        Some(("tentative".into(), "join".into()))
+    );
+}
+
+/// `Undo{Join}` removes the *signer's* participation — the embedded
+/// Join's self-asserted `actor` must not let a third party delete
+/// someone else's row (review C-1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_undo_join_uses_verified_signer() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let token = register(&env.app, "alice", "alice@x.com").await;
+    let (status_id, uri) = make_local_event(&env, &token, "free", None).await;
+    let victim = "https://remote.test/@victim";
+    let attacker = "https://remote.test/@attacker";
+
+    // Victim joins and is accepted.
+    let (act, raw) = join_activity(victim, &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+
+    // Attacker signs an Undo whose embedded Join names the victim.
+    let inner = json!({
+        "id": format!("{victim}/activities/join-1"),
+        "type": "Join",
+        "actor": victim,
+        "object": {"id": uri, "type": "Event"},
+    });
+    let outer = pubby_sdk::Activity {
+        id: format!("{attacker}/activities/undo-1"),
+        activity_type: "Undo".into(),
+        actor: attacker.into(),
+        object: inner.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(
+        yonder::events::inbound::handle_undo_join(&core, &outer, &inner)
+            .await
+            .unwrap()
+    );
+
+    // The victim's row and the counter survive — the attacker had no
+    // participation to remove.
+    assert_eq!(
+        participation_state(&env, &uri, victim).await,
+        Some(("accepted".into(), "join".into()))
+    );
+    assert_eq!(participation_state(&env, &uri, attacker).await, None);
+    assert_eq!(event_counters(&env, status_id).await, (1, 0));
+
+    // The victim's own Undo does remove their row.
+    let inner = json!({
+        "id": format!("{victim}/activities/join-1"),
+        "type": "Join",
+        "actor": victim,
+        "object": {"id": uri, "type": "Event"},
+    });
+    let outer = pubby_sdk::Activity {
+        id: format!("{victim}/activities/undo-2"),
+        activity_type: "Undo".into(),
+        actor: victim.into(),
+        object: inner.clone(),
+        to: vec![],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(
+        yonder::events::inbound::handle_undo_join(&core, &outer, &inner)
+            .await
+            .unwrap()
+    );
+    assert_eq!(participation_state(&env, &uri, victim).await, None);
+    assert_eq!(event_counters(&env, status_id).await, (0, 0));
+}
+
+/// A `pending` join on a restricted event cannot self-approve with
+/// `Accept` — the row stays pending for the organizer (review C-2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_pending_join_cannot_self_accept() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let token = register(&env.app, "alice", "alice@x.com").await;
+    let (status_id, uri) = make_local_event(&env, &token, "restricted", None).await;
+    let bob = "https://remote.test/@bob";
+
+    let (act, raw) = join_activity(bob, &uri);
+    assert!(yonder::events::inbound::handle_activity(&core, &act, &raw)
+        .await
+        .unwrap());
+    assert_eq!(
+        participation_state(&env, &uri, bob).await,
+        Some(("pending".into(), "join".into()))
+    );
+    assert_eq!(event_counters(&env, status_id).await, (0, 1));
+
+    // Bob's own Accept{object: event} must not resolve the pending row.
+    let (act, raw) = response_activity("Accept", bob, json!(uri));
+    assert!(yonder::events::inbound::handle_response(
+        &core,
+        &act,
+        &raw,
+        yonder::events::rsvp::RemoteResponseKind::Accept,
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        participation_state(&env, &uri, bob).await,
+        Some(("pending".into(), "join".into())),
+        "pending join cannot self-approve"
+    );
+    assert_eq!(event_counters(&env, status_id).await, (0, 1));
+}
+
+/// Raw GET returning status + body text (ICS feeds aren't JSON).
+async fn get_text(app: &Router, path: &str) -> (StatusCode, String) {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, String::from_utf8_lossy(&body).to_string())
+}
+
+/// ICS export: per-event route serves anonymously for public events
+/// (and 404s for postponed ones); the user feed lists upcoming public
+/// events (review C-3, W-2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_ics_routes() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "alice", "alice@x.com").await;
+    let (status_id, _uri) = make_local_event(&env, &token, "free", None).await;
+
+    // Anonymous per-event ICS.
+    let (code, body) = get_text(&env.app, &format!("/api/v1/yonder/events/{status_id}/ics")).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(body.contains("BEGIN:VCALENDAR"), "{body}");
+    assert!(body.contains("BEGIN:VEVENT"), "{body}");
+    assert!(body.contains("SUMMARY:Test event"), "{body}");
+
+    // User calendar feed — the advertised discovery URL shape.
+    let (code, body) = get_text(&env.app, "/users/alice/events.ics").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(body.contains("BEGIN:VCALENDAR"), "{body}");
+    assert!(body.contains("SUMMARY:Test event"), "{body}");
+
+    // Postponed (no start) → the per-event route 404s. `end_time`
+    // stays set so the user-feed query still selects the row and the
+    // writer's skip-before-VEVENT path is what drops it.
+    sqlx::query("UPDATE events SET start_time = NULL, status = 'postponed' WHERE status_id = $1")
+        .bind(status_id)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    let (code, _) = get_text(&env.app, &format!("/api/v1/yonder/events/{status_id}/ics")).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    // …and the user feed emits no empty VEVENT for it.
+    let (code, body) = get_text(&env.app, "/users/alice/events.ics").await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert!(!body.contains("BEGIN:VEVENT"), "{body}");
+}

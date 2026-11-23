@@ -31,6 +31,7 @@ use crate::{
         middleware::{auth::MaybeAuth, ratelimit},
         AppState,
     },
+    posts,
     posts::PostContext,
     social,
     users::account as account_mapper,
@@ -89,6 +90,13 @@ async fn profile_feed(
     State(state): State<Arc<AppState>>,
     Path(rest): Path<String>,
 ) -> Result<Response> {
+    // `/users/{u}/events.ics` — the per-user event calendar feed
+    // (FEP-8a8e). Public upcoming events only; anonymous like the
+    // other feeds. `rest` keeps the full sub-path, so the suffix is
+    // `/events.ics`, not `.ics`.
+    if let Some(username) = rest.strip_suffix("/events.ics") {
+        return profile_events_ics(&state, username).await;
+    }
     let Some((username, format)) = split_feed_path(&rest) else {
         // `/@{u}` is the web profile: `/users/{u}` without a feed
         // extension is the same page — redirect (Mastodon's shape).
@@ -121,6 +129,61 @@ async fn profile_feed(
     .await?;
     feed.self_url = format!("{base}/users/{}.{}", account.username, format.ext());
     Ok(xml_response(format, &feed))
+}
+
+/// `GET /users/{username}/events.ics` — RFC 5545 feed of the local
+/// account's upcoming public events. Remote names and accounts
+/// without events serve an empty-but-valid calendar.
+async fn profile_events_ics(state: &Arc<AppState>, username: &str) -> Result<Response> {
+    let account = account_mapper::load_local_by_username(&state.db, username)
+        .await?
+        .ok_or_else(|| Error::NotFound("account".into()))?;
+    let max = state.config().content.max_feed_items as i64;
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT s.id FROM statuses s \
+         JOIN accounts a ON a.id = s.account_id \
+         JOIN events e ON e.status_id = s.id \
+         WHERE a.id = $1 \
+           AND s.object_type = 'Event' \
+           AND s.visibility = 'public' \
+           AND NOT s.tombstone \
+           AND COALESCE(e.end_time, e.start_time) >= now() \
+         ORDER BY COALESCE(e.start_time, e.end_time) ASC \
+         LIMIT $2",
+    )
+    .bind(account.id)
+    .bind(max)
+    .fetch_all(&state.db)
+    .await?;
+    let statuses = posts::load_many(&state.db, &ids).await?;
+    let bundles = crate::events::entity::load_many(&state.db, &ids, None).await?;
+    let feed_events: Vec<crate::events::ics::FeedEvent<'_>> = ids
+        .iter()
+        .filter_map(|id| {
+            let status = statuses.get(id)?;
+            let bundle = bundles.get(id)?;
+            Some(crate::events::ics::FeedEvent {
+                status,
+                row: &bundle.row,
+                locations: &bundle.locations,
+            })
+        })
+        .collect();
+    let body = crate::events::ics::user_ics(&feed_events);
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                "text/calendar; charset=utf-8".to_string(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"events.ics\"".to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
 }
 
 /// `GET /tags/{tag}.atom|.rss` — latest public posts carrying the tag
@@ -242,6 +305,17 @@ pub fn discovery_links(base_path: &str, title: &str) -> String {
     format!(
         "<link rel=\"alternate\" type=\"application/atom+xml\" title=\"{title}\" href=\"{base_path}.atom\" />\n\
          <link rel=\"alternate\" type=\"application/rss+xml\" title=\"{title}\" href=\"{base_path}.rss\" />"
+    )
+}
+
+/// `<link rel=\"alternate\">` for the user's event calendar feed —
+/// appended to profile discovery only (tag feeds have no events
+/// analogue). `base_path` is the extension-less profile feed path.
+pub fn calendar_discovery_link(base_path: &str, title: &str) -> String {
+    let title = escape(render::xml_safe(title));
+    let base_path = escape(render::xml_safe(base_path));
+    format!(
+        "<link rel=\"alternate\" type=\"text/calendar\" title=\"{title}\" href=\"{base_path}/events.ics\" />"
     )
 }
 

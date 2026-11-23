@@ -20,6 +20,7 @@ pub mod blocks;
 pub mod conversations;
 pub mod custom_emojis;
 pub mod emoji_admin;
+pub mod events;
 pub mod featured_tags;
 pub mod filters;
 pub mod follow_requests;
@@ -411,6 +412,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/statuses/{id}/history",
             get(transfer::status_history),
         )
+        .route("/api/v1/yonder/events/{id}/ics", get(events::event_ics))
         .route(
             "/api/v1/yonder/history/messages",
             get(transfer::history_messages),

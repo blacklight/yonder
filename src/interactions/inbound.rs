@@ -220,6 +220,18 @@ async fn undo_inbound(
             undo_react_inbound(core, activity, &inner).await?;
             Ok(ActivityDisposition::Handled)
         }
+        "Join" => {
+            // `Undo{Join}` on an event is the joiner's Leave
+            // (FEP-8a8e §7.1); non-event joins pass through. The
+            // verified signer (`activity.actor`) is authoritative —
+            // the embedded Join's self-asserted actor is not.
+            if sync_block(crate::events::inbound::handle_undo_join(
+                core, activity, &inner,
+            ))? {
+                return Ok(ActivityDisposition::Handled);
+            }
+            Ok(ActivityDisposition::PassThrough)
+        }
         _ => Ok(ActivityDisposition::PassThrough),
     }
 }

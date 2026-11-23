@@ -266,6 +266,15 @@ pub enum JobKind {
     /// (`{"entity": "statuses"|"accounts"|"all", "after_id": …,
     /// "batch_size": …}`) — cursor-paginates and re-enqueues itself.
     SearchIndexBackfill,
+    /// Re-materialize remote Event statuses that predate the `events`
+    /// side table (`{"after_id": …, "batch_size": …}` — paged,
+    /// self-continuing). One-off backfill, also runnable via
+    /// `yonder run-job events_backfill`.
+    EventsBackfill,
+    /// Re-fetch a remote event not refreshed within
+    /// `events.remote_refresh_after_minutes` (Section 12 — stub for
+    /// now).
+    EventRemoteRefresh,
 }
 
 impl JobKind {
@@ -308,6 +317,8 @@ impl JobKind {
         JobKind::QuoteAuthorization,
         JobKind::SearchIndexSync,
         JobKind::SearchIndexBackfill,
+        JobKind::EventsBackfill,
+        JobKind::EventRemoteRefresh,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -350,6 +361,8 @@ impl JobKind {
             JobKind::QuoteAuthorization => "quote_authorization",
             JobKind::SearchIndexSync => "search_index_sync",
             JobKind::SearchIndexBackfill => "search_index_backfill",
+            JobKind::EventsBackfill => "events_backfill",
+            JobKind::EventRemoteRefresh => "event_remote_refresh",
         }
     }
 
@@ -378,7 +391,8 @@ impl JobKind {
             | JobKind::FetchLinkPreview
             | JobKind::ThreadExpand
             | JobKind::SearchIndexSync
-            | JobKind::SearchIndexBackfill => Queue::Bulk,
+            | JobKind::SearchIndexBackfill
+            | JobKind::EventsBackfill => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
             | JobKind::AccountDeletion

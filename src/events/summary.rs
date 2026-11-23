@@ -261,6 +261,61 @@ pub fn preamble_html(
     format!("<p>{}</p>", lines.join("<br>"))
 }
 
+/// `dt` rendered RFC 3339 in the event zone — the IANA `timezone`
+/// when known, else the literal UTC offset, else UTC. Gancio style:
+/// `2026-12-12T20:00:00+01:00`.
+pub fn rfc3339_in_zone(row: &EventRow, dt: DateTime<Utc>) -> String {
+    if let Some(tz_name) = row.timezone.as_deref() {
+        if let Ok(tz) = crate::events::model::TimezoneId::try_from(tz_name) {
+            return tz
+                .0
+                .from_utc_datetime(&dt.naive_utc())
+                .format("%Y-%m-%dT%H:%M:%S%:z")
+                .to_string();
+        }
+    }
+    if let Some(offset) = row.utc_offset_seconds {
+        if let Some(fixed) = chrono::FixedOffset::east_opt(offset) {
+            return fixed
+                .from_utc_datetime(&dt.naive_utc())
+                .format("%Y-%m-%dT%H:%M:%S%:z")
+                .to_string();
+        }
+    }
+    dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+}
+
+/// The ActivityPub `summary` form (plan.md §5.2): the preamble lines
+/// plus a plain-text description excerpt capped at
+/// `excerpt_chars` (`0` = preamble only). The excerpt is escaped —
+/// remote descriptions are untrusted text.
+pub fn ap_summary_html(
+    row: &EventRow,
+    locations: &[EventLocationRow],
+    language: Option<&str>,
+    description: Option<&str>,
+    excerpt_chars: u32,
+) -> String {
+    let mut html = preamble_html(row, locations, language);
+    if excerpt_chars > 0 {
+        if let Some(text) = description.map(str::trim).filter(|t| !t.is_empty()) {
+            let excerpt: String = text.chars().take(excerpt_chars as usize).collect();
+            let ellipsis = if text.chars().count() > excerpt_chars as usize {
+                "…"
+            } else {
+                ""
+            };
+            let paragraph = format!("<p>{}{}</p>", html_escape_text(&excerpt), ellipsis);
+            if html.is_empty() {
+                html = paragraph;
+            } else {
+                html.push_str(&paragraph);
+            }
+        }
+    }
+    html
+}
+
 /// `end` rendered in the event zone: `HH:MM` when it falls on the
 /// same local date as `start`, else `YYYY-MM-DD HH:MM` (cross-midnight
 /// and multi-day events keep the end's own date).

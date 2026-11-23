@@ -295,9 +295,11 @@ pub fn spa_entry(state: &AppState, path: &str, user_choice: Option<&str>) -> Res
 fn feed_discovery(local_domain: &str, path: &str) -> Option<String> {
     if let Some(username) = local_profile_username(local_domain, path) {
         let encoded: String = url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
-        return Some(crate::feeds::discovery_links(
-            &format!("/users/{}", encoded.replace('+', "%20")),
-            &format!("@{username}"),
+        let base = format!("/users/{}", encoded.replace('+', "%20"));
+        return Some(format!(
+            "{}\n{}",
+            crate::feeds::discovery_links(&base, &format!("@{username}")),
+            crate::feeds::calendar_discovery_link(&base, &format!("@{username} events")),
         ));
     }
     if let Some(rest) = path.strip_prefix("/tags/") {

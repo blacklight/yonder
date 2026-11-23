@@ -43,7 +43,7 @@ use crate::http::AppState;
 use crate::posts::{self, mentions::ResolvedMention, render, PostContext, StatusRow};
 use crate::{Error, Result};
 
-use super::{actors::sync_call, delivery, ApContext};
+use super::{actors::sync_call, context, delivery, ApContext};
 
 /// The doc-cache key for a served status object.
 fn object_key(status_id: i64) -> pubby_sdk::cache::CacheKey {
@@ -267,10 +267,13 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
 
     let mut object = Object::new(status.uri.clone().unwrap_or_default());
     let article = posts::is_article(status);
+    let event = event_bundle(ctx, status).await?;
     object.object_type = if status.poll_id.is_some() {
         "Question"
     } else if article {
         "Article"
+    } else if event.is_some() {
+        "Event"
     } else {
         "Note"
     }
@@ -306,7 +309,17 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         hashtags(ctx, status.id).await?,
         |name| format!("{}/tags/{name}", ctx.base_url()),
     ));
-    object.attachment = attachments(ctx, status).await?;
+    // Event media loads once — attachments and the flyer `image`
+    // share the same list.
+    let event_media = if event.is_some() {
+        Some(posts::entity::media_for_status(ctx, status.id).await?)
+    } else {
+        None
+    };
+    object.attachment = match (&event, &event_media) {
+        (Some(bundle), Some(media)) => event_attachments(ctx, status, bundle, media)?,
+        _ => attachments(ctx, status).await?,
+    };
     object.to = to;
     object.cc = cc;
     object.language = status.language.clone();
@@ -402,6 +415,27 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
             "name": "Yonder",
         });
     }
+    // FEP-8a8e Event fields `Object` can't express — name, generated
+    // summary, times, locations, join mode, capacity, collections.
+    if let Some(bundle) = &event {
+        for (k, v) in event_fields(
+            ctx,
+            status,
+            bundle,
+            &actor_id,
+            event_media.as_deref().unwrap_or(&[]),
+        )?
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        {
+            doc[k] = v;
+        }
+        doc["generator"] = json!({
+            "type": "Application",
+            "name": "Yonder",
+        });
+    }
     pubby_sdk::quotes::allow_public_quotes(&mut doc);
     // Quotes (epic 13): stamp every FEP-0449 spelling. `quote_of_id`
     // resolves through the target row; `quote_uri` covers remote
@@ -427,6 +461,298 @@ async fn hashtags(ctx: &PostContext, status_id: i64) -> Result<Vec<String>> {
     .fetch_all(&ctx.db)
     .await
     .map_err(Into::into)
+}
+
+// ---------------------------------------------------------------------------
+// Event (FEP-8a8e) object fields — plan.md §5.2
+// ---------------------------------------------------------------------------
+
+/// The `events` bundle for an event status — `None` for non-events
+/// and (defensively) event rows missing their side-table row.
+async fn event_bundle(
+    ctx: &PostContext,
+    status: &StatusRow,
+) -> Result<Option<crate::events::entity::EventBundle>> {
+    if !posts::is_event(status) {
+        return Ok(None);
+    }
+    let mut bundles = crate::events::entity::load_many(&ctx.db, &[status.id], None).await?;
+    Ok(bundles.remove(&status.id))
+}
+
+/// One AS2 `Document` for a media row — shared by the generic
+/// attachment list and the event variant (which adds `focalPoint`).
+fn media_doc(
+    config: &crate::config::Config,
+    base_url: &str,
+    m: &posts::entity::MediaRow,
+) -> Option<Value> {
+    let url = posts::entity::media_url(config, base_url, m)?;
+    let doc_type = match m.kind.as_str() {
+        "image" => "Image",
+        "video" => "Video",
+        "audio" => "Audio",
+        _ => "Document",
+    };
+    let mut doc = json!({
+        "type": doc_type,
+        "url": url,
+        "mediaType": m.content_type,
+        "name": m.description,
+        "blurhash": m.blurhash,
+        "width": m.width,
+        "height": m.height,
+    });
+    if let (Some(x), Some(y)) = (m.focus_x, m.focus_y) {
+        doc["focalPoint"] = json!([x, y]);
+    }
+    Some(doc)
+}
+
+/// Event `attachment[]`: the banner first with `isBannerImage`, then
+/// the remaining media (the flyer is promoted to `image`, so it is
+/// not repeated), then Markdown inline images like notes get.
+fn event_attachments(
+    ctx: &PostContext,
+    status: &StatusRow,
+    bundle: &crate::events::entity::EventBundle,
+    media: &[posts::entity::MediaRow],
+) -> Result<Vec<Value>> {
+    let base = ctx.base_url();
+    let banner_id = bundle.row.banner_media_id;
+    let flyer_id = bundle.row.flyer_media_id;
+    let mut banner_doc = None;
+    let mut docs: Vec<Value> = Vec::new();
+    for m in media {
+        if Some(m.id) == flyer_id {
+            continue;
+        }
+        let Some(mut doc) = media_doc(&ctx.config, &base, m) else {
+            continue;
+        };
+        if Some(m.id) == banner_id {
+            doc["isBannerImage"] = json!(true);
+            banner_doc = Some(doc);
+        } else {
+            docs.push(doc);
+        }
+    }
+    // Markdown `![alt](url)` images — same treatment as notes.
+    if status.content_type == "text/markdown" {
+        let mut seen: std::collections::HashSet<String> = docs
+            .iter()
+            .chain(banner_doc.iter())
+            .filter_map(|d| d.get("url").and_then(|u| u.as_str()).map(str::to_string))
+            .collect();
+        for image in render::markdown_images(&status.content, &ctx.config) {
+            if !seen.insert(image.url.clone()) {
+                continue;
+            }
+            let mut doc = json!({
+                "type": "Image",
+                "url": image.url,
+                "mediaType": inline_image_media_type(&image.url),
+            });
+            if !image.alt.is_empty() {
+                doc["name"] = json!(image.alt);
+            }
+            docs.push(doc);
+        }
+    }
+    let mut out = Vec::with_capacity(docs.len() + 1);
+    if let Some(banner) = banner_doc {
+        out.push(banner);
+    }
+    out.extend(docs);
+    Ok(out)
+}
+
+/// One `event_locations` row → the wire `location[]` entry —
+/// `Place` with `PostalAddress`, or `VirtualLocation`.
+fn event_location_doc(loc: &crate::events::model::EventLocationRow) -> Value {
+    use crate::events::model::LocationKind;
+    let mut doc = json!({
+        "type": if loc.kind == LocationKind::Place { "Place" } else { "VirtualLocation" },
+    });
+    if let Some(name) = &loc.name {
+        doc["name"] = json!(name);
+    }
+    match loc.kind {
+        LocationKind::Place => {
+            let has_structured = loc.street_address.is_some()
+                || loc.locality.is_some()
+                || loc.region.is_some()
+                || loc.postal_code.is_some()
+                || loc.country.is_some();
+            if has_structured {
+                let mut address = json!({ "type": "PostalAddress" });
+                for (key, value) in [
+                    ("streetAddress", &loc.street_address),
+                    ("addressLocality", &loc.locality),
+                    ("addressRegion", &loc.region),
+                    ("postalCode", &loc.postal_code),
+                    ("addressCountry", &loc.country),
+                ] {
+                    if let Some(v) = value {
+                        address[key] = json!(v);
+                    }
+                }
+                doc["address"] = address;
+            } else if let Some(text) = &loc.address_text {
+                doc["address"] = json!(text);
+            }
+            if let Some(lat) = loc.latitude {
+                doc["latitude"] = json!(lat);
+            }
+            if let Some(lon) = loc.longitude {
+                doc["longitude"] = json!(lon);
+            }
+        }
+        LocationKind::Virtual => {
+            if let Some(url) = &loc.url {
+                doc["url"] = json!(url);
+            }
+        }
+    }
+    doc
+}
+
+/// The FEP-8a8e fields `build_object` merges onto an Event document
+/// (plan.md §5.2). `actor_id` is the status author's actor URL — the
+/// `requiredJoinVisibility`/organizer fallback.
+fn event_fields(
+    ctx: &PostContext,
+    status: &StatusRow,
+    bundle: &crate::events::entity::EventBundle,
+    actor_id: &str,
+    media: &[posts::entity::MediaRow],
+) -> Result<Value> {
+    use crate::events::model::{JoinMode, LocationKind};
+    let row = &bundle.row;
+    let mut doc = json!({});
+
+    if let Some(title) = status.title.as_deref().filter(|t| !t.is_empty()) {
+        doc["name"] = json!(title);
+        if let Some(lang) = status.language.as_deref() {
+            doc["nameMap"] = json!({ lang: title });
+        }
+    }
+
+    // Generated summary: preamble + plain-text excerpt.
+    let summary = crate::events::summary::ap_summary_html(
+        row,
+        &bundle.locations,
+        status.language.as_deref(),
+        Some(status.content.as_str()),
+        ctx.config.events.summary_excerpt_chars,
+    );
+    if !summary.is_empty() {
+        doc["summary"] = json!(summary);
+        if let Some(lang) = status.language.as_deref() {
+            doc["summaryMap"] = json!({ lang: doc["summary"].clone() });
+        }
+    }
+
+    // Times in the event zone (Gancio style). Postponed events omit
+    // start/end entirely — `previousStartTime` carries the old slot.
+    if let Some(start) = row.start_time {
+        doc["startTime"] = json!(crate::events::summary::rfc3339_in_zone(row, start));
+        if let Some(end) = row.end_time {
+            doc["endTime"] = json!(crate::events::summary::rfc3339_in_zone(row, end));
+        }
+        doc["displayEndTime"] = json!(row.display_end_time);
+    }
+    if let Some(tz) = &row.timezone {
+        doc["timezone"] = json!(tz);
+    }
+    doc["eventStatus"] = json!(super::context::event_status_token(row.status));
+    doc["status"] = json!(super::context::ical_status(row.status));
+    if let Some(prev) = row.previous_start_time {
+        doc["previousStartTime"] = json!(crate::events::summary::rfc3339_in_zone(row, prev));
+    }
+
+    let locations: Vec<Value> = bundle.locations.iter().map(event_location_doc).collect();
+    if !locations.is_empty() {
+        doc["location"] = json!(locations);
+        let all_virtual = bundle
+            .locations
+            .iter()
+            .all(|l| l.kind == LocationKind::Virtual);
+        doc["isOnline"] = json!(all_virtual);
+    }
+
+    match row.categories.as_slice() {
+        [] => {}
+        [single] => doc["category"] = json!(single),
+        many => doc["category"] = json!(many),
+    }
+
+    doc["joinMode"] = json!(row.join_mode.to_string());
+    if let Some(url) = &row.external_participation_url {
+        doc["externalParticipationUrl"] = json!(url);
+    }
+    // Approval-gated join modes name the organizer as the required
+    // join visibility (plan.md §5.2).
+    if matches!(row.join_mode, JoinMode::Restricted | JoinMode::Invite) {
+        doc["requiredJoinVisibility"] = json!([actor_id]);
+    }
+    if row.is_capacity_limited() {
+        if let Some(cap) = row.maximum_attendee_capacity {
+            doc["maximumAttendeeCapacity"] = json!(cap);
+        }
+        if let Some(remaining) = row.remaining_capacity() {
+            doc["remainingAttendeeCapacity"] = json!(remaining);
+        }
+    }
+
+    // Collection stubs — the OrderedCollection/OrganizersCollection
+    // endpoints land with the RSVP section; emit id + totalItems now.
+    let object_id = status.uri.clone().unwrap_or_default();
+    doc["attendees"] = json!({
+        "id": format!("{object_id}/attendees"),
+        "type": "OrderedCollection",
+        "totalItems": row.participants_count,
+    });
+    let organizer_items: Vec<String> = bundle
+        .organizers
+        .iter()
+        .filter_map(|o| {
+            o.account_id
+                .and_then(|aid| bundle.organizer_accounts.get(&aid))
+        })
+        .map(|a| a.actor_id.clone())
+        .collect();
+    let organizer_items = if organizer_items.is_empty() {
+        vec![actor_id.to_string()]
+    } else {
+        organizer_items
+    };
+    doc["organizers"] = json!({
+        "id": format!("{object_id}/organizers"),
+        "type": "OrganizersCollection",
+        "totalItems": organizer_items.len(),
+        "items": organizer_items,
+    });
+
+    // Flyer → `image` (never duplicating the banner).
+    if let Some(flyer_id) = row.flyer_media_id {
+        if let Some(m) = media.iter().find(|m| m.id == flyer_id) {
+            if let Some(url) = posts::entity::media_url(&ctx.config, &ctx.base_url(), m) {
+                let mut image = json!({
+                    "type": "Image",
+                    "url": url,
+                    "mediaType": m.content_type,
+                    "name": m.description,
+                });
+                if let (Some(w), Some(h)) = (m.width, m.height) {
+                    image["width"] = json!(w);
+                    image["height"] = json!(h);
+                }
+                doc["image"] = image;
+            }
+        }
+    }
+    Ok(doc)
 }
 
 /// `Object` → the pubby `Object` struct the activity builders want —
@@ -457,6 +783,9 @@ pub async fn publish_create(
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
     }
+    if posts::is_event(status) {
+        activity["@context"] = context::event_context();
+    }
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
 }
@@ -479,6 +808,9 @@ pub async fn publish_update(
     let mut activity = sync_call(move || handler.outbox.build_update_activity_obj(&obj)).await;
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
+    }
+    if posts::is_event(status) {
+        activity["@context"] = context::event_context();
     }
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
@@ -521,6 +853,26 @@ pub(crate) fn merge_object_extras(target: &mut Value, doc: &Value) {
         "image",
         "preview",
         "generator",
+        // FEP-8a8e Event fields (plan.md §5.2) — an object is a
+        // Question or an Event, never both, so sharing `endTime`
+        // with polls is safe.
+        "startTime",
+        "endTime",
+        "displayEndTime",
+        "timezone",
+        "eventStatus",
+        "status",
+        "previousStartTime",
+        "location",
+        "isOnline",
+        "category",
+        "joinMode",
+        "externalParticipationUrl",
+        "requiredJoinVisibility",
+        "maximumAttendeeCapacity",
+        "remainingAttendeeCapacity",
+        "attendees",
+        "organizers",
     ] {
         if let Some(v) = doc.get(key) {
             target[key] = v.clone();
@@ -844,7 +1196,13 @@ pub(crate) async fn verify_signature(
 
 fn json_response(doc: Value) -> Response {
     let mut doc = doc;
-    doc["@context"] = pubby_sdk::model::ap_context();
+    // Event documents carry the FEP-8a8e context (plan.md §5.1);
+    // everything else keeps pubby's.
+    doc["@context"] = if doc.get("type").and_then(|v| v.as_str()) == Some("Event") {
+        context::event_context()
+    } else {
+        pubby_sdk::model::ap_context()
+    };
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/activity+json")],

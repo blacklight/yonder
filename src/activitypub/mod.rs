@@ -16,6 +16,7 @@
 pub mod actors;
 pub mod adapter;
 pub mod c2s;
+pub mod context;
 pub mod delivery;
 pub(crate) mod edge;
 pub mod featured;
@@ -24,6 +25,7 @@ pub mod inbox;
 pub mod incoming;
 pub(crate) mod lookup;
 pub mod moderation;
+pub mod nodeinfo;
 pub mod outbox;
 pub mod permalinks;
 pub mod posts;

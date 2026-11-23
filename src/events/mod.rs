@@ -6,6 +6,10 @@
 //! tables for locations, participations and organizers.
 
 pub mod entity;
+pub mod ics;
+pub mod inbound;
+pub mod jobs;
 pub mod model;
 pub mod remote;
+pub mod rsvp;
 pub mod summary;

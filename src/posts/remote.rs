@@ -1481,6 +1481,12 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         {
             tracing::warn!(status_id, uri = %object_id, error = %e, "pending invite drain failed");
         }
+        // §7.3 — pick the RSVP protocol for remote events (joinMode
+        // short-circuits; nodeinfo only runs when joinMode is absent).
+        // Best-effort: a failure leaves the stored value.
+        if let Err(e) = crate::events::inbound::select_remote_protocol(core, status_id).await {
+            tracing::warn!(status_id, error = %e, "event protocol selection failed");
+        }
     }
 
     // A still-pending quote target gets an active fetch — passive

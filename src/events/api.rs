@@ -672,3 +672,60 @@ pub async fn list_participations(
         })
         .collect())
 }
+
+/// §16 invitees-only fan-out — one `Invite{object: event_uri,
+/// to: [invitee]}` per invitee, published as the organizer. Also
+/// records the `invited` participation rows (the Events page "invited"
+/// tab and the §7.1 invite-response transitions read them). Local
+/// invitees already get the mention notification through
+/// `status_mentions`; the `Invite` is the ActivityPub-compatible
+/// signal (and the only one remote invitees see).
+pub async fn create_invited_rows_and_invite(
+    ctx: &PostContext,
+    status: &posts::StatusRow,
+    organizer_account_id: i64,
+    invitee_ids: &[i64],
+) -> Result<()> {
+    if invitee_ids.is_empty() {
+        return Ok(());
+    }
+    let event_uri = status
+        .uri
+        .clone()
+        .ok_or_else(|| Error::Internal("local event without uri".to_string()))?;
+    // `invited` participation rows — an existing row is left untouched
+    // (`DO NOTHING`), so decided states are never overwritten.
+    for invitee in invitee_ids {
+        sqlx::query(
+            "INSERT INTO event_participations \
+                 (status_id, account_id, role, state, protocol) \
+             VALUES ($1, $2, 'participant', 'invited', 'invite_response') \
+             ON CONFLICT (status_id, account_id) DO NOTHING",
+        )
+        .bind(status.id)
+        .bind(invitee)
+        .execute(&ctx.db)
+        .await?;
+    }
+    let Some(ap) = &ctx.ap else {
+        return Ok(());
+    };
+    let (organizer_actor, username) = actor_of(&ctx.db, organizer_account_id).await?;
+    let actors: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, actor_id FROM accounts WHERE id = ANY($1)")
+            .bind(invitee_ids)
+            .fetch_all(&ctx.db)
+            .await?;
+    for (invitee, actor) in actors {
+        let doc = OutboundActivity::Invite {
+            object: event_uri.clone(),
+            to: vec![actor],
+            cc: vec![],
+        }
+        .to_json(&organizer_actor);
+        if let Err(e) = crate::activitypub::delivery::publish(ap, &username, &doc).await {
+            tracing::warn!(status_id = status.id, invitee, error = %e, "event invite publish failed");
+        }
+    }
+    Ok(())
+}

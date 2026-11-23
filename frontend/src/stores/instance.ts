@@ -16,8 +16,11 @@ export const useInstanceStore = defineStore("instance", () => {
     () => entity.value?.yonder?.single_user?.trim() || null,
   );
   // `events.enabled` — absent on older servers, treated as enabled.
+  // Unloaded (or failed) → off, so gated surfaces don't flash in
+  // before `ensure()` resolves.
   const eventsEnabled = computed(
-    () => entity.value?.yonder?.events_enabled !== false,
+    () =>
+      entity.value !== null && entity.value.yonder?.events_enabled !== false,
   );
   let inflight: Promise<InstanceEntity | null> | null = null;
 

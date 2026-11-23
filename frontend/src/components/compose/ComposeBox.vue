@@ -20,9 +20,9 @@ import {
 import { ApiError } from "@/api/errors";
 import { customEmojis } from "@/api/emojis";
 import { composeLimits } from "@/api/instance";
-import { getInstance } from "@/api/instance";
 import { search } from "@/api/search";
 import { useComposeStore, emptyEventDraft } from "@/stores/compose";
+import { useInstanceStore } from "@/stores/instance";
 import { useToastsStore } from "@/stores/toasts";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
@@ -62,11 +62,14 @@ const route = useRoute();
 const compose = useComposeStore();
 const toasts = useToastsStore();
 const settings = useSettingsStore();
+const instance = useInstanceStore();
 const timelines = useTimelineStore();
 
 const limits = ref(composeLimits(null));
-// `events.enabled` — absent on older servers, treated as enabled.
-const eventsEnabled = ref(true);
+// `events.enabled` from the shared instance store — off until the
+// response confirms it, so the event type isn't offered before (or
+// without) the server saying so.
+const eventsEnabled = computed(() => instance.eventsEnabled);
 const media = ref<MediaAttachment[]>([]);
 const uploading = ref(false);
 const posting = ref(false);
@@ -264,13 +267,9 @@ onMounted(async () => {
   // nextTick the parent's mount hooks (e.g. Modal's focus) have run.
   await nextTick();
   textarea.value?.focus();
-  try {
-    const inst = await getInstance();
-    limits.value = composeLimits(inst);
-    eventsEnabled.value = inst.yonder?.events_enabled !== false;
-  } catch {
-    /* defaults */
-  }
+  // `ensure()` never rejects; a failed fetch leaves the defaults.
+  await instance.ensure();
+  limits.value = composeLimits(instance.entity);
   // `?edit=<id>` reopens the draft of an own post for `PUT /statuses`.
   const edit = route.query.edit;
   if (typeof edit === "string" && edit) {
@@ -861,7 +860,9 @@ async function submit() {
         ? (d.value.coverMediaId ?? undefined)
         : undefined,
       event:
-        isEvent.value && d.value.event ? eventPayload(d.value.event) : undefined,
+        isEvent.value && d.value.event
+          ? eventPayload(d.value.event)
+          : undefined,
     };
     const sig = JSON.stringify(body);
     if (sig !== idemBody) {
@@ -1132,7 +1133,9 @@ async function submit() {
           :class="{ 'compose__ctl--on': isEvent }"
           :aria-label="t('compose.event')"
           :disabled="isArticle"
-          :title="isArticle ? t('compose.eventArticleHint') : t('compose.event')"
+          :title="
+            isArticle ? t('compose.eventArticleHint') : t('compose.event')
+          "
           data-testid="event-toggle"
           @click="toggleEvent"
         >

@@ -34,6 +34,10 @@ reflects the latest stored overlays.
 schedules). Everything else takes effect live via the hot-swapped
 `AppState::config()` snapshot.
 
+The `[events]` section (feature flag, authoring limits, reminder
+sweep schedule, `[events.geocoding]` provider) is overlay-writable;
+see [events.md](events.md).
+
 ## Audit log
 
 `GET /api/v1/admin/audit_log` (admin-only; Mastodon's equivalent is

@@ -1197,7 +1197,9 @@
     "joined": "Joined {date}",
     "movedIndication": "{name} has indicated that their new account is now:",
     "goToProfile": "Go to profile",
-    "movedUnavailable": "This account has moved to an account that is no longer available"
+    "movedUnavailable": "This account has moved to an account that is no longer available",
+    "events": "Events",
+    "noEvents": "No events."
   },
   "register": {
     "title": "Create an account",
@@ -1533,6 +1535,22 @@
     "calendarCopy": "Copy URL",
     "calendarCopied": "Copied",
     "calendarRegenerate": "Regenerate",
-    "calendarRevoke": "Revoke"
+    "calendarRevoke": "Revoke",
+    "discover": "Discover"
+  },
+  "eventsDiscover": {
+    "title": "Discover events",
+    "myEvents": "My events",
+    "tabHome": "Upcoming",
+    "tabLocal": "Local",
+    "tabFederated": "Federated",
+    "allCategories": "All categories",
+    "tagPlaceholder": "Filter by hashtag",
+    "online": "Online only",
+    "nearMe": "Near me",
+    "nearActive": "Showing events near you",
+    "nearClear": "Clear",
+    "nearFailed": "Location unavailable",
+    "empty": "No events found."
   }
 }

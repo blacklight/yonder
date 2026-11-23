@@ -19,6 +19,14 @@ export interface EventsQuery {
   /** RFC 3339 upper bound — defaults to +90d; unbounded when `from`
    * is set without `to`. */
   to?: string;
+  /** Hashtag filter (case-insensitive). */
+  tag?: string;
+  /** true → only virtual-location (online) events. */
+  online?: boolean;
+  /** `lat,lon` — keep events with a physical location within
+   * `radius_km` (default 50). */
+  near?: string;
+  radius_km?: number;
   include_cancelled?: boolean;
   cursor?: string;
   limit?: number;
@@ -31,6 +39,57 @@ export function listEvents(query: EventsQuery = {}): Promise<Page<Status>> {
     query: { ...query },
   }).then(({ response, data }) => paginated<Status>(response, data));
 }
+
+/** Extract the keyset cursor from a `Link`/`next` URL — shared by the
+ * events pages' infinite scroll. */
+export function cursorOf(
+  url: string | undefined,
+  key = "cursor",
+): string | undefined {
+  if (!url) return undefined;
+  return new URL(url, location.origin).searchParams.get(key) ?? undefined;
+}
+
+/** The FEP-8a8e category list (mirrors the backend's
+ * `FEP_CATEGORIES`) — labels are humanized codes, not translated. */
+export const FEP_CATEGORIES = [
+  "ARTS",
+  "AUTO_BOAT_AIR",
+  "BOOK_CLUBS",
+  "BUSINESS",
+  "CAUSES",
+  "CLIMATE_ENVIRONMENT",
+  "COMMUNITY",
+  "COMEDY",
+  "CRAFTS",
+  "CREATIVE_JAM",
+  "DIY_MAKER_SPACES",
+  "FAMILY_EDUCATION",
+  "FASHION_BEAUTY",
+  "FESTIVALS",
+  "FILM_MEDIA",
+  "FOOD_DRINK",
+  "GAMES",
+  "INCLUSIVE_SPACES",
+  "LANGUAGE_CULTURE",
+  "LEARNING",
+  "LGBTQ",
+  "MEETING",
+  "MEDITATION_WELLBEING",
+  "MOVEMENTS_POLITICS",
+  "MUSIC",
+  "NETWORKING",
+  "OUTDOORS_ADVENTURE",
+  "PARTY",
+  "PERFORMING_VISUAL_ARTS",
+  "PETS",
+  "PHOTOGRAPHY",
+  "SCIENCE_TECH",
+  "SPIRITUALITY_RELIGION_BELIEFS",
+  "SPORTS",
+  "THEATRE",
+  "WORKSHOPS_SKILL_SHARING",
+] as const;
 
 /** `POST /api/v1/yonder/events/{id}/rsvp`. */
 export function eventRsvp(

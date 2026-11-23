@@ -1227,7 +1227,9 @@
     "joined": "انضم في {date}",
     "movedIndication": "أشار {name} إلى أن حسابه الجديد هو الآن:",
     "goToProfile": "انتقل إلى الملف الشخصي",
-    "movedUnavailable": "انتقل هذا الحساب إلى حساب لم يعد متاحًا"
+    "movedUnavailable": "انتقل هذا الحساب إلى حساب لم يعد متاحًا",
+    "events": "الفعاليات",
+    "noEvents": "لا فعاليات."
   },
   "register": {
     "title": "إنشاء حساب",
@@ -1533,6 +1535,22 @@
     "calendarCopy": "نسخ الرابط",
     "calendarCopied": "تم النسخ",
     "calendarRegenerate": "إعادة الإنشاء",
-    "calendarRevoke": "إلغاء"
+    "calendarRevoke": "إلغاء",
+    "discover": "استكشف"
+  },
+  "eventsDiscover": {
+    "title": "استكشاف الفعاليات",
+    "myEvents": "فعالياتي",
+    "tabHome": "القادمة",
+    "tabLocal": "محلي",
+    "tabFederated": "الفيدرالية",
+    "allCategories": "كل الفئات",
+    "tagPlaceholder": "تصفية حسب الوسم",
+    "online": "عن بُعد فقط",
+    "nearMe": "بالقرب مني",
+    "nearActive": "تُعرض الفعاليات القريبة منك",
+    "nearClear": "مسح",
+    "nearFailed": "الموقع غير متاح",
+    "empty": "لا توجد فعاليات."
   }
 }

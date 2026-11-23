@@ -131,21 +131,24 @@ pub async fn emit_event_update_to(
 
 /// `pleroma:event_reminder` for one participation row — called by the
 /// `EventReminderSweep` job once per (participation, start_time).
+/// Fallible so the sweep only stamps `reminded_at` after a successful
+/// enqueue (a failed enqueue retries on the next sweep tick).
 pub async fn emit_event_reminder(
     db: &PgPool,
     dispatcher: &Dispatcher,
     status: &StatusRow,
     participant_account_id: i64,
-) {
-    emit_notification_event(
+) -> Result<()> {
+    crate::interactions::emit_notification_event_ext(
         db,
         dispatcher,
         "pleroma:event_reminder",
         status.account_id,
         Some(status.id),
+        None,
         participant_account_id,
     )
-    .await;
+    .await
 }
 
 /// Convenience for call sites holding only ids — loads the status row

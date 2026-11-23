@@ -1227,7 +1227,9 @@
     "joined": "Beigetreten {date}",
     "movedIndication": "{name} hat angegeben, dass das neue Konto nun folgendes ist:",
     "goToProfile": "Zum Profil",
-    "movedUnavailable": "Dieses Konto ist zu einem nicht mehr verfügbaren Konto umgezogen"
+    "movedUnavailable": "Dieses Konto ist zu einem nicht mehr verfügbaren Konto umgezogen",
+    "events": "Veranstaltungen",
+    "noEvents": "Keine Veranstaltungen."
   },
   "register": {
     "title": "Konto erstellen",
@@ -1533,6 +1535,22 @@
     "calendarCopy": "URL kopieren",
     "calendarCopied": "Kopiert",
     "calendarRegenerate": "Neu erstellen",
-    "calendarRevoke": "Widerrufen"
+    "calendarRevoke": "Widerrufen",
+    "discover": "Entdecken"
+  },
+  "eventsDiscover": {
+    "title": "Veranstaltungen entdecken",
+    "myEvents": "Meine Veranstaltungen",
+    "tabHome": "Anstehend",
+    "tabLocal": "Lokal",
+    "tabFederated": "Föderiert",
+    "allCategories": "Alle Kategorien",
+    "tagPlaceholder": "Nach Hashtag filtern",
+    "online": "Nur online",
+    "nearMe": "In der Nähe",
+    "nearActive": "Veranstaltungen in deiner Nähe",
+    "nearClear": "Zurücksetzen",
+    "nearFailed": "Standort nicht verfügbar",
+    "empty": "Keine Veranstaltungen gefunden."
   }
 }

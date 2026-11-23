@@ -180,6 +180,13 @@ to these services, which are the same functions the CLI subcommands call.
   [feeds.md](feeds.md).
 - **`translation`** — pluggable third-party translation backends for
   `POST /api/v1/statuses/{id}/translate`.
+- **`events`** — FEP-8a8e events as first-class statuses: inbound
+  parsing/materialization, local authoring and editing, the RSVP state
+  machine (shared by the local API and inbound activities),
+  notifications/reminders/refresh jobs, ICS export (per-event,
+  anonymous profile feed, token-gated personalized subscription) and
+  discovery (list API, `upcomingEvents` collection, geocoding proxy).
+  See [events.md](events.md).
 
 ### Social graph and interactions
 

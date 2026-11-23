@@ -169,3 +169,11 @@ cross-process fan-out is a later concern.
   shares the real bus).
 - `min_id` returns the `limit` statuses immediately newer than the
   cursor, ordered newest-first — the Mastodon contract.
+
+## Calendar feeds
+
+Event timelines are served as iCalendar instead of Mastodon
+pagination: per-event ICS endpoints, an anonymous public profile feed
+(`/users/{u}/events.ics`) and a token-gated personalized subscription
+(`/users/{u}/calendar/{token}.ics`) carrying the viewer's RSVP state.
+See [events.md](events.md).

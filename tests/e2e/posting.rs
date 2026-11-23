@@ -5834,3 +5834,632 @@ async fn events_list_explicit_from_is_unbounded() {
     assert_eq!(arr.len(), 1, "{body}");
     assert_eq!(arr[0]["yonder"]["event"]["name"], "Old meetup");
 }
+
+/// Discovery scope visibility (review-04 C-1/C-2): `federated` returns
+/// public events from anywhere (remote included) and `local` returns
+/// public + local-visibility events from this instance — neither ever
+/// includes `unlisted` (plan §8: calendar/search output must carry
+/// Public in `to`).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn events_list_discovery_scopes() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "dscalice", "dscalice@example.com").await;
+    // Start times must sit inside the list API's default window
+    // (now → +90d).
+    let start = (chrono::Utc::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let make_event = |title: &'static str, visibility: &'static str| {
+        let app = env.app.clone();
+        let token = token.clone();
+        let start = start.clone();
+        async move {
+            let (code, body) = request(
+                &app,
+                "POST",
+                "/api/v1/statuses",
+                Some(&token),
+                Some(json!({
+                    "status": title,
+                    "post_type": "event",
+                    "visibility": visibility,
+                    "event": {
+                        "start_time": start,
+                        "timezone": "UTC",
+                        "join_mode": "free",
+                    }
+                })),
+                &[],
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            let id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+            id
+        }
+    };
+    let public_id = make_event("Public discovery", "public").await;
+    let unlisted_id = make_event("Unlisted discovery", "unlisted").await;
+    let local_id = make_event("Local discovery", "local").await;
+
+    // A remote public event, materialized through the ingest path.
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let remote_uri = "https://remote.test/events/discovery";
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/discovery"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/@host".into(),
+        object: json!({
+            "id": remote_uri,
+            "type": "Event",
+            "name": "Remote discovery",
+            "attributedTo": "https://remote.test/@host",
+            "startTime": start,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    remote::handle(&core, &activity, &activity.to_json()).await;
+    let remote_id: i64 = sqlx::query_scalar("SELECT id FROM statuses WHERE uri = $1")
+        .bind(remote_uri)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+
+    let scope_ids = |scope: &'static str, tok: Option<String>| {
+        let app = env.app.clone();
+        async move {
+            let (code, body) = request(
+                &app,
+                "GET",
+                &format!("/api/v1/yonder/events?scope={scope}&limit=40"),
+                tok.as_deref(),
+                None,
+                &[],
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            let arr = body.as_array().unwrap();
+            arr.iter()
+                .map(|s| s["id"].as_str().unwrap().parse::<i64>().unwrap())
+                .collect::<Vec<i64>>()
+        }
+    };
+    let tok = token.clone();
+
+    // Federated: public everywhere — local public + remote, never
+    // unlisted or local-visibility.
+    let ids = scope_ids("federated", Some(tok.clone())).await;
+    assert!(ids.contains(&public_id), "{ids:?}");
+    assert!(ids.contains(&remote_id), "{ids:?}");
+    assert!(!ids.contains(&unlisted_id), "{ids:?}");
+    assert!(!ids.contains(&local_id), "{ids:?}");
+
+    // Local: public + local-visibility from this instance only.
+    let ids = scope_ids("local", Some(tok.clone())).await;
+    assert!(ids.contains(&public_id), "{ids:?}");
+    assert!(ids.contains(&local_id), "{ids:?}");
+    assert!(!ids.contains(&unlisted_id), "{ids:?}");
+    assert!(!ids.contains(&remote_id), "{ids:?}");
+
+    // Anonymous: same exclusions (unlisted must not leak).
+    let ids = scope_ids("local", None).await;
+    assert!(ids.contains(&public_id), "{ids:?}");
+    assert!(!ids.contains(&unlisted_id), "{ids:?}");
+    assert!(!ids.contains(&local_id), "{ids:?}");
+    let ids = scope_ids("federated", None).await;
+    assert!(
+        ids.contains(&public_id) && ids.contains(&remote_id),
+        "{ids:?}"
+    );
+    assert!(!ids.contains(&unlisted_id), "{ids:?}");
+}
+
+/// Discovery filters (review-04 T-1): `near` bounding box + distance
+/// check including the antimeridian wrap, the hashtag filter, and the
+/// virtual-only `online` filter.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn events_list_geo_tag_and_online_filters() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "geofilt", "geofilt@example.com").await;
+    // Inside the list API's default window (now → +90d).
+    let start = (chrono::Utc::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let make = |content: &'static str, locations: Value| {
+        let app = env.app.clone();
+        let token = token.clone();
+        let start = start.clone();
+        async move {
+            let (code, body) = request(
+                &app,
+                "POST",
+                "/api/v1/statuses",
+                Some(&token),
+                Some(json!({
+                    "status": content,
+                    "post_type": "event",
+                    "visibility": "public",
+                    "event": {
+                        "start_time": start,
+                        "timezone": "UTC",
+                        "join_mode": "free",
+                        "locations": locations,
+                    }
+                })),
+                &[],
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            body["id"].as_str().unwrap().parse::<i64>().unwrap()
+        }
+    };
+    let milan = make(
+        "Milan meetup #geofiltertag",
+        json!([{"type": "place", "name": "Duomo", "latitude": 45.4642, "longitude": 9.19}]),
+    )
+    .await;
+    let oslo = make(
+        "Oslo meetup",
+        json!([{"type": "place", "name": "Opera", "latitude": 59.9139, "longitude": 10.7522}]),
+    )
+    .await;
+    // Just west of the antimeridian: the longitude box would have to
+    // wrap past ±180°, so only the latitude band applies.
+    let dateline = make(
+        "Dateline meetup",
+        json!([{"type": "place", "name": "Atoll", "latitude": 0.0, "longitude": -179.95}]),
+    )
+    .await;
+    let virtual_event = make(
+        "Online meetup",
+        json!([{"type": "virtual", "name": "Room", "url": "https://meet.example/room"}]),
+    )
+    .await;
+
+    let ids = |query: &'static str| {
+        let app = env.app.clone();
+        let token = token.clone();
+        async move {
+            let (code, body) = request(
+                &app,
+                "GET",
+                &format!("/api/v1/yonder/events?scope=mine&limit=40&{query}"),
+                Some(&token),
+                None,
+                &[],
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            body.as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_str().unwrap().parse::<i64>().unwrap())
+                .collect::<Vec<i64>>()
+        }
+    };
+
+    // Near Milan, 25 km: the Milan event only — Oslo is far, the
+    // virtual event has no physical location.
+    let near_milan = ids("near=45.4642,9.19&radius_km=25").await;
+    assert!(near_milan.contains(&milan), "{near_milan:?}");
+    assert!(!near_milan.contains(&oslo), "{near_milan:?}");
+    assert!(!near_milan.contains(&virtual_event), "{near_milan:?}");
+
+    // Antimeridian: a query just east of ±180° must still find the
+    // event just west of it (the longitude box is skipped, the
+    // distance check still applies).
+    let near_dateline = ids("near=0,179.95&radius_km=50").await;
+    assert!(near_dateline.contains(&dateline), "{near_dateline:?}");
+    assert!(!near_dateline.contains(&milan), "{near_dateline:?}");
+
+    // Hashtag filter is case-insensitive and matches the parsed tag.
+    let tagged = ids("tag=GeoFilterTag").await;
+    assert_eq!(tagged, vec![milan], "{tagged:?}");
+
+    // `online=true` keeps only events with a virtual location and no
+    // physical one.
+    let online_only = ids("online=true").await;
+    assert_eq!(online_only, vec![virtual_event], "{online_only:?}");
+}
+
+/// Personal calendar feed ordering (review-04 R-3): upcoming events
+/// come first (nearest start first), then past events most recent
+/// first, so an overflowing 1000-row cap drops the oldest past events
+/// rather than the imminent ones. Postponed events never render.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn calendar_feed_orders_upcoming_first() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "calorder", "calorder@example.com").await;
+    let (past, _) = make_local_event(&env, &token, "free", None).await;
+    let (soon, _) = make_local_event(&env, &token, "free", None).await;
+    let (later, _) = make_local_event(&env, &token, "free", None).await;
+    let (postponed, _) = make_local_event(&env, &token, "free", None).await;
+    for (id, title, offset) in [
+        (past, "Past event", "-2 days"),
+        (soon, "Soon event", "1 day"),
+        (later, "Later event", "10 days"),
+    ] {
+        sqlx::query("UPDATE statuses SET title = $2 WHERE id = $1")
+            .bind(id)
+            .bind(title)
+            .execute(&env.state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE events SET start_time = now() + $2::interval, \
+                               end_time = now() + $2::interval + interval '1 hour' \
+             WHERE status_id = $1",
+        )
+        .bind(id)
+        .bind(offset)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE events SET start_time = NULL, status = 'postponed' WHERE status_id = $1")
+        .bind(postponed)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/yonder/calendar/token",
+        Some(&token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let url = body["calendar_url"].as_str().unwrap().to_string();
+    let token_part = url.rsplit('/').next().unwrap().trim_end_matches(".ics");
+    let (code, feed) = get_text(
+        &env.app,
+        &format!("/users/calorder/calendar/{token_part}.ics"),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{feed}");
+    let order: Vec<&str> = feed
+        .lines()
+        .filter_map(|l| l.strip_prefix("SUMMARY:"))
+        .collect();
+    assert_eq!(
+        order,
+        vec!["Soon event", "Later event", "Past event"],
+        "{feed}"
+    );
+    // The postponed event keeps its original title and never renders.
+    assert!(!feed.contains("SUMMARY:Test event"), "{feed}");
+}
+
+/// `upcomingEvents` collection (review-04 T-1): ascending by start
+/// time, public + unlisted only, postponed and tombstoned events
+/// excluded, unknown accounts 404.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upcoming_events_collection_scopes_and_order() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "upalice", "upalice@example.com").await;
+    let start = (chrono::Utc::now() + chrono::Duration::days(7))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let make = |title: &'static str, visibility: &'static str| {
+        let app = env.app.clone();
+        let token = token.clone();
+        let start = start.clone();
+        async move {
+            let (code, body) = request(
+                &app,
+                "POST",
+                "/api/v1/statuses",
+                Some(&token),
+                Some(json!({
+                    "status": title,
+                    "post_type": "event",
+                    "visibility": visibility,
+                    "event": {
+                        "start_time": start,
+                        "timezone": "UTC",
+                        "join_mode": "free",
+                    }
+                })),
+                &[],
+            )
+            .await;
+            assert_eq!(code, StatusCode::OK, "{body}");
+            (
+                body["id"].as_str().unwrap().parse::<i64>().unwrap(),
+                body["uri"].as_str().unwrap().to_string(),
+            )
+        }
+    };
+    let (soonest, soonest_uri) = make("Soonest", "public").await;
+    let (middle, middle_uri) = make("Middle", "unlisted").await;
+    let (latest, latest_uri) = make("Latest", "public").await;
+    let (private, _) = make("Private", "private").await;
+    let (postponed, _) = make("Postponed", "public").await;
+    let (tombstoned, _) = make("Tombstoned", "public").await;
+    for (id, offset) in [
+        (soonest, "1 day"),
+        (middle, "2 days"),
+        (latest, "3 days"),
+        (private, "4 days"),
+        (tombstoned, "5 days"),
+    ] {
+        sqlx::query(
+            "UPDATE events SET start_time = now() + $2::interval, \
+                               end_time = now() + $2::interval + interval '1 hour' \
+             WHERE status_id = $1",
+        )
+        .bind(id)
+        .bind(offset)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE events SET start_time = NULL, status = 'postponed' WHERE status_id = $1")
+        .bind(postponed)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE statuses SET tombstone = true WHERE id = $1")
+        .bind(tombstoned)
+        .execute(&env.state.db)
+        .await
+        .unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get("/ap/users/upalice/collections/upcoming_events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let doc: Value = serde_json::from_slice(
+        &axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(doc["type"], "OrderedCollection");
+    let ids: Vec<String> = doc["orderedItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, vec![soonest_uri, middle_uri, latest_uri], "{doc}");
+    assert_eq!(doc["totalItems"], 3);
+
+    // Unknown account → 404 (cacheable miss, not a 500).
+    let (code, _) = get_text(&env.app, "/ap/users/nosuchuser/collections/upcoming_events").await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
+/// Invite fan-out (review-04 T-1): a local event with `invitees` gets
+/// one `invited` participation row and one `Invite` activity per
+/// invitee; a decided state is never overwritten and only newly added
+/// invitees get an `Invite` on edit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_invite_fanout() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let organizer = register(&env.app, "invorg", "invorg@example.com").await;
+    let _bob = register(&env.app, "invbob", "invbob@example.com").await;
+    let _carol = register(&env.app, "invcarol", "invcarol@example.com").await;
+    let bob_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'invbob'")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    let carol_id: i64 = sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'invcarol'")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    let start = (chrono::Utc::now() + chrono::Duration::days(5))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&organizer),
+        Some(json!({
+            "status": "Invite-only planning",
+            "post_type": "event",
+            "visibility": "direct",
+            "event": {
+                "start_time": start,
+                "timezone": "UTC",
+                "join_mode": "invite",
+                "invitees": [bob_id],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+
+    let invited: String = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(bob_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(invited, "invited");
+    assert_eq!(outbound_count(&env, "Invite").await, 1);
+
+    // Bob decides. A later edit that still lists him must not reset
+    // the state and must not re-send the Invite.
+    sqlx::query(
+        "UPDATE event_participations SET state = 'accepted' \
+         WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(bob_id)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&organizer),
+        Some(json!({
+            "status": "Invite-only planning (updated)",
+            "event": {
+                "start_time": start,
+                "timezone": "UTC",
+                "join_mode": "invite",
+                "invitees": [bob_id],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(bob_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(state, "accepted");
+    assert_eq!(outbound_count(&env, "Invite").await, 1);
+
+    // Adding an invitee sends exactly one more Invite.
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&organizer),
+        Some(json!({
+            "status": "Invite-only planning (updated)",
+            "event": {
+                "start_time": start,
+                "timezone": "UTC",
+                "join_mode": "invite",
+                "invitees": [bob_id, carol_id],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(outbound_count(&env, "Invite").await, 2);
+    let carol: String = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(carol_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(carol, "invited");
+
+    // Removing an undecided invitee drops the `invited` row; the
+    // decided one keeps hers.
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&organizer),
+        Some(json!({
+            "status": "Invite-only planning (updated)",
+            "event": {
+                "start_time": start,
+                "timezone": "UTC",
+                "join_mode": "invite",
+                "invitees": [bob_id],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT account_id, state FROM event_participations \
+         WHERE status_id = $1 AND role = 'participant' ORDER BY account_id",
+    )
+    .bind(status_id)
+    .fetch_all(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![(bob_id, "accepted".to_string())], "{rows:?}");
+}
+
+/// Actor document (review-05 T-1): `upcomingEvents` is injected after
+/// pubby's dispatch, so the document must carry a validator for the
+/// injected body and never answer a conditional GET with `304` — a
+/// pubby-computed `If-None-Match` match would freeze the stale body.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actor_document_advertises_upcoming_and_never_304s() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    register(&env.app, "etagalice", "etagalice@example.com").await;
+
+    let get = |inm: Option<String>| {
+        let app = env.app.clone();
+        async move {
+            let mut req = Request::get("/ap/users/etagalice")
+                .header(axum::http::header::ACCEPT, "application/activity+json");
+            if let Some(v) = inm {
+                req = req.header(axum::http::header::IF_NONE_MATCH, v);
+            }
+            let resp = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            let status = resp.status();
+            let etag = resp
+                .headers()
+                .get(axum::http::header::ETAG)
+                .map(|v| v.to_str().unwrap().to_string());
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, etag, bytes)
+        }
+    };
+
+    let (status, etag, bytes) = get(None).await;
+    assert_eq!(status, StatusCode::OK);
+    let etag = etag.expect("actor document carries an ETag");
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        doc["upcomingEvents"],
+        format!("{BASE}/ap/users/etagalice/collections/upcoming_events")
+    );
+
+    // The validator from the first response must not produce a 304:
+    // the actor document is never served conditionally.
+    let (status, _, bytes) = get(Some(etag)).await;
+    assert_eq!(status, StatusCode::OK);
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(doc["upcomingEvents"].is_string());
+}

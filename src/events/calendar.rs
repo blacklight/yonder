@@ -88,7 +88,14 @@ pub async fn account_for_token(db: &sqlx::PgPool, token: &str) -> Result<Option<
 /// Status ids in the personal feed: events the account organizes
 /// (author or organizer-role participation) plus events it
 /// participates in with a feed-worthy state. Remote events included —
-/// the token is the authorization, not status visibility.
+/// the token is the authorization, not status visibility. Postponed
+/// events (no start) are excluded here — the writer skips them anyway
+/// and they must not take cap slots. Windowed to roughly the past year
+/// onward and capped at 1000 rows. Upcoming events come first, nearest
+/// first, then past events most-recent first, so an overflowing cap
+/// drops the *oldest past* events rather than the imminent ones. A
+/// heavy calendar therefore doesn't build an unbounded document on
+/// every poll.
 pub async fn feed_status_ids(db: &sqlx::PgPool, account_id: i64) -> Result<Vec<i64>> {
     sqlx::query_scalar(
         "SELECT status_id FROM ( \
@@ -100,8 +107,15 @@ pub async fn feed_status_ids(db: &sqlx::PgPool, account_id: i64) -> Result<Vec<i
              WHERE s.account_id = $1 AND s.object_type = 'Event' \
          ) ids \
          JOIN statuses s ON s.id = ids.status_id \
+         JOIN events e ON e.status_id = s.id \
          WHERE NOT s.tombstone \
-         ORDER BY s.id",
+           AND e.start_time IS NOT NULL \
+           AND COALESCE(e.end_time, e.start_time) >= now() - interval '1 year' \
+         ORDER BY (e.start_time < now()), \
+                  CASE WHEN e.start_time >= now() THEN e.start_time END ASC, \
+                  CASE WHEN e.start_time < now() THEN e.start_time END DESC, \
+                  s.id \
+         LIMIT 1000",
     )
     .bind(account_id)
     .bind(FEED_STATES)
@@ -153,6 +167,7 @@ pub async fn calendar_ics(db: &sqlx::PgPool, account_id: i64) -> Result<String> 
 
     let mut out = String::new();
     ics::calendar_open_pub(&format!("Yonder — {username}"), &mut out);
+    let mut skipped = 0usize;
     for id in &ids {
         let (Some(status), Some(bundle)) = (statuses.get(id), bundles.get(id)) else {
             continue;
@@ -177,7 +192,15 @@ pub async fn calendar_ics(db: &sqlx::PgPool, account_id: i64) -> Result<String> 
             },
             None => continue,
         };
-        let _ = ics::vevent_pub(status, &bundle.row, &bundle.locations, &party, &mut out);
+        // `false` = the writer skipped the row (no start time —
+        // postponed events have nothing to subscribe to). Counted so
+        // the omission is observable in logs rather than silent.
+        if !ics::vevent_pub(status, &bundle.row, &bundle.locations, &party, &mut out) {
+            skipped += 1;
+        }
+    }
+    if skipped > 0 {
+        tracing::info!(account_id, skipped, "calendar feed skipped events");
     }
     ics::calendar_close_pub(&mut out);
     Ok(out)

@@ -134,6 +134,7 @@ flate2 = "1.1.10"
 ureq = "3.5"
 getrandom = "0.4"
 hmac = "0.13"
+sha1 = "0.10.7"
 
 [dev-dependencies]
 base64 = "0.22"

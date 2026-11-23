@@ -32,6 +32,7 @@ pub mod posts;
 pub(crate) mod remote_lists;
 pub mod storage;
 pub mod thread;
+pub mod upcoming;
 
 use std::sync::Arc;
 
@@ -368,6 +369,12 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/ap/users/{username}/collections/featured",
             get(featured::serve_featured),
+        )
+        // FEP-8a8e upcoming-events collection (§16) — pubby has no
+        // route for this path.
+        .route(
+            "/ap/users/{username}/collections/upcoming_events",
+            get(upcoming::serve_upcoming_events),
         )
         // FEP-8a8e attendees/organizers collections — custom handlers
         // (attendees_visibility gating isn't expressible in pubby's

@@ -367,15 +367,17 @@ max_categories = 3
 # Inbound parser keeps unknown category tokens (plan.md §6); this
 # flag gates custom categories in local authoring (later section).
 allow_custom_categories = false
-# Reserved for the outbound summary builder / reminder sections.
+# Summary excerpt length for the generated AP summary.
 summary_excerpt_chars = 300
 reminder_lead_minutes = 60
 remote_refresh_after_minutes = 360
 # Cron for the event_reminder_sweep job (every 5 min); empty disables.
 reminder_sweep_schedule = "*/5 * * * *"
 
-# Pending (geocoding lands with the discovery section): server-side
-# place lookup for the composer.
+# Server-side place lookup for the composer (Nominatim proxy). Set
+# provider = "nominatim" and a descriptive user_agent (their usage
+# policy requires one); the location search endpoint is rate-limited
+# under the `search` bucket.
 [events.geocoding]
 provider = "none"
 nominatim_url = "https://nominatim.openstreetmap.org"

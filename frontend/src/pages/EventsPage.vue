@@ -9,6 +9,7 @@ import Spinner from "@/components/ui/Spinner.vue";
 import {
   calendarTokenCreate,
   calendarTokenRevoke,
+  cursorOf,
   listEvents,
   type EventsScope,
 } from "@/api/events";
@@ -44,11 +45,6 @@ const stateFor = computed<string | undefined>(() => {
       return undefined;
   }
 });
-
-function cursorOf(url?: string) {
-  if (!url) return undefined;
-  return new URL(url, location.origin).searchParams.get("cursor") ?? undefined;
-}
 
 async function load(reset = false) {
   if (loading.value) return;
@@ -153,9 +149,14 @@ async function copyCalendar() {
   <div class="events-page">
     <header class="events-page__header">
       <h1>{{ t("events.title") }}</h1>
-      <Button size="sm" @click="newEvent">
-        {{ t("events.newEvent") }}
-      </Button>
+      <div class="events-page__header-actions">
+        <router-link to="/events/discover" class="events-page__discover">
+          {{ t("events.discover") }}
+        </router-link>
+        <Button size="sm" @click="newEvent">
+          {{ t("events.newEvent") }}
+        </Button>
+      </div>
     </header>
 
     <nav class="events-page__tabs" role="tablist">
@@ -186,10 +187,20 @@ async function copyCalendar() {
           <Button size="sm" @click="copyCalendar">
             {{ copied ? t("events.calendarCopied") : t("events.calendarCopy") }}
           </Button>
-          <Button size="sm" variant="secondary" :loading="calendarBusy" @click="mintCalendar">
+          <Button
+            size="sm"
+            variant="secondary"
+            :loading="calendarBusy"
+            @click="mintCalendar"
+          >
             {{ t("events.calendarRegenerate") }}
           </Button>
-          <Button size="sm" variant="secondary" :loading="calendarBusy" @click="revokeCalendar">
+          <Button
+            size="sm"
+            variant="secondary"
+            :loading="calendarBusy"
+            @click="revokeCalendar"
+          >
             {{ t("events.calendarRevoke") }}
           </Button>
         </div>
@@ -202,7 +213,11 @@ async function copyCalendar() {
       </p>
     </section>
 
-    <div v-if="loading && !loaded" role="status" :aria-label="t('common.loading')">
+    <div
+      v-if="loading && !loaded"
+      role="status"
+      :aria-label="t('common.loading')"
+    >
       <StatusCardSkeleton v-for="n in 3" :key="n" />
     </div>
     <div v-else-if="error" class="events-page__state">
@@ -224,11 +239,7 @@ async function copyCalendar() {
     <div v-if="loading && loaded" class="events-page__state">
       <Spinner />
     </div>
-    <Button
-      v-if="!ioSupported && hasMore()"
-      :loading="loading"
-      @click="load()"
-    >
+    <Button v-if="!ioSupported && hasMore()" :loading="loading" @click="load()">
       {{ t("common.loadMore") }}
     </Button>
   </div>
@@ -245,6 +256,14 @@ async function copyCalendar() {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.events-page__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.events-page__discover {
+  font-size: 0.85rem;
 }
 .events-page__header h1 {
   font-size: 1.25rem;

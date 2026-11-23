@@ -3,11 +3,9 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
 import { search } from "@/api/search";
+import { FEP_CATEGORIES } from "@/api/events";
 import type { Account, MediaAttachment } from "@/api/entities";
-import type {
-  EventDraft,
-  EventLocationDraft,
-} from "@/stores/compose";
+import type { EventDraft, EventLocationDraft } from "@/stores/compose";
 import { timeZones } from "@/utils/timezone";
 
 const props = defineProps<{
@@ -30,46 +28,9 @@ const { t } = useI18n();
 
 const JOIN_MODES = ["free", "restricted", "invite", "external"];
 const ATTENDEE_VISIBILITIES = ["organizers", "participants", "public"];
-// Mirrors the backend FEP-8a8e category list (`events::validate::
-// FEP_CATEGORIES`) — labels are humanized codes, not translated.
-const CATEGORIES = [
-  "ARTS",
-  "AUTO_BOAT_AIR",
-  "BOOK_CLUBS",
-  "BUSINESS",
-  "CAUSES",
-  "CLIMATE_ENVIRONMENT",
-  "COMMUNITY",
-  "COMEDY",
-  "CRAFTS",
-  "CREATIVE_JAM",
-  "DIY_MAKER_SPACES",
-  "FAMILY_EDUCATION",
-  "FASHION_BEAUTY",
-  "FESTIVALS",
-  "FILM_MEDIA",
-  "FOOD_DRINK",
-  "GAMES",
-  "INCLUSIVE_SPACES",
-  "LANGUAGE_CULTURE",
-  "LEARNING",
-  "LGBTQ",
-  "MEETING",
-  "MEDITATION_WELLBEING",
-  "MOVEMENTS_POLITICS",
-  "MUSIC",
-  "NETWORKING",
-  "OUTDOORS_ADVENTURE",
-  "PARTY",
-  "PERFORMING_VISUAL_ARTS",
-  "PETS",
-  "PHOTOGRAPHY",
-  "SCIENCE_TECH",
-  "SPIRITUALITY_RELIGION_BELIEFS",
-  "SPORTS",
-  "THEATRE",
-  "WORKSHOPS_SKILL_SHARING",
-];
+// The FEP-8a8e category list — shared with the discover page
+// (`api/events.ts`); labels are humanized codes, not translated.
+const CATEGORIES = FEP_CATEGORIES;
 // Edit-mode status transitions the API accepts (§9.1).
 const EDIT_STATUSES = [
   "scheduled",
@@ -139,8 +100,9 @@ function toggleEnd(checked: boolean) {
       ? new Date(`${props.event.startTime}:00`)
       : new Date(Date.now() + 2 * 3600_000);
     const end = new Date(
-      (Number.isNaN(base.getTime()) ? Date.now() + 2 * 3600_000 : base.getTime()) +
-        3600_000,
+      (Number.isNaN(base.getTime())
+        ? Date.now() + 2 * 3600_000
+        : base.getTime()) + 3600_000,
     );
     const p = (n: number) => String(n).padStart(2, "0");
     patch({
@@ -259,7 +221,9 @@ function removeInvitee(id: string) {
             type="datetime-local"
             :disabled="!hasEnd"
             data-testid="event-end"
-            @input="patch({ endTime: ($event.target as HTMLInputElement).value })"
+            @input="
+              patch({ endTime: ($event.target as HTMLInputElement).value })
+            "
           />
         </span>
       </label>
@@ -268,7 +232,9 @@ function removeInvitee(id: string) {
         <select
           :value="event.timezone"
           data-testid="event-timezone"
-          @change="patch({ timezone: ($event.target as HTMLSelectElement).value })"
+          @change="
+            patch({ timezone: ($event.target as HTMLSelectElement).value })
+          "
         >
           <option v-for="z in zones" :key="z" :value="z">{{ z }}</option>
         </select>
@@ -281,7 +247,9 @@ function removeInvitee(id: string) {
         <select
           :value="event.status"
           data-testid="event-status"
-          @change="patch({ status: ($event.target as HTMLSelectElement).value })"
+          @change="
+            patch({ status: ($event.target as HTMLSelectElement).value })
+          "
         >
           <option v-for="s in EDIT_STATUSES" :key="s" :value="s">
             {{ t(`compose.eventStatus_${s}`) }}
@@ -296,14 +264,19 @@ function removeInvitee(id: string) {
         <select
           :value="event.joinMode"
           data-testid="event-join-mode"
-          @change="patch({ joinMode: ($event.target as HTMLSelectElement).value })"
+          @change="
+            patch({ joinMode: ($event.target as HTMLSelectElement).value })
+          "
         >
           <option v-for="m in JOIN_MODES" :key="m" :value="m">
             {{ t(`compose.eventJoin_${m}`) }}
           </option>
         </select>
       </label>
-      <label v-if="event.joinMode === 'external'" class="event__field event__field--grow">
+      <label
+        v-if="event.joinMode === 'external'"
+        class="event__field event__field--grow"
+      >
         <span>{{ t("compose.eventExternalUrl") }}</span>
         <input
           :value="event.externalParticipationUrl"
@@ -312,7 +285,8 @@ function removeInvitee(id: string) {
           data-testid="event-external-url"
           @input="
             patch({
-              externalParticipationUrl: ($event.target as HTMLInputElement).value,
+              externalParticipationUrl: ($event.target as HTMLInputElement)
+                .value,
             })
           "
         />
@@ -326,7 +300,8 @@ function removeInvitee(id: string) {
           data-testid="event-capacity"
           @input="
             patch({
-              maximumAttendeeCapacity: ($event.target as HTMLInputElement).value,
+              maximumAttendeeCapacity: ($event.target as HTMLInputElement)
+                .value,
             })
           "
         />
@@ -337,7 +312,9 @@ function removeInvitee(id: string) {
           :value="event.attendeesVisibility"
           data-testid="event-attendees-visibility"
           @change="
-            patch({ attendeesVisibility: ($event.target as HTMLSelectElement).value })
+            patch({
+              attendeesVisibility: ($event.target as HTMLSelectElement).value,
+            })
           "
         >
           <option v-for="v in ATTENDEE_VISIBILITIES" :key="v" :value="v">
@@ -373,7 +350,8 @@ function removeInvitee(id: string) {
             :value="loc.kind"
             @change="
               patchLocation(i, {
-                kind: ($event.target as HTMLSelectElement).value as 'place' | 'virtual',
+                kind: ($event.target as HTMLSelectElement).value as
+                  'place' | 'virtual',
               })
             "
           >
@@ -392,14 +370,20 @@ function removeInvitee(id: string) {
         <input
           :value="loc.name"
           :placeholder="t('compose.eventLocName')"
-          @input="patchLocation(i, { name: ($event.target as HTMLInputElement).value })"
+          @input="
+            patchLocation(i, {
+              name: ($event.target as HTMLInputElement).value,
+            })
+          "
         />
         <input
           v-if="loc.kind === 'virtual'"
           :value="loc.url"
           type="url"
           :placeholder="t('compose.eventLocUrl')"
-          @input="patchLocation(i, { url: ($event.target as HTMLInputElement).value })"
+          @input="
+            patchLocation(i, { url: ($event.target as HTMLInputElement).value })
+          "
         />
         <template v-else>
           <input
@@ -425,7 +409,9 @@ function removeInvitee(id: string) {
               :value="loc.region"
               :placeholder="t('compose.eventLocRegion')"
               @input="
-                patchLocation(i, { region: ($event.target as HTMLInputElement).value })
+                patchLocation(i, {
+                  region: ($event.target as HTMLInputElement).value,
+                })
               "
             />
             <input
@@ -441,7 +427,9 @@ function removeInvitee(id: string) {
               :value="loc.country"
               :placeholder="t('compose.eventLocCountry')"
               @input="
-                patchLocation(i, { country: ($event.target as HTMLInputElement).value })
+                patchLocation(i, {
+                  country: ($event.target as HTMLInputElement).value,
+                })
               "
             />
           </div>
@@ -475,7 +463,11 @@ function removeInvitee(id: string) {
         <button type="button" class="event__add" @click="addLocation('place')">
           <FontAwesomeIcon icon="plus" /> {{ t("compose.eventLocAddPlace") }}
         </button>
-        <button type="button" class="event__add" @click="addLocation('virtual')">
+        <button
+          type="button"
+          class="event__add"
+          @click="addLocation('virtual')"
+        >
           <FontAwesomeIcon icon="plus" /> {{ t("compose.eventLocAddVirtual") }}
         </button>
       </div>
@@ -549,7 +541,9 @@ function removeInvitee(id: string) {
       <ul v-if="inviteResults.length" class="event__invitee-results">
         <li v-for="a in inviteResults" :key="a.id">
           <button type="button" @click="addInvitee(a)">
-            <span class="event__invitee-name">{{ a.display_name || a.username }}</span>
+            <span class="event__invitee-name">{{
+              a.display_name || a.username
+            }}</span>
             <span class="event__invitee-acct">@{{ a.acct }}</span>
           </button>
         </li>

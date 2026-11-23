@@ -1,3 +1,6 @@
+-- Reverting 0062 fails if any row still uses a `pleroma:*`
+-- notification type or the `event` default post type — delete or
+-- migrate those rows first.
 ALTER TABLE accounts DROP CONSTRAINT accounts_default_post_type_check;
 ALTER TABLE accounts ADD CONSTRAINT accounts_default_post_type_check
     CHECK (default_post_type IN ('note', 'article'));

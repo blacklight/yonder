@@ -266,6 +266,52 @@ pub async fn calendar_token_revoke(
 // `GET /api/v1/yonder/events` — the events list (Section 15)
 // ---------------------------------------------------------------------------
 
+/// `near=lat,lon` → `(lat, lon)`, range-checked. `None` when absent.
+fn parse_near(raw: Option<&String>) -> Result<Option<(f64, f64)>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let (lat, lon) = raw
+        .split_once(',')
+        .ok_or_else(|| Error::Validation("near must be lat,lon".to_string()))?;
+    let lat: f64 = lat
+        .trim()
+        .parse()
+        .map_err(|_| Error::Validation("near latitude must be numeric".to_string()))?;
+    let lon: f64 = lon
+        .trim()
+        .parse()
+        .map_err(|_| Error::Validation("near longitude must be numeric".to_string()))?;
+    if !(-90.0..=90.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+        return Err(Error::Validation("near out of range".to_string()));
+    }
+    Ok(Some((lat, lon)))
+}
+
+/// Longitude half-width (degrees) of the `near` bounding box. Longitude
+/// degrees shrink poleward, so the widest band is at the poleward edge
+/// of the latitude band; using the query latitude would under-cover
+/// events north (or south) of it and drop in-radius matches.
+fn lon_half_width_deg(lat: f64, radius_km: f64) -> f64 {
+    let poleward = (lat.abs() + radius_km / 111.0).min(89.999);
+    radius_km / (111.0 * poleward.to_radians().cos())
+}
+
+/// `radius_km` for `near` — default 50, must be a finite number,
+/// clamped to 0.1–500 km.
+fn parse_radius_km(raw: Option<&String>) -> Result<f64> {
+    let Some(raw) = raw else {
+        return Ok(50.0);
+    };
+    let radius: f64 = raw
+        .parse()
+        .map_err(|_| Error::Validation("radius_km must be numeric".to_string()))?;
+    if !radius.is_finite() {
+        return Err(Error::Validation("radius_km must be finite".to_string()));
+    }
+    Ok(radius.clamp(0.1, 500.0))
+}
+
 /// `GET /api/v1/yonder/events` — chronological event listing.
 ///
 /// Scopes: `mine` (viewer organizes), `participating` (viewer has any
@@ -276,6 +322,8 @@ pub async fn calendar_token_revoke(
 /// bound the window (default now → +90d; an explicit `from` without
 /// `to` is unbounded); `category` filters; postponed
 /// events (`start_time IS NULL`) always appear, sorted last.
+/// `near=lat,lon` + `radius_km` keep only events with a physical
+/// location within the radius (spherical law of cosines).
 /// Pagination is keyset on `(start_time, status_id)` via `cursor`.
 #[utoipa::path(
     get,
@@ -287,6 +335,10 @@ pub async fn calendar_token_revoke(
         ("from" = Option<String>, Query, description = "RFC 3339 lower bound"),
         ("to" = Option<String>, Query, description = "RFC 3339 upper bound"),
         ("category" = Option<String>, Query, description = "FEP category filter"),
+        ("tag" = Option<String>, Query, description = "Hashtag filter (case-insensitive, leading # optional)"),
+        ("online" = Option<bool>, Query, description = "true → only virtual-location events"),
+        ("near" = Option<String>, Query, description = "lat,lon — keep events with a physical location within radius_km"),
+        ("radius_km" = Option<f64>, Query, description = "Search radius for `near` (default 50, max 500)"),
         ("include_cancelled" = Option<bool>, Query),
         ("cursor" = Option<String>, Query, description = "Keyset cursor from a previous page"),
         ("limit" = Option<i64>, Query),
@@ -373,17 +425,22 @@ pub async fn events_list(
             .fetch_all(&state.db)
             .await?
         }
+        // `federated`: public events everywhere. `local`: public +
+        // local-visibility events from this instance only. Neither
+        // includes `unlisted` — plan §8 forbids calendar/search output
+        // without Public in `to`.
         "local" | "federated" => {
             let vis = if scope == "federated" {
                 "'public'"
             } else {
-                "'public','local','unlisted'"
+                "'public','local'"
             };
+            let local_only = if scope == "local" { "AND s.local " } else { "" };
             sqlx::query_scalar(&format!(
                 "SELECT s.id FROM statuses s \
                  JOIN events e ON e.status_id = s.id \
                  WHERE s.object_type = 'Event' AND NOT s.tombstone \
-                   AND s.local AND s.visibility IN ({vis})"
+                   {local_only}AND s.visibility IN ({vis})"
             ))
             .fetch_all(&state.db)
             .await?
@@ -394,6 +451,80 @@ pub async fn events_list(
                     .to_string(),
             ))
         }
+    };
+
+    // §16 "near me": keep only candidates with a physical location
+    // within `radius_km` of `near=lat,lon`. A bounding box on
+    // lat/lon (1 deg lat ≈ 111 km) prefilters on
+    // `event_locations_geo_idx` before the distance check.
+    let ids = match parse_near(params.get("near"))? {
+        Some((lat, lon)) => {
+            let radius_km = parse_radius_km(params.get("radius_km"))?;
+            let lat_delta = radius_km / 111.0;
+            let lon_delta = lon_half_width_deg(lat, radius_km);
+            // The longitude box can wrap past ±180°; skip it there
+            // rather than miss antimeridian events (the distance
+            // check still filters).
+            let lon_box = lon - lon_delta >= -180.0 && lon + lon_delta <= 180.0;
+            sqlx::query_scalar(
+                "SELECT l.status_id FROM event_locations l \
+                 WHERE l.status_id = ANY($1) \
+                   AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL \
+                   AND l.latitude BETWEEN $2 - $4 AND $2 + $4 \
+                   AND ($7 OR l.longitude BETWEEN $3 - $5 AND $3 + $5) \
+                   AND (6371.0 * acos(greatest(-1.0, least(1.0, \
+                     cos(radians($2)) * cos(radians(l.latitude)) \
+                       * cos(radians(l.longitude) - radians($3)) \
+                     + sin(radians($2)) * sin(radians(l.latitude))))) <= $6",
+            )
+            .bind(&ids)
+            .bind(lat)
+            .bind(lon)
+            .bind(lat_delta)
+            .bind(lon_delta)
+            .bind(radius_km)
+            .bind(!lon_box)
+            .fetch_all(&state.db)
+            .await?
+        }
+        None => ids,
+    };
+
+    // §16 discovery filters: hashtag and online-only.
+    let ids = match params
+        .get("tag")
+        .map(|s| s.trim().trim_start_matches('#'))
+        .filter(|t| !t.is_empty())
+    {
+        Some(tag) => {
+            sqlx::query_scalar(
+                "SELECT st.status_id FROM status_tags st JOIN tags t ON t.id = st.tag_id \
+                 WHERE st.status_id = ANY($1) AND lower(t.name) = lower($2)",
+            )
+            .bind(&ids)
+            .bind(tag)
+            .fetch_all(&state.db)
+            .await?
+        }
+        None => ids,
+    };
+    let ids = if params
+        .get("online")
+        .is_some_and(|v| v == "true" || v == "1")
+    {
+        sqlx::query_scalar(
+            "SELECT e.status_id FROM events e \
+             WHERE e.status_id = ANY($1) \
+               AND NOT EXISTS (SELECT 1 FROM event_locations l \
+                 WHERE l.status_id = e.status_id AND l.kind <> 'virtual') \
+               AND EXISTS (SELECT 1 FROM event_locations l \
+                 WHERE l.status_id = e.status_id AND l.kind = 'virtual')",
+        )
+        .bind(&ids)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        ids
     };
     if ids.is_empty() {
         return Ok((
@@ -577,4 +708,85 @@ pub async fn events_list(
         }
     }
     Ok((headers, Json(serde_json::json!(out))).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_near_absent_is_none() {
+        assert_eq!(parse_near(None).unwrap(), None);
+        assert!(parse_near(Some(&String::new())).is_err());
+    }
+
+    #[test]
+    fn parse_near_accepts_coords() {
+        let raw = " 45.12 , 9.40 ".to_string();
+        let (lat, lon) = parse_near(Some(&raw)).unwrap().unwrap();
+        assert_eq!(lat, 45.12);
+        assert_eq!(lon, 9.40);
+    }
+
+    #[test]
+    fn parse_radius_km_defaults_clamps_and_rejects_non_finite() {
+        assert_eq!(parse_radius_km(None).unwrap(), 50.0);
+        assert_eq!(parse_radius_km(Some(&"12.5".to_string())).unwrap(), 12.5);
+        assert_eq!(parse_radius_km(Some(&"0".to_string())).unwrap(), 0.1);
+        assert_eq!(parse_radius_km(Some(&"9000".to_string())).unwrap(), 500.0);
+        for bad in ["NaN", "inf", "-inf", "far"] {
+            assert!(
+                parse_radius_km(Some(&bad.to_string())).is_err(),
+                "{bad} should be rejected"
+            );
+        }
+    }
+
+    /// Great-circle distance in km (haversine form), for the box check.
+    fn great_circle_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
+        let (p1, p2) = (lat1.to_radians(), lat2.to_radians());
+        let dlon = (lon2 - lon1).to_radians();
+        let h = ((p2 - p1) / 2.0).sin().powi(2) + p1.cos() * p2.cos() * (dlon / 2.0).sin().powi(2);
+        2.0 * 6371.0 * h.sqrt().min(1.0).asin()
+    }
+
+    #[test]
+    fn near_lon_box_covers_every_in_radius_event() {
+        // For each query latitude and radius, the largest longitude
+        // offset of any event inside the radius (found by bisection
+        // along the band) must fit inside the box. The query-latitude
+        // box failed this poleward of ~50°.
+        for qlat in [-75.0, -60.0, -30.0, 0.0, 30.0, 45.0, 60.0, 70.0, 80.0] {
+            for radius in [10.0, 50.0, 200.0, 500.0] {
+                let half = lon_half_width_deg(qlat, radius);
+                let lat_delta = radius / 111.0;
+                for k in -200..=200 {
+                    let elat = qlat + lat_delta * (k as f64 / 200.0);
+                    let (mut lo, mut hi) = (0.0_f64, 180.0_f64);
+                    for _ in 0..60 {
+                        let mid = (lo + hi) / 2.0;
+                        if great_circle_km(qlat, 0.0, elat, mid) <= radius {
+                            lo = mid;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    assert!(
+                        lo <= half + 1e-9,
+                        "qlat={qlat} radius={radius} elat={elat}: true {lo} > box {half}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn parse_near_rejects_malformed_and_out_of_range() {
+        for bad in ["45.12", "abc,def", "91,0", "0,181", "45.12,9.40,3"] {
+            assert!(
+                parse_near(Some(&bad.to_string())).is_err(),
+                "{bad} should be rejected"
+            );
+        }
+    }
 }

@@ -1206,6 +1206,22 @@ pub async fn publish(
             tracing::error!(status_id, error = %e, "AP Create publish failed");
         }
     }
+    // §16 invitees-only fan-out: `invited` participation rows plus one
+    // `Invite` per invitee (the Create itself is already addressed to
+    // them; the Invite is the explicit FEP-8a8e signal).
+    if let Some(ev) = &validated.event {
+        if let Err(e) = crate::events::api::create_invited_rows_and_invite(
+            ctx,
+            &status,
+            account_id,
+            &ev.invitees,
+        )
+        .await
+        {
+            tracing::warn!(status_id = status.id, error = %e, "event invite fan-out failed");
+        }
+        crate::activitypub::upcoming::invalidate(ctx, account_id).await;
+    }
     if let Some(target) = &quote_target {
         crate::interactions::quote::finish_quote(ctx, ctx.ap.as_ref(), &status, target).await;
     }
@@ -1249,6 +1265,7 @@ pub async fn edit_status(
     if !status.local {
         return Err(Error::Forbidden("remote statuses cannot be edited"));
     }
+    let is_event_status = status.object_type.as_deref() == Some("Event");
     let validated = validate(ctx, auth, params, Some(status_id)).await?;
 
     // A status carries a poll or media, never both: media supplied on
@@ -1473,6 +1490,7 @@ pub async fn edit_status(
     // ordinary Updates — never a Delete). An edit without the payload
     // keeps the stored event row untouched.
     let mut invitee_ids: Vec<i64> = Vec::new();
+    let mut new_invitees: Vec<i64> = Vec::new();
     let mut event_payload = false;
     let mut start_moved = false;
     if status.object_type.as_deref() == Some("Event") {
@@ -1487,6 +1505,18 @@ pub async fn edit_status(
             .await?
             .flatten()
                 != parsed.start_time;
+            // The stored list is needed to diff newly added invitees
+            // (§16: only additions get an `Invite`) before the UPDATE
+            // below replaces it. `FOR UPDATE` serializes concurrent
+            // edits so two racing edits cannot both see the same
+            // invitee as new and double-send `Invite`s.
+            let old_invitees: Vec<i64> = sqlx::query_scalar::<_, Vec<i64>>(
+                "SELECT COALESCE(invitees, '{}') FROM events WHERE status_id = $1 FOR UPDATE",
+            )
+            .bind(status_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or_default();
             crate::events::remote::sync_event(
                 &mut tx,
                 status_id,
@@ -1508,6 +1538,31 @@ pub async fn edit_status(
             .execute(&mut *tx)
             .await?;
             invitee_ids = ev.invitees.clone();
+            new_invitees = ev
+                .invitees
+                .iter()
+                .filter(|id| !old_invitees.contains(id))
+                .copied()
+                .collect();
+            // Invitees dropped from the list lose their `invited` row
+            // (visibility already hides the event from them); decided
+            // states are kept — an accepted/declined participant is
+            // history, not a pending invitation.
+            let removed: Vec<i64> = old_invitees
+                .iter()
+                .filter(|id| !ev.invitees.contains(id))
+                .copied()
+                .collect();
+            if !removed.is_empty() {
+                sqlx::query(
+                    "DELETE FROM event_participations \
+                     WHERE status_id = $1 AND account_id = ANY($2) AND state = 'invited'",
+                )
+                .bind(status_id)
+                .bind(&removed)
+                .execute(&mut *tx)
+                .await?;
+            }
         } else {
             // No payload — preserve the stored invitee list so the
             // mention re-sync below doesn't drop it.
@@ -1582,6 +1637,9 @@ pub async fn edit_status(
         }
         crate::activitypub::posts::invalidate_object(ap, status_id);
     }
+    if is_event_status {
+        crate::activitypub::upcoming::invalidate(ctx, auth.account_id).await;
+    }
     // Stream the `status.update` event — subscribed timelines replace
     // the row in place, so an edit reflects without a reload (and an
     // edit of an unseen row never lands as a pending "new" item).
@@ -1598,6 +1656,20 @@ pub async fn edit_status(
         if start_moved {
             if let Err(e) = crate::events::notify::rearm_reminders(&ctx.db, status.id).await {
                 tracing::warn!(status_id = status.id, error = %e, "reminder re-arm failed");
+            }
+        }
+        // §16: invitees added by this edit get their `Invite` (and the
+        // `invited` participation row) — existing invitees don't.
+        if !new_invitees.is_empty() {
+            if let Err(e) = crate::events::api::create_invited_rows_and_invite(
+                ctx,
+                &status,
+                auth.account_id,
+                &new_invitees,
+            )
+            .await
+            {
+                tracing::warn!(status_id = status.id, error = %e, "event invite fan-out failed");
             }
         }
     }
@@ -1724,6 +1796,9 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
             }
         }
         crate::activitypub::posts::invalidate_object(ap, status.id);
+    }
+    if status.object_type.as_deref() == Some("Event") {
+        crate::activitypub::upcoming::invalidate(ctx, status.account_id).await;
     }
     crate::timelines::fanout::remove_quiet(
         &ctx.db,

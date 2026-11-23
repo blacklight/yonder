@@ -28,7 +28,12 @@ anonymous-eligible.
   the section on a 404.
 
 Both entities also carry a `yonder` extension block; today it only
-has `single_user` (see below).
+has `single_user` (see below). The Akkoma-style `pleroma.features`
+list gains `"events"` when `[events] enabled` — the SPA hides the
+composer event type, the `/events` navigation entry and the profile
+Events tab when it's absent (and `yonder.events_enabled` mirrors the
+flag for programmatic checks). See [events.md](events.md) for the
+`[events]` configuration surface.
 
 ## Domains: the acct domain vs the federation origin
 

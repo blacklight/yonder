@@ -8,6 +8,7 @@ import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
 import { useToastsStore } from "@/stores/toasts";
 import ComposeBox from "./ComposeBox.vue";
+import { getInstance } from "@/api/instance";
 
 vi.mock("@/api/emojis", () => ({
   customEmojis: vi.fn().mockResolvedValue([
@@ -835,14 +836,18 @@ describe("ComposeBox", () => {
       wrapper.get("[data-testid='post']").attributes("disabled"),
     ).toBeDefined();
     await wrapper.get("[data-testid='event-name']").setValue("Gig night");
-    await wrapper.get("[data-testid='event-start']").setValue("2030-06-01T18:00");
+    await wrapper
+      .get("[data-testid='event-start']")
+      .setValue("2030-06-01T18:00");
     await wrapper.get("[data-testid='post']").trigger("click");
     await flushPromises();
     const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
     expect(body.post_type).toBe("event");
     expect(body.title).toBe("Gig night");
     expect(body.event.timezone).toBeTruthy();
-    expect(body.event.start_time).toMatch(/^2030-06-01T18:00:00[+-]\d{2}:\d{2}$/);
+    expect(body.event.start_time).toMatch(
+      /^2030-06-01T18:00:00[+-]\d{2}:\d{2}$/,
+    );
     expect(body.event.status).toBe("scheduled");
     expect(body.poll).toBeUndefined();
     expect(body.in_reply_to_id).toBeUndefined();
@@ -859,5 +864,41 @@ describe("ComposeBox", () => {
     expect(d.event).toBeNull();
     expect(d.title).toBe("Gig night");
     expect(wrapper.find("[data-testid='event-builder']").exists()).toBe(false);
+  });
+
+  it("offers the event type only once the instance confirms it", async () => {
+    let resolveInst!: (v: unknown) => void;
+    vi.mocked(getInstance).mockImplementationOnce(
+      () => new Promise((r) => (resolveInst = r)) as never,
+    );
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const options = () =>
+      wrapper
+        .findAll("[data-testid='post-type'] option")
+        .map((o) => o.attributes("value"));
+    // Off until the response lands — an older server never answers
+    // with the flag, so a missing response must not expose the type.
+    expect(options()).toEqual(["note", "article"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(false);
+
+    resolveInst({ yonder: { events_enabled: true } });
+    await flushPromises();
+    expect(options()).toEqual(["note", "article", "event"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(true);
+  });
+
+  it("hides the event type when the instance disables events", async () => {
+    vi.mocked(getInstance).mockResolvedValueOnce({
+      yonder: { events_enabled: false },
+    } as never);
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    expect(
+      wrapper
+        .findAll("[data-testid='post-type'] option")
+        .map((o) => o.attributes("value")),
+    ).toEqual(["note", "article"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(false);
   });
 });

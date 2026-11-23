@@ -195,21 +195,62 @@ impl JobHandler for EventReminderSweepJob {
         let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
         let mut last_cursor: Option<Value> = None;
         let mut emitted = 0u64;
+        let mut failed = 0u64;
         for (status_id, account_id, start_time) in &rows {
-            let Some(status) = crate::posts::load(&ctx.db, *status_id).await? else {
-                continue;
-            };
-            crate::events::notify::emit_event_reminder(&ctx.db, &dispatcher, &status, *account_id)
-                .await;
-            crate::events::notify::mark_reminded(&ctx.db, *status_id, *account_id).await?;
-            emitted += 1;
+            // The cursor must always advance past a consumed row —
+            // even a skipped one — or a page of missing statuses
+            // would restart the sweep from the beginning forever.
             last_cursor = Some(json!({
                 "start": start_time.to_rfc3339(),
                 "status_id": status_id,
                 "account_id": account_id,
             }));
+            let Some(status) = crate::posts::load(&ctx.db, *status_id).await? else {
+                continue;
+            };
+            // Per-row failures are logged and left unstamped
+            // (`reminded_at` stays unset, so the next sweep retries
+            // them) instead of aborting the whole page — a persistent
+            // enqueue failure on one participation must not starve
+            // every reminder after it.
+            match crate::events::notify::emit_event_reminder(
+                &ctx.db,
+                &dispatcher,
+                &status,
+                *account_id,
+            )
+            .await
+            {
+                Ok(()) => {
+                    match crate::events::notify::mark_reminded(&ctx.db, *status_id, *account_id)
+                        .await
+                    {
+                        Ok(()) => emitted += 1,
+                        // Sent but not stamped: the next sweep may repeat
+                        // it. Logged rather than aborting the page.
+                        Err(e) => {
+                            failed += 1;
+                            tracing::warn!(
+                                status_id,
+                                account_id,
+                                error = %e,
+                                "event reminder sent but not stamped"
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(
+                        status_id,
+                        account_id,
+                        error = %e,
+                        "event reminder emission failed"
+                    );
+                }
+            }
         }
-        tracing::debug!(emitted, "event reminder sweep page");
+        tracing::debug!(emitted, failed, "event reminder sweep page");
         if rows.len() as i64 == REMINDER_BATCH {
             dispatcher
                 .enqueue(JobKind::EventReminderSweep, json!({"cursor": last_cursor}))

@@ -1227,7 +1227,9 @@
     "joined": "Iscritto da {date}",
     "movedIndication": "{name} ha indicato che il suo nuovo account è ora:",
     "goToProfile": "Vai al profilo",
-    "movedUnavailable": "Questo account è stato spostato su un account non più disponibile"
+    "movedUnavailable": "Questo account è stato spostato su un account non più disponibile",
+    "events": "Eventi",
+    "noEvents": "Nessun evento."
   },
   "register": {
     "title": "Crea un account",
@@ -1533,6 +1535,22 @@
     "calendarCopy": "Copia URL",
     "calendarCopied": "Copiato",
     "calendarRegenerate": "Rigenera",
-    "calendarRevoke": "Revoca"
+    "calendarRevoke": "Revoca",
+    "discover": "Scopri"
+  },
+  "eventsDiscover": {
+    "title": "Scopri eventi",
+    "myEvents": "I miei eventi",
+    "tabHome": "In arrivo",
+    "tabLocal": "Locali",
+    "tabFederated": "Federati",
+    "allCategories": "Tutte le categorie",
+    "tagPlaceholder": "Filtra per hashtag",
+    "online": "Solo online",
+    "nearMe": "Vicino a me",
+    "nearActive": "Eventi vicino a te",
+    "nearClear": "Azzera",
+    "nearFailed": "Posizione non disponibile",
+    "empty": "Nessun evento trovato."
   }
 }

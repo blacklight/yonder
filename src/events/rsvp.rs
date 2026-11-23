@@ -187,6 +187,13 @@ pub enum OutboundActivity {
         to: Vec<String>,
         cc: Vec<String>,
     },
+    /// `Invite{object: event_uri, to: [invitee]}` — the organizer
+    /// inviting one account to an invitees-only event (§16).
+    Invite {
+        object: String,
+        to: Vec<String>,
+        cc: Vec<String>,
+    },
 }
 
 impl OutboundActivity {
@@ -212,6 +219,7 @@ impl OutboundActivity {
             Self::Reject { object, .. } => ("reject", json!(object), Value::Null),
             Self::Ignore { object, .. } => ("ignore", json!(object), Value::Null),
             Self::TentativeAccept { object, .. } => ("tentativeaccept", json!(object), Value::Null),
+            Self::Invite { object, .. } => ("invite", json!(object), Value::Null),
         };
         let mut doc = json!({
             "@context": crate::activitypub::context::event_context(),
@@ -223,6 +231,7 @@ impl OutboundActivity {
                 Self::Reject { .. } => "Reject",
                 Self::Ignore { .. } => "Ignore",
                 Self::TentativeAccept { .. } => "TentativeAccept",
+                Self::Invite { .. } => "Invite",
             },
             "actor": actor,
             "object": object,
@@ -246,7 +255,8 @@ impl OutboundActivity {
             | Self::Accept { to, .. }
             | Self::Reject { to, .. }
             | Self::Ignore { to, .. }
-            | Self::TentativeAccept { to, .. } => Some(to),
+            | Self::TentativeAccept { to, .. }
+            | Self::Invite { to, .. } => Some(to),
         }
     }
 
@@ -257,7 +267,8 @@ impl OutboundActivity {
             | Self::Accept { cc, .. }
             | Self::Reject { cc, .. }
             | Self::Ignore { cc, .. }
-            | Self::TentativeAccept { cc, .. } => Some(cc),
+            | Self::TentativeAccept { cc, .. }
+            | Self::Invite { cc, .. } => Some(cc),
         }
     }
 }

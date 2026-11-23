@@ -399,6 +399,7 @@ async fn create_note(
         title,
         summary,
         cover_media_id: None,
+        event: None,
     };
     let validated = create::validate(pctx, auth, &params, None).await?;
     let status = create::publish(pctx, auth.account_id, &validated, None).await?;

@@ -120,6 +120,30 @@ fn location_text(loc: &EventLocationRow) -> String {
     }
 }
 
+/// iCalendar `PARTSTAT` for a participation state — the personalized
+/// calendar feed (Section 18) renders the viewer's RSVP this way.
+/// `None` for states that don't map (pending/rejected/ignored —
+/// those events simply don't appear in the feed).
+pub fn partstat(state: &str) -> Option<&'static str> {
+    match state {
+        "invited" => Some("NEEDS-ACTION"),
+        "accepted" => Some("ACCEPTED"),
+        "tentative" => Some("TENTATIVE"),
+        "declined" => Some("DECLINED"),
+        _ => None,
+    }
+}
+
+/// Optional `ORGANIZER`/`ATTENDEE` lines for the personalized feed —
+/// `None` fields emit nothing (public feeds stay attendee-free).
+#[derive(Debug, Default)]
+pub struct VEventParty<'a> {
+    /// `(cn, uri)` → `ORGANIZER;CN=…:{uri}`.
+    pub organizer: Option<(&'a str, &'a str)>,
+    /// `(partstat, cn, uri)` → `ATTENDEE;PARTSTAT=…;CN=…:{uri}`.
+    pub attendee: Option<(&'a str, &'a str, &'a str)>,
+}
+
 /// One `VEVENT` for `status` + its event bundle data. Returns the
 /// folded block (ending in CRLF) or `None` when the event has no
 /// start time (postponed events carry no calendar slot).
@@ -127,6 +151,7 @@ fn vevent(
     status: &StatusRow,
     row: &EventRow,
     locations: &[EventLocationRow],
+    party: &VEventParty<'_>,
     out: &mut String,
 ) -> Result<()> {
     let Some(start) = row.start_time else {
@@ -199,6 +224,20 @@ fn vevent(
     if let Some(url) = url {
         lines.push(format!("URL:{}", escape_text(&url)));
     }
+    if let Some((cn, uri)) = party.organizer {
+        lines.push(format!(
+            "ORGANIZER;CN={}:{}",
+            escape_text(cn),
+            escape_text(uri)
+        ));
+    }
+    if let Some((partstat, cn, uri)) = party.attendee {
+        lines.push(format!(
+            "ATTENDEE;PARTSTAT={partstat};CN={}:{}",
+            escape_text(cn),
+            escape_text(uri)
+        ));
+    }
     for line in lines {
         fold_line(&line, out);
     }
@@ -221,6 +260,36 @@ fn calendar_close(out: &mut String) {
     fold_line("END:VCALENDAR", out);
 }
 
+// --- Public surface for the personalized feed (`events::calendar`) ---
+
+/// `calendar_open` for callers outside this module.
+pub fn calendar_open_pub(name: &str, out: &mut String) {
+    out.push_str(&calendar_open(name));
+}
+
+/// `calendar_close` for callers outside this module.
+pub fn calendar_close_pub(out: &mut String) {
+    calendar_close(out);
+}
+
+/// `vevent` (with party lines) for callers outside this module —
+/// returns `false` when the event has no start (postponed).
+pub fn vevent_pub(
+    status: &StatusRow,
+    row: &EventRow,
+    locations: &[EventLocationRow],
+    party: &VEventParty<'_>,
+    out: &mut String,
+) -> bool {
+    if row.start_time.is_none() {
+        return false;
+    }
+    fold_line("BEGIN:VEVENT", out);
+    let _ = vevent(status, row, locations, party, out);
+    fold_line("END:VEVENT", out);
+    true
+}
+
 /// ICS for one event — `None` when the event has no start time
 /// (postponed events carry no calendar slot), so the route can 404.
 pub fn event_ics(
@@ -233,7 +302,7 @@ pub fn event_ics(
     }
     let mut out = calendar_open("");
     fold_line("BEGIN:VEVENT", &mut out);
-    vevent(status, row, locations, &mut out)?;
+    vevent(status, row, locations, &VEventParty::default(), &mut out)?;
     fold_line("END:VEVENT", &mut out);
     calendar_close(&mut out);
     Ok(Some(out))
@@ -256,7 +325,13 @@ pub fn user_ics(events: &[FeedEvent<'_>]) -> String {
             continue;
         }
         fold_line("BEGIN:VEVENT", &mut out);
-        let _ = vevent(e.status, e.row, e.locations, &mut out);
+        let _ = vevent(
+            e.status,
+            e.row,
+            e.locations,
+            &VEventParty::default(),
+            &mut out,
+        );
         fold_line("END:VEVENT", &mut out);
     }
     calendar_close(&mut out);
@@ -404,7 +479,7 @@ mod tests {
         let mut r = row();
         r.display_end_time = false;
         let mut out = String::new();
-        vevent(&s, &r, &[], &mut out).unwrap();
+        vevent(&s, &r, &[], &VEventParty::default(), &mut out).unwrap();
         assert!(out.contains("DTSTART;TZID=Europe/Rome:20261212T200000"));
         assert!(!out.contains("DTEND"));
         assert!(out.contains("STATUS:CONFIRMED"));
@@ -419,7 +494,7 @@ mod tests {
         r.status = EventStatus::Cancelled;
         r.display_end_time = true;
         let mut out = String::new();
-        vevent(&s, &r, &[], &mut out).unwrap();
+        vevent(&s, &r, &[], &VEventParty::default(), &mut out).unwrap();
         assert!(out.contains("STATUS:CANCELLED"));
         assert!(out.contains("DTEND;TZID=Europe/Rome:20261212T230000"));
     }
@@ -431,7 +506,7 @@ mod tests {
         r.start_time = None;
         r.end_time = None;
         let mut out = String::new();
-        vevent(&s, &r, &[], &mut out).unwrap();
+        vevent(&s, &r, &[], &VEventParty::default(), &mut out).unwrap();
         assert!(out.is_empty());
     }
 

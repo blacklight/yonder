@@ -63,6 +63,8 @@ pub struct StatusParams {
     /// `media_attachments` id of the representative image (AS2
     /// `image`); must be one of the status's image attachments.
     pub cover_media_id: Option<i64>,
+    /// FEP-8a8e event payload — required when `post_type=event`.
+    pub event: Option<crate::events::validate::EventParams>,
 }
 
 /// The validated, resolved create payload (stored verbatim in
@@ -104,6 +106,10 @@ pub struct ValidatedStatus {
     /// Representative-image attachment — `Some` only for `article`.
     #[serde(default)]
     pub cover_media_id: Option<i64>,
+    /// Validated event payload — `Some` only for `post_type=event`
+    /// creates; `None` on event edits that keep the stored payload.
+    #[serde(default)]
+    pub event: Option<crate::events::validate::ValidatedEvent>,
 }
 
 fn default_post_type() -> String {
@@ -151,6 +157,26 @@ pub async fn validate(
         }
     }
     let user_settings = settings::load(&ctx.db, auth.user_id).await?;
+    // The stored object type on edit — an `Event` status keeps its
+    // post type (edits can't convert it to a note/article, which
+    // would orphan the `events` side-table row).
+    let existing_object_type: Option<String> = match editing_status_id {
+        Some(id) => sqlx::query_scalar("SELECT object_type FROM statuses WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&ctx.db)
+            .await?
+            .flatten(),
+        None => None,
+    };
+    let editing_is_event = existing_object_type.as_deref() == Some("Event");
+    // An event intent relaxes the empty-body rule — the event name
+    // lives in `title`, the description may legitimately be empty.
+    let event_intent = editing_is_event
+        || params.event.is_some()
+        || params
+            .post_type
+            .as_deref()
+            .is_some_and(|p| p.trim().eq_ignore_ascii_case("event"));
 
     let content_type = params
         .content_type
@@ -173,7 +199,7 @@ pub async fn validate(
             "a status is either poll or media, not both".to_string(),
         ));
     }
-    if params.status.trim().is_empty() && !has_media && params.poll.is_none() {
+    if params.status.trim().is_empty() && !has_media && params.poll.is_none() && !event_intent {
         return Err(Error::Validation("status cannot be empty".to_string()));
     }
 
@@ -299,20 +325,48 @@ pub async fn validate(
     if let Some(poll) = &params.poll {
         polls::validate(ctx, poll)?;
     }
-    // Post type (FEP-b2b8): `note` or `article`, resolved through the
-    // account's `default_post_type`. Article metadata is exclusive to
-    // articles — a note carrying a title/summary/cover is a client
-    // bug, not something to silently drop.
+    // Post type (FEP-b2b8 + FEP-8a8e): `note`, `article` or `event`,
+    // resolved through the account's `default_post_type`. Editing an
+    // event keeps `event` even when `post_type` is omitted; an
+    // explicit non-event type on an event status is rejected below.
     let post_type = match params.post_type.as_deref() {
+        Some(raw) if raw.trim().eq_ignore_ascii_case("event") => "event".to_string(),
         Some(raw) => crate::users::settings::normalize_post_type(raw)?,
+        None if editing_is_event => "event".to_string(),
         None => user_settings
             .default_post_type
             .as_deref()
             .and_then(|v| crate::users::settings::normalize_post_type(v).ok())
             .unwrap_or_else(|| "note".to_string()),
     };
+    if editing_is_event && post_type != "event" {
+        return Err(Error::Validation(
+            "an event cannot change its post type".to_string(),
+        ));
+    }
     let article = post_type == "article";
-    let title = params.title.clone().map(|t| t.trim().to_string());
+    let is_event = post_type == "event";
+    let mut event = None;
+    let mut title = params.title.clone().map(|t| t.trim().to_string());
+    // Event name fallback: `title` is the FEP-8a8e `name`. When the
+    // client omits it, a create borrows the status text (the composer
+    // sends a dedicated name field; API callers get ergonomic
+    // single-field authoring) and an edit keeps the stored title so
+    // description edits don't silently rename the event.
+    if title.is_none() && is_event {
+        title = match editing_status_id {
+            Some(id) => {
+                sqlx::query_scalar::<_, Option<String>>("SELECT title FROM statuses WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&ctx.db)
+                    .await?
+            }
+            None => {
+                let t = params.status.trim();
+                (!t.is_empty()).then(|| t.to_string())
+            }
+        };
+    }
     let summary = params.summary.clone().map(|s| s.trim().to_string());
     if article {
         let Some(title) = &title else {
@@ -364,9 +418,69 @@ pub async fn validate(
                 ));
             }
         }
+    } else if is_event {
+        // FEP-8a8e: `title` is the event name; the description stays
+        // in `status`. Events are thread roots — no replies, no
+        // polls, no article cover (banner/flyer live in the event
+        // payload). An event edit may omit `event` to keep the
+        // stored payload. `events.enabled = false` blocks *new*
+        // events only — edits to existing ones still work.
+        if editing_status_id.is_none() && !config.events.enabled {
+            return Err(Error::Forbidden("events are disabled on this instance"));
+        }
+        if params.in_reply_to_id.is_some() {
+            return Err(Error::Validation("an event cannot be a reply".to_string()));
+        }
+        if params.poll.is_some() {
+            return Err(Error::Validation("an event cannot have a poll".to_string()));
+        }
+        if summary.is_some() || params.cover_media_id.is_some() {
+            return Err(Error::Validation(
+                "summary and cover_media_id require post_type=article".to_string(),
+            ));
+        }
+        let Some(title) = &title else {
+            return Err(Error::Validation("an event requires a title".to_string()));
+        };
+        if title.is_empty() {
+            return Err(Error::Validation("an event requires a title".to_string()));
+        }
+        if title.chars().count() > TITLE_MAX {
+            return Err(Error::Validation(format!(
+                "title must be at most {TITLE_MAX} characters"
+            )));
+        }
+        match &params.event {
+            Some(ep) => {
+                event = Some(
+                    crate::events::validate::validate(
+                        ctx,
+                        auth.account_id,
+                        &config.events,
+                        ep,
+                        &visibility,
+                        params.media_ids.as_deref(),
+                        editing_status_id,
+                        editing_status_id.is_none(),
+                    )
+                    .await?,
+                );
+            }
+            None if editing_is_event => {}
+            None => {
+                return Err(Error::Validation(
+                    "post_type=event requires an event payload".to_string(),
+                ))
+            }
+        }
     } else if title.is_some() || summary.is_some() || params.cover_media_id.is_some() {
         return Err(Error::Validation(
             "title, summary and cover_media_id require post_type=article".to_string(),
+        ));
+    }
+    if !is_event && params.event.is_some() {
+        return Err(Error::Validation(
+            "an event payload requires post_type=event".to_string(),
         ));
     }
     let cap = config.media.max_attachments_per_post as usize;
@@ -404,7 +518,7 @@ pub async fn validate(
         poll: params.poll.clone(),
         quote_of_id,
         post_type,
-        title: if article {
+        title: if article || is_event {
             title.filter(|t| !t.is_empty())
         } else {
             None
@@ -415,6 +529,7 @@ pub async fn validate(
             None
         },
         cover_media_id: if article { params.cover_media_id } else { None },
+        event,
     })
 }
 
@@ -552,6 +667,7 @@ fn fingerprint(validated: &ValidatedStatus, scheduled: bool) -> String {
         "title": validated.title,
         "summary": validated.summary,
         "cover_media_id": validated.cover_media_id,
+        "event": validated.event,
         "scheduled": scheduled,
     });
     hex::encode(Sha256::digest(canonical.to_string().as_bytes()))
@@ -731,16 +847,21 @@ pub async fn insert_status_tx(
         None => None,
     };
     // `object_type` is the AP object type we emit: polls are
-    // `Question`s, `article` posts are FEP-b2b8 `Article`s, everything
-    // else a `Note`.
+    // `Question`s, `article` posts are FEP-b2b8 `Article`s, events are
+    // FEP-8a8e `Event`s, everything else a `Note`.
     let object_type = if v.poll.is_some() {
         "Question"
     } else if v.post_type == "article" {
         "Article"
+    } else if v.post_type == "event" {
+        "Event"
     } else {
         "Note"
     };
     let article = v.post_type == "article";
+    // Articles and events both carry `statuses.title` (headline /
+    // event name); only articles have summary/cover.
+    let titled = article || v.post_type == "event";
     let status_id: i64 = sqlx::query_scalar(
         "INSERT INTO statuses (account_id, content, content_html, content_type, language, \
              visibility, spoiler_text, sensitive, local, in_reply_to_id, \
@@ -764,7 +885,7 @@ pub async fn insert_status_tx(
     .bind(scheduled_deletion_days)
     .bind(v.quote_of_id)
     .bind(object_type)
-    .bind(if article { v.title.as_deref() } else { None })
+    .bind(if titled { v.title.as_deref() } else { None })
     .bind(if article { v.summary.as_deref() } else { None })
     .bind(if article { v.cover_media_id } else { None })
     .fetch_one(&mut **tx)
@@ -812,6 +933,56 @@ pub async fn insert_status_tx(
             return Err(Error::Validation(format!(
                 "media {media_id} is no longer attachable"
             )));
+        }
+    }
+    // FEP-8a8e: the `events` side tables sync through the same upsert
+    // remote ingest uses; the author becomes the organizer
+    // participation and `direct`-event invitees become mentions (the
+    // visibility + notification mechanism `can_see` already knows).
+    if let Some(ev) = &v.event {
+        let parsed = ev.to_parsed(&uri);
+        crate::events::remote::sync_event(
+            tx,
+            status_id,
+            &parsed,
+            account_id,
+            ev.banner_media_id,
+            ev.flyer_media_id,
+            &ctx.config.events,
+        )
+        .await?;
+        // `attendees_visibility` isn't part of the remote-sync column
+        // set (remote objects don't carry it) — local authoring sets
+        // it here; `invitees` is the authoring-side list (§16 Invite
+        // fan-out reads it).
+        sqlx::query(
+            "UPDATE events SET invitees = $2, \
+             attendees_visibility = COALESCE($3, attendees_visibility) \
+             WHERE status_id = $1",
+        )
+        .bind(status_id)
+        .bind(&ev.invitees)
+        .bind(&ev.attendees_visibility)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO event_participations (status_id, account_id, role, state, protocol) \
+             VALUES ($1, $2, 'organizer', 'accepted', 'local') \
+             ON CONFLICT (status_id, account_id) DO NOTHING",
+        )
+        .bind(status_id)
+        .bind(account_id)
+        .execute(&mut **tx)
+        .await?;
+        for invitee in &ev.invitees {
+            sqlx::query(
+                "INSERT INTO status_mentions (status_id, account_id) VALUES ($1, $2) \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(status_id)
+            .bind(invitee)
+            .execute(&mut **tx)
+            .await?;
         }
     }
     if let Some(poll) = &v.poll {
@@ -1194,10 +1365,13 @@ pub async fn edit_status(
             "Question"
         } else if validated.post_type == "article" {
             "Article"
+        } else if validated.post_type == "event" {
+            "Event"
         } else {
             "Note"
         };
     let article = validated.post_type == "article";
+    let titled = article || validated.post_type == "event";
     sqlx::query(
         "UPDATE statuses SET content = $2, content_html = $3, content_type = $4, \
              language = $5, sensitive = $6, spoiler_text = $7, visibility = $8, \
@@ -1213,7 +1387,7 @@ pub async fn edit_status(
     .bind(&validated.spoiler_text)
     .bind(&validated.visibility)
     .bind(object_type)
-    .bind(if article {
+    .bind(if titled {
         validated.title.as_deref()
     } else {
         None
@@ -1294,10 +1468,86 @@ pub async fn edit_status(
             .execute(&mut *tx)
             .await?;
     }
+    // FEP-8a8e: an event edit carrying a new `event` payload re-syncs
+    // the side tables (cancel/postpone/reschedule all land here as
+    // ordinary Updates — never a Delete). An edit without the payload
+    // keeps the stored event row untouched.
+    let mut invitee_ids: Vec<i64> = Vec::new();
+    let mut event_payload = false;
+    let mut start_moved = false;
+    if status.object_type.as_deref() == Some("Event") {
+        if let Some(ev) = &validated.event {
+            event_payload = true;
+            let parsed = ev.to_parsed(status.uri.as_deref().unwrap_or_default());
+            start_moved = sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT start_time FROM events WHERE status_id = $1",
+            )
+            .bind(status_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten()
+                != parsed.start_time;
+            crate::events::remote::sync_event(
+                &mut tx,
+                status_id,
+                &parsed,
+                auth.account_id,
+                ev.banner_media_id,
+                ev.flyer_media_id,
+                &ctx.config.events,
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE events SET invitees = $2, \
+                 attendees_visibility = COALESCE($3, attendees_visibility) \
+                 WHERE status_id = $1",
+            )
+            .bind(status_id)
+            .bind(&ev.invitees)
+            .bind(&ev.attendees_visibility)
+            .execute(&mut *tx)
+            .await?;
+            invitee_ids = ev.invitees.clone();
+        } else {
+            // No payload — preserve the stored invitee list so the
+            // mention re-sync below doesn't drop it.
+            invitee_ids = sqlx::query_scalar::<_, Vec<i64>>(
+                "SELECT invitees FROM events WHERE status_id = $1",
+            )
+            .bind(status_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or_default();
+        }
+        sqlx::query(
+            "INSERT INTO event_participations (status_id, account_id, role, state, protocol) \
+             VALUES ($1, $2, 'organizer', 'accepted', 'local') \
+             ON CONFLICT (status_id, account_id) DO NOTHING",
+        )
+        .bind(status_id)
+        .bind(auth.account_id)
+        .execute(&mut *tx)
+        .await?;
+    }
     sqlx::query("DELETE FROM status_mentions WHERE status_id = $1")
         .bind(status_id)
         .execute(&mut *tx)
         .await?;
+    // Invitee mention rows (direct events) — re-inserted on every
+    // edit since the blanket DELETE above clears them; they ride the
+    // same `status_mentions` visibility/notification path as textual
+    // mentions. Inserted before `persist` so its conversation-key
+    // refresh sees the full participant set.
+    for invitee in &invitee_ids {
+        sqlx::query(
+            "INSERT INTO status_mentions (status_id, account_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(status_id)
+        .bind(invitee)
+        .execute(&mut *tx)
+        .await?;
+    }
     mentions::persist(&mut tx, status_id, &resolved).await?;
     sqlx::query("DELETE FROM status_tags WHERE status_id = $1")
         .bind(status_id)
@@ -1336,6 +1586,21 @@ pub async fn edit_status(
     // the row in place, so an edit reflects without a reload (and an
     // edit of an unseen row never lands as a pending "new" item).
     crate::timelines::stream::publish_status_update(ctx, &status).await;
+    // Event edits notify local participants and re-arm reminders on
+    // reschedule — post-commit so a rolled-back edit can't notify.
+    if event_payload {
+        if let Err(e) =
+            crate::events::notify::emit_event_update_by_id(&ctx.db, &ctx.dispatcher, status.id)
+                .await
+        {
+            tracing::warn!(status_id = status.id, error = %e, "event_update notify failed");
+        }
+        if start_moved {
+            if let Err(e) = crate::events::notify::rearm_reminders(&ctx.db, status.id).await {
+                tracing::warn!(status_id = status.id, error = %e, "reminder re-arm failed");
+            }
+        }
+    }
     // When the edit kept the attachments (`media_ids` omitted), read
     // them back so the preview check still sees the effective set.
     let effective_media: Vec<i64> = match &validated.media_ids {
@@ -1406,6 +1671,19 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
             .execute(&ctx.db)
             .await?;
     }
+    crate::search::index::enqueue_remove(&ctx.dispatcher, &ctx.config, "status", status.id).await;
+    crate::notifications::delete_for_status(&ctx.db, status.id).await?;
+    // Event deletion is an Update-shaped change for participants —
+    // emit before the scrub so the async notification fan-out still
+    // renders the title/URI from the row, and after `delete_for_status`
+    // so the fresh notifications aren't swept with the old ones.
+    if status.object_type.as_deref() == Some("Event") {
+        if let Err(e) =
+            crate::events::notify::emit_event_update(&ctx.db, &ctx.dispatcher, status).await
+        {
+            tracing::warn!(status_id = status.id, error = %e, "event_update notify failed");
+        }
+    }
     sqlx::query(
         "UPDATE statuses SET content = '', content_html = '', spoiler_text = NULL, \
              title = NULL, summary = NULL, sensitive = false, tombstone = true, \
@@ -1414,8 +1692,6 @@ pub async fn tombstone(ctx: &PostContext, status: &StatusRow) -> Result<StatusRo
     .bind(status.id)
     .execute(&ctx.db)
     .await?;
-    crate::search::index::enqueue_remove(&ctx.dispatcher, &ctx.config, "status", status.id).await;
-    crate::notifications::delete_for_status(&ctx.db, status.id).await?;
     // The deletion releases the author's post counter; a deleted reply
     // releases its parent's counter; same for a deleted quote post's
     // target.

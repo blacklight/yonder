@@ -129,9 +129,13 @@ pub(crate) fn asset_url(base_url: &str, path: &Option<String>, name: &str) -> Op
 /// discovery key) a client can read regardless of which entity shape
 /// it fetches.
 pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
+    let mut features = vec!["pleroma_emoji_reactions", "yonder"];
+    if config.events.enabled {
+        features.push("events");
+    }
     json!({
         "metadata": {
-            "features": ["pleroma_emoji_reactions", "yonder", "events"],
+            "features": features,
             "post_formats": ["text/plain", "text/markdown"],
             // Akkoma-style WebPush discovery: clients need the VAPID
             // public key *before* they can create a subscription
@@ -182,6 +186,9 @@ pub(crate) fn yonder_metadata(config: &crate::config::Config) -> Value {
         .filter(|user| crate::auth::registration::validate_username(config, user).is_ok());
     json!({
         "single_user": single_user,
+        // `events.enabled` — the SPA hides the composer event type,
+        // the Events nav entry and `/events` when false.
+        "events_enabled": config.events.enabled,
     })
 }
 

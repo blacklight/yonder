@@ -102,21 +102,170 @@ impl JobHandler for EventsBackfillJob {
     }
 }
 
-/// `JobKind::EventRemoteRefresh` — registered stub until Section 12
-/// implements participant-view refresh. A no-op `Ok` so an accidental
-/// enqueue completes harmlessly instead of dead-lettering.
+/// `JobKind::EventRemoteRefresh` — participant-view refresh (Section
+/// 12). The entity layer enqueues `{status_id}` when a participant
+/// views a remote event older than
+/// `events.remote_refresh_after_minutes`; the handler re-validates
+/// (remote, not tombstoned, has an `events` row, still stale, at least
+/// one local participant) and delegates the actual fetch to
+/// `RemoteStatusFetch` with `refresh: true`, which reuses the handler's
+/// markers, circuit breaker and retry budget.
 pub struct EventRemoteRefreshJob;
 
 #[async_trait::async_trait]
 impl JobHandler for EventRemoteRefreshJob {
-    async fn run(&self, _ctx: &JobContext, _payload: &Value) -> Result<()> {
-        tracing::debug!("event_remote_refresh is a stub until Section 12");
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let status_id = payload
+            .get("status_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| crate::Error::Validation("status_id required".into()))?;
+        let row: Option<(bool, bool, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT s.local, s.tombstone, e.updated_at FROM statuses s \
+             JOIN events e ON e.status_id = s.id WHERE s.id = $1",
+        )
+        .bind(status_id)
+        .fetch_optional(&ctx.db)
+        .await?;
+        let Some((local, tombstone, updated_at)) = row else {
+            return Ok(());
+        };
+        if local || tombstone {
+            return Ok(());
+        }
+        let stale = updated_at
+            < chrono::Utc::now()
+                - chrono::Duration::minutes(i64::from(
+                    ctx.config.events.remote_refresh_after_minutes,
+                ));
+        if !stale {
+            return Ok(());
+        }
+        // Only refresh when a local account actually participates —
+        // nobody is watching an event with no local audience.
+        let has_local_participant: bool = sqlx::query_scalar(
+            "SELECT EXISTS( \
+               SELECT 1 FROM event_participations p \
+               JOIN accounts a ON a.id = p.account_id AND a.domain IS NULL \
+               WHERE p.status_id = $1)",
+        )
+        .bind(status_id)
+        .fetch_one(&ctx.db)
+        .await?;
+        if !has_local_participant {
+            return Ok(());
+        }
+        let uri: Option<String> = sqlx::query_scalar("SELECT uri FROM statuses WHERE id = $1")
+            .bind(status_id)
+            .fetch_optional(&ctx.db)
+            .await?
+            .flatten();
+        let Some(uri) = uri else {
+            return Ok(());
+        };
+        Dispatcher::new(&ctx.redis, &ctx.config.jobs)
+            .enqueue(
+                JobKind::RemoteStatusFetch,
+                json!({"uri": uri, "refresh": true}),
+            )
+            .await?;
         Ok(())
     }
+}
+
+/// `JobKind::EventReminderSweep` — periodic sweep emitting
+/// `pleroma:event_reminder` for participations whose event starts
+/// inside `events.reminder_lead_minutes`. Payload is `{}`; the
+/// `reminded_at` stamp makes re-runs idempotent and `rearm_reminders`
+/// re-arms on reschedule.
+pub struct EventReminderSweepJob;
+
+/// Rows processed per run — the sweep re-enqueues itself with an
+/// `after` cursor when it hits the cap so a large backlog drains
+/// across ticks instead of one long job.
+const REMINDER_BATCH: i64 = 500;
+
+#[async_trait::async_trait]
+impl JobHandler for EventReminderSweepJob {
+    async fn run(&self, ctx: &JobContext, payload: &Value) -> Result<()> {
+        let cursor = payload.get("cursor").cloned();
+        let rows = reminder_page(&ctx.db, &ctx.config.events, cursor.as_ref()).await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+        let dispatcher = Dispatcher::new(&ctx.redis, &ctx.config.jobs);
+        let mut last_cursor: Option<Value> = None;
+        let mut emitted = 0u64;
+        for (status_id, account_id, start_time) in &rows {
+            let Some(status) = crate::posts::load(&ctx.db, *status_id).await? else {
+                continue;
+            };
+            crate::events::notify::emit_event_reminder(&ctx.db, &dispatcher, &status, *account_id)
+                .await;
+            crate::events::notify::mark_reminded(&ctx.db, *status_id, *account_id).await?;
+            emitted += 1;
+            last_cursor = Some(json!({
+                "start": start_time.to_rfc3339(),
+                "status_id": status_id,
+                "account_id": account_id,
+            }));
+        }
+        tracing::debug!(emitted, "event reminder sweep page");
+        if rows.len() as i64 == REMINDER_BATCH {
+            dispatcher
+                .enqueue(JobKind::EventReminderSweep, json!({"cursor": last_cursor}))
+                .await?;
+        }
+        Ok(())
+    }
+}
+
+/// One keyset page of reminder candidates. The cursor is the last
+/// row's `(start_time, status_id, account_id)` triple — events share
+/// start times across participants, so all three are needed.
+async fn reminder_page(
+    db: &sqlx::PgPool,
+    events_cfg: &crate::config::EventsConfig,
+    cursor: Option<&Value>,
+) -> Result<Vec<(i64, i64, chrono::DateTime<chrono::Utc>)>> {
+    let (start, sid, aid) = match cursor {
+        Some(c) => (
+            c.get("start")
+                .and_then(Value::as_str)
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|d| d.with_timezone(&chrono::Utc)),
+            c.get("status_id").and_then(Value::as_i64),
+            c.get("account_id").and_then(Value::as_i64),
+        ),
+        None => (None, None, None),
+    };
+    let rows: Vec<(i64, i64, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT p.status_id, p.account_id, e.start_time FROM event_participations p \
+         JOIN events e ON e.status_id = p.status_id \
+         JOIN statuses s ON s.id = p.status_id AND NOT s.tombstone \
+         WHERE p.state IN ('accepted','tentative') \
+           AND p.reminded_at IS NULL \
+           AND e.status NOT IN ('cancelled','postponed') \
+           AND e.start_time IS NOT NULL \
+           AND e.start_time > now() \
+           AND e.start_time <= now() + make_interval(mins => $1) \
+           AND ($2::timestamptz IS NULL \
+                OR (e.start_time, p.status_id, p.account_id) \
+                   > ($2, $3, $4)) \
+         ORDER BY e.start_time, p.status_id, p.account_id LIMIT $5",
+    )
+    .bind(i64::from(events_cfg.reminder_lead_minutes))
+    .bind(start)
+    .bind(sid)
+    .bind(aid)
+    .bind(REMINDER_BATCH)
+    .fetch_all(db)
+    .await?;
+    Ok(rows)
 }
 
 /// Register the event jobs (called by [`crate::cli::build_registry`]).
 pub fn register(registry: &mut crate::jobs::Registry) {
     registry.register(JobKind::EventsBackfill, EventsBackfillJob::new());
     registry.register(JobKind::EventRemoteRefresh, EventRemoteRefreshJob);
+    registry.register(JobKind::EventReminderSweep, EventReminderSweepJob);
 }

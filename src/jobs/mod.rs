@@ -272,9 +272,13 @@ pub enum JobKind {
     /// `yonder run-job events_backfill`.
     EventsBackfill,
     /// Re-fetch a remote event not refreshed within
-    /// `events.remote_refresh_after_minutes` (Section 12 — stub for
-    /// now).
+    /// `events.remote_refresh_after_minutes` — enqueued by the entity
+    /// layer when a participant views a stale remote event.
     EventRemoteRefresh,
+    /// Periodic sweep emitting `pleroma:event_reminder` notifications
+    /// for events starting inside `events.reminder_lead_minutes`
+    /// (payload `{}` or `{"cursor": …}` for multi-page drains).
+    EventReminderSweep,
 }
 
 impl JobKind {
@@ -319,6 +323,7 @@ impl JobKind {
         JobKind::SearchIndexBackfill,
         JobKind::EventsBackfill,
         JobKind::EventRemoteRefresh,
+        JobKind::EventReminderSweep,
     ];
 
     /// Stable wire name (`snake_case`).
@@ -363,6 +368,7 @@ impl JobKind {
             JobKind::SearchIndexBackfill => "search_index_backfill",
             JobKind::EventsBackfill => "events_backfill",
             JobKind::EventRemoteRefresh => "event_remote_refresh",
+            JobKind::EventReminderSweep => "event_reminder_sweep",
         }
     }
 
@@ -379,6 +385,7 @@ impl JobKind {
             | JobKind::RemoteActorFetch
             | JobKind::RemoteActorResolve
             | JobKind::RemoteNetworkSync
+            | JobKind::EventRemoteRefresh
             | JobKind::WebmentionIncoming
             | JobKind::WebmentionOutgoing => Queue::Remote,
             JobKind::ThreadPath => Queue::RemoteBulk,
@@ -392,7 +399,8 @@ impl JobKind {
             | JobKind::ThreadExpand
             | JobKind::SearchIndexSync
             | JobKind::SearchIndexBackfill
-            | JobKind::EventsBackfill => Queue::Bulk,
+            | JobKind::EventsBackfill
+            | JobKind::EventReminderSweep => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
             | JobKind::AccountDeletion

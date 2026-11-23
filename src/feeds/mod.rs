@@ -97,6 +97,15 @@ async fn profile_feed(
     if let Some(username) = rest.strip_suffix("/events.ics") {
         return profile_events_ics(&state, username).await;
     }
+    // `/users/{u}/calendar/{token}.ics` — the personalized subscription
+    // feed (Section 18): organized + participating events with the
+    // owner's RSVP as PARTSTAT. The token is the authorization —
+    // unknown/revoked/mismatched usernames all 404 alike.
+    if let Some(inner) = rest.strip_suffix(".ics") {
+        if let Some((username, token)) = inner.split_once("/calendar/") {
+            return personal_calendar_ics(&state, username, token).await;
+        }
+    }
     let Some((username, format)) = split_feed_path(&rest) else {
         // `/@{u}` is the web profile: `/users/{u}` without a feed
         // extension is the same page — redirect (Mastodon's shape).
@@ -179,6 +188,42 @@ async fn profile_events_ics(state: &Arc<AppState>, username: &str) -> Result<Res
             (
                 header::CONTENT_DISPOSITION,
                 "attachment; filename=\"events.ics\"".to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// `GET /users/{username}/calendar/{token}.ics` — personalized feed.
+/// The token resolves to exactly one account; a username/token
+/// mismatch 404s (the token alone authorizes, but keeping the
+/// username in the path makes URLs readable and self-describing).
+async fn personal_calendar_ics(
+    state: &Arc<AppState>,
+    username: &str,
+    token: &str,
+) -> Result<Response> {
+    let account_id = crate::events::calendar::account_for_token(&state.db, token)
+        .await?
+        .ok_or_else(|| Error::NotFound("calendar".into()))?;
+    let account = account_mapper::load_local_by_username(&state.db, username)
+        .await?
+        .ok_or_else(|| Error::NotFound("account".into()))?;
+    if account.id != account_id {
+        return Err(Error::NotFound("calendar".into()));
+    }
+    let body = crate::events::calendar::calendar_ics(&state.db, account_id).await?;
+    Ok((
+        [
+            (
+                header::CONTENT_TYPE,
+                "text/calendar; charset=utf-8".to_string(),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                "inline; filename=\"yonder-calendar.ics\"".to_string(),
             ),
         ],
         body,

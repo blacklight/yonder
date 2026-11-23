@@ -59,6 +59,9 @@ pub enum Error {
     #[error("rate limited: {0}")]
     RateLimited(String),
 
+    #[error("upstream error: {0}")]
+    Upstream(String),
+
     #[error("internal error: {0}")]
     Internal(String),
 
@@ -99,6 +102,7 @@ impl Error {
             Self::RateLimited(_) => StatusCode::TOO_MANY_REQUESTS,
             // Pool saturation is transient — 503 invites a retry.
             Self::RedisPool(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Upstream(_) => StatusCode::BAD_GATEWAY,
             Self::Config(_)
             | Self::Database(_)
             | Self::Migration(_)
@@ -120,7 +124,8 @@ impl Error {
             | Self::BadRequest(_)
             | Self::Validation(_)
             | Self::Conflict(_)
-            | Self::RateLimited(_) => self.to_string().into(),
+            | Self::RateLimited(_)
+            | Self::Upstream(_) => self.to_string().into(),
             _ => "Internal server error".into(),
         }
     }
@@ -141,6 +146,7 @@ impl Error {
             Self::Validation(_) => "validation",
             Self::Conflict(_) => "conflict",
             Self::RateLimited(_) => "rate_limited",
+            Self::Upstream(_) => "upstream",
             Self::Internal(_) => "internal",
             Self::Federation(_) => "federation",
         }

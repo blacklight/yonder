@@ -357,8 +357,8 @@ min_duration_seconds = 300
 max_duration_seconds = 2592000
 
 [events]
-# `enabled` currently only gates planned UI/API surfaces — inbound
-# Event parsing and materialization always run.
+# `enabled = false` blocks new event creation and hides the SPA's
+# event surfaces; inbound Event parsing always runs.
 enabled = true
 # Inferred endTime for open-ended events; clamped to 1 minute - 1 week.
 default_duration_minutes = 180
@@ -371,6 +371,8 @@ allow_custom_categories = false
 summary_excerpt_chars = 300
 reminder_lead_minutes = 60
 remote_refresh_after_minutes = 360
+# Cron for the event_reminder_sweep job (every 5 min); empty disables.
+reminder_sweep_schedule = "*/5 * * * *"
 
 # Pending (geocoding lands with the discovery section): server-side
 # place lookup for the composer.

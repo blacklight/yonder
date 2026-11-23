@@ -3187,7 +3187,9 @@ export interface paths {
     };
     /**
      * `GET /api/v1/trends/tags` — ranked by uses over the window;
-     *     `history` is always the trailing 7 days.
+     *     `history` is always the trailing 7 days. Each entity also carries
+     *     the window's `uses`/`accounts` totals (stringified, Yonder
+     *     extension) and the viewer's `following` flag.
      */
     get: operations["tags_trending"];
     put?: never;
@@ -3432,6 +3434,163 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/yonder/calendar/token": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/yonder/calendar/token` — mint (or rotate) the
+     *     personalized calendar subscription token. The URL is returned
+     *     once; only its hash is stored.
+     */
+    post: operations["calendar_token_create"];
+    /** `DELETE /api/v1/yonder/calendar/token` — revoke the subscription. */
+    delete: operations["calendar_token_revoke"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/events` — chronological event listing.
+     * @description Scopes: `mine` (viewer organizes), `participating` (viewer has any
+     *     participation row), `account:{id}` (that account's events,
+     *     visibility-scoped), `home` (followed accounts), `local`
+     *     (local public+local visibility), `federated` (public only).
+     *     `state` filters the viewer's participation state; `from`/`to`
+     *     bound the window (default now → +90d); `category` filters; postponed
+     *     events (`start_time IS NULL`) always appear, sorted last.
+     *     Pagination is keyset on `(start_time, status_id)` via `cursor`.
+     */
+    get: operations["events_list"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/ics": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/events/{id}/ics` — RFC 5545 `VCALENDAR` for one
+     *     event. `id` is the event's status id.
+     */
+    get: operations["event_ics"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/invitees": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/yonder/events/{id}/invitees` — organizer-only. */
+    post: operations["event_invitees"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/participants/{account_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** `DELETE /api/v1/yonder/events/{id}/participants/{account_id}`. */
+    delete: operations["event_remove_participant"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/participation_requests/{account_id}/{decision}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/yonder/events/{id}/participation_requests/{account_id}/authorize|reject`. */
+    post: operations["event_decide_request"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/participations": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/events/{id}/participations` — organizer-only
+     *     listing (pending requests + states for the management UI).
+     */
+    get: operations["event_participations"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/events/{id}/rsvp": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/yonder/events/{id}/rsvp` — `{state, message?}`. */
+    post: operations["event_rsvp"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/yonder/exports": {
     parameters: {
       query?: never;
@@ -3510,6 +3669,118 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/yonder/history/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/history/messages` — owner-only imported
+     *     private history.
+     */
+    get: operations["history_messages"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/history/messages/{id}/media/{index}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations["history_media"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/import_connections": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** `GET /api/v1/yonder/import_connections` — owned connections. */
+    get: operations["list_connections"];
+    put?: never;
+    /**
+     * `POST /api/v1/yonder/import_connections` — begin OAuth; returns the
+     *     remote authorization URL the client navigates to.
+     */
+    post: operations["begin_connection"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/import_connections/callback": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/import_connections/callback` — the remote
+     *     server's redirect target (no session cookie: single-use state +
+     *     the browser-binding cookie set at begin).
+     */
+    get: operations["connection_callback"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/import_connections/{id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /** `DELETE /api/v1/yonder/import_connections/{id}` — revoke. */
+    delete: operations["revoke_connection"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/import_sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/yonder/import_sessions` — a remote-source session. */
+    post: operations["create_import_session"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/yonder/imports": {
     parameters: {
       query?: never;
@@ -3542,6 +3813,43 @@ export interface paths {
     get: operations["get_import"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/imports/{id}/cancel": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** `POST /api/v1/yonder/imports/{id}/cancel`. */
+    post: operations["cancel_import"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/imports/{id}/resume": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/yonder/imports/{id}/resume` — resume a paused
+     *     session (after reauthorization or suspension lift).
+     */
+    post: operations["resume_import"];
     delete?: never;
     options?: never;
     head?: never;
@@ -3618,6 +3926,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/yonder/restricted/logout": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/yonder/restricted/logout` — revoke the restricted
+     *     token and drop its session row.
+     */
+    post: operations["restricted_logout"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/yonder/restricted/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/restricted/session` — account-access metadata
+     *     for the restricted page: the suspension marker, the account's own
+     *     email, and the *configured public* instance contact (never an
+     *     arbitrary admin address; `null` when unset).
+     */
+    get: operations["restricted_session"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/yonder/settings": {
     parameters: {
       query?: never;
@@ -3640,6 +3990,26 @@ export interface paths {
      *     object as the GET. Unknown keys and invalid values are 422.
      */
     patch: operations["patch_settings"];
+    trace?: never;
+  };
+  "/api/v1/yonder/statuses/{id}/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/yonder/statuses/{id}/history` — owner-scoped
+     *     historical observations for one imported copy.
+     */
+    get: operations["status_history"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   "/api/v2/filters": {
@@ -3867,6 +4237,16 @@ export interface components {
       /** @description `user@domain` handle or actor URI to add/remove. */
       acct: string;
     };
+    BeginConnectionForm: {
+      categories?: string[];
+      origin: string;
+      /**
+       * @description Local path the OAuth callback redirects back to instead of
+       *     `/settings/data` (e.g. the migration wizard). Server-validated:
+       *     must be a single-segment local path, never a URL.
+       */
+      return_to?: string | null;
+    };
     ChangePasswordParams: {
       /** @description Current password (re-authentication). */
       current_password: string;
@@ -3958,6 +4338,27 @@ export interface components {
       /** Format: float */
       y: number;
     };
+    ImportSessionForm: {
+      categories?: string[];
+      connection_id: string;
+      federate?: boolean;
+      /** Format: int64 */
+      limit?: number | null;
+      order?: string;
+      /**
+       * @description Present remote profile values (even empty ones) replace the
+       *     destination's; by default empty values keep them.
+       */
+      overwrite_profile?: boolean;
+      /** Format: date-time */
+      since?: string | null;
+      /** Format: date-time */
+      until?: string | null;
+    };
+    /** @description `POST .../invitees` body. */
+    InviteesBody: {
+      account_ids: number[];
+    };
     /**
      * @description Body for `POST /notifications/read` — ids the client rendered, or
      *     `all` for the bulk mark-read action.
@@ -4021,6 +4422,15 @@ export interface components {
     RescheduleSchema: {
       /** @description New publish time (RFC-3339, must be in the future). */
       scheduled_at: string;
+    };
+    ResumeImportForm: {
+      connection_id?: string | null;
+    };
+    /** @description `POST .../rsvp` body. */
+    RsvpBody: {
+      message?: string | null;
+      /** @description `accepted` | `tentative` | `declined` | `none` (leave). */
+      state: string;
     };
     /**
      * @description OpenAPI shape of `PATCH /api/v1/yonder/settings` (all fields
@@ -4087,6 +4497,13 @@ export interface components {
     StatusCreateSchema: {
       /** @description `text/plain` / `text/markdown` (yonder extension). */
       content_type?: string | null;
+      /**
+       * Format: int64
+       * @description Representative image attachment id (AS2 `image`).
+       */
+      cover_media_id?: number | null;
+      /** @description FEP-8a8e event payload (`post_type=event`). */
+      event?: unknown;
       /** @description Reply parent id. */
       in_reply_to_id?: string | null;
       /** @description BCP-47 language. */
@@ -4094,6 +4511,8 @@ export interface components {
       /** @description Attachment ids. */
       media_ids?: string[] | null;
       poll?: components["schemas"]["PollSchema"] | null;
+      /** @description `note`/`article` — FEP-b2b8 long-form text (yonder extension). */
+      post_type?: string | null;
       /** @description Quoted status id (epic 13). */
       quote_id?: string | null;
       /** @description Future RFC-3339 time → scheduled post. */
@@ -4104,7 +4523,11 @@ export interface components {
       spoiler_text?: string | null;
       /** @description Raw source text. */
       status?: string | null;
-      /** @description `public|unlisted|private|direct`. */
+      /** @description Article teaser (AS2 `summary`, plain text). */
+      summary?: string | null;
+      /** @description Article headline (AS2 `name`), required for `article`. */
+      title?: string | null;
+      /** @description `public|unlisted|private|direct|local`. */
       visibility?: string | null;
     };
     TotpConfirmParams: {
@@ -10879,6 +11302,15 @@ export interface operations {
           "application/json": components["schemas"]["ErrorBody"];
         };
       };
+      /** @description Restricted (export-only) token */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
     };
   };
   show_12: {
@@ -11398,6 +11830,14 @@ export interface operations {
       query?: {
         /** @description day|week|month (default week) — yonder extension */
         period?: string;
+        /** @description now|latest (default now) — `latest` ends the window at the most recent hashtag occurrence — yonder extension */
+        anchor?: string;
+        /** @description Restrict to local authors — yonder extension */
+        local?: boolean;
+        /** @description Window start: RFC 3339 or YYYY-MM-DD (overrides period/anchor) — yonder extension */
+        from?: string;
+        /** @description Window end, inclusive: RFC 3339 or YYYY-MM-DD covering the whole day — yonder extension */
+        to?: string;
         /** @description Max results (default 10) */
         limit?: number;
         /** @description Skip the first n results (ranking capped at 1000) */
@@ -11416,7 +11856,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description Invalid period */
+      /** @description Invalid period, anchor or window */
       422: {
         headers: {
           [name: string]: unknown;
@@ -12141,6 +12581,397 @@ export interface operations {
       };
     };
   };
+  calendar_token_create: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Fresh calendar subscription URL */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  calendar_token_revoke: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Token revoked */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  events_list: {
+    parameters: {
+      query?: {
+        /** @description mine|participating|home|local|federated|account:{id} */
+        scope?: string;
+        /** @description Viewer participation state filter */
+        state?: string;
+        /** @description RFC 3339 lower bound */
+        from?: string;
+        /** @description RFC 3339 upper bound */
+        to?: string;
+        /** @description FEP category filter */
+        category?: string;
+        include_cancelled?: boolean;
+        /** @description Keyset cursor from a previous page */
+        cursor?: string;
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Event statuses, oldest start first */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  event_ics: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description iCalendar feed for the event */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/calendar": unknown;
+        };
+      };
+      /** @description Missing token for a non-public event */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an event, or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  event_invitees: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InviteesBody"];
+      };
+    };
+    responses: {
+      /** @description Invitees recorded */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an organizer */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an event or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  event_remove_participant: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+        /** @description Account id to remove */
+        account_id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Participant removed */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an organizer */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  event_decide_request: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+        /** @description Account id deciding on */
+        account_id: number;
+        /** @description authorize | reject */
+        decision: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Request decided */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an organizer */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Unknown decision */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  event_participations: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Participation rows */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an organizer */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an event or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  event_rsvp: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id of the event */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RsvpBody"];
+      };
+    };
+    responses: {
+      /** @description Participation state after the transition */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not an event or not visible */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Validation failure */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   list_exports: {
     parameters: {
       query?: never;
@@ -12311,6 +13142,158 @@ export interface operations {
       };
     };
   };
+  history_messages: {
+    parameters: {
+      query?: {
+        /** @description Page before this id */
+        max_id?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Owner-only history */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  history_media: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Owner-only attachment download */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  list_connections: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The caller's import connections */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  begin_connection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Origin + category selection */
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["BeginConnectionForm"];
+      };
+    };
+    responses: {
+      /** @description Authorization URL; sets the browser-binding cookie */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  connection_callback: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Redirect to the data settings page */
+      302: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  revoke_connection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Connection id */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Revoked */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  create_import_session: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Session options */
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ImportSessionForm"];
+      };
+    };
+    responses: {
+      /** @description Session created */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   list_imports: {
     parameters: {
       query?: never;
@@ -12401,6 +13384,52 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ErrorBody"];
         };
+      };
+    };
+  };
+  cancel_import: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Import id */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Cancellation requested */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  resume_import: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Import id */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: {
+      content: {
+        "application/json": components["schemas"]["ResumeImportForm"] | null;
+      };
+    };
+    responses: {
+      /** @description Resumed */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };
@@ -12629,6 +13658,78 @@ export interface operations {
       };
     };
   };
+  restricted_logout: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Session revoked */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not a restricted session */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  restricted_session: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Restricted session metadata */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Missing or invalid token */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Not a restricted session */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
   get_settings: {
     parameters: {
       query?: never;
@@ -12711,6 +13812,27 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ErrorBody"];
         };
+      };
+    };
+  };
+  status_history: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Status id */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Historical observations */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

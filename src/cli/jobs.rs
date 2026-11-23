@@ -278,9 +278,14 @@ pub enum JobCommand {
     /// Re-fetch a remote event not refreshed within
     /// `events.remote_refresh_after_minutes`.
     ///
-    /// Stub for now (Section 12 implements it).
+    /// Payload: `{"status_id": <id>}`.
     #[command(name = "event_remote_refresh")]
     EventRemoteRefresh(JobArgs),
+    /// Emit `pleroma:event_reminder` notifications for events starting
+    /// inside `events.reminder_lead_minutes`. Normally cron-driven;
+    /// this subcommand forces a sweep now.
+    #[command(name = "event_reminder_sweep")]
+    EventReminderSweep(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -331,6 +336,7 @@ impl JobCommand {
             Self::SearchIndexBackfill(a) => (JobKind::SearchIndexBackfill, a),
             Self::EventsBackfill(a) => (JobKind::EventsBackfill, a),
             Self::EventRemoteRefresh(a) => (JobKind::EventRemoteRefresh, a),
+            Self::EventReminderSweep(a) => (JobKind::EventReminderSweep, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

@@ -169,6 +169,12 @@ export const router = createRouter({
       props: (route) => ({ id: route.params.id, kind: "likes" }),
     },
     {
+      path: "/events",
+      name: "events",
+      component: () => import("@/pages/EventsPage.vue"),
+      meta: { requiresAuth: true },
+    },
+    {
       path: "/notifications",
       name: "notifications",
       component: () => import("@/pages/NotificationsPage.vue"),

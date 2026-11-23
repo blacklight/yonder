@@ -811,9 +811,53 @@ pub async fn publish_update(
     }
     if posts::is_event(status) {
         activity["@context"] = context::event_context();
+        // FEP-8a8e §7: an event Update reaches the usual audience
+        // *plus* every remote participant's actor — participants who
+        // don't follow the organizer still learn about reschedules,
+        // cancellations and moved-online transitions. The embedded
+        // object keeps the normal audience; only the activity-level
+        // `cc` widens (pubby collects recipient inboxes from there).
+        let extra = event_participant_actors(ctx, status.id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(status_id = status.id, error = %e,
+                    "event participant audience lookup failed");
+                Vec::new()
+            });
+        if !extra.is_empty() {
+            let cc = activity.get_mut("cc").and_then(|v| v.as_array_mut());
+            match cc {
+                Some(arr) => {
+                    for actor in extra {
+                        let v = json!(actor);
+                        if !arr.contains(&v) {
+                            arr.push(v);
+                        }
+                    }
+                }
+                None => activity["cc"] = json!(extra),
+            }
+        }
     }
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
+}
+
+/// Remote participant actor URLs for an event — states that still
+/// care about updates (`accepted`, `tentative`, `pending`, `invited`;
+/// declined/rejected/ignored rows opted out). Local participants get
+/// stream updates already; remote rows carry `actor_id` URLs.
+async fn event_participant_actors(ctx: &PostContext, status_id: i64) -> Result<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT a.actor_id FROM event_participations p \
+         JOIN accounts a ON a.id = p.account_id \
+         WHERE p.status_id = $1 AND a.domain IS NOT NULL \
+           AND p.state IN ('accepted','tentative','pending','invited')",
+    )
+    .bind(status_id)
+    .fetch_all(&ctx.db)
+    .await
+    .map_err(Into::into)
 }
 
 /// Delete → `Delete(object_uri)` to the stored audience's inboxes.
@@ -1209,6 +1253,167 @@ fn json_response(doc: Value) -> Response {
         Json(doc),
     )
         .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Event `attendees`/`organizers` collections (FEP-8a8e §7.1)
+// ---------------------------------------------------------------------------
+
+/// `GET /ap/users/{u}/statuses/{id}/{attendees,organizers}` —
+/// `OrderedCollection` of actor URIs. `totalItems` is always public;
+/// `orderedItems` is gated by `events.attendees_visibility`:
+/// `public` → everyone, `participants` → accepted/tentative
+/// participants and the organizer, `organizers` → organizer only,
+/// anything else → empty. The `organizers` collection is public.
+/// Signer-gated documents are never edge-cached.
+pub async fn serve_event_collection(
+    State(state): State<Arc<AppState>>,
+    Path((username, status_id, kind)): Path<(String, i64, String)>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    match event_collection_inner(&state, &username, status_id, &kind, &headers, &uri).await {
+        Ok((doc, public)) => {
+            super::edge::apply(json_response(doc), public, super::edge::anonymous(&headers))
+        }
+        Err(e) => {
+            // Only genuine misses are cacheable 404s — a transient
+            // failure must not be frozen at the edge as "not found".
+            let not_found = matches!(e, Error::NotFound(_));
+            if !not_found {
+                tracing::warn!(status_id, kind, error = %e, "event collection failed");
+            }
+            super::edge::apply(
+                (if not_found {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })
+                .into_response(),
+                not_found,
+                super::edge::anonymous(&headers),
+            )
+        }
+    }
+}
+
+async fn event_collection_inner(
+    state: &Arc<AppState>,
+    username: &str,
+    status_id: i64,
+    kind: &str,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Result<(Value, bool)> {
+    let Some(ap) = &state.ap else {
+        return Err(Error::NotFound("ap".into()));
+    };
+    let ctx = PostContext::new(state);
+    let status = posts::load_any(&ctx.db, status_id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !status.local || status.tombstone || !posts::is_event(&status) {
+        return Err(Error::NotFound("status".into()));
+    }
+    let event = sqlx::query_as::<_, crate::events::model::EventRow>(
+        "SELECT * FROM events WHERE status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_optional(&ctx.db)
+    .await?
+    .ok_or_else(|| Error::NotFound("event".into()))?;
+    let base = status.uri.clone().unwrap_or_default();
+    let coll_uri = format!("{base}/{kind}");
+
+    // Verified signer → local account (for the participants gate).
+    let signer = verify_signature(state, ap, username, headers, uri).await;
+    let signer_account = match &signer {
+        Some(actor) => signer_account_id(&ctx, actor).await?,
+        None => None,
+    };
+
+    let (total, items): (i64, Vec<String>) = if kind == "organizers" {
+        // Public: disclosed organizers plus the status author.
+        let mut actors: Vec<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT COALESCE(a.actor_id, o.uri) FROM event_organizers o \
+             LEFT JOIN accounts a ON a.id = o.account_id WHERE o.status_id = $1 \
+             ORDER BY o.position",
+        )
+        .bind(status_id)
+        .fetch_all(&ctx.db)
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
+        if let Some(author) =
+            sqlx::query_scalar::<_, String>("SELECT actor_id FROM accounts WHERE id = $1")
+                .bind(status.account_id)
+                .fetch_optional(&ctx.db)
+                .await?
+        {
+            if !actors.contains(&author) {
+                actors.insert(0, author);
+            }
+        }
+        let n = actors.len() as i64;
+        (n, actors)
+    } else {
+        // attendees — states that mean "going".
+        let rows = sqlx::query_as::<_, (i64, String)>(
+            "SELECT p.account_id, p.state FROM event_participations p \
+             WHERE p.status_id = $1 AND p.role <> 'organizer' \
+               AND p.state IN ('accepted','tentative')",
+        )
+        .bind(status_id)
+        .fetch_all(&ctx.db)
+        .await?;
+        let total = rows.len() as i64;
+        let allowed = match event.attendees_visibility {
+            crate::events::model::AttendeesVisibility::Public => true,
+            crate::events::model::AttendeesVisibility::Participants => {
+                signer_account.is_some_and(|sid| {
+                    sid == status.account_id || rows.iter().any(|(id, _)| *id == sid)
+                })
+            }
+            crate::events::model::AttendeesVisibility::Organizers => {
+                signer_account.is_some_and(|sid| sid == status.account_id)
+            }
+        };
+        if !allowed {
+            return Ok((
+                json!({
+                    "id": coll_uri,
+                    "type": "OrderedCollection",
+                    "totalItems": total,
+                    "orderedItems": [],
+                }),
+                false,
+            ));
+        }
+        let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+        let actors: Vec<String> = if ids.is_empty() {
+            vec![]
+        } else {
+            sqlx::query_scalar::<_, String>("SELECT actor_id FROM accounts WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&ctx.db)
+                .await?
+        };
+        (total, actors)
+    };
+
+    Ok((
+        json!({
+            "id": coll_uri,
+            "type": "OrderedCollection",
+            "totalItems": total,
+            "orderedItems": items,
+        }),
+        // Items are only anonymous-visible under `public` attendees
+        // visibility (or the organizers collection, which is public).
+        kind == "organizers"
+            || event.attendees_visibility == crate::events::model::AttendeesVisibility::Public,
+    ))
 }
 
 #[cfg(test)]

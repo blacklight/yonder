@@ -27,6 +27,10 @@ const ALERT_TYPES = [
   "poll",
   "status",
   "update",
+  "pleroma:participation_request",
+  "pleroma:participation_accepted",
+  "pleroma:event_update",
+  "pleroma:event_reminder",
 ] as const;
 
 const POLICIES = ["all", "followed", "follower", "none"] as const;
@@ -138,7 +142,11 @@ onMounted(async () => {
                   :disabled="saving"
                   @change="onAlertChange"
                 />
-                <span>{{ t(`settingsNotifications.types.${kind}`) }}</span>
+                <span>{{
+                  t(
+                    `settingsNotifications.types.${kind.replace(/[.:]/g, "_")}`,
+                  )
+                }}</span>
               </label>
             </section>
 

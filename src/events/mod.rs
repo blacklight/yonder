@@ -5,11 +5,15 @@
 //! plus an `events` side table (migration `0057_events`) and child
 //! tables for locations, participations and organizers.
 
+pub mod api;
+pub mod calendar;
 pub mod entity;
 pub mod ics;
 pub mod inbound;
 pub mod jobs;
 pub mod model;
+pub mod notify;
 pub mod remote;
 pub mod rsvp;
 pub mod summary;
+pub mod validate;

@@ -77,12 +77,18 @@ pub enum RsvpInput {
     /// `Join` — inbound on a local event, or our user joining a
     /// remote one. `join_uri` is the Join activity's own id (the
     /// object remote `Accept`/`Reject`/`Ignore` answer).
+    /// `tentative` marks a tentative join (local API only — remote
+    /// `Join`s have no tentative flag).
     Join {
         join_uri: Option<String>,
         participation_message: Option<String>,
+        tentative: bool,
     },
     /// `Leave` / `Undo{Join}`.
     Leave,
+    /// Local opt-out record — writes `declined` without federating
+    /// (no pending join to answer).
+    Decline,
     /// Friendica-style `Accept` on our `Invite` or the event itself.
     AcceptInvite { activity_uri: Option<String> },
     /// Friendica-style `TentativeAccept`.
@@ -360,8 +366,18 @@ pub fn transition(
         RsvpInput::Join {
             join_uri,
             participation_message,
-        } => join_transition(event, existing, join_uri, participation_message, party, env),
+            tentative,
+        } => join_transition(
+            event,
+            existing,
+            join_uri,
+            participation_message,
+            tentative,
+            party,
+            env,
+        ),
         RsvpInput::Leave => leave_transition(existing, env),
+        RsvpInput::Decline => decline_transition(existing),
         RsvpInput::AcceptInvite { activity_uri } => {
             invite_response(existing, ParticipationState::Accepted, activity_uri)
         }
@@ -382,11 +398,20 @@ fn join_transition(
     existing: Option<&EventParticipationRow>,
     join_uri: Option<String>,
     participation_message: Option<String>,
+    tentative: bool,
     party: &RsvpParty,
     env: &RsvpEnv,
 ) -> Result<Option<RsvpOutcome>> {
     if env.event_local {
-        local_join(event, existing, join_uri, participation_message, party, env)
+        local_join(
+            event,
+            existing,
+            join_uri,
+            participation_message,
+            tentative,
+            party,
+            env,
+        )
     } else {
         remote_join(event, existing, participation_message, env)
     }
@@ -398,6 +423,7 @@ fn local_join(
     existing: Option<&EventParticipationRow>,
     join_uri: Option<String>,
     participation_message: Option<String>,
+    tentative: bool,
     party: &RsvpParty,
     env: &RsvpEnv,
 ) -> Result<Option<RsvpOutcome>> {
@@ -450,8 +476,13 @@ fn local_join(
                     Some(OutboundActivity::Reject { object, to, cc }),
                 )));
             }
+            let state = if tentative {
+                ParticipationState::Tentative
+            } else {
+                ParticipationState::Accepted
+            };
             let write = ParticipationWrite {
-                state: ParticipationState::Accepted,
+                state,
                 // A local account joining through the API is `local`;
                 // a remote joiner answering over AP is `join`.
                 protocol: if party.username.is_some() {
@@ -466,8 +497,12 @@ fn local_join(
             };
             Ok(Some(RsvpOutcome::write(
                 Some(write),
-                counter_delta(existing, ParticipationState::Accepted),
-                Some(OutboundActivity::Accept { object, to, cc }),
+                counter_delta(existing, state),
+                Some(if tentative {
+                    OutboundActivity::TentativeAccept { object, to, cc }
+                } else {
+                    OutboundActivity::Accept { object, to, cc }
+                }),
             )))
         }
         JoinMode::Restricted => {
@@ -489,8 +524,13 @@ fn local_join(
         }
         JoinMode::Invite => {
             // `party.invited` — accept immediately.
+            let state = if tentative {
+                ParticipationState::Tentative
+            } else {
+                ParticipationState::Accepted
+            };
             let write = ParticipationWrite {
-                state: ParticipationState::Accepted,
+                state,
                 protocol: ParticipationProtocol::InviteResponse,
                 request_activity_uri: join_uri.clone(),
                 response_activity_uri: None,
@@ -499,11 +539,33 @@ fn local_join(
             };
             Ok(Some(RsvpOutcome::write(
                 Some(write),
-                counter_delta(existing, ParticipationState::Accepted),
-                Some(OutboundActivity::Accept { object, to, cc }),
+                counter_delta(existing, state),
+                Some(if tentative {
+                    OutboundActivity::TentativeAccept { object, to, cc }
+                } else {
+                    OutboundActivity::Accept { object, to, cc }
+                }),
             )))
         }
     }
+}
+
+/// Local `declined` write — records the opt-out without federating
+/// (pending remote joins leave through [`RsvpInput::Leave`] instead).
+fn decline_transition(existing: Option<&EventParticipationRow>) -> Result<Option<RsvpOutcome>> {
+    let write = ParticipationWrite {
+        state: ParticipationState::Declined,
+        protocol: ParticipationProtocol::Local,
+        request_activity_uri: None,
+        response_activity_uri: None,
+        invite_activity_uri: existing.and_then(|e| e.invite_activity_uri.clone()),
+        participation_message: None,
+    };
+    Ok(Some(RsvpOutcome::write(
+        Some(write),
+        counter_delta(existing, ParticipationState::Declined),
+        None,
+    )))
 }
 
 /// Counter delta for moving `existing` → `new_state`: +1 for each
@@ -894,6 +956,7 @@ mod tests {
         RsvpInput::Join {
             join_uri: Some("https://remote.example/users/joiner#join/1".into()),
             participation_message: Some("see you there".into()),
+            tentative: false,
         }
     }
 
@@ -1183,6 +1246,7 @@ mod tests {
             RsvpInput::Join {
                 join_uri: None,
                 participation_message: None,
+                tentative: false,
             },
             &p,
             &env_remote(),

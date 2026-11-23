@@ -137,6 +137,13 @@ const menuSource = computed<MenuEntry[]>(() => [
     visible: auth.isFull,
   },
   {
+    id: "events",
+    label: t("nav.events"),
+    to: "/events",
+    icon: "calendar-days",
+    visible: auth.isFull && instance.eventsEnabled,
+  },
+  {
     id: "hashtags",
     label: t("nav.hashtags"),
     to: "/tags",

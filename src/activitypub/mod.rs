@@ -369,6 +369,17 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/ap/users/{username}/collections/featured",
             get(featured::serve_featured),
         )
+        // FEP-8a8e attendees/organizers collections — custom handlers
+        // (attendees_visibility gating isn't expressible in pubby's
+        // static collection config).
+        .route(
+            "/ap/users/{username}/statuses/{id}/attendees",
+            get(posts::serve_event_collection),
+        )
+        .route(
+            "/ap/users/{username}/statuses/{id}/organizers",
+            get(posts::serve_event_collection),
+        )
         // Every GET under /ap/* fans into dispatch_multi.
         .route("/ap/{*rest}", get(serve(state)))
         // Well-known + nodeinfo endpoints.

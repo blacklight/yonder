@@ -242,7 +242,59 @@ export interface Status {
       summary: string | null;
       cover: MediaAttachment | null;
     } | null;
+    /** FEP-8a8e event metadata — present on `object_type = 'Event'`
+     * statuses; `participation` is the viewer's own RSVP row. */
+    event?: {
+      name?: string | null;
+      content?: string | null;
+      status?: string;
+      previous_start_time?: string | null;
+      start_time?: string | null;
+      end_time?: string | null;
+      display_end_time?: boolean;
+      end_time_inferred?: boolean;
+      timezone?: string | null;
+      utc_offset?: string | null;
+      join_mode?: string;
+      external_participation_url?: string | null;
+      rsvp_protocol?: string;
+      maximum_attendee_capacity?: number | null;
+      participants_count?: number;
+      remaining_capacity?: number | null;
+      pending_count?: number | null;
+      categories?: string[];
+      locations?: EventLocation[];
+      links?: { name?: string | null; href?: string }[];
+      banner?: MediaAttachment | null;
+      flyer?: MediaAttachment | null;
+      organizers?: unknown[];
+      organizers_disclosed?: boolean;
+      attendees_visibility?: string;
+      participation?: {
+        state?: string;
+        role?: string;
+        can_join?: boolean;
+        reason?: string | null;
+      } | null;
+      comments_enabled?: boolean;
+      ics_url?: string;
+    } | null;
   };
+}
+
+/** `yonder.event.locations[]` — FEP-8a8e place/virtual location. */
+export interface EventLocation {
+  type?: string;
+  name?: string | null;
+  url?: string | null;
+  street_address?: string | null;
+  locality?: string | null;
+  region?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  address_text?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /** `statuses::context` — the Mastodon Context entity. */
@@ -607,4 +659,6 @@ export interface StatusCreateBody {
   summary?: string;
   /** Representative image attachment id (AS2 `image`). */
   cover_media_id?: string;
+  /** FEP-8a8e event payload — required for `post_type=event`. */
+  event?: Record<string, unknown>;
 }

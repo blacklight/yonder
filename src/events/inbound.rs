@@ -260,6 +260,7 @@ async fn handle_join(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -> Re
     let input = rsvp::RsvpInput::Join {
         join_uri: (!activity.id.is_empty()).then(|| activity.id.clone()),
         participation_message: message,
+        tentative: false,
     };
     let Some(outcome) = decide_and_apply(core, status.id, actor_id, input, party, &env).await?
     else {
@@ -271,6 +272,7 @@ async fn handle_join(core: &Arc<ApCore>, activity: &Activity, raw: &Value) -> Re
             tracing::warn!(error = %e, "rsvp outbound publish failed");
         }
     }
+    emit_rsvp(core, status.id, actor_id, &outcome).await;
     Ok(true)
 }
 
@@ -383,7 +385,10 @@ async fn local_event_response(
             event_uri: status.uri.clone().unwrap_or_else(|| uri.clone()),
             now: chrono::Utc::now(),
         };
-        decide_and_apply(core, status.id, actor_id, input, party, &env).await?;
+        let outcome = decide_and_apply(core, status.id, actor_id, input, party, &env).await?;
+        if let Some(outcome) = &outcome {
+            emit_rsvp(core, status.id, actor_id, outcome).await;
+        }
         return Ok(true);
     }
     Ok(false)
@@ -503,10 +508,34 @@ async fn remote_event_response(
         // The transition re-reads the event row + participation
         // under the `events` lock inside `decide_and_apply` — the
         // `existing`/`bundle.row` reads above are for matching only.
-        decide_and_apply(core, status_id, account_id, input, party, &env).await?;
+        let outcome = decide_and_apply(core, status_id, account_id, input, party, &env).await?;
+        if let Some(outcome) = &outcome {
+            emit_rsvp(core, status_id, account_id, outcome).await;
+        }
         return Ok(true);
     }
     Ok(false)
+}
+
+/// Post-commit RSVP notifications — loads the status row (missing or
+/// tombstoned rows are a no-op) and emits the organizer/participant
+/// `pleroma:*` notifications the outcome flags call for.
+async fn emit_rsvp(core: &ApCore, status_id: i64, actor_id: i64, outcome: &rsvp::RsvpOutcome) {
+    if !outcome.notify_organizer && !outcome.notify_participant {
+        return;
+    }
+    let Some(status) = posts::load(&core.db, status_id).await.ok().flatten() else {
+        return;
+    };
+    crate::events::notify::emit_rsvp_notifications(
+        &core.db,
+        &core.dispatcher,
+        &status,
+        actor_id,
+        outcome.notify_organizer,
+        outcome.notify_participant,
+    )
+    .await;
 }
 
 /// The account's actor URI.

@@ -28,12 +28,19 @@ export const FILTERS = {
   followers: ["follow"],
   follow_requests: ["follow_request"],
   reports: ["admin.report"],
+  events: [
+    "pleroma:participation_request",
+    "pleroma:participation_accepted",
+    "pleroma:event_update",
+    "pleroma:event_reminder",
+  ],
 } as const;
 export type NotificationFilter = keyof typeof FILTERS;
 
 /** i18n key for a notification's label, `unknown` as the fallback. */
 export function notificationTypeKey(n: Notification): string {
-  const key = `notifications.type.${n.type.replace(".", "_")}`;
+  // `pleroma:*` types carry a colon — normalize to `_` like `.`.
+  const key = `notifications.type.${n.type.replace(/[.:]/g, "_")}`;
   return i18n.global.te(key) ? key : "notifications.type.unknown";
 }
 
@@ -52,6 +59,10 @@ const TYPE_ICONS: Record<string, IconProp> = {
   moderation_warning: "triangle-exclamation",
   "admin.report": "flag",
   move: "right-from-bracket",
+  "pleroma:participation_request": "user-plus",
+  "pleroma:participation_accepted": "check",
+  "pleroma:event_update": "calendar-days",
+  "pleroma:event_reminder": "bell",
 };
 
 /** The per-type icon shown on rows and toasts. */

@@ -1345,11 +1345,7 @@ pub async fn handle_invite(
     }
     let invite_uri = activity.id.clone();
     let invited = write_invited_rows(&mut conn, status_id, &addressees, &invite_uri).await?;
-    if invited > 0 {
-        // Notification emission lands with the notifications section;
-        // the stub keeps the hook point.
-        event_invite_received(core, status_id, invited).await;
-    }
+    event_invite_received(core, status_id, invited).await;
     Ok(true)
 }
 
@@ -1443,18 +1439,16 @@ pub async fn drain_pending_invites(core: &ApCore, status_id: i64, event_uri: &st
             .or_default()
             .push(addressee.clone());
     }
-    let mut invited = 0u64;
+    let mut invited: Vec<i64> = Vec::new();
     for ((invite_uri, actor), addressees) in by_sender {
         if !invite_authorized(&mut tx, status_id, &actor).await? {
             tracing::warn!(actor = %actor, status_id, "Parked invite from non-organizer dropped");
             continue;
         }
-        invited += write_invited_rows(&mut tx, status_id, &addressees, &invite_uri).await?;
+        invited.extend(write_invited_rows(&mut tx, status_id, &addressees, &invite_uri).await?);
     }
     tx.commit().await?;
-    if invited > 0 {
-        event_invite_received(core, status_id, invited).await;
-    }
+    event_invite_received(core, status_id, invited).await;
     Ok(())
 }
 
@@ -1505,15 +1499,16 @@ async fn invite_authorized(
 }
 
 /// Upsert `invited` participation rows for local addressees — one
-/// statement per actor, never clobbering a decided state. Returns
-/// the number of local accounts addressed.
+/// statement per actor, never clobbering a decided state. Returns the
+/// account ids of *newly inserted* rows — re-invites of an existing
+/// `invited` row update the stamp silently (no re-notification).
 async fn write_invited_rows(
     db: &mut sqlx::PgConnection,
     status_id: i64,
     addressees: &[String],
     invite_uri: &str,
-) -> Result<u64> {
-    let mut invited = 0u64;
+) -> Result<Vec<i64>> {
+    let mut invited = Vec::new();
     for actor in addressees {
         let account_id: Option<i64> =
             sqlx::query_scalar("SELECT id FROM accounts WHERE actor_id = $1 AND domain IS NULL")
@@ -1525,33 +1520,62 @@ async fn write_invited_rows(
         };
         // One upsert: insert the `invited` row, or refresh the invite
         // stamp on an existing one — never clobber a decided state.
-        sqlx::query(
+        // `xmax = 0` on RETURNING marks freshly inserted rows.
+        let inserted: Option<bool> = sqlx::query_scalar(
             "INSERT INTO event_participations \
                  (status_id, account_id, role, state, protocol, invite_activity_uri) \
              VALUES ($1,$2,'participant','invited','invite_response',$3) \
              ON CONFLICT (status_id, account_id) DO UPDATE SET \
                  invite_activity_uri = EXCLUDED.invite_activity_uri, \
                  updated_at = now() \
-             WHERE event_participations.state = 'invited'",
+             WHERE event_participations.state = 'invited' \
+             RETURNING (xmax = 0)",
         )
         .bind(status_id)
         .bind(account_id)
         .bind(invite_uri)
-        .execute(&mut *db)
+        .fetch_optional(&mut *db)
         .await?;
-        invited += 1;
+        if inserted == Some(true) {
+            invited.push(account_id);
+        }
     }
     Ok(invited)
 }
 
-/// Stub hook — Section (notifications) wires the real
-/// `mention`/invitation notification here.
-pub(crate) async fn event_invite_received(_core: &ApCore, _status_id: i64, _count: u64) {}
+/// A remote `Invite` materialized new local invitee rows — notify
+/// exactly those accounts (`pleroma:event_update`), not every
+/// existing participant.
+pub(crate) async fn event_invite_received(core: &ApCore, status_id: i64, invited: Vec<i64>) {
+    if invited.is_empty() {
+        return;
+    }
+    let status = match crate::posts::load(&core.db, status_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(status_id, error = %e, "event invite status load failed");
+            return;
+        }
+    };
+    crate::events::notify::emit_event_update_to(&core.db, &core.dispatcher, &status, &invited)
+        .await;
+}
 
-/// Stub hook — a remote event Update changed material fields; the
-/// notifications section fans out `pleroma:event_update` to local
-/// participants here.
-pub(crate) async fn event_update_fanout(_core: &ApCore, _status_id: i64) {}
+/// Post-sync side effects for a remote `Event` Update — notifies
+/// local participants (`pleroma:event_update`). Called after the sync
+/// transaction commits; failures only log. Reminder re-arming is *not*
+/// here: `sync_event` already clears `reminded_at` inside its own
+/// transaction, and only when `start_time` actually moved
+/// (`EventSyncOutcome::start_moved`).
+pub(crate) async fn event_update_fanout(core: &ApCore, status_id: i64) {
+    match crate::events::notify::emit_event_update_by_id(&core.db, &core.dispatcher, status_id)
+        .await
+    {
+        Ok(()) => {}
+        Err(e) => tracing::warn!(status_id, error = %e, "event_update notify failed"),
+    }
+}
 
 #[cfg(test)]
 mod tests {

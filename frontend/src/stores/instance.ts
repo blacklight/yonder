@@ -15,6 +15,10 @@ export const useInstanceStore = defineStore("instance", () => {
   const singleUser = computed(
     () => entity.value?.yonder?.single_user?.trim() || null,
   );
+  // `events.enabled` — absent on older servers, treated as enabled.
+  const eventsEnabled = computed(
+    () => entity.value?.yonder?.events_enabled !== false,
+  );
   let inflight: Promise<InstanceEntity | null> | null = null;
 
   /** Fetch the instance entity once; failures stay unloaded — every
@@ -27,5 +31,5 @@ export const useInstanceStore = defineStore("instance", () => {
     await inflight;
   }
 
-  return { entity, translationEnabled, singleUser, ensure };
+  return { entity, translationEnabled, singleUser, eventsEnabled, ensure };
 });

@@ -441,3 +441,47 @@ describe("context hygiene + drafts", () => {
     expect(raw).toContain("persisted");
   });
 });
+
+describe("event drafts", () => {
+  beforeEach(() => {
+    localStorage.removeItem("yonder.compose.draft");
+    localStorage.removeItem("yonder.compose.stashed");
+    localStorage.removeItem("yonder.compose.drafts");
+  });
+
+  it("openEvent resets into event mode with a zoned payload", () => {
+    const c = useComposeStore();
+    c.update({ text: "leftover", poll: { options: ["a", "b"], expiresIn: 1, multiple: false, hideTotals: false } });
+    c.openEvent();
+    expect(c.draft.postType).toBe("event");
+    expect(c.draft.poll).toBeNull();
+    expect(c.draft.text).toBe("");
+    const ev = c.draft.event;
+    expect(ev).not.toBeNull();
+    expect(ev!.status).toBe("scheduled");
+    expect(ev!.joinMode).toBe("free");
+    expect(ev!.attendeesVisibility).toBe("organizers");
+    expect(ev!.timezone).toMatch(/\//); // browser IANA zone, not bare UTC
+    expect(c.openSignal).toBe(1);
+    expect(c.contextIsLive).toBe(true);
+  });
+
+  it("event changes mark the draft dirty; an untouched shell does not", () => {
+    const c = useComposeStore();
+    c.openEvent();
+    expect(c.isDirty).toBe(false); // shell only — no fields filled
+    c.update({ event: { ...c.draft.event!, startTime: "2030-01-01T10:00" } });
+    expect(c.isDirty).toBe(true);
+  });
+
+  it("persisted event drafts survive a reload", () => {
+    const c = useComposeStore();
+    c.openEvent();
+    c.update({
+      event: { ...c.draft.event!, startTime: "2030-01-01T10:00", categories: ["MUSIC"] },
+    });
+    const raw = localStorage.getItem("yonder.compose.draft");
+    expect(raw).toContain('"postType":"event"');
+    expect(raw).toContain('"categories":["MUSIC"]');
+  });
+});

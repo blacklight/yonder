@@ -5153,3 +5153,684 @@ async fn event_ics_routes() {
     assert_eq!(code, StatusCode::OK, "{body}");
     assert!(!body.contains("BEGIN:VEVENT"), "{body}");
 }
+
+/// Section 7 — local event authoring: `post_type=event` + `event`
+/// payload materializes `object_type='Event'`, `statuses.title`, the
+/// `events` side table and the organizer participation row; the
+/// status entity exposes `yonder.event`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_local_event() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "orga", "orga@x.com").await;
+
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "Come to the **meetup**",
+            "post_type": "event",
+            "visibility": "public",
+            "event": {
+                "start_time": "2030-06-01T18:00:00+02:00",
+                "end_time": "2030-06-01T20:00:00+02:00",
+                "timezone": "Europe/Rome",
+                "join_mode": "free",
+                "categories": ["MEETING", "NETWORKING"],
+                "locations": [{"type": "place", "name": "Cafe Central", "locality": "Rome"}],
+                "maximum_attendee_capacity": 50,
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(body["yonder"]["event"]["name"], "Come to the **meetup**");
+    assert_eq!(body["yonder"]["event"]["status"], "scheduled");
+    assert_eq!(body["yonder"]["event"]["join_mode"], "free");
+    // The organizer's own participation row is accepted → join_state.
+    assert_eq!(body["pleroma"]["event"]["join_state"], "accept");
+
+    // Side table: object_type/title + event row + organizer row.
+    let row: (String, String, String, i32) = sqlx::query_as(
+        "SELECT s.object_type, s.title, e.status, e.maximum_attendee_capacity \
+         FROM statuses s JOIN events e ON e.status_id = s.id WHERE s.id = $1",
+    )
+    .bind(status_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            "Event".into(),
+            "Come to the **meetup**".into(),
+            "scheduled".into(),
+            50
+        )
+    );
+    let organizer: String = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND role = 'organizer'",
+    )
+    .bind(status_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(organizer, "accepted");
+    let cats: Vec<String> =
+        sqlx::query_scalar("SELECT categories FROM events WHERE status_id = $1")
+            .bind(status_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(cats, vec!["MEETING".to_string(), "NETWORKING".to_string()]);
+
+    // Edit: postpone (status change is an Update, not a delete).
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&token),
+        Some(json!({
+            "status": "Come to the **meetup**",
+            "event": {"status": "postponed", "timezone": "Europe/Rome"}
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let st: String = sqlx::query_scalar("SELECT status FROM events WHERE status_id = $1")
+        .bind(status_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(st, "postponed");
+    // Postponed drops the start time.
+    let has_start: bool =
+        sqlx::query_scalar("SELECT start_time IS NOT NULL FROM events WHERE status_id = $1")
+            .bind(status_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert!(!has_start);
+}
+
+/// Section 7 — reschedule auto-fills `previous_start_time` from the
+/// stored start; an explicit organizer value wins.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reschedule_event_fills_previous_start() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "resched", "resched@x.com").await;
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "Meetup",
+            "post_type": "event",
+            "event": {
+                "start_time": "2030-06-01T18:00:00Z",
+                "timezone": "UTC",
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(&token),
+        Some(json!({
+            "status": "Meetup",
+            "event": {
+                "start_time": "2030-06-08T18:00:00Z",
+                "timezone": "UTC",
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let (status, prev): (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT status, previous_start_time FROM events WHERE status_id = $1")
+            .bind(status_id)
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+    assert_eq!(status, "rescheduled");
+    assert_eq!(
+        prev.map(|t| t.to_rfc3339()),
+        Some("2030-06-01T18:00:00+00:00".to_string())
+    );
+}
+
+/// Section 7 — validation failures on local event authoring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_validation_errors() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "val", "val@x.com").await;
+    let post = |event: Value, extra: Value| {
+        let mut body = json!({"status": "x", "post_type": "event"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        body["event"] = event;
+        body
+    };
+    let try_post = |payload: Value| {
+        let app = env.app.clone();
+        let token = token.clone();
+        async move {
+            request(
+                &app,
+                "POST",
+                "/api/v1/statuses",
+                Some(&token),
+                Some(payload),
+                &[],
+            )
+            .await
+        }
+    };
+
+    // Missing title.
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC"}),
+        json!({"status": ""}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Missing start_time (non-postponed).
+    let (code, _) = try_post(post(json!({"timezone": "UTC"}), json!({"status": "x"}))).await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Bad timezone.
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "Mars/Olympus"}),
+        json!({"status": "x"}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Poll on an event.
+    let (code, _) = try_post(json!({
+        "status": "x", "post_type": "event",
+        "poll": {"options": ["a", "b"], "expires_in": 3600},
+        "event": {"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC"},
+    }))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // external join_mode without URL.
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC", "join_mode": "external"}),
+        json!({"status": "x"}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Non-FEP category (allow_custom_categories off by default).
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC", "categories": ["MY_CUSTOM"]}),
+        json!({"status": "x"}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Too many locations (default cap 5).
+    let locs: Vec<Value> = (0..6)
+        .map(|i| json!({"name": format!("Loc {i}")}))
+        .collect();
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC", "locations": locs}),
+        json!({"status": "x"}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Invitees on a non-direct event.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "x", "post_type": "event", "visibility": "public",
+            "event": {
+                "start_time": "2030-01-01T10:00:00Z", "timezone": "UTC",
+                "invitees": [1],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Cancelled status on create is rejected (only scheduled/tentative).
+    let (code, _) = try_post(post(
+        json!({"start_time": "2030-01-01T10:00:00Z", "timezone": "UTC", "status": "cancelled"}),
+        json!({"status": "x"}),
+    ))
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Section 11 — the Yonder-native RSVP API: join/leave through the
+/// §7.1 state machine, organizer guards, pending-request decisions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_rsvp_api() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let org_token = register(&env.app, "orga", "orga@x.com").await;
+    let bob_token = register(&env.app, "bob", "bob@x.com").await;
+    let bob_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'bob' AND domain IS NULL")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+
+    // A restricted event: joins land pending until the organizer decides.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&org_token),
+        Some(json!({
+            "status": "Gated meetup",
+            "post_type": "event",
+            "visibility": "public",
+            "event": {
+                "start_time": "2030-07-01T18:00:00Z",
+                "timezone": "UTC",
+                "join_mode": "restricted",
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+
+    // Bob joins → pending (restricted requires organizer approval).
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/rsvp"),
+        Some(&bob_token),
+        Some(json!({"state": "accepted", "message": "see you there"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["participation"]["state"], "pending");
+    let (accepted, pending) = event_counters(&env, status_id).await;
+    assert_eq!((accepted, pending), (0, 1));
+
+    // The organizer cannot RSVP to their own event.
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/rsvp"),
+        Some(&org_token),
+        Some(json!({"state": "accepted"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Organizer lists pending requests, then authorizes.
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/yonder/events/{status_id}/participations"),
+        Some(&org_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let rows = body["participations"].as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["state"], "pending");
+    assert_eq!(rows[0]["participation_message"], "see you there");
+
+    // A non-organizer cannot decide.
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/participation_requests/{bob_id}/authorize"),
+        Some(&bob_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/participation_requests/{bob_id}/authorize"),
+        Some(&org_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    let (accepted, pending) = event_counters(&env, status_id).await;
+    assert_eq!((accepted, pending), (1, 0));
+
+    // Bob leaves → the participation row is withdrawn.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/rsvp"),
+        Some(&bob_token),
+        Some(json!({"state": "none"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let state: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(bob_id)
+    .fetch_optional(&env.state.db)
+    .await
+    .unwrap()
+    .flatten();
+    assert!(
+        state.is_none() || state.as_deref() == Some("declined"),
+        "{state:?}"
+    );
+}
+
+/// Section 11 — the Nicolex `/api/v1/pleroma/events*` adapter:
+/// create/joined_events/join/participations/requests/ics/location.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pleroma_events_adapter() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let org_token = register(&env.app, "norganizer", "norg@x.com").await;
+    let bob_token = register(&env.app, "nbob", "nbob@x.com").await;
+    let bob_id: i64 =
+        sqlx::query_scalar("SELECT id FROM accounts WHERE username = 'nbob' AND domain IS NULL")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+
+    // Geocoding is off → location search returns [].
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/pleroma/search/location?q=rome",
+        Some(&org_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([]));
+
+    // Create through the Nicolex param shape.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/pleroma/events",
+        Some(&org_token),
+        Some(json!({
+            "name": "Nicolex Meetup",
+            "status": "Adapter-created event",
+            "start_time": "2030-08-01T18:00:00Z",
+            "end_time": "2030-08-01T20:00:00Z",
+            "join_mode": "free",
+            "attendees_visibility": "public",
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(body["pleroma"]["event"]["name"], "Nicolex Meetup");
+
+    // `location_id` without geocoding → 422 with a hint.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/pleroma/events",
+        Some(&org_token),
+        Some(json!({
+            "name": "Geo event",
+            "start_time": "2030-08-01T18:00:00Z",
+            "location_id": 12345,
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    // Bob joins through the adapter.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/pleroma/events/{status_id}/join"),
+        Some(&bob_token),
+        Some(json!({"participation_message": "hi"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let st: String = sqlx::query_scalar(
+        "SELECT state FROM event_participations WHERE status_id = $1 AND account_id = $2",
+    )
+    .bind(status_id)
+    .bind(bob_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(st, "accepted");
+
+    // joined_events lists it for Bob.
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/pleroma/events/joined_events",
+        Some(&bob_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert!(ids.contains(&status_id.to_string().as_str()), "{ids:?}");
+
+    // participations returns Bob's account entity (public visibility).
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/pleroma/events/{status_id}/participations"),
+        Some(&bob_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let accts = body.as_array().unwrap();
+    assert!(accts.iter().any(|a| a["acct"] == "nbob"), "{accts:?}");
+
+    // participation_requests is organizer-only → Bob gets 403.
+    let (code, _) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/pleroma/events/{status_id}/participation_requests"),
+        Some(&bob_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::FORBIDDEN);
+
+    // ICS through the adapter path.
+    let (code, text) = get_text(&env.app, &format!("/api/v1/pleroma/events/{status_id}/ics")).await;
+    assert_eq!(code, StatusCode::OK, "{text}");
+    assert!(text.contains("BEGIN:VCALENDAR"), "{text}");
+
+    // Leave withdraws the participation.
+    let (code, _) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/pleroma/events/{status_id}/leave"),
+        Some(&bob_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+}
+
+/// Nicolex `PUT` with only `start_time` must merge over the stored
+/// event — locations, categories, join mode, timezone and invitees
+/// survive (review C-1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pleroma_events_partial_edit_preserves_metadata() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "npartial", "npartial@x.com").await;
+
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/pleroma/events",
+        Some(&token),
+        Some(json!({
+            "name": "Full Event",
+            "status": "desc",
+            "start_time": "2030-08-01T18:00:00Z",
+            "end_time": "2030-08-01T20:00:00Z",
+            "timezone": "Europe/Rome",
+            "join_mode": "restricted",
+            "attendees_visibility": "participants",
+            "categories": ["MEETING"],
+            "locations": [{"type": "place", "name": "Hall", "locality": "Rome"}],
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let status_id: i64 = body["id"].as_str().unwrap().parse().unwrap();
+
+    // Partial edit: only the start moves.
+    let (code, body) = request(
+        &env.app,
+        "PUT",
+        &format!("/api/v1/pleroma/events/{status_id}"),
+        Some(&token),
+        Some(json!({"start_time": "2030-08-02T18:00:00Z"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+
+    let row: (String, String, String, Vec<String>, bool) = sqlx::query_as(
+        "SELECT e.timezone, e.join_mode, e.attendees_visibility, e.categories, \
+                (SELECT count(*) FROM event_locations l WHERE l.status_id = e.status_id) > 0 \
+         FROM events e WHERE e.status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(row.0, "Europe/Rome");
+    assert_eq!(row.1, "restricted");
+    assert_eq!(row.2, "participants");
+    assert_eq!(row.3, vec!["MEETING".to_string()]);
+    assert!(row.4, "location survived partial edit");
+    let moved: bool = sqlx::query_scalar(
+        "SELECT start_time = '2030-08-02 18:00:00+00'::timestamptz FROM events WHERE status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(moved);
+    // Name/description untouched.
+    let title: String = sqlx::query_scalar("SELECT title FROM statuses WHERE id = $1")
+        .bind(status_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(title, "Full Event");
+}
+
+/// `GET /api/v1/yonder/events?from=<past>` must not collapse the
+/// window to `from + 90d` — an explicit `from` without `to` is
+/// unbounded (review C-2).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn events_list_explicit_from_is_unbounded() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "elist", "elist@x.com").await;
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "Old meetup",
+            "post_type": "event",
+            "visibility": "public",
+            "event": {
+                "start_time": "2020-01-01T10:00:00Z",
+                "timezone": "UTC",
+                "join_mode": "free",
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+
+    let (code, body) = request(
+        &env.app,
+        "GET",
+        "/api/v1/yonder/events?scope=mine&from=2000-01-01T00:00:00Z&include_cancelled=true",
+        Some(&token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let arr = body.as_array().unwrap();
+    assert_eq!(arr.len(), 1, "{body}");
+    assert_eq!(arr[0]["yonder"]["event"]["name"], "Old meetup");
+}

@@ -227,6 +227,16 @@ fn event_text(kind: super::NotificationType, actor: &str) -> String {
         }
         super::NotificationType::AdminReport => "A new report was filed".to_string(),
         super::NotificationType::Move => format!("{actor} moved to a new account"),
+        super::NotificationType::ParticipationRequest => {
+            format!("{actor} requested to join your event")
+        }
+        super::NotificationType::ParticipationAccepted => {
+            format!("{actor} responded to your event")
+        }
+        super::NotificationType::EventUpdate => {
+            format!("{actor} updated an event you're attending")
+        }
+        super::NotificationType::EventReminder => "A reminder for an upcoming event".to_string(),
     }
 }
 

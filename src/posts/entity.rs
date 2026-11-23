@@ -742,6 +742,48 @@ impl StatusBatch {
 
         let accounts: HashMap<i64, account_mapper::AccountRow> =
             author_rows.into_iter().map(|a| (a.id, a)).collect();
+
+        // Section 12 participant-view refresh: a viewer with a
+        // participation row on a remote event whose `events` row is
+        // older than `remote_refresh_after_minutes` kicks a background
+        // re-fetch. `EventRemoteRefresh` re-checks staleness at run
+        // time and the remote queue dedupes in-flight fetches, so a
+        // burst of views collapses to one fetch.
+        {
+            let stale_after = chrono::Duration::minutes(i64::from(
+                ctx.config.events.remote_refresh_after_minutes,
+            ));
+            let cutoff = chrono::Utc::now() - stale_after;
+            let remote_ids: HashSet<i64> = rows
+                .iter()
+                .chain(originals.values())
+                .filter(|s| !s.local)
+                .map(|s| s.id)
+                .collect();
+            let mut refresh_ids = Vec::new();
+            for (status_id, bundle) in &events {
+                if bundle.participation.is_none() || bundle.row.updated_at > cutoff {
+                    continue;
+                }
+                if !remote_ids.contains(status_id) {
+                    continue;
+                }
+                refresh_ids.push(*status_id);
+            }
+            for status_id in refresh_ids {
+                if let Err(e) = ctx
+                    .dispatcher
+                    .enqueue(
+                        crate::jobs::JobKind::EventRemoteRefresh,
+                        serde_json::json!({"status_id": status_id}),
+                    )
+                    .await
+                {
+                    tracing::debug!(status_id, error = %e, "event refresh enqueue failed");
+                }
+            }
+        }
+
         let pinned: HashSet<(i64, i64)> = pin_rows
             .into_iter()
             .filter(|p| pair_set.contains(p))

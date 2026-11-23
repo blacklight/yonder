@@ -134,6 +134,7 @@ impl Config {
             "remote_sync",
             "remote_context",
             "webmention",
+            "events_rsvp",
         ] {
             let limit = self.rate_limit.bucket(name).expect("static bucket name");
             if limit.limit == 0 || limit.period_seconds == 0 {
@@ -950,6 +951,10 @@ pub struct RateLimitConfig {
     /// unauthenticated, so the anonymous ceiling is the anti-spam
     /// knob.
     pub webmention: RateLimit,
+    /// Event RSVP writes (`POST /yonder/events/{id}/rsvp`, Nicolex
+    /// join/leave, participation decisions) — each can fan out
+    /// federation deliveries, so it gets its own bucket.
+    pub events_rsvp: RateLimit,
 }
 
 impl RateLimitConfig {
@@ -972,6 +977,7 @@ impl RateLimitConfig {
             "remote_sync" => Some(&self.remote_sync),
             "remote_context" => Some(&self.remote_context),
             "webmention" => Some(&self.webmention),
+            "events_rsvp" => Some(&self.events_rsvp),
             _ => None,
         }
     }
@@ -1054,6 +1060,11 @@ impl Default for RateLimitConfig {
                 period_seconds: 300,
                 authenticated_limit: None,
             },
+            events_rsvp: RateLimit {
+                limit: 30,
+                period_seconds: 60,
+                authenticated_limit: Some(120),
+            },
         }
     }
 }
@@ -1079,13 +1090,14 @@ impl Default for PollsConfig {
     }
 }
 
-/// FEP-8a8e event support (`[events]`). `enabled = false` is planned
-/// to hide the composer type and calendar surfaces; nothing reads it
-/// yet, and inbound parsing always runs.
+/// FEP-8a8e event support (`[events]`). `enabled = false` blocks new
+/// event creation (`post_type=event`) and is advertised to clients via
+/// `yonder.events_enabled` / the pleroma `features` list; inbound
+/// parsing and existing events are unaffected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EventsConfig {
-    /// Reserved — no consumer yet (planned UI/API gating).
+    /// Gates new event authoring + the SPA's event surfaces.
     pub enabled: bool,
     /// Inferred `endTime` for open-ended local events and remote
     /// events lacking `endTime` (Gancio uses 3 h).
@@ -1102,6 +1114,9 @@ pub struct EventsConfig {
     /// Minutes before a remote event is considered stale and
     /// re-fetchable on participant view.
     pub remote_refresh_after_minutes: u32,
+    /// Cron schedule for the `event_reminder_sweep` job — empty
+    /// disables reminders.
+    pub reminder_sweep_schedule: Option<String>,
     /// Optional server-side place lookup (`[events.geocoding]`).
     pub geocoding: EventsGeocodingConfig,
 }
@@ -1117,6 +1132,7 @@ impl Default for EventsConfig {
             summary_excerpt_chars: 300,
             reminder_lead_minutes: 60,
             remote_refresh_after_minutes: 360,
+            reminder_sweep_schedule: Some("*/5 * * * *".to_string()),
             geocoding: EventsGeocodingConfig::default(),
         }
     }

@@ -822,4 +822,42 @@ describe("ComposeBox", () => {
     expect(d.coverMediaId).toBeNull();
     expect(wrapper.find("[data-testid='article-title']").exists()).toBe(false);
   });
+
+  it("event mode posts an Event status with the serialized payload", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='event-builder']").exists()).toBe(true);
+    // Post is disabled until the event has a name and a start time.
+    expect(
+      wrapper.get("[data-testid='post']").attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.get("[data-testid='event-name']").setValue("Gig night");
+    await wrapper.get("[data-testid='event-start']").setValue("2030-06-01T18:00");
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.post_type).toBe("event");
+    expect(body.title).toBe("Gig night");
+    expect(body.event.timezone).toBeTruthy();
+    expect(body.event.start_time).toMatch(/^2030-06-01T18:00:00[+-]\d{2}:\d{2}$/);
+    expect(body.event.status).toBe("scheduled");
+    expect(body.poll).toBeUndefined();
+    expect(body.in_reply_to_id).toBeUndefined();
+  });
+
+  it("toggling event off returns to a note and keeps the title", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    await wrapper.get("[data-testid='event-name']").setValue("Gig night");
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    const d = useComposeStore().draft;
+    expect(d.postType).toBe("note");
+    expect(d.event).toBeNull();
+    expect(d.title).toBe("Gig night");
+    expect(wrapper.find("[data-testid='event-builder']").exists()).toBe(false);
+  });
 });

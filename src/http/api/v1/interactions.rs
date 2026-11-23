@@ -66,6 +66,7 @@ pub async fn favourite(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:favourites")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = favourite::favourite(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -88,6 +89,7 @@ pub async fn unfavourite(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:favourites")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = favourite::unfavourite(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -110,6 +112,7 @@ pub async fn favourites_list(
 ) -> Result<(HeaderMap, Json<Value>)> {
     require_scope(&state.config(), &auth, "read:favourites")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let page = paginate::parse(&params);
     let rows = favourite::list(&ctx, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -204,6 +207,7 @@ pub async fn reblog(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let visibility = reblog_visibility(&params, request).await?;
     let status = boost::reblog(&ctx, &auth, id, visibility.as_deref()).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
@@ -261,6 +265,7 @@ pub async fn unreblog(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = boost::unreblog(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -340,6 +345,7 @@ pub async fn quotes(
         require_scope(&state.config(), a, "read:statuses")?;
     }
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     let viewer = auth.0.as_ref().map(|a| a.account_id);
     let status = crate::interactions::load_visible(&ctx, id, viewer).await?;
     let page = paginate::parse(&params);
@@ -372,6 +378,7 @@ pub async fn bookmark(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:bookmarks")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = bookmark::bookmark(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -394,6 +401,7 @@ pub async fn unbookmark(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:bookmarks")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = bookmark::unbookmark(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -416,6 +424,7 @@ pub async fn bookmarks_list(
 ) -> Result<(HeaderMap, Json<Value>)> {
     require_scope(&state.config(), &auth, "read:bookmarks")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let page = paginate::parse(&params);
     let rows = bookmark::list(&ctx, auth.account_id, &page).await?;
     let cursors: Vec<i64> = rows.iter().map(|(_, c)| *c).collect();
@@ -450,6 +459,7 @@ pub async fn pin(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:accounts")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = pins::pin(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -472,6 +482,7 @@ pub async fn unpin(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:accounts")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = pins::unpin(&ctx, &auth, id).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -502,6 +513,7 @@ pub async fn react(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = reactions::react(&ctx, &auth, id, &emoji).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }
@@ -527,6 +539,7 @@ pub async fn unreact(
 ) -> Result<Json<Value>> {
     require_scope(&state.config(), &auth, "write:statuses")?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let status = reactions::unreact(&ctx, &auth, id, &emoji).await?;
     Ok(Json(status_json(&ctx, &status, auth.account_id).await?))
 }

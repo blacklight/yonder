@@ -146,6 +146,7 @@ fn ctx(state: &AppState) -> PostContext {
         media: state.media.clone(),
         ap: state.ap.clone(),
         bus: state.bus.clone(),
+        client_app: None,
     }
 }
 
@@ -952,6 +953,851 @@ async fn remote_note_materializes() {
     .await
     .unwrap();
     assert!(!html.contains("hacked"), "spoofed update must be dropped");
+}
+
+/// FEP-8a8e ownership gate: an Event may be signed by an alternate
+/// same-host actor only when `attributedTo` is a collective on the
+/// object's own host. Cross-host attribution, known `Person`
+/// attribution, and signers absent from `actor`/`organizers` must all
+/// be dropped; an unknown same-host `attributedTo` is allowed on
+/// first contact while its actor document is fetched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_ownership_gate() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let ingest = |n: usize, actor: &str, object: Value| {
+        let core = core.clone();
+        let actor = actor.to_string();
+        async move {
+            let activity = pubby_sdk::Activity {
+                id: format!("{BASE}/ap/activities/evt{n}"),
+                activity_type: "Create".into(),
+                actor,
+                object,
+                to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+                cc: vec![],
+                published: None,
+                signature: None,
+            };
+            remote::handle(&core, &activity, &activity.to_json()).await
+        }
+    };
+    let status_exists = |uri: &str| {
+        let db = env.state.db.clone();
+        let uri = uri.to_string();
+        async move {
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM statuses WHERE uri = $1)")
+                .bind(uri)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let event = |id: &str, attributed: Value, signer: &str| {
+        json!({
+            "id": id,
+            "type": "Event",
+            "name": "Gate test",
+            "attributedTo": attributed,
+            "actor": signer,
+            "startTime": "2026-03-01T10:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        })
+    };
+
+    // Collective attributedTo on the object's host, signer listed as
+    // the object `actor` → accepted, stored under the group.
+    // (`handle` returns true for handled-and-ignored alike; the
+    // status row is the source of truth.)
+    ingest(
+        1,
+        "https://remote.test/@alice",
+        event(
+            "https://remote.test/events/1",
+            json!({"id": "https://remote.test/@club", "type": "Group"}),
+            "https://remote.test/@alice",
+        ),
+    )
+    .await;
+    assert!(status_exists("https://remote.test/events/1").await);
+    let owner: String = sqlx::query_scalar(
+        "SELECT a.actor_id FROM statuses s JOIN accounts a ON a.id = s.account_id \
+         WHERE s.uri = 'https://remote.test/events/1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(owner, "https://remote.test/@club");
+    // The events side table materialized too.
+    let is_event: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM events e JOIN statuses s ON s.id = e.status_id \
+         WHERE s.uri = 'https://remote.test/events/1')",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(is_event);
+
+    // attributedTo on a *different* host → rejected even though the
+    // signer shares the object's host.
+    ingest(
+        2,
+        "https://remote.test/@alice",
+        event(
+            "https://remote.test/events/2",
+            json!({"id": "https://other.test/@club", "type": "Group"}),
+            "https://remote.test/@alice",
+        ),
+    )
+    .await;
+    assert!(!status_exists("https://remote.test/events/2").await);
+
+    // Known `Person` attributedTo, alternate same-host signer →
+    // rejected (the embedded type hint is authoritative).
+    ingest(
+        3,
+        "https://remote.test/@alice",
+        event(
+            "https://remote.test/events/3",
+            json!({"id": "https://remote.test/@bob", "type": "Person"}),
+            "https://remote.test/@alice",
+        ),
+    )
+    .await;
+    assert!(!status_exists("https://remote.test/events/3").await);
+
+    // Signer absent from `actor`/`organizers` → rejected even with a
+    // collective attributedTo.
+    ingest(
+        4,
+        "https://remote.test/@mallory",
+        event(
+            "https://remote.test/events/4",
+            json!({"id": "https://remote.test/@club2", "type": "Group"}),
+            "https://remote.test/@alice",
+        ),
+    )
+    .await;
+    assert!(!status_exists("https://remote.test/events/4").await);
+
+    // Unknown same-host attributedTo (bare URI, no type anywhere) →
+    // allowed on first contact; a stub account is created so a later
+    // fetch resolves the type.
+    ingest(
+        5,
+        "https://remote.test/@alice",
+        event(
+            "https://remote.test/events/5",
+            json!("https://remote.test/@carol"),
+            "https://remote.test/@alice",
+        ),
+    )
+    .await;
+    assert!(status_exists("https://remote.test/events/5").await);
+    let stub: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM accounts WHERE actor_id = 'https://remote.test/@carol')",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert!(stub, "unknown attributedTo gets a stub for actor fetch");
+}
+
+/// FEP-8a8e `Invite{Event}` handling: organizer invites write
+/// `invited` participation rows for local addressees; non-organizers,
+/// remote-only addressees, and non-Event objects are rejected or
+/// ignored; decided participation states are never clobbered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_invites() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let _token = register(&env.app, "alice", "alice@x.com").await;
+    let alice_actor = format!("{BASE}/ap/users/alice");
+
+    // Remote event materialized by its organizer.
+    let create = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/ev100"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/@org".into(),
+        object: json!({
+            "id": "https://remote.test/events/100",
+            "type": "Event",
+            "name": "Invite test",
+            "attributedTo": "https://remote.test/@org",
+            "startTime": "2026-03-01T10:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+
+    let invite = |n: usize, actor: &str, object: Value, to: Vec<String>| pubby_sdk::Activity {
+        id: format!("https://remote.test/ap/activities/inv{n}"),
+        activity_type: "Invite".into(),
+        actor: actor.into(),
+        object,
+        to,
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let participation = || {
+        let db = env.state.db.clone();
+        let actor = alice_actor.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, String)>(
+                "SELECT p.state, p.protocol, p.invite_activity_uri \
+                 FROM event_participations p \
+                 JOIN statuses s ON s.id = p.status_id \
+                 JOIN accounts a ON a.id = p.account_id \
+                 WHERE s.uri = 'https://remote.test/events/100' \
+                   AND a.actor_id = $1",
+            )
+            .bind(actor)
+            .fetch_optional(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Organizer invite → `invited` row with protocol + invite URI.
+    let inv = invite(
+        1,
+        "https://remote.test/@org",
+        json!("https://remote.test/events/100"),
+        vec![alice_actor.clone()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    let row = participation().await.expect("invited row written");
+    assert_eq!(row.0, "invited");
+    assert_eq!(row.1, "invite_response");
+    assert_eq!(row.2, "https://remote.test/ap/activities/inv1");
+
+    // A non-organizer's invite is consumed but writes nothing.
+    let inv = invite(
+        2,
+        "https://remote.test/@mallory",
+        json!("https://remote.test/events/100"),
+        vec![alice_actor.clone()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    let row = participation().await.unwrap();
+    assert_eq!(
+        row.2, "https://remote.test/ap/activities/inv1",
+        "invite stamp unchanged"
+    );
+
+    // Remote-only addressee on a materialized event → handled, but
+    // `write_invited_rows` filters to local accounts so nothing is
+    // written.
+    let inv = invite(
+        3,
+        "https://remote.test/@org",
+        json!("https://remote.test/events/100"),
+        vec!["https://remote.test/@bob".into()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    let bob_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM event_participations p \
+         JOIN accounts a ON a.id = p.account_id \
+         WHERE a.actor_id = 'https://remote.test/@bob'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(bob_rows, 0);
+
+    // Non-Event object → falls through.
+    let inv = invite(
+        4,
+        "https://remote.test/@org",
+        json!({"id": "https://remote.test/notes/9", "type": "Note"}),
+        vec![alice_actor.clone()],
+    );
+    assert!(
+        !yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+
+    // A decided state is never clobbered by a later invite.
+    sqlx::query(
+        "UPDATE event_participations SET state = 'accepted' \
+         WHERE status_id = (SELECT id FROM statuses WHERE uri = 'https://remote.test/events/100')",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let inv = invite(
+        5,
+        "https://remote.test/@org",
+        json!("https://remote.test/events/100"),
+        vec![alice_actor.clone()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    let row = participation().await.unwrap();
+    assert_eq!(row.0, "accepted", "decided state preserved");
+    assert_eq!(
+        row.2, "https://remote.test/ap/activities/inv1",
+        "invite stamp untouched"
+    );
+}
+
+/// A bare-URI `Invite{Event}` that arrives before the event federates
+/// parks its addressing in `event_pending_invites`; the event's later
+/// ingest drains it into `invited` rows — and re-checks the sender's
+/// organizer authorization at drain time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_bare_uri_invite_parks_and_drains() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let _token = register(&env.app, "bob", "bob@x.com").await;
+    let bob_actor = format!("{BASE}/ap/users/bob");
+
+    let invite = |n: usize, actor: &str, uri: &str, to: Vec<String>| pubby_sdk::Activity {
+        id: format!("https://remote.test/ap/activities/pinv{n}"),
+        activity_type: "Invite".into(),
+        actor: actor.into(),
+        object: json!(uri),
+        to,
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let event = |id: &str, uri: &str| {
+        json!({
+            "id": uri,
+            "type": "Event",
+            "name": "Parked invite",
+            "attributedTo": id,
+            "startTime": "2026-04-01T10:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        })
+    };
+    let create = |n: usize, actor: &str, object: Value| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/ev{n}"),
+        activity_type: "Create".into(),
+        actor: actor.into(),
+        object,
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let participation = |uri: &str| {
+        let db = env.state.db.clone();
+        let uri = uri.to_string();
+        let actor = bob_actor.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS( \
+                     SELECT 1 FROM event_participations p \
+                     JOIN statuses s ON s.id = p.status_id \
+                     JOIN accounts a ON a.id = p.account_id \
+                     WHERE s.uri = $1 AND a.actor_id = $2)",
+            )
+            .bind(uri)
+            .bind(actor)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    let parked = |uri: &str| {
+        let db = env.state.db.clone();
+        let uri = uri.to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM event_pending_invites WHERE event_uri = $1",
+            )
+            .bind(uri)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+
+    // Invite for an event that hasn't federated → parked, fetch
+    // enqueued, handled.
+    let inv = invite(
+        1,
+        "https://remote.test/@org",
+        "https://remote.test/events/200",
+        vec![bob_actor.clone()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    assert_eq!(parked("https://remote.test/events/200").await, 1);
+    assert!(!participation("https://remote.test/events/200").await);
+
+    // A non-organizer's parked invite is dropped at drain time.
+    let inv = invite(
+        2,
+        "https://remote.test/@mallory",
+        "https://remote.test/events/300",
+        vec![bob_actor.clone()],
+    );
+    assert!(
+        yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap()
+    );
+    assert_eq!(parked("https://remote.test/events/300").await, 1);
+
+    // The events materialize — the organizer's invite drains into a
+    // row, the stranger's is dropped.
+    let c = create(
+        200,
+        "https://remote.test/@org",
+        event("https://remote.test/@org", "https://remote.test/events/200"),
+    );
+    assert!(remote::handle(&core, &c, &c.to_json()).await);
+    assert!(participation("https://remote.test/events/200").await);
+    assert_eq!(parked("https://remote.test/events/200").await, 0);
+
+    let c = create(
+        300,
+        "https://remote.test/@org",
+        event("https://remote.test/@org", "https://remote.test/events/300"),
+    );
+    assert!(remote::handle(&core, &c, &c.to_json()).await);
+    assert!(!participation("https://remote.test/events/300").await);
+    assert_eq!(parked("https://remote.test/events/300").await, 0);
+}
+
+/// `sync_event` on Update: a moved `startTime` updates the row and
+/// re-arms participant reminders (`reminded_at` reset).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_update_moves_start() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let _token = register(&env.app, "carol", "carol@x.com").await;
+    let carol_actor = format!("{BASE}/ap/users/carol");
+
+    let event_obj = |start: &str| {
+        json!({
+            "id": "https://remote.test/events/400",
+            "type": "Event",
+            "name": "Movable",
+            "attributedTo": "https://remote.test/@org",
+            "startTime": start,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        })
+    };
+    let activity = |n: usize, kind: &str, object: Value| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/mv{n}"),
+        activity_type: kind.into(),
+        actor: "https://remote.test/@org".into(),
+        object,
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let c = activity(1, "Create", event_obj("2026-05-01T10:00:00Z"));
+    assert!(remote::handle(&core, &c, &c.to_json()).await);
+
+    // A participant row with a fired reminder.
+    sqlx::query(
+        "INSERT INTO event_participations (status_id, account_id, role, state, protocol, reminded_at) \
+         SELECT s.id, a.id, 'participant', 'accepted', 'join', now() \
+         FROM statuses s, accounts a \
+         WHERE s.uri = 'https://remote.test/events/400' AND a.actor_id = $1",
+    )
+    .bind(&carol_actor)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let u = activity(2, "Update", event_obj("2026-05-02T10:00:00Z"));
+    assert!(remote::handle(&core, &u, &u.to_json()).await);
+
+    let (start, reminded): (
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT e.start_time, p.reminded_at \
+             FROM events e \
+             JOIN statuses s ON s.id = e.status_id \
+             JOIN event_participations p ON p.status_id = s.id \
+             JOIN accounts a ON a.id = p.account_id \
+             WHERE s.uri = 'https://remote.test/events/400' AND a.actor_id = $1",
+    )
+    .bind(&carol_actor)
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(start.to_rfc3339(), "2026-05-02T10:00:00+00:00");
+    assert!(reminded.is_none(), "moved start re-arms the reminder");
+}
+
+/// Event Update ownership: the incoming object's self-asserted
+/// `actor`/`organizers` list is not trusted on Update — a same-host
+/// stranger cannot rewrite a Group's event, and ownership never moves.
+/// A *stored* organizer (disclosed at Create) may still sign Updates.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_update_ownership() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    // Group event with a disclosed organizer — the stored organizer
+    // row is what later Updates are authorized against.
+    let event_obj = |name: &str, actor: &str, attributed: Value| {
+        json!({
+            "id": "https://remote.test/events/600",
+            "type": "Event",
+            "name": name,
+            "attributedTo": attributed,
+            "actor": actor,
+            "organizers": ["https://remote.test/@alice"],
+            "startTime": "2026-06-01T10:00:00Z",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        })
+    };
+    let activity = |n: usize, kind: &str, actor: &str, object: Value| pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/uo{n}"),
+        activity_type: kind.into(),
+        actor: actor.into(),
+        object,
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    let title = || {
+        let db = env.state.db.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT s.title FROM statuses s WHERE s.uri = 'https://remote.test/events/600'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap()
+            .unwrap()
+        }
+    };
+
+    let c = activity(
+        1,
+        "Create",
+        "https://remote.test/@alice",
+        event_obj(
+            "Original",
+            "https://remote.test/@alice",
+            json!({"id": "https://remote.test/@club", "type": "Group"}),
+        ),
+    );
+    assert!(remote::handle(&core, &c, &c.to_json()).await);
+    assert_eq!(title().await, "Original");
+
+    // A same-host stranger lists itself as `actor` — the Create gate
+    // would accept this shape, but Updates require a stored organizer.
+    let u = activity(
+        2,
+        "Update",
+        "https://remote.test/@mallory",
+        event_obj(
+            "Hijacked",
+            "https://remote.test/@mallory",
+            json!({"id": "https://remote.test/@club", "type": "Group"}),
+        ),
+    );
+    assert!(remote::handle(&core, &u, &u.to_json()).await);
+    assert_eq!(title().await, "Original", "self-asserted signer rejected");
+
+    // Ownership move: the stranger attributes the event to itself.
+    let u = activity(
+        3,
+        "Update",
+        "https://remote.test/@mallory",
+        event_obj(
+            "Hijacked",
+            "https://remote.test/@mallory",
+            json!("https://remote.test/@mallory"),
+        ),
+    );
+    assert!(remote::handle(&core, &u, &u.to_json()).await);
+    assert_eq!(title().await, "Original", "attributedTo move rejected");
+    let owner: String = sqlx::query_scalar(
+        "SELECT a.actor_id FROM statuses s JOIN accounts a ON a.id = s.account_id \
+         WHERE s.uri = 'https://remote.test/events/600'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(owner, "https://remote.test/@club");
+
+    // The disclosed organizer (a stored `event_organizers` row) may
+    // sign the Update.
+    let u = activity(
+        4,
+        "Update",
+        "https://remote.test/@alice",
+        event_obj(
+            "Renamed",
+            "https://remote.test/@alice",
+            json!({"id": "https://remote.test/@club", "type": "Group"}),
+        ),
+    );
+    assert!(remote::handle(&core, &u, &u.to_json()).await);
+    assert_eq!(title().await, "Renamed", "stored organizer accepted");
+}
+
+/// `event_pending_invites` abuse bounds: parking stops at a per-sender
+/// cap, and the retention sweep (`prune_pending_invites`) removes
+/// expired rows while leaving fresh ones.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_pending_invite_cap_and_prune() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let _token = register(&env.app, "erin", "erin@x.com").await;
+    let erin_actor = format!("{BASE}/ap/users/erin");
+
+    // Fill the per-sender cap straight from SQL.
+    sqlx::query(
+        "INSERT INTO event_pending_invites \
+             (event_uri, invite_activity_uri, actor, addressee) \
+         SELECT 'https://remote.test/events/fill' || g, \
+                'https://remote.test/ap/activities/finv' || g, \
+                'https://remote.test/@spammer', $1 \
+         FROM generate_series(1, 256) g",
+    )
+    .bind(&erin_actor)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let spammer_count = || {
+        let db = env.state.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM event_pending_invites \
+                 WHERE actor = 'https://remote.test/@spammer'",
+            )
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(spammer_count().await, 256);
+
+    // One more invite from the capped sender is dropped whole.
+    let inv = pubby_sdk::Activity {
+        id: "https://remote.test/ap/activities/finv999".into(),
+        activity_type: "Invite".into(),
+        actor: "https://remote.test/@spammer".into(),
+        object: json!("https://remote.test/events/999"),
+        to: vec![erin_actor.clone()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(
+        !yonder::events::remote::handle_invite(&core, &inv, &inv.to_json())
+            .await
+            .unwrap(),
+        "capped sender's invite falls through"
+    );
+    assert_eq!(spammer_count().await, 256, "cap holds");
+
+    // Retention: backdate the spammer's rows, keep a fresh one for
+    // another sender.
+    sqlx::query(
+        "UPDATE event_pending_invites SET created_at = now() - interval '30 days' \
+         WHERE actor = 'https://remote.test/@spammer'",
+    )
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO event_pending_invites \
+             (event_uri, invite_activity_uri, actor, addressee) \
+         VALUES ('https://remote.test/events/fresh', \
+                 'https://remote.test/ap/activities/finv-fresh', \
+                 'https://remote.test/@other', $1)",
+    )
+    .bind(&erin_actor)
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+
+    let deleted = yonder::events::remote::prune_pending_invites(&env.state.db, 7)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 256);
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM event_pending_invites")
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap();
+    assert_eq!(total, 1, "fresh row survives the sweep");
+}
+
+/// The read path: a materialized event exposes `yonder.event`/
+/// `pleroma.event` with locations, links and banner, and the
+/// Mastodon-API `content` carries the When/Where preamble — which is
+/// suppressed for event-aware clients (pl-fe) but shown to everyone
+/// else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_entity_output() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let _token = register(&env.app, "frank", "frank@x.com").await;
+
+    // Physical place + a Link attachment (not promoted to a virtual
+    // location because a physical place exists) + a banner image.
+    let create = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/ev500"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/@org".into(),
+        object: json!({
+            "id": "https://remote.test/events/500",
+            "type": "Event",
+            "name": "Entity test",
+            "attributedTo": "https://remote.test/@org",
+            "content": "<p>About the event</p>",
+            "startTime": "2026-07-01T10:00:00Z",
+            "location": {"type": "Place", "name": "Grand Hall"},
+            "attachment": [
+                {"type": "Link", "href": "https://remote.test/register", "name": "Register"},
+                {"type": "Document", "mediaType": "image/jpeg",
+                 "url": "https://remote.test/media/banner.jpg", "name": "Banner"}
+            ],
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    assert!(remote::handle(&core, &create, &create.to_json()).await);
+
+    let status_id: i64 =
+        sqlx::query_scalar("SELECT id FROM statuses WHERE uri = 'https://remote.test/events/500'")
+            .fetch_one(&env.state.db)
+            .await
+            .unwrap();
+
+    // Anonymous (non-event-aware) reader: full block + preamble.
+    let (status, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        None,
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ev = &body["yonder"]["event"];
+    assert_eq!(ev["name"].as_str(), Some("Entity test"), "{body}");
+    assert_eq!(ev["locations"][0]["name"].as_str(), Some("Grand Hall"));
+    assert_eq!(
+        ev["links"][0]["href"].as_str(),
+        Some("https://remote.test/register"),
+        "Link attachment persisted"
+    );
+    assert!(
+        ev["banner"].is_object(),
+        "banner resolved to a media entity: {ev}"
+    );
+    assert_eq!(
+        body["pleroma"]["event"]["name"].as_str(),
+        Some("Entity test")
+    );
+    let content = body["content"].as_str().unwrap();
+    assert!(content.contains("When:"), "preamble present: {content}");
+    assert!(content.contains("About the event"));
+
+    // An event-aware client (pl-fe) gets no preamble — it renders the
+    // structured block itself.
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT u.id FROM users u JOIN accounts a ON a.id = u.account_id \
+         WHERE a.username = 'frank'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let app_id: i64 = sqlx::query_scalar(
+        "INSERT INTO oauth_applications (name, client_id, client_secret_hash, confidential) \
+         VALUES ('pl-fe', 'plfe-client', 'x', false) RETURNING id",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let plfe_token = "plfe-test-token-0123456789abcdef";
+    sqlx::query(
+        "INSERT INTO oauth_access_tokens (application_id, user_id, token_hash, scopes, name) \
+         VALUES ($1, $2, $3, 'read', 'pl-fe tok')",
+    )
+    .bind(app_id)
+    .bind(user_id)
+    .bind(yonder::http::middleware::auth::token_hash(plfe_token))
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let (status, body) = request(
+        &env.app,
+        "GET",
+        &format!("/api/v1/statuses/{status_id}"),
+        Some(plfe_token),
+        None,
+        &[],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let content = body["content"].as_str().unwrap();
+    assert!(
+        !content.contains("When:"),
+        "preamble suppressed for event-aware clients: {content}"
+    );
+    assert!(content.contains("About the event"));
+    assert_eq!(
+        body["yonder"]["event"]["name"].as_str(),
+        Some("Entity test")
+    );
 }
 
 /// A bare remote stub still gets one `RemoteActorFetch`, but once

@@ -56,6 +56,7 @@ pub struct Config {
     pub http: HttpConfig,
     pub rate_limit: RateLimitConfig,
     pub polls: PollsConfig,
+    pub events: EventsConfig,
     pub content: ContentConfig,
     /// LaTeX formula rendering (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`).
     pub math: MathConfig,
@@ -216,6 +217,16 @@ impl Config {
         if !(1..=100).contains(&self.timelines.trends_max_limit) {
             return Err(crate::Error::Validation(
                 "timelines.trends_max_limit must be in 1..=100".to_string(),
+            ));
+        }
+        if !(1..=64).contains(&self.events.max_locations) {
+            return Err(crate::Error::Validation(
+                "events.max_locations must be in 1..=64".to_string(),
+            ));
+        }
+        if !(1..=32).contains(&self.events.max_categories) {
+            return Err(crate::Error::Validation(
+                "events.max_categories must be in 1..=32".to_string(),
             ));
         }
         if self.math.enabled {
@@ -1064,6 +1075,77 @@ impl Default for PollsConfig {
             max_option_chars: 200,
             min_duration_seconds: 5 * 60,
             max_duration_seconds: 30 * 24 * 60 * 60,
+        }
+    }
+}
+
+/// FEP-8a8e event support (`[events]`). `enabled = false` is planned
+/// to hide the composer type and calendar surfaces; nothing reads it
+/// yet, and inbound parsing always runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventsConfig {
+    /// Reserved — no consumer yet (planned UI/API gating).
+    pub enabled: bool,
+    /// Inferred `endTime` for open-ended local events and remote
+    /// events lacking `endTime` (Gancio uses 3 h).
+    pub default_duration_minutes: u32,
+    pub max_locations: u32,
+    pub max_categories: u32,
+    /// Accept category tokens outside the FEP list.
+    pub allow_custom_categories: bool,
+    /// Description excerpt length in the generated AP `summary`;
+    /// 0 = preamble only.
+    pub summary_excerpt_chars: u32,
+    /// Minutes before start that `pleroma:event_reminder` fires.
+    pub reminder_lead_minutes: u32,
+    /// Minutes before a remote event is considered stale and
+    /// re-fetchable on participant view.
+    pub remote_refresh_after_minutes: u32,
+    /// Optional server-side place lookup (`[events.geocoding]`).
+    pub geocoding: EventsGeocodingConfig,
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_duration_minutes: 180,
+            max_locations: 5,
+            max_categories: 3,
+            allow_custom_categories: false,
+            summary_excerpt_chars: 300,
+            reminder_lead_minutes: 60,
+            remote_refresh_after_minutes: 360,
+            geocoding: EventsGeocodingConfig::default(),
+        }
+    }
+}
+
+/// `events.geocoding.provider` values.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GeocodingProvider {
+    #[default]
+    None,
+    Nominatim,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventsGeocodingConfig {
+    pub provider: GeocodingProvider,
+    pub nominatim_url: String,
+    /// Required by Nominatim's usage policy; ignored by other providers.
+    pub user_agent: String,
+}
+
+impl Default for EventsGeocodingConfig {
+    fn default() -> Self {
+        Self {
+            provider: GeocodingProvider::None,
+            nominatim_url: "https://nominatim.openstreetmap.org".to_string(),
+            user_agent: String::new(),
         }
     }
 }

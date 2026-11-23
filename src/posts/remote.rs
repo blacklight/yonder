@@ -216,6 +216,183 @@ pub(crate) async fn handle_as(
     }
 }
 
+/// Event ownership-gate relaxation: `activity.actor` may be the
+/// object's `attributedTo`, its object-level `actor`, or a disclosed
+/// organizer — but only when the actor's host equals the object id's
+/// host (a same-origin organizer, e.g. a Mobilizon group event signed
+/// by the person while `attributedTo` is the group), `attributedTo`
+/// itself lives on that same host, and `attributedTo` is a collective
+/// actor, not another person on the instance (see
+/// [`attributed_is_collective`]). The `attributedTo` host check keeps
+/// a signer from attributing events to actors on other servers, which
+/// the same-host signer rule alone would not catch.
+async fn event_actor_allowed(
+    core: &ApCore,
+    actor: &str,
+    object: &Value,
+    attributed: &str,
+    object_id: &str,
+) -> bool {
+    let (Some(actor_domain), Some(object_domain)) = (
+        moderation::actor_domain(actor),
+        moderation::actor_domain(object_id),
+    ) else {
+        return false;
+    };
+    if actor_domain != object_domain {
+        return false;
+    }
+    if actor == attributed {
+        return true;
+    }
+    // Alternate signer: the attributed author must belong to the
+    // object's origin too — otherwise a signer could claim events
+    // authored by an actor on another server.
+    if moderation::actor_domain(attributed).as_deref() != Some(object_domain.as_str()) {
+        return false;
+    }
+    let mut candidates: Vec<String> = Vec::new();
+    if let Some(a) = object.get("actor") {
+        if let Some(uri) = a
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| a.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        {
+            candidates.push(uri);
+        }
+    }
+    for key in ["organizers", "organizer"] {
+        match object.get(key) {
+            Some(Value::Array(items)) => {
+                for item in items {
+                    if let Some(uri) = item.as_str().map(str::to_string).or_else(|| {
+                        item.get("id")
+                            .or_else(|| item.get("href"))
+                            .and_then(|i| i.as_str())
+                            .map(str::to_string)
+                    }) {
+                        candidates.push(uri);
+                    }
+                }
+            }
+            Some(v @ (Value::String(_) | Value::Object(_))) => {
+                if let Some(uri) = v.as_str().map(str::to_string).or_else(|| {
+                    v.get("id")
+                        .or_else(|| v.get("href"))
+                        .and_then(|i| i.as_str())
+                        .map(str::to_string)
+                }) {
+                    candidates.push(uri);
+                }
+            }
+            _ => {}
+        }
+    }
+    candidates.iter().any(|c| c == actor)
+        && attributed_is_collective(core, object, attributed).await
+}
+
+/// Whether `actor` may sign an Update for the event status `status_id`.
+/// Unlike the Create gate, the incoming object's self-asserted
+/// `actor`/`organizers` list is not trusted — the signer must be
+/// recorded in `event_organizers` (by resolved account or bare URI).
+/// The stored author always has an organizer row, so it passes too.
+async fn event_update_organizer_allowed(
+    db: &sqlx::PgPool,
+    status_id: i64,
+    actor: &str,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS( \
+             SELECT 1 FROM event_organizers o \
+             LEFT JOIN accounts a ON a.id = o.account_id \
+             WHERE o.status_id = $1 AND COALESCE(a.actor_id, o.uri) = $2)",
+    )
+    .bind(status_id)
+    .bind(actor)
+    .fetch_one(db)
+    .await?)
+}
+
+/// Actor types that legitimately own events signed by somebody else —
+/// Mobilizon groups, organizations, services.
+const COLLECTIVE_ACTOR_TYPES: &[&str] = &["Group", "Organization", "Service", "Application"];
+
+/// Whether an actor `type` value names a collective. `actor_data`
+/// stores the raw JSON, so an array type arrives quoted — match the
+/// quoted token as well as the bare name.
+fn is_collective_type(ty: &str) -> bool {
+    COLLECTIVE_ACTOR_TYPES
+        .iter()
+        .any(|t| ty == *t || ty.contains(&format!("\"{t}\"")))
+}
+
+/// The relaxation above exists for collective authors (a Mobilizon
+/// `Group` event signed by a member `Person`). Without the type
+/// check, any account on the origin could sign an `Event` whose
+/// `attributedTo` names *another person* on the same instance —
+/// the status would land on the victim's profile. `attributedTo` is
+/// a bare URI in most payloads, so the type comes from, in order:
+/// an embedded `type`, `accounts.actor_data`, `actor_cache`. An
+/// unknown type is allowed (first-contact group events must
+/// federate) while a `RemoteActorFetch` fills the cache so later
+/// events get a definitive answer; a known non-collective type is
+/// denied.
+async fn attributed_is_collective(core: &ApCore, object: &Value, attributed: &str) -> bool {
+    // The embedded hint only counts when it describes *this* actor —
+    // on Updates the stored owner can differ from the object's
+    // current `attributedTo`.
+    if attributed_to(object).as_deref() == Some(attributed) {
+        if let Some(t) = attributed_type_hint(object) {
+            return is_collective_type(&t);
+        }
+    }
+    let ty: Option<String> = sqlx::query_scalar(
+        "SELECT COALESCE( \
+             (SELECT a.actor_data->>'type' FROM accounts a WHERE a.actor_id = $1), \
+             (SELECT c.actor_data->>'type' FROM actor_cache c WHERE c.actor_id = $1))",
+    )
+    .bind(attributed)
+    .fetch_optional(&core.db)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+    match ty.as_deref() {
+        Some(t) => is_collective_type(t),
+        None => {
+            // Unknown — allow, and make sure the actor document gets
+            // fetched so subsequent events resolve the type.
+            if let Err(e) = crate::activitypub::lookup::upsert_remote_stub(
+                &core.db,
+                &core.dispatcher,
+                &core.config,
+                attributed,
+            )
+            .await
+            {
+                tracing::debug!(actor = %attributed, error = %e, "attributedTo stub upsert failed");
+            }
+            true
+        }
+    }
+}
+
+/// `attributedTo`'s embedded `type` when the object form carries one
+/// (array form → first item's type).
+fn attributed_type_hint(object: &Value) -> Option<String> {
+    let v = object.get("attributedTo")?;
+    let v = match v {
+        Value::Array(a) => a.first()?,
+        other => other,
+    };
+    match v.get("type")? {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(a) => a.iter().find_map(|i| i.as_str().map(str::to_string)),
+        _ => None,
+    }
+}
+
 /// `attributedTo` → actor URL (string, `{id}`, or first array item).
 fn attributed_to(object: &Value) -> Option<String> {
     match object.get("attributedTo") {
@@ -377,7 +554,7 @@ fn att_url_str(v: &Value) -> Option<&str> {
 /// Media kind for an `attachment` entry. `mediaType` is authoritative
 /// when present; SocialHome/PyFed emit ActivityStreams `type` values
 /// (`Image`, `Video`, `Audio`) without a MIME type.
-fn attachment_kind(att: &Value) -> Option<&'static str> {
+pub(crate) fn attachment_kind(att: &Value) -> Option<&'static str> {
     let media_type = att
         .get("mediaType")
         .and_then(|v| v.as_str())
@@ -452,7 +629,9 @@ fn infer_visibility(
     "direct"
 }
 
-fn str_list(v: Option<&Value>) -> Vec<String> {
+/// `to`/`cc` string-list extraction — shared with the events module
+/// (`Invite{Event}` materialization).
+pub(crate) fn str_list(v: Option<&Value>) -> Vec<String> {
     match v {
         Some(Value::String(s)) => vec![s.clone()],
         Some(Value::Array(a)) => a
@@ -477,23 +656,32 @@ enum Upsert {
 
 /// Create/Update materialization. The ownership gate runs before any
 /// write: `activity.actor` must equal `attributedTo`, and an Update
-/// must match the stored owner.
+/// must match the stored owner. For `Event` objects the gate is
+/// relaxed (§6): Mobilizon group events are signed by the organizer
+/// `Person` while `attributedTo` is the `Group` — the actor may be the
+/// attributedTo, the object-level `actor`, or a disclosed organizer,
+/// provided its host matches the object id's host.
 async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -> Result<Upsert> {
     let Some(author) = attributed_to(object) else {
         return Ok(Upsert::Ignored);
     };
-    if author != activity.actor {
-        tracing::warn!(
-            actor = %activity.actor, attributed = %author,
-            "spoofed remote status mutation dropped"
-        );
-        return Ok(Upsert::Ignored);
-    }
+    let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
     let object_id = object
         .get("id")
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
+    if author != activity.actor {
+        let allowed = object_type == "Event"
+            && event_actor_allowed(core, &activity.actor, object, &author, &object_id).await;
+        if !allowed {
+            tracing::warn!(
+                actor = %activity.actor, attributed = %author,
+                "spoofed remote status mutation dropped"
+            );
+            return Ok(Upsert::Ignored);
+        }
+    }
     if object_id.is_empty() {
         return Ok(Upsert::Ignored);
     }
@@ -512,9 +700,32 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             .bind(existing.account_id)
             .fetch_one(&core.db)
             .await?;
-        if !stub && owner_actor != activity.actor {
-            tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
-            return Ok(Upsert::Ignored);
+        if !stub {
+            if object_type == "Event" {
+                // Unlike the Create gate, an Update trusts nothing the
+                // incoming object self-asserts: its `actor`/`organizers`
+                // list is attacker-controlled, so a same-host Person
+                // could otherwise rewrite any Group's event by listing
+                // itself. Ownership never moves after creation, and an
+                // alternate signer must be a *stored* organizer.
+                if author != owner_actor {
+                    tracing::warn!(
+                        actor = %activity.actor, attributed = %author, uri = %object_id,
+                        "event Update with changed attributedTo dropped"
+                    );
+                    return Ok(Upsert::Ignored);
+                }
+                if owner_actor != activity.actor
+                    && !event_update_organizer_allowed(&core.db, existing.id, &activity.actor)
+                        .await?
+                {
+                    tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
+                    return Ok(Upsert::Ignored);
+                }
+            } else if owner_actor != activity.actor {
+                tracing::warn!(actor = %activity.actor, uri = %object_id, "spoofed Update dropped");
+                return Ok(Upsert::Ignored);
+            }
         }
         if !stub && activity.activity_type == "Update" {
             let incoming = object.get("updated").and_then(pubby_sdk::model::parse_dt);
@@ -532,10 +743,25 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
 
     let account_id = ensure_account(core, &author).await?;
     let visibility = infer_visibility(activity, object, &author);
-    let content_src = object
+    let is_event_obj = object_type == "Event";
+    // Parsed once here — pure — and reused for media resolution and
+    // the post-upsert `events` sync inside the transaction.
+    let parsed_event =
+        is_event_obj.then(|| crate::events::remote::parse_event(object, &core.config.events));
+    let mut content_src = object
         .get("content")
         .and_then(|v| v.as_str())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .to_string();
+    // An event with no `content` falls back to `summary` as its
+    // description (the summary itself is never folded into the body —
+    // Gancio repeats the whole description there).
+    if is_event_obj && content_src.trim().is_empty() {
+        if let Some(summary) = object.get("summary").and_then(|v| v.as_str()) {
+            content_src = summary.to_string();
+        }
+    }
+    let content_src = content_src.as_str();
     // Most servers send `content` as HTML; PeerTube (and some others)
     // declare `mediaType` and send Markdown or plain-text source —
     // run those through the same render pipeline locals use so links,
@@ -556,14 +782,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         "text/plain" => "text/plain",
         _ => "text/html",
     };
-    let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    // Mastodon's "converted" types (long-form + media shapes): the
-    // `name` headline and `summary` teaser join the status *text*
-    // with the permalink — `summary` is never a CW there.
-    let converted = matches!(
-        object_type,
-        "Article" | "Page" | "Audio" | "Video" | "Event"
-    );
+    // Events are NOT folded like Mastodon "converted" types: the name
+    // lives in `statuses.title`, the structured fields in the `events`
+    // table, and `summary` never becomes body text or a CW.
+    let converted = matches!(object_type, "Article" | "Page" | "Audio" | "Video");
     // Inline `<img>`s in remote HTML are only trusted when the same
     // object also delivers the image as an attachment (Yonder/Mastodon
     // style) — or, for the converted long-form types, unconditionally:
@@ -745,9 +967,16 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // `in_reply_to_uri` is always written — it powers relink-on-arrival
     // and the ancestor walk when `in_reply_to_id` is still NULL.
     // Article/Page metadata for the frontend article block — plain
-    // text, already bounded by the column CHECKs.
+    // text, already bounded by the column CHECKs. Events share the
+    // `title` column (the event name); `summary` keeps the remote AS2
+    // summary for search but is never rendered.
     let article_meta = matches!(object_type, "Article" | "Page");
-    let title_col = if article_meta {
+    let has_meta = article_meta || is_event_obj;
+    let title_col = if is_event_obj {
+        // The parser already resolved `name`/`nameMap` (event
+        // language first) and HTML-stripped it.
+        parsed_event.as_ref().and_then(|p| p.name.clone())
+    } else if article_meta {
         object
             .get("name")
             .and_then(|v| v.as_str())
@@ -757,7 +986,7 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     } else {
         None
     };
-    let summary_col = if article_meta && !summary_text.is_empty() {
+    let summary_col = if has_meta && !summary_text.is_empty() {
         Some(summary_text.clone())
     } else {
         None
@@ -921,6 +1150,13 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         preview_art: Option<String>,
     }
     let mut atts: Vec<RemoteAtt> = Vec::new();
+    // The event banner renders in the event card, not inline — it
+    // must keep its `media_attachments` row even when the same URL
+    // also appears as an inline `<img>`.
+    let banner_url = parsed_event
+        .as_ref()
+        .and_then(|p| p.banner.as_ref())
+        .map(|b| b.url.clone());
     for att in object
         .get("attachment")
         .and_then(|v| v.as_array())
@@ -930,12 +1166,20 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         let url = att.get("url").and_then(att_url_str);
         let Some(url) = url else { continue };
         let media_type = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
-        let Some(kind) = attachment_kind(att) else {
+        // Events extend `attachment_kind`: a `Document`/`Image` named
+        // `Banner` without a mediaType counts as an image.
+        let kind = if is_event_obj {
+            crate::events::remote::event_attachment_kind(att)
+        } else {
+            attachment_kind(att)
+        };
+        let Some(kind) = kind else {
             continue;
         };
         // The image already renders inline in the post body — a
         // `media_attachments` row would show it twice.
         if kind == "image"
+            && banner_url.as_deref() != Some(url)
             && super::render::normalize_url_for_match(url)
                 .is_some_and(|u| inline_image_srcs.contains(&u))
         {
@@ -979,6 +1223,22 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
                 preview_art: preview_art_url(&Value::Null, object),
             });
         }
+    }
+    // The event `image` (flyer) becomes a media row when it isn't
+    // already an attachment — WordPress Event Bridge sends the same
+    // URL in both places, which the `remote_url` dedupe absorbs.
+    if let Some(flyer) = parsed_event
+        .as_ref()
+        .and_then(|p| p.flyer.as_ref())
+        .filter(|f| !atts.iter().any(|a| a.url == f.url))
+    {
+        atts.push(RemoteAtt {
+            kind: "image",
+            url: flyer.url.clone(),
+            media_type: flyer.media_type.clone().unwrap_or_default(),
+            description: flyer.name.clone(),
+            preview_art: None,
+        });
     }
     let mut remote_urls: Vec<String> = Vec::new();
     for a in &atts {
@@ -1051,6 +1311,35 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // Question → polls/poll_options (votes stay remote).
     if object.get("type").and_then(|v| v.as_str()) == Some("Question") {
         sync_poll(&mut tx, status_id, object).await?;
+    }
+    // Event → events/event_locations/event_organizers. Runs after the
+    // media inserts so banner/flyer URLs resolve to row ids.
+    let mut event_outcome = None;
+    if let Some(parsed) = &parsed_event {
+        let banner_id = media_id_for_url(
+            &mut tx,
+            status_id,
+            parsed.banner.as_ref().map(|b| b.url.as_str()),
+        )
+        .await?;
+        let flyer_id = media_id_for_url(
+            &mut tx,
+            status_id,
+            parsed.flyer.as_ref().map(|f| f.url.as_str()),
+        )
+        .await?;
+        event_outcome = Some(
+            crate::events::remote::sync_event(
+                &mut tx,
+                status_id,
+                parsed,
+                account_id,
+                banner_id,
+                flyer_id,
+                &core.config.events,
+            )
+            .await?,
+        );
     }
     // Reply counter on the parent: only moves when the linkage changed —
     // a new reply bumps it, an Update reparenting shifts it, and a
@@ -1136,7 +1425,9 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     // on create/edit — materialization is the remote equivalent. Only
     // fresh rows and accepted Updates enqueue: a redelivered Create
     // changed nothing (a stale Update returned before this point).
-    if is_new || activity.activity_type == "Update" {
+    // Events skip it: the event card's banner/metadata beat the page
+    // card, and Gancio/Mobilizon pages are SPA shells.
+    if (is_new || activity.activity_type == "Update") && !is_event_obj {
         if let Ok(Some(status)) = super::load(&core.db, status_id).await {
             let media_ids: Vec<i64> =
                 sqlx::query_scalar("SELECT id FROM media_attachments WHERE status_id = $1")
@@ -1170,6 +1461,26 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     .await
     {
         tracing::warn!(status_id, uri = %object_id, error = %e, "pending boost drain failed");
+    }
+
+    // A remote event Update that changed material fields (start,
+    // end, status, locations) fans out `pleroma:event_update` to local
+    // participants — the hook is a stub until the notifications
+    // section wires it.
+    if let Some(outcome) = event_outcome {
+        if outcome.material_changed && activity.activity_type == "Update" {
+            crate::events::remote::event_update_fanout(core, status_id).await;
+        }
+    }
+    // Bare-URI `Invite{Event}` activities that arrived before this
+    // object federated write their `invited` rows now — best-effort,
+    // a drain failure must not fail the ingest itself.
+    if is_event_obj {
+        if let Err(e) =
+            crate::events::remote::drain_pending_invites(core, status_id, &object_id).await
+        {
+            tracing::warn!(status_id, uri = %object_id, error = %e, "pending invite drain failed");
+        }
     }
 
     // A still-pending quote target gets an active fetch — passive
@@ -1351,6 +1662,40 @@ pub async fn enqueue_remote_media_fetches(core: &ApCore, status_id: i64) -> Resu
     Ok(())
 }
 
+/// Materialize an embedded remote object through the same path as an
+/// inbox `Create` — used by `Invite{Event}` handling, where the event
+/// document arrives inside the Invite rather than as its own activity.
+/// Returns the materialized status id when the object carried one —
+/// note this can be an *older* copy: if the ownership gate rejected
+/// the embedded object, `load_by_uri` still finds whatever was stored
+/// before, which callers must not mistake for a fresh ingest.
+pub(crate) async fn ingest_embedded(
+    core: &ApCore,
+    actor: &str,
+    object: &Value,
+    to: Vec<String>,
+    cc: Vec<String>,
+) -> Result<Option<i64>> {
+    let activity = pubby_sdk::Activity {
+        activity_type: "Create".to_string(),
+        actor: actor.to_string(),
+        object: object.clone(),
+        to,
+        cc,
+        ..Default::default()
+    };
+    let raw = json!({ "object": object });
+    handle_as(core, &activity, &raw, IngestOrigin::Inbox).await;
+    let uri = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if uri.is_empty() {
+        return Ok(None);
+    }
+    Ok(super::load_by_uri(&core.db, uri).await?.map(|s| s.id))
+}
+
 /// `status_mentions` account lookup for a Mention `href`.
 async fn mentions_account(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -1369,6 +1714,25 @@ async fn mentions_account(
             r.get("actor_id"),
         )
     }))
+}
+
+/// Resolve a remote media URL to its `media_attachments.id` inside the
+/// ingest transaction (event banner/flyer linkage).
+async fn media_id_for_url(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    status_id: i64,
+    url: Option<&str>,
+) -> Result<Option<i64>> {
+    let Some(url) = url else { return Ok(None) };
+    sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT id FROM media_attachments WHERE status_id = $1 AND remote_url = $2",
+    )
+    .bind(status_id)
+    .bind(url)
+    .fetch_optional(&mut **tx)
+    .await
+    .map(|row| row.flatten())
+    .map_err(Into::into)
 }
 
 /// Materialize a remote `Question`: `oneOf`/`anyOf` options and

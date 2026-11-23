@@ -83,7 +83,8 @@ pub async fn show(
     auth: MaybeAuth,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     let status = posts::load(&ctx.db, id)
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
@@ -155,7 +156,8 @@ pub async fn context(
     ClientIp(ip): ClientIp,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     let status = posts::load(&ctx.db, id)
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
@@ -544,7 +546,8 @@ pub async fn list_by_ids(
         }
     }
     ids.truncate(100);
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.app_name.as_deref());
     let mut statuses = Vec::with_capacity(ids.len());
     for id in ids {
         if let Some(status) = posts::load(&ctx.db, id).await? {

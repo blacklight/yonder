@@ -209,10 +209,11 @@ pub fn register_jobs(registry: &mut crate::jobs::Registry) {
 pub async fn render(
     state: &AppState,
     results: &RawResults,
-    viewer: Option<i64>,
+    caller: Option<&crate::http::middleware::auth::AuthContext>,
     v1: bool,
 ) -> Result<Value> {
-    let ctx = PostContext::new(state);
+    let viewer = caller.map(|a| a.account_id);
+    let ctx = PostContext::new(state).with_client_app(caller.and_then(|a| a.app_name.as_deref()));
     let base_url = ctx.base_url();
 
     let mut accounts = Vec::with_capacity(results.account_ids.len());

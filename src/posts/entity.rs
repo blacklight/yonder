@@ -192,6 +192,8 @@ struct StatusBatch {
     flags: HashMap<i64, (bool, bool, bool)>,
     /// status ids inside a conversation the viewer muted.
     muted: HashSet<i64>,
+    /// Event side-table bundles by status id (`object_type = 'Event'`).
+    events: HashMap<i64, crate::events::entity::EventBundle>,
 }
 
 impl StatusBatch {
@@ -612,6 +614,15 @@ impl StatusBatch {
             .await
             .map_err(to_err)
         };
+        let mut event_ids: Vec<i64> = rows
+            .iter()
+            .chain(originals.values())
+            .filter(|s| super::is_event(s))
+            .map(|s| s.id)
+            .collect();
+        event_ids.sort_unstable();
+        event_ids.dedup();
+        let events_f = crate::events::entity::load_many(db, &event_ids, viewer);
         let own_f = async {
             match (viewer, poll_ids.is_empty()) {
                 (Some(v), false) => sqlx::query_as::<_, (i64, i32)>(
@@ -708,6 +719,7 @@ impl StatusBatch {
             option_rows,
             voter_rows,
             own_rows,
+            events,
             mention_seen_ids,
             followed,
             hidden_accounts,
@@ -720,6 +732,7 @@ impl StatusBatch {
             options_f,
             voters_f,
             own_f,
+            events_f,
             mention_f,
             follows_f,
             hidden_f,
@@ -1051,6 +1064,7 @@ impl StatusBatch {
             pinned,
             flags,
             muted,
+            events,
         })
     }
 
@@ -1150,10 +1164,29 @@ impl StatusBatch {
             .poll_id
             .and_then(|id| self.polls.get(&id).cloned())
             .unwrap_or(Value::Null);
-        let content = status
+        // Event statuses get a read-time preamble ("When / Where /
+        // Online") prepended to the description — Mastodon-API clients
+        // that don't know `yonder.event` still read a sensible event.
+        // Event-aware apps (pl-fe, soapbox, nicolex) render the
+        // structured block themselves, so the preamble is suppressed
+        // for them (owner decision 1b).
+        let desc_html = status
             .content_html
             .clone()
             .unwrap_or_else(|| pubby_sdk::content::html_escape(&status.content));
+        let event_bundle = self.events.get(&status.id);
+        let event_aware = crate::events::entity::is_event_aware_client(ctx.client_app.as_deref());
+        let content = match event_bundle {
+            Some(bundle) if !event_aware => {
+                let preamble = crate::events::summary::preamble_html(
+                    &bundle.row,
+                    &bundle.locations,
+                    status.language.as_deref(),
+                );
+                format!("{preamble}{desc_html}")
+            }
+            _ => desc_html.clone(),
+        };
         let (faved, marked, boosted) = self.flags.get(&status.id).copied().unwrap_or_default();
         let flags = json!({
             "reblogged": boosted,
@@ -1222,6 +1255,41 @@ impl StatusBatch {
             })
         } else {
             Value::Null
+        };
+        // `yonder.event`/`pleroma.event` — only on `object_type =
+        // 'Event'` statuses with a materialized `events` row.
+        let (event_block, pleroma_event_block) = match event_bundle {
+            Some(bundle) => {
+                let rows: Vec<&MediaRow> =
+                    self.media.get(&status.id).into_iter().flatten().collect();
+                let media_for = |id: i64| -> Value {
+                    rows.iter()
+                        .find(|m| m.id == id)
+                        .map(|m| media_entity(&ctx.config, &base_url, m))
+                        .unwrap_or(Value::Null)
+                };
+                (
+                    crate::events::entity::yonder_event_json(
+                        bundle,
+                        status.id,
+                        status.title.as_deref(),
+                        Some(desc_html.as_str()),
+                        status.local,
+                        viewer,
+                        status.account_id,
+                        &base_url,
+                        &ctx.config,
+                        &media_for,
+                    ),
+                    crate::events::entity::pleroma_event_json(
+                        bundle,
+                        status.title.as_deref(),
+                        viewer,
+                        status.account_id,
+                    ),
+                )
+            }
+            None => (Value::Null, Value::Null),
         };
         let imported_block = status.original_id.as_ref().map(|uri| {
             json!({
@@ -1296,6 +1364,7 @@ impl StatusBatch {
             "muted": self.muted.contains(&status.id),
             "pleroma": {
                 "emoji_reactions": emoji_reactions,
+                "event": pleroma_event_block,
             },
             "yonder": {
                 "source": status.content,
@@ -1306,6 +1375,7 @@ impl StatusBatch {
                     _ => Value::Null,
                 },
                 "article": article_block,
+                "event": event_block,
                 // §10: import provenance — the source URI and the
                 // post's original publication instant, present only
                 // on imported copies. Observation details stay on the

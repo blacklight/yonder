@@ -131,7 +131,7 @@ pub(crate) fn asset_url(base_url: &str, path: &Option<String>, name: &str) -> Op
 pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
     json!({
         "metadata": {
-            "features": ["pleroma_emoji_reactions", "yonder"],
+            "features": ["pleroma_emoji_reactions", "yonder", "events"],
             "post_formats": ["text/plain", "text/markdown"],
             // Akkoma-style WebPush discovery: clients need the VAPID
             // public key *before* they can create a subscription

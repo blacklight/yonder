@@ -356,6 +356,29 @@ min_duration_seconds = 300
 # Default: 30 days.
 max_duration_seconds = 2592000
 
+[events]
+# `enabled` currently only gates planned UI/API surfaces — inbound
+# Event parsing and materialization always run.
+enabled = true
+# Inferred endTime for open-ended events; clamped to 1 minute - 1 week.
+default_duration_minutes = 180
+max_locations = 5
+max_categories = 3
+# Inbound parser keeps unknown category tokens (plan.md §6); this
+# flag gates custom categories in local authoring (later section).
+allow_custom_categories = false
+# Reserved for the outbound summary builder / reminder sections.
+summary_excerpt_chars = 300
+reminder_lead_minutes = 60
+remote_refresh_after_minutes = 360
+
+# Pending (geocoding lands with the discovery section): server-side
+# place lookup for the composer.
+[events.geocoding]
+provider = "none"
+nominatim_url = "https://nominatim.openstreetmap.org"
+user_agent = ""
+
 [content]
 max_post_length = 5000
 max_bio_length = 5000

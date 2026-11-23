@@ -208,6 +208,20 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
         ) {
             return crate::interactions::inbound::handle(&core, activity, raw);
         }
+        // Friendica/Hubzilla event invitations — materialize the
+        // event and record `invited` participation rows. Returns
+        // `Handled` only for event invites; other `Invite` objects
+        // (groups, actors) fall through to the default dispatch.
+        if activity.activity_type == "Invite" {
+            match sync_block(crate::events::remote::handle_invite(&core, activity, raw)) {
+                Ok(true) => return Ok(ActivityDisposition::Handled),
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "Invite ingest failed");
+                    return Ok(ActivityDisposition::Handled);
+                }
+            }
+        }
         // Social graph (epic 14): `Follow` stays PassThrough (pubby
         // stores the follower/request — the hook just schedules the
         // notification settle); `Block` severs the local follow.

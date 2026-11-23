@@ -940,6 +940,88 @@ async fn sessions_and_user_tokens() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// Regression: user-managed tokens (`POST /api/v1/tokens`) carry no
+/// `application_id`, so token resolution must not INNER JOIN
+/// `oauth_applications` — otherwise every PAT gets a 401.
+#[tokio::test]
+async fn personal_access_token_authenticates() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_app(base_config()).await else {
+        return;
+    };
+    let (status, _) = register_user(&env.app, "pat", "pat@x.com").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = password_login(&env.app, "pat@x.com", "hunter2password").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = body["access_token"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req(
+                "POST",
+                "/api/v1/tokens",
+                json!({"name": "ci", "scopes": "read"}),
+            ),
+            &token,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let pat = body["token"].as_str().unwrap().to_string();
+
+    // The PAT resolves like any other credential.
+    let (status, body) = request(
+        &env.app,
+        authed(
+            json_req("GET", "/api/v1/accounts/verify_credentials", json!({})),
+            &pat,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["acct"].as_str(), Some("pat"), "{body}");
+    // The PAT resolves through `resolve_token` with no OAuth app —
+    // `app_name` stays `None`, so event rendering falls back to
+    // generic client handling.
+    let ctx = yonder::http::middleware::auth::resolve_token(env.state.as_ref(), &pat)
+        .await
+        .expect("PAT must resolve");
+    assert_eq!(ctx.app_name, None);
+
+    // An app-issued token resolves its OAuth app name — event-aware
+    // client detection (`pl-fe`/`soapbox`/`nicolex`) depends on it.
+    let app_token = "app-test-token-0123456789abcdef";
+    let user_id: i64 = sqlx::query_scalar(
+        "SELECT u.id FROM users u JOIN accounts a ON a.id = u.account_id \
+         WHERE a.username = 'pat'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    let app_id: i64 = sqlx::query_scalar(
+        "INSERT INTO oauth_applications (name, client_id, client_secret_hash, confidential) \
+         VALUES ('TestApp', 'test-app-client', 'x', false) RETURNING id",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO oauth_access_tokens (application_id, user_id, token_hash, scopes, name) \
+         VALUES ($1, $2, $3, 'read', 'app tok')",
+    )
+    .bind(app_id)
+    .bind(user_id)
+    .bind(yonder::http::middleware::auth::token_hash(app_token))
+    .execute(&env.state.db)
+    .await
+    .unwrap();
+    let ctx = yonder::http::middleware::auth::resolve_token(env.state.as_ref(), app_token)
+        .await
+        .expect("app token must resolve");
+    assert_eq!(ctx.app_name.as_deref(), Some("TestApp"));
+}
+
 #[tokio::test]
 async fn email_verification_flow() {
     let mut config = base_config();

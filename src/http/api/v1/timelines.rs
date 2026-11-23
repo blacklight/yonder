@@ -75,13 +75,15 @@ async fn filters(
 async fn render(
     state: &AppState,
     rows: Vec<StatusRow>,
-    viewer: Option<i64>,
+    auth: Option<&AuthContext>,
     rules: &[Rule],
     uri: &Uri,
     params: &HashMap<String, String>,
     limit: i64,
 ) -> Result<(HeaderMap, Json<Value>)> {
-    let ctx = PostContext::new(state);
+    let mut ctx = PostContext::new(state);
+    ctx.set_client_app(auth.and_then(|a| a.app_name.as_deref()));
+    let viewer = auth.map(|a| a.account_id);
     let mut out = posts::entity::status_entities(&ctx, &rows, viewer).await?;
     content_filters::apply::attach_filtered(&state.db, rules, &rows, &mut out).await?;
     let cursors = timelines::query::cursors(&rows);
@@ -127,16 +129,7 @@ pub async fn home(
         &page,
     )
     .await?;
-    render(
-        &state,
-        rows,
-        Some(auth.account_id),
-        &rules,
-        &uri,
-        &params,
-        page.limit,
-    )
-    .await
+    render(&state, rows, Some(&auth), &rules, &uri, &params, page.limit).await
 }
 
 /// `GET /api/v1/timelines/public` — `local=true` restricts to local
@@ -182,7 +175,7 @@ pub async fn public(
     render(
         &state,
         rows,
-        auth.0.as_ref().map(|a| a.account_id),
+        auth.0.as_ref(),
         &rules,
         &uri,
         &params,
@@ -229,16 +222,7 @@ pub async fn list_timeline(
     let page = paginate::parse(&params);
     let (filters, rules) = filters(&state, Some(&auth), &params, FilterContext::Home).await?;
     let rows = timelines::query::fetch(&state.db, &scope, &filters, &page).await?;
-    render(
-        &state,
-        rows,
-        Some(auth.account_id),
-        &rules,
-        &uri,
-        &params,
-        page.limit,
-    )
-    .await
+    render(&state, rows, Some(&auth), &rules, &uri, &params, page.limit).await
 }
 
 /// `GET /api/v1/timelines/tag/{hashtag}` — public statuses carrying
@@ -281,7 +265,7 @@ pub async fn tag(
     render(
         &state,
         rows,
-        auth.0.as_ref().map(|a| a.account_id),
+        auth.0.as_ref(),
         &rules,
         &uri,
         &params,

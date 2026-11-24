@@ -988,7 +988,7 @@ pub async fn sync_event(
              timezone, utc_offset_seconds, status, previous_start_time, join_mode, \
              external_participation_url, maximum_attendee_capacity, participants_count, \
              pending_count, remote_participants_count, categories, links, banner_media_id, \
-             flyer_media_id, comments_enabled, organizers_disclosed, attendees_visibility, \
+             flyer_media_id, invitees, comments_enabled, organizers_disclosed, attendees_visibility, \
              attendees_uri, remote_join_protocol, raw_status, created_at, updated_at \
          FROM events WHERE status_id = $1 FOR UPDATE",
     )

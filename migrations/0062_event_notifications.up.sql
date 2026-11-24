@@ -19,7 +19,5 @@ ALTER TABLE accounts DROP CONSTRAINT accounts_default_post_type_check;
 ALTER TABLE accounts ADD CONSTRAINT accounts_default_post_type_check
     CHECK (default_post_type IN ('note', 'article', 'event'));
 
--- Reminder-sweep idempotency marker (Section 12): NULL until the
--- `pleroma:event_reminder` notification has been queued for this
--- (event, participant, start_time) triple; cleared on reschedule.
-ALTER TABLE event_participations ADD COLUMN reminded_at TIMESTAMPTZ;
+-- Reminder-sweep idempotency marker (Section 12) is `event_participations.reminded_at`,
+-- already created by 0057_events — do not re-add it here.

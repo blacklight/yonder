@@ -212,6 +212,9 @@ pub struct EventRow {
     pub links: Vec<EventLink>,
     pub banner_media_id: Option<i64>,
     pub flyer_media_id: Option<i64>,
+    /// Authoring-side invitee account ids (`0060`) — local events only;
+    /// remote syncs never populate it.
+    pub invitees: Vec<i64>,
     /// Comments/replies hint from the origin — UI hint only.
     pub comments_enabled: bool,
     pub organizers_disclosed: bool,
@@ -407,6 +410,7 @@ mod tests {
             categories: vec![],
             banner_media_id: None,
             flyer_media_id: None,
+            invitees: vec![],
             comments_enabled: true,
             organizers_disclosed: true,
             attendees_visibility: AttendeesVisibility::Organizers,

@@ -390,13 +390,13 @@ pub fn transition(
         RsvpInput::Leave => leave_transition(existing, env),
         RsvpInput::Decline => decline_transition(existing),
         RsvpInput::AcceptInvite { activity_uri } => {
-            invite_response(existing, ParticipationState::Accepted, activity_uri)
+            invite_response(existing, ParticipationState::Accepted, activity_uri, env)
         }
         RsvpInput::TentativeAcceptInvite { activity_uri } => {
-            invite_response(existing, ParticipationState::Tentative, activity_uri)
+            invite_response(existing, ParticipationState::Tentative, activity_uri, env)
         }
         RsvpInput::RejectInvite { activity_uri } => {
-            invite_response(existing, ParticipationState::Declined, activity_uri)
+            invite_response(existing, ParticipationState::Declined, activity_uri, env)
         }
         RsvpInput::RemoteResponse { kind, activity_uri } => {
             remote_response(existing, kind, activity_uri, party)
@@ -632,11 +632,15 @@ fn counter_delta_for_removal(e: &EventParticipationRow) -> CounterDelta {
 
 /// Friendica-style `Accept`/`TentativeAccept`/`Reject` on our Invite
 /// or the event — resolves an `invited` row immediately
-/// (`protocol='invite_response'`).
+/// (`protocol='invite_response'`). On a *remote* event the answer
+/// federates back to the organizer (§5.3: `to` = organizer actors);
+/// the object is the stored `invite_activity_uri` when the invite
+/// named one, else the event URI.
 fn invite_response(
     existing: Option<&EventParticipationRow>,
     state: ParticipationState,
     activity_uri: Option<String>,
+    env: &RsvpEnv,
 ) -> Result<Option<RsvpOutcome>> {
     let Some(e) = existing else {
         return Ok(None);
@@ -652,9 +656,41 @@ fn invite_response(
     write.protocol = ParticipationProtocol::InviteResponse;
     write.response_activity_uri = activity_uri;
     let counters = counter_delta(existing, state);
-    let mut out = RsvpOutcome::write(Some(write), counters, None);
+    let outbound = if env.event_local {
+        None
+    } else {
+        let object = e
+            .invite_activity_uri
+            .clone()
+            .unwrap_or_else(|| env.event_uri.clone());
+        let (to, cc) = invite_response_audience(env);
+        Some(match state {
+            ParticipationState::Accepted => OutboundActivity::Accept { object, to, cc },
+            ParticipationState::Tentative => OutboundActivity::TentativeAccept { object, to, cc },
+            ParticipationState::Declined => OutboundActivity::Reject { object, to, cc },
+            _ => return Ok(None),
+        })
+    };
+    let mut out = RsvpOutcome::write(Some(write), counters, outbound);
     out.notify_participant = true;
     Ok(Some(out))
+}
+
+/// Invite-response addressing for our outbound activities on a
+/// remote event: `to` = the organizer actors (§5.3 — Friendica
+/// requires `to`), `cc` = `attributedTo` when it differs.
+fn invite_response_audience(env: &RsvpEnv) -> (Vec<String>, Vec<String>) {
+    let mut to = env.organizer_actors.clone();
+    if !to.contains(&env.organizer_actor) {
+        to.push(env.organizer_actor.clone());
+    }
+    let mut cc = Vec::new();
+    if let Some(attr) = &env.attributed_to_actor {
+        if !to.contains(attr) {
+            cc.push(attr.clone());
+        }
+    }
+    (to, cc)
 }
 
 /// §7.2 — inbound `Accept`/`Reject`/`Ignore`/`TentativeAccept`
@@ -915,6 +951,7 @@ mod tests {
             links: vec![],
             banner_media_id: None,
             flyer_media_id: None,
+            invitees: vec![],
             comments_enabled: true,
             organizers_disclosed: true,
             attendees_visibility: crate::events::model::AttendeesVisibility::Public,
@@ -1204,6 +1241,74 @@ mod tests {
         assert_eq!(w.state, ParticipationState::Accepted);
         assert_eq!(w.protocol, ParticipationProtocol::InviteResponse);
         assert_eq!(w.response_activity_uri.as_deref(), Some("act-1"));
+    }
+
+    #[test]
+    fn remote_invite_response_federates_back() {
+        // Our user answering an invite on a *remote* event — the
+        // answer must reach the organizer, addressed `to:` them
+        // (§5.3), with the Invite's own id as the object when the
+        // invitee's row recorded one.
+        let invited = |invite_uri: Option<&str>| EventParticipationRow {
+            id: 1,
+            status_id: 1,
+            account_id: 42,
+            role: ParticipantRole::Participant,
+            state: ParticipationState::Invited,
+            protocol: ParticipationProtocol::InviteResponse,
+            request_activity_uri: None,
+            response_activity_uri: None,
+            invite_activity_uri: invite_uri.map(str::to_string),
+            participation_message: None,
+            reminded_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let out = transition(
+            &event(),
+            Some(&invited(Some("invite-1"))),
+            RsvpInput::AcceptInvite { activity_uri: None },
+            &party(),
+            &env_remote(),
+        )
+        .unwrap()
+        .unwrap();
+        match out.outbound {
+            Some(OutboundActivity::Accept { object, to, cc }) => {
+                assert_eq!(object, "invite-1");
+                assert_eq!(to, vec!["https://remote.example/users/org".to_string()]);
+                assert_eq!(cc, vec!["https://remote.example/users/group".to_string()]);
+            }
+            other => panic!("expected Accept, got {other:?}"),
+        }
+        // No stored invite id → the event URI is the object; a
+        // decline answers with `Reject`.
+        let out = transition(
+            &event(),
+            Some(&invited(None)),
+            RsvpInput::RejectInvite { activity_uri: None },
+            &party(),
+            &env_remote(),
+        )
+        .unwrap()
+        .unwrap();
+        match out.outbound {
+            Some(OutboundActivity::Reject { object, .. }) => {
+                assert_eq!(object, "https://remote.example/users/org/statuses/9")
+            }
+            other => panic!("expected Reject, got {other:?}"),
+        }
+        // Local events never federate invite responses.
+        let out = transition(
+            &event(),
+            Some(&invited(Some("invite-1"))),
+            RsvpInput::AcceptInvite { activity_uri: None },
+            &party(),
+            &env_local(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(out.outbound.is_none());
     }
 
     #[test]

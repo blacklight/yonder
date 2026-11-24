@@ -3470,8 +3470,11 @@ export interface paths {
      *     visibility-scoped), `home` (followed accounts), `local`
      *     (local public+local visibility), `federated` (public only).
      *     `state` filters the viewer's participation state; `from`/`to`
-     *     bound the window (default now → +90d); `category` filters; postponed
+     *     bound the window (default now → +90d; an explicit `from` without
+     *     `to` is unbounded); `category` filters; postponed
      *     events (`start_time IS NULL`) always appear, sorted last.
+     *     `near=lat,lon` + `radius_km` keep only events with a physical
+     *     location within the radius (spherical law of cosines).
      *     Pagination is keyset on `(start_time, status_id)` via `cursor`.
      */
     get: operations["events_list"];
@@ -4357,7 +4360,11 @@ export interface components {
     };
     /** @description `POST .../invitees` body. */
     InviteesBody: {
-      account_ids: number[];
+      /**
+       * @description Local account ids — string or number; snowflake values exceed
+       *     JS's `Number.MAX_SAFE_INTEGER`, so clients send strings.
+       */
+      account_ids: components["schemas"]["EntityId"][];
     };
     /**
      * @description Body for `POST /notifications/read` — ids the client rendered, or
@@ -12648,6 +12655,14 @@ export interface operations {
         to?: string;
         /** @description FEP category filter */
         category?: string;
+        /** @description Hashtag filter (case-insensitive, leading # optional) */
+        tag?: string;
+        /** @description true → only virtual-location events */
+        online?: boolean;
+        /** @description lat,lon — keep events with a physical location within radius_km */
+        near?: string;
+        /** @description Search radius for `near` (default 50, max 500) */
+        radius_km?: number;
         include_cancelled?: boolean;
         /** @description Keyset cursor from a previous page */
         cursor?: string;

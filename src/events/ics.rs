@@ -392,6 +392,7 @@ mod tests {
             links: vec![],
             banner_media_id: None,
             flyer_media_id: None,
+            invitees: vec![],
             comments_enabled: true,
             organizers_disclosed: true,
             attendees_visibility: crate::events::model::AttendeesVisibility::Public,

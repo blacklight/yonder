@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
+import Avatar from "@/components/ui/Avatar.vue";
 import { search } from "@/api/search";
 import { FEP_CATEGORIES } from "@/api/events";
 import type { Account, MediaAttachment } from "@/api/entities";
@@ -152,7 +153,7 @@ async function searchInvitees() {
   }
   inviteLoading.value = true;
   try {
-    const res = await search({ q, type: "accounts", limit: 5 });
+    const res = await search({ q, type: "accounts", limit: 5, resolve: true });
     const chosen = new Set(props.event.invitees);
     inviteResults.value = res.accounts.filter((a) => !chosen.has(a.id));
   } catch {
@@ -164,6 +165,14 @@ async function searchInvitees() {
 function onInviteInput() {
   clearTimeout(inviteTimer);
   inviteTimer = setTimeout(searchInvitees, 300);
+}
+/** Enter picks the top suggestion, or runs the search immediately
+ * when the debounced list hasn't populated yet. */
+function onInviteKeydown(e: KeyboardEvent) {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  if (inviteResults.value.length) addInvitee(inviteResults.value[0]);
+  else void searchInvitees();
 }
 function addInvitee(a: Account) {
   if (props.event.invitees.includes(a.id)) return;
@@ -537,10 +546,16 @@ function removeInvitee(id: string) {
         :placeholder="t('compose.eventInviteePh')"
         data-testid="event-invitee-search"
         @input="onInviteInput"
+        @keydown="onInviteKeydown"
       />
       <ul v-if="inviteResults.length" class="event__invitee-results">
         <li v-for="a in inviteResults" :key="a.id">
           <button type="button" @click="addInvitee(a)">
+            <Avatar
+              :src="a.avatar"
+              :name="a.display_name || a.username"
+              size="sm"
+            />
             <span class="event__invitee-name">{{
               a.display_name || a.username
             }}</span>
@@ -780,6 +795,7 @@ function removeInvitee(id: string) {
 }
 .event__invitee-results button {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
   width: 100%;
   border: 0;

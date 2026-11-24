@@ -13,4 +13,5 @@ ALTER TABLE notifications ADD CONSTRAINT notifications_type_check
         'emoji_reaction', 'admin.sign_up', 'moderation_warning',
         'admin.report', 'move'));
 
-ALTER TABLE event_participations DROP COLUMN reminded_at;
+-- `event_participations.reminded_at` belongs to 0057_events and is
+-- intentionally not dropped here.

@@ -19,8 +19,9 @@ vi.mock("@/api/events", () => ({
   eventInvitees: (...a: unknown[]) => inviteesMock(...a),
   eventRemoveParticipant: (...a: unknown[]) => removeMock(...a),
 }));
+const searchMock = vi.fn();
 vi.mock("@/api/search", () => ({
-  search: vi.fn().mockResolvedValue({ accounts: [], statuses: [], hashtags: [] }),
+  search: (...a: unknown[]) => searchMock(...a),
 }));
 vi.mock("@/api/client", () => ({
   requestBlob: vi.fn().mockResolvedValue({
@@ -77,6 +78,7 @@ describe("StatusEvent", () => {
     vi.clearAllMocks();
     setActivePinia(createPinia());
     useAuthStore().token = "test-token";
+    searchMock.mockResolvedValue({ accounts: [], statuses: [], hashtags: [] });
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: vi.fn().mockResolvedValue(undefined) },
       configurable: true,
@@ -146,7 +148,9 @@ describe("StatusEvent", () => {
       external_participation_url: "https://tickets.example.com/x",
     });
     expect(rsvpButtons(w)).toEqual([]);
-    expect(w.find("a[href='https://tickets.example.com/x']").exists()).toBe(true);
+    expect(w.find("a[href='https://tickets.example.com/x']").exists()).toBe(
+      true,
+    );
   });
 
   it("shows the disabled reason for a full event", async () => {
@@ -159,41 +163,162 @@ describe("StatusEvent", () => {
 
   it("hides RSVP entirely for the organizer and shows the panel", async () => {
     const w = await mountCard({
-      participation: { state: "accepted", can_join: false, reason: "own_event" },
+      participation: {
+        state: "accepted",
+        can_join: false,
+        reason: "own_event",
+      },
     });
     expect(rsvpButtons(w)).toEqual([]);
-    expect(w.find("[data-testid='organizer-panel-toggle']").exists()).toBe(true);
+    expect(w.find("[data-testid='organizer-panel-toggle']").exists()).toBe(
+      true,
+    );
   });
 
   it("organizer panel lists pending requests with approve/reject", async () => {
     participationsMock.mockResolvedValue({
       participations: [
-        { account_id: "9", username: "bob", state: "pending", participation_message: "hi" },
-        { account_id: "10", username: "cat", state: "accepted" },
+        {
+          account_id: "9",
+          account: {
+            id: "9",
+            username: "bob",
+            acct: "bob",
+            display_name: "Bobby",
+            avatar: "https://img.test/bob.png",
+            emojis: [],
+          },
+          state: "pending",
+          participation_message: "hi",
+        },
+        {
+          account_id: "10",
+          account: {
+            id: "10",
+            username: "cat",
+            acct: "cat@remote.test",
+            display_name: "Cat",
+            avatar: "",
+            emojis: [],
+          },
+          state: "accepted",
+        },
       ],
     });
     const w = await mountCard({
-      participation: { state: "accepted", can_join: false, reason: "own_event" },
+      participation: {
+        state: "accepted",
+        can_join: false,
+        reason: "own_event",
+      },
     });
     await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
     await flushPromises();
+    expect(w.text()).toContain("Bobby");
     expect(w.text()).toContain("@bob");
-    expect(w.text()).toContain("@cat");
+    expect(w.text()).toContain("Cat");
+    expect(w.text()).toContain("@cat@remote.test");
+    expect(w.find('img[src="https://img.test/bob.png"]').exists()).toBe(true);
     const approve = w.findAll("button").find((b) => b.text() === "Approve")!;
     await approve.trigger("click");
     await flushPromises();
     expect(decideMock).toHaveBeenCalledWith("7", "9", "authorize");
   });
 
+  it("invite picker searches accounts and invites the picked id as a string", async () => {
+    searchMock.mockResolvedValue({
+      accounts: [
+        {
+          id: "117518582417719632",
+          username: "testuser1",
+          acct: "testuser1",
+          display_name: "Test User 1",
+        },
+      ],
+      statuses: [],
+      hashtags: [],
+    });
+    participationsMock.mockResolvedValue({ participations: [] });
+    inviteesMock.mockResolvedValue({ ok: true });
+    const w = await mountCard({
+      participation: {
+        state: "accepted",
+        can_join: false,
+        reason: "own_event",
+      },
+    });
+    await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
+    await flushPromises();
+    const input = w.get("[data-testid='invite-search']");
+    await input.setValue("test");
+    // Enter with no results yet runs the search immediately.
+    await input.trigger("keydown.enter");
+    await flushPromises();
+    expect(searchMock).toHaveBeenCalledWith({
+      q: "test",
+      type: "accounts",
+      limit: 5,
+      resolve: true,
+    });
+    // Enter again picks the top suggestion — the snowflake id must
+    // reach the API as a string, never a JS number.
+    await input.trigger("keydown.enter");
+    await flushPromises();
+    expect(inviteesMock).toHaveBeenCalledWith("7", ["117518582417719632"]);
+  });
+
+  it("invite picker result click invites that account", async () => {
+    searchMock.mockResolvedValue({
+      accounts: [
+        {
+          id: "42",
+          username: "bob",
+          acct: "bob",
+          display_name: "Bob",
+        },
+      ],
+      statuses: [],
+      hashtags: [],
+    });
+    participationsMock.mockResolvedValue({ participations: [] });
+    inviteesMock.mockResolvedValue({ ok: true });
+    const w = await mountCard({
+      participation: {
+        state: "accepted",
+        can_join: false,
+        reason: "own_event",
+      },
+    });
+    await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
+    await flushPromises();
+    const input = w.get("[data-testid='invite-search']");
+    await input.setValue("bob");
+    // Enter runs the search immediately (no debounce wait).
+    await input.trigger("keydown.enter");
+    await flushPromises();
+    const btn = w
+      .findAll(".status-event__invite-results button")
+      .find((b) => b.text().includes("bob"))!;
+    await btn.trigger("click");
+    await flushPromises();
+    expect(inviteesMock).toHaveBeenCalledWith("7", ["42"]);
+  });
+
   it("copy link writes the absolute ics url; download saves the blob", async () => {
     const { saveBlob } = await import("@/composables/useExports");
     const { requestBlob } = await import("@/api/client");
     const w = await mountCard();
-    await w.findAll("button").find((b) => b.text().includes("Copy link"))!.trigger("click");
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Copy link"))!
+      .trigger("click");
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       "https://yonder.test/api/v1/yonder/events/7/ics",
     );
-    await w.findAll("button").find((b) => b.text().includes("Download calendar"))!.trigger("click");
+    await w
+      .findAll("button")
+      .find((b) => b.text().includes("Download calendar"))!
+      .trigger("click");
     await flushPromises();
     expect(requestBlob).toHaveBeenCalled();
     expect(saveBlob).toHaveBeenCalledWith(expect.any(Blob), "event.ics");

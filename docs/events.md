@@ -54,11 +54,17 @@ surfaces — inbound Event parsing and existing events keep working.
   re-arms reminders.
 - Title falls back to the status text on create and to the stored
   title on edit.
-- Invitees require a `direct`-visibility event and existing local
-  accounts; invitees become mentions (visibility + Mastodon-compatible
-  mention notification) **and** receive an ActivityPub `Invite` plus an
-  `invited` participation row. Adding invitees in a later edit only
-  notifies the newly added ones.
+- Invitees require a `direct`-visibility event and existing accounts —
+  local or remote (a remote stub row exists once the actor is known,
+  e.g. via `GET /api/v1/accounts/lookup` or search `resolve`). Invitees
+  become mentions (visibility + Mastodon-compatible mention
+  notification) **and** receive an ActivityPub `Invite` plus an
+  `invited` participation row — remote invitees only see the `Invite`
+  (their instance fetches the event object signed by its instance
+  actor, which `serve_object` authorizes when the signer domain has a
+  mentioned recipient). Invite responses naming the `Invite` activity
+  id resolve through `invite_activity_uri`. Adding invitees in a later
+  edit only notifies the newly added ones.
 
 ## RSVP
 
@@ -74,7 +80,9 @@ Join modes: `free` (instant), `restricted` (organizer approval via
 
 Outbound responses follow the remote event's protocol: `Join`/`Leave`
 (Mobilizon-style) or `Accept`/`Reject`/`TentativeAccept` on the
-organizer's `Invite` (Friendica-style).
+organizer's `Invite` (Friendica-style). Answering an `invited` row on a
+remote event sends that response back to the organizer actors, using
+the stored `invite_activity_uri` as the object when present.
 
 ## Notifications
 

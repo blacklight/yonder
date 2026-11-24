@@ -269,6 +269,9 @@ export interface Status {
       flyer?: MediaAttachment | null;
       organizers?: unknown[];
       organizers_disclosed?: boolean;
+      /** Authoring invitee list — populated for the organizer only;
+       * string ids (snowflakes exceed `Number.MAX_SAFE_INTEGER`). */
+      invitees?: string[];
       attendees_visibility?: string;
       participation?: {
         state?: string;

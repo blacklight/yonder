@@ -61,7 +61,7 @@ use crate::{
 /// strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
 /// so round-tripping through a JS number silently corrupts them —
 /// but bare JSON numbers are accepted for convenience.
-#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum EntityId {
     /// String form (`"1234"`), matching entity serialization.

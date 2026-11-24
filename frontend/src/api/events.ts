@@ -1,6 +1,6 @@
 import { requestWithResponse } from "./client";
 import { paginated, type Page } from "./pagination";
-import type { Status } from "./entities";
+import type { Account, Status } from "./entities";
 
 export type EventsScope =
   | "mine"
@@ -141,7 +141,9 @@ export function eventDecideRequest(
 
 export interface EventParticipationRow {
   account_id: string;
-  username?: string | null;
+  /** Full Account entity (avatar, display name, acct, emojis);
+   * `null` when the account row is gone. */
+  account?: Account | null;
   state: string;
   participation_message?: string | null;
 }

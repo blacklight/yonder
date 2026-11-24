@@ -1069,11 +1069,33 @@ async fn serve_object_inner(
     if signer.is_none() {
         return Err(Error::NotFound("status".into()));
     }
-    match signer_account {
-        Some(id) if posts::can_see(&ctx.db, &status, Some(id)).await? => {
-            build_object(&ctx, &status).await.map(|doc| (doc, false))
+    let mut allowed = match signer_account {
+        Some(id) => posts::can_see(&ctx.db, &status, Some(id)).await?,
+        None => false,
+    };
+    // `direct` objects are fetched by the *remote instance actor* on
+    // behalf of the addressed user — that actor usually has no
+    // `accounts` row (and never a mention), so `can_see` alone 404s
+    // every invite fetch (§16 invitees-only events depend on it).
+    // The signature already verified the keyId URL; a signer domain
+    // matching a mentioned account's domain is the delegation proof.
+    if !allowed && status.visibility == "direct" {
+        if let Some(domain) = signer.as_deref().and_then(super::moderation::actor_domain) {
+            allowed = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM status_mentions sm \
+                 JOIN accounts a ON a.id = sm.account_id \
+                 WHERE sm.status_id = $1 AND lower(a.domain) = $2)",
+            )
+            .bind(status.id)
+            .bind(&domain)
+            .fetch_one(&ctx.db)
+            .await?;
         }
-        _ => Err(Error::NotFound("status".into())),
+    }
+    if allowed {
+        build_object(&ctx, &status).await.map(|doc| (doc, false))
+    } else {
+        Err(Error::NotFound("status".into()))
     }
 }
 

@@ -508,8 +508,9 @@ function toggleEvent() {
 }
 
 /** `yonder.event` entity → `EventDraft` for `?edit=` hydration.
- * Wall times are re-zoned into `datetime-local` strings; invitees
- * aren't exposed on the entity so the picker starts empty. */
+ * Wall times are re-zoned into `datetime-local` strings; `invitees`
+ * comes back on the entity for the organizer so an edit doesn't
+ * silently drop the list. */
 function eventDraftFromStatus(s: Status): EventDraft {
   const ev = s.yonder?.event;
   const tz = ev?.timezone || browserTimeZone();
@@ -542,12 +543,13 @@ function eventDraftFromStatus(s: Status): EventDraft {
     })),
     bannerMediaId: ev?.banner?.id ?? null,
     flyerMediaId: ev?.flyer?.id ?? null,
-    invitees: [],
+    invitees: ev?.invitees ?? [],
   };
 }
 
-/** `EventDraft` → the §9.1 `event` wire block (snake_case; numeric
- * fields are real JSON numbers — `EventParams` is serde-typed). */
+/** `EventDraft` → the §9.1 `event` wire block (snake_case; capacity
+ * and coordinates are real JSON numbers, entity ids stay strings —
+ * snowflakes exceed `Number.MAX_SAFE_INTEGER`). */
 function eventPayload(ev: EventDraft) {
   const str = (v: string) => {
     const t = v.trim();
@@ -582,9 +584,9 @@ function eventPayload(ev: EventDraft) {
       latitude: num(l.latitude),
       longitude: num(l.longitude),
     })),
-    banner_media_id: ev.bannerMediaId ? Number(ev.bannerMediaId) : undefined,
-    flyer_media_id: ev.flyerMediaId ? Number(ev.flyerMediaId) : undefined,
-    invitees: ev.invitees.map(Number).filter(Number.isFinite),
+    banner_media_id: ev.bannerMediaId ?? undefined,
+    flyer_media_id: ev.flyerMediaId ?? undefined,
+    invitees: ev.invitees,
   };
 }
 

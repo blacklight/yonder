@@ -81,6 +81,38 @@ pub struct LocationParams {
     pub longitude: Option<f64>,
 }
 
+/// Snowflake-id fields accept the string wire form — values exceed
+/// JS's `Number.MAX_SAFE_INTEGER`, so clients serialize them as
+/// decimal strings (the same rule as `EntityId`).
+fn de_id_opt<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<i64>, D::Error> {
+    Option::<Value>::deserialize(d)?
+        .map(|v| match &v {
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| serde::de::Error::custom("invalid id")),
+            Value::String(s) => s.parse().map_err(serde::de::Error::custom),
+            _ => Err(serde::de::Error::custom(
+                "id must be a number or decimal string",
+            )),
+        })
+        .transpose()
+}
+
+fn de_id_vec<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<i64>, D::Error> {
+    Vec::<Value>::deserialize(d)?
+        .iter()
+        .map(|v| match v {
+            Value::Number(n) => n
+                .as_i64()
+                .ok_or_else(|| serde::de::Error::custom("invalid id")),
+            Value::String(s) => s.parse().map_err(serde::de::Error::custom),
+            _ => Err(serde::de::Error::custom(
+                "id must be a number or decimal string",
+            )),
+        })
+        .collect()
+}
+
 /// The raw `event` request payload — every field optional; missing
 /// required fields are validation errors, not parse errors.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -97,8 +129,11 @@ pub struct EventParams {
     pub attendees_visibility: Option<String>,
     pub categories: Vec<String>,
     pub locations: Vec<LocationParams>,
+    #[serde(deserialize_with = "de_id_opt")]
     pub banner_media_id: Option<i64>,
+    #[serde(deserialize_with = "de_id_opt")]
     pub flyer_media_id: Option<i64>,
+    #[serde(deserialize_with = "de_id_vec")]
     pub invitees: Vec<i64>,
     pub display_end_time: Option<bool>,
 }
@@ -689,7 +724,9 @@ pub async fn validate(
         }
     }
 
-    // Invitees: direct-only, must be existing local accounts.
+    // Invitees: direct-only, must be existing accounts — local or
+    // remote (a remote stub row exists once the actor is known;
+    // §16 delivers them an `Invite` activity).
     let mut invitees: Vec<i64> = params.invitees.clone();
     invitees.sort_unstable();
     invitees.dedup();
@@ -700,13 +737,13 @@ pub async fn validate(
             ));
         }
         let found: Vec<i64> =
-            sqlx::query_scalar("SELECT id FROM accounts WHERE id = ANY($1) AND domain IS NULL")
+            sqlx::query_scalar("SELECT id FROM accounts WHERE id = ANY($1) AND deleted_at IS NULL")
                 .bind(&invitees)
                 .fetch_all(db)
                 .await?;
         if found.len() != invitees.len() {
             return Err(Error::Validation(
-                "event.invitees must be existing local accounts".to_string(),
+                "event.invitees must be existing accounts".to_string(),
             ));
         }
     }
@@ -730,4 +767,42 @@ pub async fn validate(
         display_end_time: params.display_end_time.unwrap_or(true),
         end_time_inferred: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// Snowflake ids arrive as decimal strings (JS loses precision
+    /// past 2^53) — `EventParams` must accept either wire form.
+    #[test]
+    fn event_params_accepts_string_and_number_ids() {
+        let p: EventParams = serde_json::from_value(json!({
+            "banner_media_id": "117518582417719632",
+            "flyer_media_id": 42,
+            "invitees": ["117518582417719632", "117518582417719640", 7],
+        }))
+        .unwrap();
+        assert_eq!(p.banner_media_id, Some(117518582417719632));
+        assert_eq!(p.flyer_media_id, Some(42));
+        assert_eq!(p.invitees, vec![117518582417719632, 117518582417719640, 7]);
+        // Missing fields still default.
+        let p: EventParams = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(p.invitees, Vec::<i64>::new());
+        assert_eq!(p.banner_media_id, None);
+    }
+
+    #[test]
+    fn event_params_rejects_non_numeric_ids() {
+        assert!(serde_json::from_value::<EventParams>(json!({
+            "invitees": ["not-a-number"]
+        }))
+        .is_err());
+        assert!(serde_json::from_value::<EventParams>(json!({
+            "banner_media_id": "abc"
+        }))
+        .is_err());
+    }
 }

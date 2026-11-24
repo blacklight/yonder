@@ -97,6 +97,39 @@ async fn local_event_by_uri(
     let Some(status) = posts::load_by_uri(&core.db, uri).await? else {
         return Ok(None);
     };
+    local_event_status(core, status.id).await
+}
+
+/// [`local_event_by_uri`] for an `Invite` *activity* id — a
+/// Friendica-style `Accept{object: invite_id}` names the Invite we
+/// sent, not the event; `invite_activity_uri` on the invitee's
+/// participation row bridges the two.
+async fn local_event_by_invite_uri(
+    core: &ApCore,
+    uri: &str,
+) -> Result<Option<(posts::StatusRow, EventRow)>> {
+    let status_id: Option<i64> = sqlx::query_scalar(
+        "SELECT status_id FROM event_participations \
+         WHERE invite_activity_uri = $1 LIMIT 1",
+    )
+    .bind(uri)
+    .fetch_optional(&core.db)
+    .await?;
+    match status_id {
+        Some(id) => local_event_status(core, id).await,
+        None => Ok(None),
+    }
+}
+
+/// `(status, event row)` for a status id — local, live, `Event`-typed
+/// only; anything else is `None`.
+async fn local_event_status(
+    core: &ApCore,
+    status_id: i64,
+) -> Result<Option<(posts::StatusRow, EventRow)>> {
+    let Some(status) = posts::load(&core.db, status_id).await? else {
+        return Ok(None);
+    };
     if !status.local || status.tombstone || !posts::is_event(&status) {
         return Ok(None);
     }
@@ -346,7 +379,14 @@ async fn local_event_response(
         _ => vec![],
     };
     for uri in candidates {
-        let Some((status, _event)) = local_event_by_uri(core, &uri).await? else {
+        // The object is usually the event URI; Friendica-style
+        // responses can also answer the `Invite` activity itself —
+        // resolve `invite_activity_uri` back to its event.
+        let resolved = match local_event_by_uri(core, &uri).await? {
+            Some(found) => Some(found),
+            None => local_event_by_invite_uri(core, &uri).await?,
+        };
+        let Some((status, _event)) = resolved else {
             continue;
         };
         let Some(actor_id) = ensure_actor(core, &activity.actor).await? else {

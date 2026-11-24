@@ -16,6 +16,7 @@ use crate::{
         model::{EventParticipationRow, EventRow, ParticipationState},
         rsvp::{self, CounterDelta, OutboundActivity, RsvpOutcome},
     },
+    http::api::v1::EntityId,
     posts::{self, PostContext},
     Error, Result,
 };
@@ -31,7 +32,10 @@ pub struct RsvpBody {
 /// `POST .../invitees` body.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct InviteesBody {
-    pub account_ids: Vec<i64>,
+    /// Account ids (local or remote) — string or number; snowflake
+    /// values exceed JS's `Number.MAX_SAFE_INTEGER`, so clients send
+    /// strings.
+    pub account_ids: Vec<EntityId>,
 }
 
 /// The caller's own participation row after an RSVP, for the response.
@@ -336,7 +340,9 @@ pub async fn invitees(
     let mut ids: Vec<i64> = body
         .account_ids
         .iter()
-        .copied()
+        .map(EntityId::to_i64)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
         .filter(|id| *id != account_id)
         .collect();
     ids.sort_unstable();
@@ -344,26 +350,39 @@ pub async fn invitees(
     if ids.is_empty() {
         return Ok(());
     }
-    // Only existing local accounts.
-    let found: Vec<i64> =
-        sqlx::query_scalar("SELECT id FROM accounts WHERE id = ANY($1) AND domain IS NULL")
+    // Existing accounts — local or remote stubs (§16 invites remote
+    // actors through `Invite` activities, delivered post-commit).
+    let found: Vec<(i64, Option<String>)> =
+        sqlx::query_as("SELECT id, domain FROM accounts WHERE id = ANY($1) AND deleted_at IS NULL")
             .bind(&ids)
             .fetch_all(&ctx.db)
             .await?;
     if found.len() != ids.len() {
         return Err(Error::Validation(
-            "invitees must be existing local accounts".to_string(),
+            "invitees must be existing accounts".to_string(),
         ));
     }
+    let remote_ids: Vec<i64> = found
+        .iter()
+        .filter(|(_, domain)| domain.is_some())
+        .map(|(id, _)| *id)
+        .collect();
     let mut tx = ctx.db.begin().await?;
     // Rows already decided (accepted/tentative/declined/pending) keep
     // their state — re-inviting must not resurrect or re-notify them.
     // `xmax = 0` on RETURNING marks freshly inserted rows.
     let mut newly_invited = Vec::new();
     for id in &ids {
+        // Remote invitees answer over ActivityPub — `invite_response`;
+        // local ones use the API (`local`).
+        let protocol = if remote_ids.contains(id) {
+            "invite_response"
+        } else {
+            "local"
+        };
         let inserted: Option<bool> = sqlx::query_scalar(
             "INSERT INTO event_participations (status_id, account_id, state, protocol) \
-             VALUES ($1, $2, 'invited', 'local') \
+             VALUES ($1, $2, 'invited', $3) \
              ON CONFLICT (status_id, account_id) DO UPDATE SET \
                  state = 'invited', updated_at = now() \
              WHERE event_participations.state = 'invited' \
@@ -372,6 +391,7 @@ pub async fn invitees(
         )
         .bind(status_id)
         .bind(id)
+        .bind(protocol)
         .fetch_optional(&mut *tx)
         .await?;
         if inserted == Some(true) {
@@ -413,6 +433,20 @@ pub async fn invitees(
         )
         .await;
     }
+    // Remote invitees get the ActivityPub `Invite` — the only signal
+    // their instance sees (§16). The state filter keeps decided rows
+    // (declined etc.) silent: re-inviting must not resurrect them.
+    if !remote_ids.is_empty() {
+        let invited_remote: Vec<i64> = sqlx::query_scalar(
+            "SELECT account_id FROM event_participations \
+             WHERE status_id = $1 AND state = 'invited' AND account_id = ANY($2)",
+        )
+        .bind(status_id)
+        .bind(&remote_ids)
+        .fetch_all(&ctx.db)
+        .await?;
+        publish_invites(ctx, &status, account_id, &invited_remote).await?;
+    }
     Ok(())
 }
 
@@ -448,27 +482,28 @@ pub async fn remove_participant(
             "organizer participations cannot be removed".to_string(),
         ));
     }
-    // Remote participants get a Reject answering their stored join —
-    // pending *and* accepted rows (revocation), per the contract.
+    // Remote participants get a Reject answering their stored join
+    // or invite — pending *and* accepted rows (revocation), and
+    // `invited` rows on local events too (§16 remote invitees).
     let mut outbound = None;
-    if !status.local {
-        if let Some(target_actor) = sqlx::query_scalar::<_, String>(
-            "SELECT actor_id FROM accounts WHERE id = $1 AND domain IS NOT NULL",
-        )
-        .bind(target_account_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        {
-            let object = existing
-                .request_activity_uri
-                .clone()
-                .unwrap_or_else(|| status.uri.clone().unwrap_or_default());
-            outbound = Some(OutboundActivity::Reject {
-                object,
-                to: vec![target_actor],
-                cc: vec![],
-            });
-        }
+    if let Some(target_actor) = sqlx::query_scalar::<_, String>(
+        "SELECT actor_id FROM accounts WHERE id = $1 AND domain IS NOT NULL",
+    )
+    .bind(target_account_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    {
+        let object = existing
+            .invite_activity_uri
+            .clone()
+            .or_else(|| existing.request_activity_uri.clone())
+            .or_else(|| status.uri.clone())
+            .unwrap_or_default();
+        outbound = Some(OutboundActivity::Reject {
+            object,
+            to: vec![target_actor],
+            cc: vec![],
+        });
     }
     sqlx::query("DELETE FROM event_participations WHERE status_id = $1 AND account_id = $2")
         .bind(status_id)
@@ -651,21 +686,30 @@ pub async fn list_participations(
     if !is_organizer(&ctx.db, &status, account_id).await? {
         return Err(Error::Forbidden("only organizers can list participations"));
     }
-    let rows = sqlx::query_as::<_, (i64, String, Option<String>, Option<String>)>(
-        "SELECT p.account_id, p.state, p.participation_message, a.username \
-         FROM event_participations p JOIN accounts a ON a.id = p.account_id \
+    let rows = sqlx::query_as::<_, (i64, String, Option<String>)>(
+        "SELECT p.account_id, p.state, p.participation_message \
+         FROM event_participations p \
          WHERE p.status_id = $1 AND p.role <> 'organizer' \
          ORDER BY p.created_at",
     )
     .bind(status_id)
     .fetch_all(&ctx.db)
     .await?;
+    // Embed the full Account entity (avatar, display name, acct,
+    // emojis) so the organizer panel can render curated rows.
+    let ids: Vec<i64> = rows.iter().map(|r| r.0).collect();
+    let accounts = crate::users::account::load_many_incl_suspended(&ctx.db, &ids).await?;
+    let entities =
+        crate::users::account::account_entities(&ctx.db, &ctx.config, &ctx.base_url(), &accounts)
+            .await?;
+    let entities: std::collections::HashMap<i64, serde_json::Value> =
+        accounts.iter().map(|a| a.id).zip(entities).collect();
     Ok(rows
         .into_iter()
-        .map(|(id, state, message, username)| {
+        .map(|(id, state, message)| {
             json!({
                 "account_id": id.to_string(),
-                "username": username,
+                "account": entities.get(&id).cloned().unwrap_or(serde_json::Value::Null),
                 "state": state,
                 "participation_message": message,
             })
@@ -689,10 +733,6 @@ pub async fn create_invited_rows_and_invite(
     if invitee_ids.is_empty() {
         return Ok(());
     }
-    let event_uri = status
-        .uri
-        .clone()
-        .ok_or_else(|| Error::Internal("local event without uri".to_string()))?;
     // `invited` participation rows — an existing row is left untouched
     // (`DO NOTHING`), so decided states are never overwritten.
     for invitee in invitee_ids {
@@ -707,9 +747,31 @@ pub async fn create_invited_rows_and_invite(
         .execute(&ctx.db)
         .await?;
     }
+    publish_invites(ctx, status, organizer_account_id, invitee_ids).await
+}
+
+/// Publish one `Invite{object: event_uri, to: [invitee actor]}` per
+/// invitee as the organizer, stamping the activity id onto the
+/// invitee's `invite_activity_uri` so a Friendica-style
+/// `Accept{object: invite_id}` resolves back to the event (§16).
+/// Publish failures are logged, not fatal — the participation row
+/// already records the invitation.
+async fn publish_invites(
+    ctx: &PostContext,
+    status: &posts::StatusRow,
+    organizer_account_id: i64,
+    invitee_ids: &[i64],
+) -> Result<()> {
+    if invitee_ids.is_empty() {
+        return Ok(());
+    }
     let Some(ap) = &ctx.ap else {
         return Ok(());
     };
+    let event_uri = status
+        .uri
+        .clone()
+        .ok_or_else(|| Error::Internal("local event without uri".to_string()))?;
     let (organizer_actor, username) = actor_of(&ctx.db, organizer_account_id).await?;
     let actors: Vec<(i64, String)> =
         sqlx::query_as("SELECT id, actor_id FROM accounts WHERE id = ANY($1)")
@@ -723,9 +785,51 @@ pub async fn create_invited_rows_and_invite(
             cc: vec![],
         }
         .to_json(&organizer_actor);
-        if let Err(e) = crate::activitypub::delivery::publish(ap, &username, &doc).await {
-            tracing::warn!(status_id = status.id, invitee, error = %e, "event invite publish failed");
+        let invite_uri = doc.get("id").and_then(|v| v.as_str()).map(str::to_string);
+        match crate::activitypub::delivery::publish(ap, &username, &doc).await {
+            Ok(_) => {
+                if let Some(uri) = invite_uri {
+                    if let Err(e) = sqlx::query(
+                        "UPDATE event_participations SET invite_activity_uri = $3, \
+                         updated_at = now() \
+                         WHERE status_id = $1 AND account_id = $2",
+                    )
+                    .bind(status.id)
+                    .bind(invitee)
+                    .bind(&uri)
+                    .execute(&ctx.db)
+                    .await
+                    {
+                        tracing::warn!(status_id = status.id, invitee, error = %e,
+                            "invite activity uri stamp failed");
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(status_id = status.id, invitee, error = %e,
+                    "event invite publish failed")
+            }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `account_ids` accepts the string wire form entity ids use —
+    /// snowflakes exceed JS's safe-integer range.
+    #[test]
+    fn invitees_body_accepts_string_ids() {
+        let body: InviteesBody =
+            serde_json::from_value(json!({"account_ids": ["117518582417719632", 7]})).unwrap();
+        let ids: Vec<i64> = body
+            .account_ids
+            .iter()
+            .map(EntityId::to_i64)
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(ids, vec![117518582417719632, 7]);
+    }
 }

@@ -3,6 +3,8 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
 import Button from "@/components/ui/Button.vue";
+import AccountChip from "@/components/ui/AccountChip.vue";
+import Avatar from "@/components/ui/Avatar.vue";
 import {
   eventDecideRequest,
   eventInvitees,
@@ -35,7 +37,10 @@ interface Participation {
 }
 const participation = ref<Participation | null>(null);
 const synced = computed<Participation | null>(
-  () => participation.value ?? (ev.value?.participation as Participation | null | undefined) ?? null,
+  () =>
+    participation.value ??
+    (ev.value?.participation as Participation | null | undefined) ??
+    null,
 );
 const isOrganizer = computed(() => synced.value?.reason === "own_event");
 const rsvpProtocol = computed(() => ev.value?.rsvp_protocol ?? "join");
@@ -86,7 +91,9 @@ function osmUrl(lat?: number | null, lon?: number | null): string | null {
   if (lat == null || lon == null) return null;
   return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=15/${lat}/${lon}`;
 }
-function locationText(l: NonNullable<NonNullable<typeof ev.value>["locations"]>[number]) {
+function locationText(
+  l: NonNullable<NonNullable<typeof ev.value>["locations"]>[number],
+) {
   return [
     l.street_address,
     l.address_text,
@@ -105,10 +112,9 @@ async function rsvp(state: "accepted" | "tentative" | "declined" | "none") {
   if (rsvpBusy.value) return;
   rsvpBusy.value = true;
   try {
-    const res = (await eventRsvp(
-      String(props.status.id),
-      state,
-    )) as { participation?: { state: string; role: string } | null };
+    const res = (await eventRsvp(String(props.status.id), state)) as {
+      participation?: { state: string; role: string } | null;
+    };
     participation.value = res.participation
       ? {
           state: res.participation.state,
@@ -136,7 +142,12 @@ const rsvpActions = computed(() => {
   const canJoin = p.can_join !== false;
   const inviteResponse = protocol === "invite_response";
   const actions: string[] = [];
-  if (!state || state === "declined" || state === "rejected" || state === "ignored") {
+  if (
+    !state ||
+    state === "declined" ||
+    state === "rejected" ||
+    state === "ignored"
+  ) {
     if (canJoin || !p.reason) {
       actions.push(inviteResponse ? "request" : "join");
     }
@@ -260,29 +271,40 @@ async function removeParticipant(accountId: string) {
     toasts.push({ text: t("common.error"), kind: "error" });
   }
 }
-const pendingRows = computed(() => rows.value.filter((r) => r.state === "pending"));
-const otherRows = computed(() => rows.value.filter((r) => r.state !== "pending"));
+const pendingRows = computed(() =>
+  rows.value.filter((r) => r.state === "pending"),
+);
+const otherRows = computed(() =>
+  rows.value.filter((r) => r.state !== "pending"),
+);
 
 // invite-more
 const inviteQuery = ref("");
 const inviteResults = ref<Account[]>([]);
 const inviteBusy = ref(false);
 let inviteTimer: ReturnType<typeof setTimeout> | undefined;
+async function searchInvitees() {
+  const q = inviteQuery.value.trim();
+  if (q.length < 2) {
+    inviteResults.value = [];
+    return;
+  }
+  try {
+    const res = await search({ q, type: "accounts", limit: 5, resolve: true });
+    inviteResults.value = res.accounts;
+  } catch {
+    inviteResults.value = [];
+  }
+}
 function onInviteInput() {
   clearTimeout(inviteTimer);
-  inviteTimer = setTimeout(async () => {
-    const q = inviteQuery.value.trim();
-    if (q.length < 2) {
-      inviteResults.value = [];
-      return;
-    }
-    try {
-      const res = await search({ q, type: "accounts", limit: 5 });
-      inviteResults.value = res.accounts;
-    } catch {
-      inviteResults.value = [];
-    }
-  }, 300);
+  inviteTimer = setTimeout(searchInvitees, 300);
+}
+/** Enter picks the top suggestion, or runs the search immediately
+ * when the debounced list hasn't populated yet. */
+function onInviteEnter() {
+  if (inviteResults.value.length) void invite(inviteResults.value[0]);
+  else void searchInvitees();
 }
 async function invite(a: Account) {
   inviteBusy.value = true;
@@ -343,18 +365,28 @@ const statusBadge = computed(() => {
       </span>
     </div>
 
-    <h3 class="status-event__name" :class="{ 'status-event__name--cancelled': cancelled }">
+    <h3
+      class="status-event__name"
+      :class="{ 'status-event__name--cancelled': cancelled }"
+    >
       {{ ev.name }}
     </h3>
     <p v-if="postponed && ev.previous_start_time" class="status-event__was">
-      {{ t("events.was", { time: fmt.format(new Date(ev.previous_start_time)) }) }}
+      {{
+        t("events.was", { time: fmt.format(new Date(ev.previous_start_time)) })
+      }}
     </p>
 
     <ul v-if="ev.locations?.length" class="status-event__locs">
       <li v-for="(l, i) in ev.locations" :key="i">
         <template v-if="l.type === 'virtual'">
           <FontAwesomeIcon icon="video" />
-          <a v-if="l.url" :href="l.url" target="_blank" rel="noopener noreferrer">
+          <a
+            v-if="l.url"
+            :href="l.url"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             {{ l.name || l.url }}
           </a>
           <span v-else>{{ l.name }}</span>
@@ -369,7 +401,9 @@ const statusBadge = computed(() => {
           >
             {{ l.name || locationText(l) || t("events.place") }}
           </a>
-          <span v-else>{{ l.name || locationText(l) || t("events.place") }}</span>
+          <span v-else>{{
+            l.name || locationText(l) || t("events.place")
+          }}</span>
           <span v-if="l.name && locationText(l)" class="status-event__addr">
             {{ locationText(l) }}
           </span>
@@ -377,16 +411,32 @@ const statusBadge = computed(() => {
       </li>
     </ul>
 
-    <p v-if="ev.external_participation_url && rsvpProtocol === 'external'" class="status-event__ext">
-      <a :href="ev.external_participation_url" target="_blank" rel="noopener noreferrer">
+    <p
+      v-if="ev.external_participation_url && rsvpProtocol === 'external'"
+      class="status-event__ext"
+    >
+      <a
+        :href="ev.external_participation_url"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
         <FontAwesomeIcon icon="arrow-up-right-from-square" />
         {{ t("events.register") }}
       </a>
     </p>
 
-    <div v-if="ev.categories?.length || capacityLabel" class="status-event__meta">
+    <div
+      v-if="ev.categories?.length || capacityLabel"
+      class="status-event__meta"
+    >
       <span v-for="c in ev.categories" :key="c" class="status-event__cat">
-        {{ c.toLowerCase().split("_").map((w) => w[0].toUpperCase() + w.slice(1)).join(" ") }}
+        {{
+          c
+            .toLowerCase()
+            .split("_")
+            .map((w) => w[0].toUpperCase() + w.slice(1))
+            .join(" ")
+        }}
       </span>
       <span v-if="capacityLabel" class="status-event__count">
         <FontAwesomeIcon icon="user-group" /> {{ capacityLabel }}
@@ -406,17 +456,30 @@ const statusBadge = computed(() => {
     </p>
 
     <!-- RSVP controls -->
-    <div v-if="rsvpActions.length || rsvpDisabledReason" class="status-event__rsvp">
+    <div
+      v-if="rsvpActions.length || rsvpDisabledReason"
+      class="status-event__rsvp"
+    >
       <template v-if="rsvpActions.length">
         <Button
           v-for="a in rsvpActions"
           :key="a"
           size="sm"
           :variant="a.endsWith('_done') ? 'secondary' : 'primary'"
-          :loading="rsvpBusy && (a === 'accept' || a === 'join' || a === 'request')"
+          :loading="
+            rsvpBusy && (a === 'accept' || a === 'join' || a === 'request')
+          "
           :disabled="rsvpBusy"
           :data-testid="`rsvp-${a}`"
-          @click="onRsvp(a === 'accept_done' || a === 'tentative_done' || a === 'pending_done' ? 'cancel' : a)"
+          @click="
+            onRsvp(
+              a === 'accept_done' ||
+                a === 'tentative_done' ||
+                a === 'pending_done'
+                ? 'cancel'
+                : a,
+            )
+          "
         >
           <template v-if="a === 'accept_done'">
             <FontAwesomeIcon icon="check" /> {{ t("events.going") }}
@@ -428,10 +491,18 @@ const statusBadge = computed(() => {
             {{ t("events.pending") }}
           </template>
           <template v-else-if="a === 'join'">{{ t("events.join") }}</template>
-          <template v-else-if="a === 'request'">{{ t("events.requestJoin") }}</template>
-          <template v-else-if="a === 'accept'">{{ t("events.accept") }}</template>
-          <template v-else-if="a === 'tentative'">{{ t("events.maybe") }}</template>
-          <template v-else-if="a === 'decline'">{{ t("events.decline") }}</template>
+          <template v-else-if="a === 'request'">{{
+            t("events.requestJoin")
+          }}</template>
+          <template v-else-if="a === 'accept'">{{
+            t("events.accept")
+          }}</template>
+          <template v-else-if="a === 'tentative'">{{
+            t("events.maybe")
+          }}</template>
+          <template v-else-if="a === 'decline'">{{
+            t("events.decline")
+          }}</template>
         </Button>
       </template>
       <span v-else-if="rsvpDisabledReason" class="status-event__rsvp-reason">
@@ -467,13 +538,24 @@ const statusBadge = computed(() => {
         </span>
       </button>
       <div v-if="panelOpen" class="status-event__panel">
-        <p v-if="panelLoading" class="status-event__hint">{{ t("common.loading") }}</p>
-        <p v-else-if="panelError" class="status-event__hint">{{ t("common.error") }}</p>
+        <p v-if="panelLoading" class="status-event__hint">
+          {{ t("common.loading") }}
+        </p>
+        <p v-else-if="panelError" class="status-event__hint">
+          {{ t("common.error") }}
+        </p>
         <template v-else>
           <div v-if="pendingRows.length" class="status-event__requests">
             <h4>{{ t("events.pendingRequests") }}</h4>
-            <div v-for="r in pendingRows" :key="r.account_id" class="status-event__row">
-              <span class="status-event__who">@{{ r.username ?? r.account_id }}</span>
+            <div
+              v-for="r in pendingRows"
+              :key="r.account_id"
+              class="status-event__row"
+            >
+              <AccountChip
+                :account="r.account"
+                :fallback="`@${r.account_id}`"
+              />
               <span v-if="r.participation_message" class="status-event__msg">
                 {{ r.participation_message }}
               </span>
@@ -481,7 +563,11 @@ const statusBadge = computed(() => {
                 <Button size="sm" @click="decide(r.account_id, 'authorize')">
                   {{ t("events.authorize") }}
                 </Button>
-                <Button size="sm" variant="secondary" @click="decide(r.account_id, 'reject')">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  @click="decide(r.account_id, 'reject')"
+                >
                   {{ t("events.reject") }}
                 </Button>
               </span>
@@ -489,9 +575,18 @@ const statusBadge = computed(() => {
           </div>
           <div v-if="otherRows.length" class="status-event__participants">
             <h4>{{ t("events.participants") }}</h4>
-            <div v-for="r in otherRows" :key="r.account_id" class="status-event__row">
-              <span class="status-event__who">@{{ r.username ?? r.account_id }}</span>
-              <span class="status-event__state">{{ t(`events.state_${r.state}`) }}</span>
+            <div
+              v-for="r in otherRows"
+              :key="r.account_id"
+              class="status-event__row"
+            >
+              <AccountChip
+                :account="r.account"
+                :fallback="`@${r.account_id}`"
+              />
+              <span class="status-event__state">{{
+                t(`events.state_${r.state}`)
+              }}</span>
               <Button
                 v-if="r.state !== 'accepted'"
                 size="sm"
@@ -509,10 +604,19 @@ const statusBadge = computed(() => {
               :placeholder="t('events.inviteMore')"
               data-testid="invite-search"
               @input="onInviteInput"
+              @keydown.enter.prevent="onInviteEnter"
             />
-            <ul v-if="inviteResults.length" class="status-event__invite-results">
+            <ul
+              v-if="inviteResults.length"
+              class="status-event__invite-results"
+            >
               <li v-for="a in inviteResults" :key="a.id">
                 <button type="button" :disabled="inviteBusy" @click="invite(a)">
+                  <Avatar
+                    :src="a.avatar"
+                    :name="a.display_name || a.username"
+                    size="sm"
+                  />
                   <span>{{ a.display_name || a.username }}</span>
                   <span class="status-event__acct">@{{ a.acct }}</span>
                 </button>
@@ -694,16 +798,19 @@ const statusBadge = computed(() => {
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+  position: relative;
   padding: 0.25rem 0;
   font-size: 0.85rem;
 }
-.status-event__who {
-  font-weight: 600;
-}
 .status-event__state,
 .status-event__msg {
-  color: var(--text-muted, #666);
+  color: var(--text-faint, #666);
   font-size: 0.8rem;
+}
+.status-event__state {
+  position: absolute;
+  top: 0;
+  right: 0;
 }
 .status-event__row-actions {
   margin-left: auto;
@@ -732,6 +839,7 @@ const statusBadge = computed(() => {
 }
 .status-event__invite-results button {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
   width: 100%;
   border: 0;

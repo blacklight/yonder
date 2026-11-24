@@ -352,6 +352,13 @@ pub fn yonder_event_json(
         "flyer": row.flyer_media_id.map(media_entity),
         "organizers": organizers_json(bundle, base_url, config),
         "organizers_disclosed": row.organizers_disclosed,
+        // The authoring invitee list — organizer-only (it drives the
+        // edit composer's picker hydration); string ids for JS safety.
+        "invitees": if bundle.viewer_is_organizer(viewer, author_id) {
+            json!(row.invitees.iter().map(|id| id.to_string()).collect::<Vec<_>>())
+        } else {
+            json!([])
+        },
         "attendees_visibility": row.attendees_visibility.to_string(),
         "participation": participation_json(row, bundle, viewer, author_id, local),
         "comments_enabled": row.comments_enabled,

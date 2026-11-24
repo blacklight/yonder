@@ -1106,6 +1106,86 @@ async fn remote_event_ownership_gate() {
     assert!(stub, "unknown attributedTo gets a stub for actor fetch");
 }
 
+/// A remote event's AS2 `summary` — the machine-generated
+/// when/where/description preamble Yonder and Gancio emit for
+/// Mastodon-style clients — must never fold into `spoiler_text` (the
+/// event card renders the structured fields itself), while ordinary
+/// notes keep the summary-as-CW behaviour.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_summary_never_becomes_cw() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+    let ingest = |n: usize, object: Value| {
+        let core = core.clone();
+        async move {
+            let activity = pubby_sdk::Activity {
+                id: format!("{BASE}/ap/activities/cwtest{n}"),
+                activity_type: "Create".into(),
+                actor: "https://remote.test/@org".into(),
+                object,
+                to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+                cc: vec![],
+                published: None,
+                signature: None,
+            };
+            remote::handle(&core, &activity, &activity.to_json()).await
+        }
+    };
+    let preamble = "<p>When: 2026-03-01 10:00 (UTC)<br>Where: Somewhere</p><p>A test event.</p>";
+
+    // Event with the Yonder-style preamble summary → no CW, but the
+    // summary column keeps it for search.
+    ingest(
+        1,
+        json!({
+            "id": "https://remote.test/events/cw1",
+            "type": "Event",
+            "name": "CW test",
+            "attributedTo": "https://remote.test/@org",
+            "startTime": "2026-03-01T10:00:00Z",
+            "content": "<p>A test event.</p>",
+            "summary": preamble,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+    )
+    .await;
+    let (spoiler, summary): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT spoiler_text, summary FROM statuses WHERE uri = 'https://remote.test/events/cw1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(spoiler, None, "event preamble must not become a CW");
+    assert!(
+        summary.is_some(),
+        "summary column keeps the text for search"
+    );
+
+    // Control: a plain note's summary still becomes the CW.
+    ingest(
+        2,
+        json!({
+            "id": "https://remote.test/notes/cw2",
+            "type": "Note",
+            "attributedTo": "https://remote.test/@org",
+            "content": "<p>spooky body</p>",
+            "summary": "spoilers ahead",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+    )
+    .await;
+    let note_spoiler: Option<String> = sqlx::query_scalar(
+        "SELECT spoiler_text FROM statuses WHERE uri = 'https://remote.test/notes/cw2'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+    assert_eq!(note_spoiler.as_deref(), Some("spoilers ahead"));
+}
+
 /// FEP-8a8e `Invite{Event}` handling: organizer invites write
 /// `invited` participation rows for local addressees; non-organizers,
 /// remote-only addressees, and non-Event objects are rejected or

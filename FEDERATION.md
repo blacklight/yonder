@@ -73,6 +73,11 @@ interoperability notes (FEP-8a8e).
   the event is online or has no physical location; calendar feeds
   (`text/calendar`, `.ics`) never promote, and a link matching the
   object's own `url`/`id` is dropped (it duplicates the permalink).
+- An event's `summary` never becomes a content warning: it is the
+  machine-generated when/where/description preamble (Yonder and Gancio
+  emit it for Mastodon-style clients), which the event card already
+  renders structured — the text is kept in `statuses.summary` for
+  search only. Notes keep the usual summary-as-CW behaviour.
 
 ### JSON-LD context
 

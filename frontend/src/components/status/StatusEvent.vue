@@ -906,7 +906,6 @@ const statusBadge = computed(() => {
   flex-wrap: wrap;
 }
 .status-event__links a {
-  color: var(--accent, #4a9eff);
   font-size: 0.85rem;
 }
 .status-event__rsvp {

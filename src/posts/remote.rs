@@ -900,8 +900,13 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     } else {
         content
     };
-    // Converted objects put the teaser in the text — no CW.
-    let spoiler = (!converted && !summary_text.is_empty()).then_some(summary_text.clone());
+    // Converted objects put the teaser in the text — no CW. Events
+    // never CW either: their `summary` is the machine-generated
+    // when/where/description preamble (Yonder emits it for
+    // Mastodon-style clients, Gancio repeats the description there),
+    // which the event card already renders structured.
+    let spoiler =
+        (!converted && !is_event_obj && !summary_text.is_empty()).then_some(summary_text.clone());
     let sensitive = object
         .get("sensitive")
         .and_then(|v| v.as_bool())

@@ -123,7 +123,7 @@ function open(event: MouseEvent) {
       </a>
       <a
         class="embed-quote__date"
-        :href="permalink"
+        :href="permalink ?? undefined"
         :datetime="target.created_at"
         >{{ formatAbsoluteDate(target.created_at) }}</a
       >

@@ -45,7 +45,9 @@ interoperability notes (FEP-8a8e).
   and `Invite{object: event, to: [invitee]}` for invitees-only
   events. All carry the FEP-8a8e `@context`.
 - Audience: participants are added to the `cc` of event `Update`s;
-  `Invite`s are addressed to the invitee only.
+  `Invite`s are addressed to the invitee only. DM invites are `direct`
+  Notes mentioning the invitees, carrying `yonder:inviteTo` and
+  `catodon:inviteTo` with the event URI (Catodon interop).
 
 ### Inbound
 
@@ -58,6 +60,11 @@ interoperability notes (FEP-8a8e).
   `Join`/`Leave`/`Accept`/`Reject`/`TentativeAccept`/`Invite` on local
   events, with `Accept`/`Reject` responses published back for remote
   joins where the join mode calls for it.
+- Two invite mechanisms inbound: Friendica/Hubzilla `Invite{Event}`
+  (organizer-authorized, `invited` rows) and Catodon `inviteTo` DMs —
+  `Create` notes carrying `yonder:inviteTo`/`catodon:inviteTo` write
+  `invited` rows for their local mentions, parking in
+  `event_pending_dm_invites` until the event federates.
 - `Update` on a known event re-syncs the side tables, notifies local
   participants (`update` + `pleroma:event_update`) and re-arms
   reminders only when `startTime` actually moved. `Delete` tombstones

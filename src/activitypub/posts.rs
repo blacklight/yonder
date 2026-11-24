@@ -330,6 +330,21 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         "content": status.content,
         "mediaType": status.content_type,
     });
+    // Catodon-style event invite (migration 0063): a `direct` status
+    // marked in `status_event_invites` carries the event URI under
+    // both property names — `yonder:` for Yonder peers, `catodon:` so
+    // Catodon renders "invited you to an event".
+    if status.visibility == "direct" {
+        let invite_uri: Option<String> =
+            sqlx::query_scalar("SELECT event_uri FROM status_event_invites WHERE status_id = $1")
+                .bind(status.id)
+                .fetch_optional(&ctx.db)
+                .await?;
+        if let Some(uri) = invite_uri {
+            doc["yonder:inviteTo"] = json!(uri);
+            doc["catodon:inviteTo"] = json!(uri);
+        }
+    }
     // Epic 20 — Emoji tags for every local `:code:` in the text, so
     // remote instances can render and record them (pubby has no
     // Emoji tag builder; `doc["tag"]` is the emitted array). A map

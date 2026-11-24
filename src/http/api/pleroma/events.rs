@@ -293,6 +293,7 @@ async fn status_params(
         } else {
             None
         },
+        event_invite_uri: None,
     })
 }
 

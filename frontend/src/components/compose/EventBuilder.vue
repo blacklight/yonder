@@ -6,7 +6,7 @@ import Avatar from "@/components/ui/Avatar.vue";
 import { search } from "@/api/search";
 import { geocodeSearch, type GeoSuggestion } from "@/api/geocoding";
 import { useInstanceStore } from "@/stores/instance";
-import { FEP_CATEGORIES } from "@/api/events";
+import { eventCategoryIcon, FEP_CATEGORIES } from "@/api/events";
 import type { Account, MediaAttachment } from "@/api/entities";
 import type { EventDraft, EventLocationDraft } from "@/stores/compose";
 import { timeZones } from "@/utils/timezone";
@@ -417,6 +417,7 @@ function removeInvitee(id: string) {
         :aria-pressed="event.categories.includes(c)"
         @click="toggleCategory(c)"
       >
+        <FontAwesomeIcon :icon="eventCategoryIcon(c)" />
         {{ categoryLabel(c) }}
       </button>
     </div>
@@ -747,6 +748,9 @@ function removeInvitee(id: string) {
   gap: var(--space-1);
 }
 .event__cat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border: 1px solid var(--border);
   background: none;
   border-radius: 999px;

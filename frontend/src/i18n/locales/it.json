@@ -1516,6 +1516,8 @@
     "reject": "Rifiuta",
     "remove": "Rimuovi",
     "inviteMore": "Invita qualcuno…",
+    "inviteDm": "Invita con un messaggio…",
+    "inviteDmHint": "Invia un messaggio diretto con il link dell'evento; chiunque possa vedere l'evento può essere invitato.",
     "state_pending": "In attesa",
     "state_accepted": "Partecipa",
     "state_rejected": "Rifiutato",

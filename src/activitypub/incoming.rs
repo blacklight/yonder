@@ -191,6 +191,11 @@ pub fn on_activity_fn(core: &Arc<ApCore>) -> OnActivityReceived {
             // `handle` logs its own failures and never errors the
             // hook — PassThrough keeps pubby's dispatch intact.
             sync_block(crate::posts::remote::handle(&core, activity, raw));
+            // Catodon-style `inviteTo` DMs — self-guards on the
+            // extension property; logs and swallows its own errors.
+            if activity.activity_type == "Create" {
+                sync_block(crate::events::dm_invites::on_note(&core, activity, raw));
+            }
             if activity.activity_type == "Update" {
                 if let Err(e) = sync_block(handle_actor_update(&core, activity, raw)) {
                     tracing::warn!(error = %e, "actor Update side-effect failed");

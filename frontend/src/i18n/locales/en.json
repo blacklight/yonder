@@ -1516,6 +1516,8 @@
     "reject": "Reject",
     "remove": "Remove",
     "inviteMore": "Invite someone…",
+    "inviteDm": "Invite by message…",
+    "inviteDmHint": "Sends a direct message with the event link — anyone who can see the event can be invited.",
     "state_pending": "Pending",
     "state_accepted": "Going",
     "state_rejected": "Declined",

@@ -7,7 +7,9 @@ import AccountChip from "@/components/ui/AccountChip.vue";
 import Avatar from "@/components/ui/Avatar.vue";
 import Modal from "@/components/ui/Modal.vue";
 import {
+  eventCategoryIcon,
   eventDecideRequest,
+  eventDmInvites,
   eventInvitees,
   eventParticipations,
   eventRemoveParticipant,
@@ -360,7 +362,11 @@ function onInviteEnter() {
 async function invite(a: Account) {
   inviteBusy.value = true;
   try {
-    await eventInvitees(String(props.status.id), [a.id]);
+    // Direct events use the `Invite` activity + invited rows; wider
+    // visibilities get the Catodon-style DM invite instead.
+    const call =
+      props.status.visibility === "direct" ? eventInvitees : eventDmInvites;
+    await call(String(props.status.id), [a.id]);
     inviteQuery.value = "";
     inviteResults.value = [];
     await loadRows();
@@ -464,7 +470,10 @@ const statusBadge = computed(() => {
               l.name || locationText(l) || t("events.place")
             }}</span>
           </div>
-          <div class="status-event__addr" v-if="l.latitude != null && l.longitude != null">
+          <div
+            v-if="l.latitude != null && l.longitude != null"
+            class="status-event__addr"
+          >
             <button
               type="button"
               class="status-event__map-btn"
@@ -502,6 +511,7 @@ const statusBadge = computed(() => {
       class="status-event__meta"
     >
       <span v-for="c in ev.categories" :key="c" class="status-event__cat">
+        <FontAwesomeIcon :icon="eventCategoryIcon(c)" />
         {{
           c
             .toLowerCase()
@@ -683,16 +693,22 @@ const statusBadge = computed(() => {
               </Button>
             </div>
           </div>
-          <!-- Invitees are a direct-visibility mechanism — the
-               endpoint 422s anything wider. -->
-          <div
-            v-if="props.status.visibility === 'direct'"
-            class="status-event__invite"
-          >
+          <!-- Direct events invite via `Invite` + invited rows;
+               wider visibilities get a Catodon-style DM invite. -->
+          <div class="status-event__invite">
             <input
               v-model="inviteQuery"
               class="status-event__invite-input"
-              :placeholder="t('events.inviteMore')"
+              :placeholder="
+                props.status.visibility === 'direct'
+                  ? t('events.inviteMore')
+                  : t('events.inviteDm')
+              "
+              :title="
+                props.status.visibility === 'direct'
+                  ? undefined
+                  : t('events.inviteDmHint')
+              "
               data-testid="invite-search"
               @input="onInviteInput"
               @keydown.enter.prevent="onInviteEnter"
@@ -869,6 +885,9 @@ const statusBadge = computed(() => {
   align-items: center;
 }
 .status-event__cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   border: 1px solid var(--border, #ddd);
   border-radius: 999px;
   padding: 0.05rem 0.5rem;

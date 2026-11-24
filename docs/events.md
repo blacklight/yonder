@@ -85,6 +85,18 @@ surfaces — inbound Event parsing and existing events keep working.
   mentioned recipient). Invite responses naming the `Invite` activity
   id resolve through `invite_activity_uri`. Adding invitees in a later
   edit only notifies the newly added ones.
+- Events of **any** visibility can also be invited by direct message —
+  the Catodon mechanism. `POST .../dm-invites` (organizer-only, same
+  `{account_ids}` body) sends one `direct` status mentioning every
+  invitee with the event name, when/where summary and link; the status
+  is marked `event_invite_uri` and the AP document carries
+  `yonder:inviteTo`/`catodon:inviteTo`. It grants no visibility and
+  writes no participation rows — RSVP follows the event's own protocol.
+  Inbound, `Create` activities whose object carries either property
+  write `invited` rows for their local mentions (no organizer check —
+  anyone who can see an event may invite); if the event hasn't
+  federated yet the invite parks in `event_pending_dm_invites` and
+  drains when the `Event` materializes.
 
 ## RSVP
 

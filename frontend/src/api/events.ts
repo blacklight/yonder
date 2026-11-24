@@ -91,6 +91,53 @@ export const FEP_CATEGORIES = [
   "WORKSHOPS_SKILL_SHARING",
 ] as const;
 
+/** FEP category code → Font Awesome icon name (registered in
+ * `icons.ts`). Unknown codes fall back to `tag`. */
+export const EVENT_CATEGORY_ICONS: Record<string, string> = {
+  ARTS: "palette",
+  AUTO_BOAT_AIR: "car",
+  BOOK_CLUBS: "book",
+  BUSINESS: "briefcase",
+  CAUSES: "bullhorn",
+  CLIMATE_ENVIRONMENT: "leaf",
+  COMMUNITY: "people-group",
+  COMEDY: "face-laugh",
+  CRAFTS: "scissors",
+  CREATIVE_JAM: "puzzle-piece",
+  DIY_MAKER_SPACES: "toolbox",
+  FAMILY_EDUCATION: "children",
+  FASHION_BEAUTY: "shirt",
+  FESTIVALS: "campground",
+  FILM_MEDIA: "film",
+  FOOD_DRINK: "utensils",
+  GAMES: "gamepad",
+  INCLUSIVE_SPACES: "universal-access",
+  LANGUAGE_CULTURE: "language",
+  LEARNING: "book-open",
+  LGBTQ: "rainbow",
+  MEETING: "user-group",
+  MEDITATION_WELLBEING: "spa",
+  MOVEMENTS_POLITICS: "flag",
+  MUSIC: "music",
+  NETWORKING: "network-wired",
+  OUTDOORS_ADVENTURE: "mountain",
+  PARTY: "champagne-glasses",
+  PERFORMING_VISUAL_ARTS: "theater-masks",
+  PETS: "dog",
+  PHOTOGRAPHY: "camera",
+  SCIENCE_TECH: "flask",
+  SPIRITUALITY_RELIGION_BELIEFS: "hands-praying",
+  SPORTS: "person-running",
+  THEATRE: "ticket",
+  WORKSHOPS_SKILL_SHARING: "screwdriver-wrench",
+};
+
+/** Icon name for a category code — `tag` for codes outside the
+ * FEP list (remote events can carry arbitrary categories). */
+export function eventCategoryIcon(code: string): string {
+  return EVENT_CATEGORY_ICONS[code] ?? "tag";
+}
+
 /** `POST /api/v1/yonder/events/{id}/rsvp`. */
 export function eventRsvp(
   id: string,
@@ -111,6 +158,19 @@ export function eventInvitees(
 ): Promise<unknown> {
   return requestWithResponse<unknown>({
     path: `/yonder/events/${encodeURIComponent(id)}/invitees`,
+    method: "POST",
+    body: { account_ids },
+  }).then(({ data }) => data);
+}
+
+/** `POST /api/v1/yonder/events/{id}/dm-invites` (organizer) —
+ * Catodon-style DM invitations, any visibility. */
+export function eventDmInvites(
+  id: string,
+  account_ids: string[],
+): Promise<unknown> {
+  return requestWithResponse<unknown>({
+    path: `/yonder/events/${encodeURIComponent(id)}/dm-invites`,
     method: "POST",
     body: { account_ids },
   }).then(({ data }) => data);

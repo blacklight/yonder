@@ -133,6 +133,31 @@ pub async fn event_invitees(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+/// `POST /api/v1/yonder/events/{id}/dm-invites` — Catodon-style DM
+/// invitations; works for events of any visibility.
+#[utoipa::path(
+    post,
+    path = "/api/v1/yonder/events/{id}/dm-invites",
+    tag = "events",
+    params(("id" = i64, Path, description = "Status id of the event")),
+    request_body = api::InviteesBody,
+    responses(
+        (status = 200, description = "The invite DM status"),
+        (status = 401, description = "Missing token", body = crate::error::ErrorBody),
+        (status = 403, description = "Not an organizer", body = crate::error::ErrorBody),
+        (status = 404, description = "Not an event or not visible", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn event_dm_invites(
+    State(state): State<Arc<AppState>>,
+    auth: crate::http::middleware::auth::AuthContext,
+    Path(id): Path<i64>,
+    Json(body): Json<api::InviteesBody>,
+) -> Result<Json<serde_json::Value>> {
+    let entity = api::dm_invites(&ctx(&state), &auth, auth.account_id, id, &body).await?;
+    Ok(Json(entity))
+}
+
 /// `DELETE /api/v1/yonder/events/{id}/participants/{account_id}`.
 #[utoipa::path(
     delete,

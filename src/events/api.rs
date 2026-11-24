@@ -155,15 +155,31 @@ async fn env_for(
 
 /// Map the API `{state}` + the caller's existing row onto the §7.1
 /// input. `invited` rows resolve through the Friendica-style
-/// Accept/TentativeAccept/Reject inputs; everyone else joins/leaves.
+/// Accept/TentativeAccept/Reject inputs — except on remote events
+/// whose `remote_join_protocol` is `join` (Mobilizon/Catodon/FEP),
+/// where the answer is a `Join`: DM invites carry no Invite activity
+/// to respond to, and `Join` is the dialect those servers understand.
 fn input_for(
     state: &str,
     existing: Option<&EventParticipationRow>,
+    event: &EventRow,
     message: Option<String>,
 ) -> Result<rsvp::RsvpInput> {
     let invited = existing.is_some_and(|e| e.state == ParticipationState::Invited);
+    let join_protocol =
+        event.remote_join_protocol == Some(crate::events::model::RemoteJoinProtocol::Join);
     match state {
         "none" => Ok(rsvp::RsvpInput::Leave),
+        "accepted" if invited && join_protocol => Ok(rsvp::RsvpInput::Join {
+            join_uri: None,
+            participation_message: message,
+            tentative: false,
+        }),
+        "tentative" if invited && join_protocol => Ok(rsvp::RsvpInput::Join {
+            join_uri: None,
+            participation_message: message,
+            tentative: true,
+        }),
         "accepted" if invited => Ok(rsvp::RsvpInput::AcceptInvite { activity_uri: None }),
         "tentative" if invited => Ok(rsvp::RsvpInput::TentativeAcceptInvite { activity_uri: None }),
         "declined" if invited => Ok(rsvp::RsvpInput::RejectInvite { activity_uri: None }),
@@ -212,7 +228,7 @@ async fn decide_and_apply<F>(
     env: &rsvp::RsvpEnv,
 ) -> Result<Option<RsvpOutcome>>
 where
-    F: FnOnce(Option<&EventParticipationRow>) -> Result<rsvp::RsvpInput>,
+    F: FnOnce(Option<&EventParticipationRow>, &EventRow) -> Result<rsvp::RsvpInput>,
 {
     let mut tx = ctx.db.begin().await?;
     let event =
@@ -226,7 +242,7 @@ where
     party.invited = existing
         .as_ref()
         .is_some_and(|e| e.state == ParticipationState::Invited);
-    let input = input(existing.as_ref())?;
+    let input = input(existing.as_ref(), &event)?;
     let Some(outcome) = rsvp::transition(&event, existing.as_ref(), input, &party, env)? else {
         return Ok(None);
     };
@@ -266,7 +282,7 @@ pub async fn rsvp(
         ctx,
         status_id,
         account_id,
-        move |existing| input_for(&state, existing, message.clone()),
+        move |existing, event| input_for(&state, existing, event, message.clone()),
         party,
         &env,
     )
@@ -455,6 +471,175 @@ pub async fn invitees(
         publish_invites(ctx, &status, account_id, &invited_remote).await?;
     }
     Ok(())
+}
+
+/// `POST /api/v1/yonder/events/{id}/dm-invites` — organizer-only;
+/// Catodon-style invitations for events of *any* visibility. Sends
+/// one `direct` status mentioning every invitee, marked with
+/// `event_invite_uri` so the AP document carries
+/// `yonder:inviteTo`/`catodon:inviteTo`. Unlike [`invitees`] this
+/// grants no visibility and writes no participation rows — it is a
+/// notification, and the event's own RSVP protocol applies.
+pub async fn dm_invites(
+    ctx: &PostContext,
+    auth: &crate::http::middleware::auth::AuthContext,
+    account_id: i64,
+    status_id: i64,
+    body: &InviteesBody,
+) -> Result<serde_json::Value> {
+    let (status, row) = load_visible_event(ctx, status_id, account_id)
+        .await?
+        .ok_or_else(|| Error::NotFound("event".into()))?;
+    if !is_organizer(&ctx.db, &status, account_id).await? {
+        return Err(Error::Forbidden("only organizers can invite"));
+    }
+    let mut ids: Vec<i64> = body
+        .account_ids
+        .iter()
+        .map(EntityId::to_i64)
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|id| *id != account_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Err(Error::Validation("account_ids must not be empty".into()));
+    }
+    let invitees: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, username, domain FROM accounts \
+         WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id",
+    )
+    .bind(&ids)
+    .fetch_all(&ctx.db)
+    .await?;
+    if invitees.len() != ids.len() {
+        return Err(Error::Validation(
+            "invitees must be existing accounts".to_string(),
+        ));
+    }
+    let event_uri = status
+        .uri
+        .clone()
+        .ok_or_else(|| Error::Validation("event has no AP uri".into()))?;
+    let text = dm_invite_text(ctx, &status, &row, status_id, &invitees).await?;
+    let params = posts::create::StatusParams {
+        status: text,
+        content_type: None,
+        visibility: Some("direct".to_string()),
+        language: None,
+        sensitive: Some(false),
+        spoiler_text: None,
+        in_reply_to_id: None,
+        media_ids: None,
+        poll: None,
+        quote_id: None,
+        scheduled_at: None,
+        post_type: Some("note".to_string()),
+        title: None,
+        summary: None,
+        cover_media_id: None,
+        event: None,
+        event_invite_uri: Some(event_uri),
+    };
+    match posts::create::create_status(ctx, auth, &params, None).await? {
+        posts::create::CreateOutcome::Published(entity)
+        | posts::create::CreateOutcome::Scheduled(entity) => Ok(entity),
+    }
+}
+
+/// The DM body — event name, when/where summary and the event link,
+/// followed by the mention audience that makes it a `direct` post.
+async fn dm_invite_text(
+    ctx: &PostContext,
+    status: &posts::StatusRow,
+    row: &EventRow,
+    status_id: i64,
+    invitees: &[(i64, String, Option<String>)],
+) -> Result<String> {
+    let title = status
+        .title
+        .clone()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "Event".to_string());
+    let mut lines = vec![title];
+    if let Some(when) = dm_when(row) {
+        lines.push(when);
+    }
+    if let Some(where_) = dm_where(ctx, status_id).await? {
+        lines.push(where_);
+    }
+    if let Some(link) = status.url.clone().or_else(|| status.uri.clone()) {
+        lines.push(link);
+    }
+    let mentions: Vec<String> = invitees
+        .iter()
+        .map(|(_, username, domain)| match domain {
+            Some(d) => format!("@{username}@{d}"),
+            None => format!("@{username}"),
+        })
+        .collect();
+    let mut text = lines.join("\n\n");
+    text.push_str("\n\n");
+    text.push_str(&mentions.join(" "));
+    Ok(text)
+}
+
+/// `<date> <time> – <date> <time> (<zone>)` in the event's timezone.
+fn dm_when(row: &EventRow) -> Option<String> {
+    let start = row.start_time?;
+    let tz = row
+        .timezone
+        .as_deref()
+        .and_then(|t| t.parse::<chrono_tz::Tz>().ok());
+    let fmt = |dt: chrono::DateTime<chrono::Utc>| match tz {
+        Some(tz) => dt
+            .with_timezone(&tz)
+            .format("%b %-d, %Y %-I:%M %p")
+            .to_string(),
+        None => dt.format("%b %-d, %Y %-I:%M %p").to_string(),
+    };
+    let mut out = fmt(start);
+    if let Some(end) = row.end_time {
+        out.push_str(" – ");
+        out.push_str(&fmt(end));
+    }
+    if let Some(tz) = row.timezone.as_deref() {
+        out.push_str(&format!(" ({tz})"));
+    }
+    Some(out)
+}
+
+/// First location's display text — name, free-text address, or the
+/// structured parts joined.
+async fn dm_where(ctx: &PostContext, status_id: i64) -> Result<Option<String>> {
+    let bundles = crate::events::entity::load_many(&ctx.db, &[status_id], None).await?;
+    let Some(bundle) = bundles.get(&status_id) else {
+        return Ok(None);
+    };
+    let Some(loc) = bundle.locations.first() else {
+        return Ok(None);
+    };
+    let text = loc
+        .name
+        .clone()
+        .or_else(|| loc.address_text.clone())
+        .or_else(|| {
+            let joined = [
+                loc.street_address.as_deref(),
+                loc.locality.as_deref(),
+                loc.region.as_deref(),
+                loc.postal_code.as_deref(),
+                loc.country.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
+            (!joined.is_empty()).then_some(joined)
+        })
+        .filter(|s: &String| !s.is_empty());
+    Ok(text)
 }
 
 /// `DELETE /api/v1/yonder/events/{id}/participants/{account_id}` —

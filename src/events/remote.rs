@@ -1375,7 +1375,7 @@ pub async fn handle_invite(
         return Ok(true);
     }
     let invite_uri = activity.id.clone();
-    let invited = write_invited_rows(&mut conn, status_id, &addressees, &invite_uri).await?;
+    let invited = write_invited_rows(&mut conn, status_id, &addressees, Some(&invite_uri)).await?;
     event_invite_received(core, status_id, invited).await;
     Ok(true)
 }
@@ -1476,7 +1476,8 @@ pub async fn drain_pending_invites(core: &ApCore, status_id: i64, event_uri: &st
             tracing::warn!(actor = %actor, status_id, "Parked invite from non-organizer dropped");
             continue;
         }
-        invited.extend(write_invited_rows(&mut tx, status_id, &addressees, &invite_uri).await?);
+        invited
+            .extend(write_invited_rows(&mut tx, status_id, &addressees, Some(&invite_uri)).await?);
     }
     tx.commit().await?;
     event_invite_received(core, status_id, invited).await;
@@ -1533,11 +1534,11 @@ async fn invite_authorized(
 /// statement per actor, never clobbering a decided state. Returns the
 /// account ids of *newly inserted* rows — re-invites of an existing
 /// `invited` row update the stamp silently (no re-notification).
-async fn write_invited_rows(
+pub(crate) async fn write_invited_rows(
     db: &mut sqlx::PgConnection,
     status_id: i64,
     addressees: &[String],
-    invite_uri: &str,
+    invite_uri: Option<&str>,
 ) -> Result<Vec<i64>> {
     let mut invited = Vec::new();
     for actor in addressees {

@@ -11,12 +11,15 @@ const rsvpMock = vi.fn();
 const participationsMock = vi.fn();
 const decideMock = vi.fn();
 const inviteesMock = vi.fn();
+const dmInvitesMock = vi.fn();
 const removeMock = vi.fn();
 vi.mock("@/api/events", () => ({
+  eventCategoryIcon: () => "tag",
   eventRsvp: (...a: unknown[]) => rsvpMock(...a),
   eventParticipations: (...a: unknown[]) => participationsMock(...a),
   eventDecideRequest: (...a: unknown[]) => decideMock(...a),
   eventInvitees: (...a: unknown[]) => inviteesMock(...a),
+  eventDmInvites: (...a: unknown[]) => dmInvitesMock(...a),
   eventRemoveParticipant: (...a: unknown[]) => removeMock(...a),
 }));
 const searchMock = vi.fn();
@@ -267,7 +270,7 @@ describe("StatusEvent", () => {
     expect(decideMock).toHaveBeenCalledWith("7", "9", "authorize");
   });
 
-  it("hides the invite box unless the event is direct", async () => {
+  it("shows the invite box for every visibility", async () => {
     participationsMock.mockResolvedValue({ participations: [] });
     const own = {
       participation: {
@@ -279,11 +282,51 @@ describe("StatusEvent", () => {
     const pub = await mountCard(own, { visibility: "public" });
     await pub.get("[data-testid='organizer-panel-toggle']").trigger("click");
     await flushPromises();
-    expect(pub.find("[data-testid='invite-search']").exists()).toBe(false);
+    expect(pub.find("[data-testid='invite-search']").exists()).toBe(true);
     const dir = await mountCard(own, { visibility: "direct" });
     await dir.get("[data-testid='organizer-panel-toggle']").trigger("click");
     await flushPromises();
     expect(dir.find("[data-testid='invite-search']").exists()).toBe(true);
+  });
+
+  it("non-direct events invite via DM, not the Invite activity", async () => {
+    searchMock.mockResolvedValue({
+      accounts: [
+        {
+          id: "42",
+          username: "bob",
+          acct: "bob",
+          display_name: "Bob",
+        },
+      ],
+      statuses: [],
+      hashtags: [],
+    });
+    participationsMock.mockResolvedValue({ participations: [] });
+    dmInvitesMock.mockResolvedValue({ id: "99" });
+    const w = await mountCard(
+      {
+        participation: {
+          state: "accepted",
+          can_join: false,
+          reason: "own_event",
+        },
+      },
+      { visibility: "public" },
+    );
+    await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
+    await flushPromises();
+    const input = w.get("[data-testid='invite-search']");
+    await input.setValue("bob");
+    await input.trigger("keydown.enter");
+    await flushPromises();
+    const btn = w
+      .findAll(".status-event__invite-results button")
+      .find((b) => b.text().includes("bob"))!;
+    await btn.trigger("click");
+    await flushPromises();
+    expect(dmInvitesMock).toHaveBeenCalledWith("7", ["42"]);
+    expect(inviteesMock).not.toHaveBeenCalled();
   });
 
   it("invite picker searches accounts and invites the picked id as a string", async () => {

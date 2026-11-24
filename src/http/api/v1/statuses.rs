@@ -973,6 +973,7 @@ fn params_from_json(body: &Value) -> Result<StatusParams> {
             .map(str::to_string),
         cover_media_id: opt_i64(body.get("cover_media_id"), "cover_media_id")?,
         event: crate::events::validate::params_from_json(body.get("event"))?,
+        event_invite_uri: None,
     })
 }
 
@@ -1060,6 +1061,7 @@ fn params_from_pairs(pairs: &[(String, String)]) -> Result<StatusParams> {
             })
             .transpose()?,
         event: event_from_pairs(pairs)?,
+        event_invite_uri: None,
     })
 }
 

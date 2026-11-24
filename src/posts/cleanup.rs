@@ -116,6 +116,7 @@ impl JobHandler for CleanupRemoteActivitiesJob {
         // Parked event invites share the remote-activity retention
         // window — they only apply if their event ever federates.
         crate::events::remote::prune_pending_invites(&ctx.db, days).await?;
+        crate::events::dm_invites::prune_pending_dm_invites(&ctx.db, days).await?;
         Ok(())
     }
 }

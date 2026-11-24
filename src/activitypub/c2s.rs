@@ -400,6 +400,7 @@ async fn create_note(
         summary,
         cover_media_id: None,
         event: None,
+        event_invite_uri: None,
     };
     let validated = create::validate(pctx, auth, &params, None).await?;
     let status = create::publish(pctx, auth.account_id, &validated, None).await?;

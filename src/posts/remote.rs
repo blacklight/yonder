@@ -1481,6 +1481,10 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         {
             tracing::warn!(status_id, uri = %object_id, error = %e, "pending invite drain failed");
         }
+        // Same for Catodon-style DM invites parked on this event.
+        if let Err(e) = crate::events::dm_invites::drain_pending_dm_invites(core, status_id).await {
+            tracing::warn!(status_id, uri = %object_id, error = %e, "pending DM invite drain failed");
+        }
         // §7.3 — pick the RSVP protocol for remote events (joinMode
         // short-circuits; nodeinfo only runs when joinMode is absent).
         // Best-effort: a failure leaves the stored value.

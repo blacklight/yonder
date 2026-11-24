@@ -1516,6 +1516,8 @@
     "reject": "Ablehnen",
     "remove": "Entfernen",
     "inviteMore": "Jemanden einladen…",
+    "inviteDm": "Per Nachricht einladen…",
+    "inviteDmHint": "Sendet eine Direktnachricht mit dem Event-Link — alle, die das Event sehen können, können eingeladen werden.",
     "state_pending": "Ausstehend",
     "state_accepted": "Kommt",
     "state_rejected": "Abgelehnt",

@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod calendar;
+pub mod dm_invites;
 pub mod entity;
 pub mod geocoding;
 pub mod ics;

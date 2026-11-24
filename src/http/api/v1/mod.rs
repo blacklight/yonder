@@ -426,6 +426,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
                 .route_layer(ratelimit::layer(state, "events_rsvp")),
         )
         .route(
+            "/api/v1/yonder/events/{id}/dm-invites",
+            axum::routing::post(events::event_dm_invites)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
             "/api/v1/yonder/events/{id}/participants/{account_id}",
             axum::routing::delete(events::event_remove_participant)
                 .route_layer(ratelimit::layer(state, "events_rsvp")),
@@ -1222,6 +1227,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     events::event_ics,
     events::event_rsvp,
     events::event_invitees,
+    events::event_dm_invites,
     events::event_remove_participant,
     events::event_decide_request,
     events::event_participations,

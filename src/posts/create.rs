@@ -65,6 +65,11 @@ pub struct StatusParams {
     pub cover_media_id: Option<i64>,
     /// FEP-8a8e event payload — required when `post_type=event`.
     pub event: Option<crate::events::validate::EventParams>,
+    /// Catodon-style event invite marker — when `Some`, the status is
+    /// a DM inviting its mentions to the event at this AP URI; the
+    /// serializer emits `yonder:inviteTo`/`catodon:inviteTo`. Internal
+    /// use only (event DM-invite endpoint); `direct` visibility only.
+    pub event_invite_uri: Option<String>,
 }
 
 /// The validated, resolved create payload (stored verbatim in
@@ -110,6 +115,11 @@ pub struct ValidatedStatus {
     /// creates; `None` on event edits that keep the stored payload.
     #[serde(default)]
     pub event: Option<crate::events::validate::ValidatedEvent>,
+    /// Event-invite marker for DM invites — `Some` only when the
+    /// create carried `StatusParams::event_invite_uri` on a `direct`
+    /// status; persisted to `status_event_invites` (migration 0063).
+    #[serde(default)]
+    pub event_invite_uri: Option<String>,
 }
 
 fn default_post_type() -> String {
@@ -506,6 +516,13 @@ pub async fn validate(
         }
     }
 
+    // DM event invites only make sense on `direct` statuses — the
+    // mention audience *is* the invitee list.
+    let event_invite_uri = if visibility == "direct" {
+        params.event_invite_uri.clone()
+    } else {
+        None
+    };
     Ok(ValidatedStatus {
         status: params.status.clone(),
         content_type,
@@ -530,6 +547,7 @@ pub async fn validate(
         },
         cover_media_id: if article { params.cover_media_id } else { None },
         event,
+        event_invite_uri,
     })
 }
 
@@ -898,6 +916,19 @@ pub async fn insert_status_tx(
         .bind(&url)
         .execute(&mut **tx)
         .await?;
+
+    // Catodon-style event invite marker — the AP serializer reads
+    // this row to emit `yonder:inviteTo`/`catodon:inviteTo`.
+    if let Some(event_uri) = &v.event_invite_uri {
+        sqlx::query(
+            "INSERT INTO status_event_invites (status_id, event_uri) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(status_id)
+        .bind(event_uri)
+        .execute(&mut **tx)
+        .await?;
+    }
 
     sqlx::query("UPDATE accounts SET statuses_count = statuses_count + 1 WHERE id = $1")
         .bind(account_id)

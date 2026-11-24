@@ -1516,6 +1516,8 @@
     "reject": "رفض",
     "remove": "إزالة",
     "inviteMore": "ادعُ شخصًا…",
+    "inviteDm": "ادعُ برسالة…",
+    "inviteDmHint": "يرسل رسالة مباشرة مع رابط الحدث — يمكن دعوة أي شخص يستطيع رؤية الحدث.",
     "state_pending": "قيد الانتظار",
     "state_accepted": "سيحضر",
     "state_rejected": "مرفوض",

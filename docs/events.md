@@ -222,6 +222,16 @@ public/unlisted events, an authenticated download otherwise) for
 clients that can't render events natively; the same pair is emitted
 as `Link` attachments on the ActivityPub object.
 
+The generated preamble (`When:`/`Where:`/`Online:` — the Mastodon-API
+content prefix and the ActivityPub `summary` for non-event-aware
+consumers) follows the same map-link rule: a place with coordinates
+or an address is an `<a>` to the configured provider, so Mastodon
+readers can open the location in one click. The `summary` description
+excerpt is the status's rendered, sanitized HTML — never the raw
+markdown source — because Mastodon renders the summary in place of
+the content for non-`Note` types; images are dropped from the excerpt
+and truncation closes any open tags cleanly.
+
 ## Federation
 
 Actor documents are not served with conditional-GET support: Yonder

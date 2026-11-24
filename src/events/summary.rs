@@ -140,6 +140,83 @@ pub fn utc_offset_label(offset: i32) -> String {
     format!("UTC{sign}{:02}:{:02}", abs / 3600, (abs % 3600) / 60)
 }
 
+/// The map-search query for a place: structured parts joined, else
+/// the freeform `address_text` — mirrors the frontend's
+/// `locationText` (the venue name alone is never a query).
+fn place_query(loc: &EventLocationRow) -> String {
+    let structured: Vec<&str> = [
+        loc.street_address.as_deref(),
+        loc.locality.as_deref(),
+        loc.region.as_deref(),
+        loc.postal_code.as_deref(),
+        loc.country.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !structured.is_empty() {
+        return structured.join(", ");
+    }
+    loc.address_text.clone().unwrap_or_default()
+}
+
+/// Percent-encode a map-search query value.
+fn encode_query(q: &str) -> String {
+    const QUERY_SET: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    percent_encoding::utf8_percent_encode(q, QUERY_SET).to_string()
+}
+
+/// Map link for a place location, following `[events] map_provider`
+/// — coordinates win, the address text is the fallback query. `None`
+/// when the place has neither (mirrors the SPA's `placeMapUrl`).
+pub fn place_map_url(
+    loc: &EventLocationRow,
+    provider: crate::config::EventMapProvider,
+) -> Option<String> {
+    use crate::config::EventMapProvider;
+    let coords = match (loc.latitude, loc.longitude) {
+        (Some(lat), Some(lon)) => Some((lat, lon)),
+        _ => None,
+    };
+    match provider {
+        EventMapProvider::Google => {
+            let q = match coords {
+                Some((lat, lon)) => format!("{lat},{lon}"),
+                None => {
+                    let text = place_query(loc);
+                    if text.is_empty() {
+                        return None;
+                    }
+                    text
+                }
+            };
+            Some(format!(
+                "https://www.google.com/maps/search/?api=1&query={}",
+                encode_query(&q)
+            ))
+        }
+        EventMapProvider::Osm => {
+            if let Some((lat, lon)) = coords {
+                return Some(format!(
+                    "https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=15/{lat}/{lon}"
+                ));
+            }
+            let text = place_query(loc);
+            if text.is_empty() {
+                return None;
+            }
+            Some(format!(
+                "https://www.openstreetmap.org/search?query={}",
+                encode_query(&text)
+            ))
+        }
+    }
+}
+
 /// One-line place rendering: `name, street locality region postal,
 /// country` — falls back to `address_text`, then the bare name.
 fn place_line(loc: &EventLocationRow) -> String {
@@ -175,6 +252,7 @@ pub fn preamble_html(
     row: &EventRow,
     locations: &[EventLocationRow],
     language: Option<&str>,
+    map_provider: crate::config::EventMapProvider,
 ) -> String {
     let labels = labels_for(language);
     let mut lines: Vec<String> = Vec::new();
@@ -219,19 +297,25 @@ pub fn preamble_html(
     }
 
     // `place_line` output is remote text — escape before it enters
-    // the HTML `content` payload.
+    // the HTML `content` payload. Places with coordinates or an
+    // address link to the configured map provider, like the SPA.
     let places: Vec<String> = locations
         .iter()
         .filter(|l| l.kind == LocationKind::Place)
-        .map(place_line)
-        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            let line = place_line(l);
+            if line.trim().is_empty() {
+                return None;
+            }
+            let escaped = html_escape_text(&line);
+            Some(match place_map_url(l, map_provider) {
+                Some(url) => format!("<a href=\"{}\">{}</a>", html_escape_text(&url), escaped),
+                None => escaped,
+            })
+        })
         .collect();
     if !places.is_empty() {
-        lines.push(format!(
-            "{}: {}",
-            labels.where_,
-            html_escape_text(&places.join("; "))
-        ));
+        lines.push(format!("{}: {}", labels.where_, places.join("; ")));
     }
     let online: Vec<String> = locations
         .iter()
@@ -285,31 +369,173 @@ pub fn rfc3339_in_zone(row: &EventRow, dt: DateTime<Utc>) -> String {
     dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// Void/standalone elements that never need a closing tag when an
+/// HTML excerpt is truncated.
+const VOID_ELEMENTS: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
+];
+
+/// Truncate a sanitized HTML fragment to at most `max` text
+/// characters, preserving markup: tags pass through, `&entities;`
+/// count as one character, `<img>` tags are dropped (preview noise —
+/// their caption text stays), and when the text overruns the output
+/// ends with an ellipsis plus every still-open tag closed. Returns
+/// the fragment unchanged when it fits.
+fn truncate_html_excerpt(html: &str, max: usize) -> String {
+    // First pass: count text characters (entities as one) — no
+    // truncation needed when the fragment already fits.
+    let mut total = 0usize;
+    let mut rest = html;
+    while let Some(pos) = rest.find(['<', '&']) {
+        total += rest[..pos].chars().count();
+        rest = &rest[pos..];
+        if rest.starts_with('<') {
+            match rest.find('>') {
+                Some(end) => rest = &rest[end + 1..],
+                None => {
+                    total += rest.chars().count();
+                    rest = "";
+                }
+            }
+        } else {
+            // `&entity;` — one visible character when terminated,
+            // literal text otherwise.
+            match rest.find(';') {
+                Some(end) if end <= 12 && !rest[1..end].contains(|c: char| c.is_whitespace()) => {
+                    total += 1;
+                    rest = &rest[end + 1..];
+                }
+                _ => {
+                    total += 1;
+                    rest = &rest[1..];
+                }
+            }
+        }
+    }
+    total += rest.chars().count();
+    if total <= max {
+        return drop_imgs(html);
+    }
+
+    // Second pass: copy through, stopping mid-text at the budget.
+    let mut out = String::with_capacity(html.len());
+    let mut open: Vec<String> = Vec::new();
+    let mut count = 0usize;
+    let mut rest = html;
+    let mut done = false;
+    while !rest.is_empty() && !done {
+        if let Some(stripped) = rest.strip_prefix('<') {
+            let end = match stripped.find('>') {
+                Some(end) => end,
+                None => break, // unterminated trailing `<` — drop it
+            };
+            let tag_src = &stripped[..end];
+            let closing = tag_src.starts_with('/');
+            let name: String = tag_src
+                .trim_start_matches('/')
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase();
+            let self_closing = tag_src.ends_with('/') || VOID_ELEMENTS.contains(&name.as_str());
+            if name != "img" {
+                out.push('<');
+                out.push_str(tag_src);
+                out.push('>');
+            }
+            if closing {
+                if let Some(pos) = open.iter().rposition(|n| *n == name) {
+                    open.remove(pos);
+                }
+            } else if !self_closing && !name.is_empty() {
+                open.push(name);
+            }
+            rest = &stripped[end + 1..];
+        } else {
+            // Text run up to the next tag; entities count as one char.
+            let run_end = rest.find('<').unwrap_or(rest.len());
+            let mut chars = rest[..run_end].chars().peekable();
+            while let Some(c) = chars.next() {
+                if count >= max {
+                    done = true;
+                    break;
+                }
+                if c == '&' {
+                    // Copy a terminated entity verbatim as one char.
+                    let mut entity = String::from('&');
+                    let mut terminated = false;
+                    while let Some(&next) = chars.peek() {
+                        if next == ';' || next.is_whitespace() || next == '&' || entity.len() > 11 {
+                            terminated = next == ';';
+                            if terminated {
+                                entity.push(';');
+                                chars.next();
+                            }
+                            break;
+                        }
+                        entity.push(next);
+                        chars.next();
+                    }
+                    let _ = terminated;
+                    out.push_str(&entity);
+                } else {
+                    out.push(c);
+                }
+                count += 1;
+            }
+            rest = &rest[run_end..];
+        }
+    }
+    out.push('…');
+    while let Some(name) = open.pop() {
+        out.push_str(&format!("</{name}>"));
+    }
+    out
+}
+
+/// Drop `<img …>` tags from a fragment — they are preview noise in a
+/// generated summary (the caption text the renderer emits after them
+/// is unaffected).
+fn drop_imgs(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(pos) = rest.find("<img") {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        match rest.find('>') {
+            Some(end) => rest = &rest[end + 1..],
+            None => rest = "",
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The ActivityPub `summary` form (plan.md §5.2): the preamble lines
-/// plus a plain-text description excerpt capped at
-/// `excerpt_chars` (`0` = preamble only). The excerpt is escaped —
-/// remote descriptions are untrusted text.
+/// plus a description excerpt capped at `excerpt_chars` visible
+/// characters (`0` = preamble only). The excerpt is the status's
+/// already-rendered, already-sanitized `content_html` — never raw
+/// markdown, so links and emphasis survive into Mastodon-style
+/// clients that render the summary in place of the content — with
+/// images dropped and the tail closed cleanly when truncated.
 pub fn ap_summary_html(
     row: &EventRow,
     locations: &[EventLocationRow],
     language: Option<&str>,
-    description: Option<&str>,
+    description_html: Option<&str>,
     excerpt_chars: u32,
+    map_provider: crate::config::EventMapProvider,
 ) -> String {
-    let mut html = preamble_html(row, locations, language);
+    let mut html = preamble_html(row, locations, language, map_provider);
     if excerpt_chars > 0 {
-        if let Some(text) = description.map(str::trim).filter(|t| !t.is_empty()) {
-            let excerpt: String = text.chars().take(excerpt_chars as usize).collect();
-            let ellipsis = if text.chars().count() > excerpt_chars as usize {
-                "…"
-            } else {
-                ""
-            };
-            let paragraph = format!("<p>{}{}</p>", html_escape_text(&excerpt), ellipsis);
+        if let Some(desc) = description_html.map(str::trim).filter(|t| !t.is_empty()) {
+            let excerpt = truncate_html_excerpt(desc, excerpt_chars as usize);
             if html.is_empty() {
-                html = paragraph;
+                html = excerpt;
             } else {
-                html.push_str(&paragraph);
+                html.push_str(&excerpt);
             }
         }
     }
@@ -347,6 +573,7 @@ fn html_escape_text(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::EventMapProvider;
     use crate::events::model::{EventRow, EventStatus};
 
     fn row() -> EventRow {
@@ -413,13 +640,15 @@ mod tests {
             "Jitsi",
             Some("https://jitsi.example/room"),
         );
-        let html = preamble_html(&row(), &[place, virtual_loc], Some("en"));
+        let html = preamble_html(
+            &row(),
+            &[place, virtual_loc],
+            Some("en"),
+            EventMapProvider::Osm,
+        );
         assert!(html.contains("When: 2026-12-12 20:00 – 23:00"), "{html}");
         assert!(html.contains("(Europe/Rome)"), "{html}");
-        assert!(
-            html.contains("Where: Circolo Arci, Via Roma 1, Roma"),
-            "{html}"
-        );
+        assert!(html.contains("Circolo Arci, Via Roma 1, Roma"), "{html}");
         assert!(
             html.contains("Online: <a href=\"https://jitsi.example/room\">Jitsi</a>"),
             "{html}"
@@ -427,10 +656,117 @@ mod tests {
     }
 
     #[test]
+    fn place_with_coordinates_links_osm_pin() {
+        let mut place = loc(LocationKind::Place, "MIT", None);
+        place.latitude = Some(42.3582529);
+        place.longitude = Some(-71.0966272);
+        let html = preamble_html(&row(), &[place], Some("en"), EventMapProvider::Osm);
+        assert!(
+            html.contains(
+                "Where: <a href=\"https://www.openstreetmap.org/?mlat=42.3582529&amp;mlon=-71.0966272#map=15/42.3582529/-71.0966272\">MIT</a>"
+            ),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn place_with_address_text_links_osm_search() {
+        let mut place = loc(LocationKind::Place, "Circolo Arci", None);
+        place.address_text = Some("Via Roma 1, Roma".into());
+        let html = preamble_html(&row(), &[place], Some("en"), EventMapProvider::Osm);
+        assert!(
+            html.contains(
+                "<a href=\"https://www.openstreetmap.org/search?query=Via%20Roma%201%2C%20Roma\">Circolo Arci, Via Roma 1, Roma</a>"
+            ),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn google_provider_links_google_maps() {
+        let mut place = loc(LocationKind::Place, "MIT", None);
+        place.latitude = Some(42.3582529);
+        place.longitude = Some(-71.0966272);
+        let html = preamble_html(&row(), &[place], Some("en"), EventMapProvider::Google);
+        assert!(
+            html.contains(
+                "<a href=\"https://www.google.com/maps/search/?api=1&amp;query=42.3582529%2C-71.0966272\">MIT</a>"
+            ),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn bare_name_place_has_no_map_link() {
+        // No coordinates and no address — nothing to query, so the
+        // place line stays plain text (mirrors the SPA).
+        let place = loc(LocationKind::Place, "Somewhere", None);
+        let html = preamble_html(&row(), &[place], Some("en"), EventMapProvider::Osm);
+        assert!(html.contains("Where: Somewhere"), "{html}");
+        assert!(!html.contains("openstreetmap"), "{html}");
+    }
+
+    #[test]
+    fn summary_excerpt_keeps_rendered_links() {
+        let desc = "<p>Compliant with <a href=\"https://example.org/fep\" rel=\"nofollow noopener\">FEP-8a8e</a></p>\n";
+        let html = ap_summary_html(
+            &row(),
+            &[],
+            Some("en"),
+            Some(desc),
+            300,
+            EventMapProvider::Osm,
+        );
+        assert!(
+            html.contains(
+                "<a href=\"https://example.org/fep\" rel=\"nofollow noopener\">FEP-8a8e</a>"
+            ),
+            "{html}"
+        );
+        assert!(!html.contains(']'), "no raw markdown leaks: {html}");
+    }
+
+    #[test]
+    fn summary_excerpt_truncates_cleanly() {
+        let desc = "<p>alpha beta gamma delta <strong>epsilon zeta</strong> eta theta</p>";
+        // 30 visible chars: the cut lands inside `<strong>` (7 chars
+        // into "epsilon zeta"), so both tags must close after the
+        // ellipsis — no dangling markup.
+        let html = ap_summary_html(
+            &row(),
+            &[],
+            Some("en"),
+            Some(desc),
+            30,
+            EventMapProvider::Osm,
+        );
+        assert!(
+            html.contains("<p>alpha beta gamma delta <strong>epsilon…</strong></p>"),
+            "{html}"
+        );
+        assert!(!html.contains("theta"), "{html}");
+    }
+
+    #[test]
+    fn summary_excerpt_drops_images() {
+        let desc = "<p>look <img src=\"https://x/p.png\" alt=\"pic\"> caption here</p>";
+        let html = ap_summary_html(
+            &row(),
+            &[],
+            Some("en"),
+            Some(desc),
+            300,
+            EventMapProvider::Osm,
+        );
+        assert!(!html.contains("<img"), "{html}");
+        assert!(html.contains("caption here"), "{html}");
+    }
+
+    #[test]
     fn cancelled_leads_with_status_line() {
         let mut r = row();
         r.status = EventStatus::Cancelled;
-        let html = preamble_html(&r, &[], Some("en"));
+        let html = preamble_html(&r, &[], Some("en"), EventMapProvider::Osm);
         assert!(html.starts_with("<p>Cancelled<br>"), "{html}");
     }
 
@@ -439,7 +775,7 @@ mod tests {
         let mut r = row();
         r.display_end_time = false;
         r.end_time_inferred = true;
-        let html = preamble_html(&r, &[], Some("en"));
+        let html = preamble_html(&r, &[], Some("en"), EventMapProvider::Osm);
         assert!(html.contains("20:00"), "{html}");
         assert!(!html.contains("23:00"), "{html}");
     }
@@ -451,7 +787,7 @@ mod tests {
         r.start_time = None;
         r.end_time = None;
         r.previous_start_time = Some("2026-12-12T19:00:00Z".parse().unwrap());
-        let html = preamble_html(&r, &[], Some("en"));
+        let html = preamble_html(&r, &[], Some("en"), EventMapProvider::Osm);
         assert!(html.contains("Postponed (was 2026-12-12 19:00"), "{html}");
         assert!(!html.contains("When:"), "{html}");
     }
@@ -462,7 +798,12 @@ mod tests {
         let mut place = loc(LocationKind::Place, "<img src=x onerror=alert(1)>", None);
         place.address_text = Some("Hall & \"Annex\"".into());
         let virtual_loc = loc(LocationKind::Virtual, "<b>Meet</b>", None);
-        let html = preamble_html(&row(), &[place, virtual_loc], Some("en"));
+        let html = preamble_html(
+            &row(),
+            &[place, virtual_loc],
+            Some("en"),
+            EventMapProvider::Osm,
+        );
         assert!(!html.contains("<img"), "{html}");
         assert!(!html.contains("<b>"), "{html}");
         assert!(
@@ -478,7 +819,7 @@ mod tests {
         let mut r = row();
         r.start_time = Some("2026-12-12T19:00:00Z".parse().unwrap());
         r.end_time = Some("2026-12-14T22:00:00Z".parse().unwrap());
-        let html = preamble_html(&r, &[], Some("en"));
+        let html = preamble_html(&r, &[], Some("en"), EventMapProvider::Osm);
         // Europe/Rome is UTC+1 in December: the end lands on a
         // different local date than the start, so it keeps its date.
         assert!(html.contains("2026-12-14 23:00"), "{html}");
@@ -486,7 +827,7 @@ mod tests {
         let mut r2 = row();
         r2.start_time = Some("2026-12-12T19:00:00Z".parse().unwrap());
         r2.end_time = Some("2026-12-12T22:00:00Z".parse().unwrap());
-        let html2 = preamble_html(&r2, &[], Some("en"));
+        let html2 = preamble_html(&r2, &[], Some("en"), EventMapProvider::Osm);
         assert!(html2.contains(" – 23:00"), "{html2}");
     }
 

@@ -5340,6 +5340,100 @@ async fn create_local_event() {
     assert!(!has_start);
 }
 
+/// Regression: the outbound AP `summary` carries the rendered HTML
+/// description — never the raw markdown source, because Mastodon
+/// renders the summary in place of the content for non-Note types —
+/// and the `Where` line links the place to the configured map
+/// provider like the SPA does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_event_ap_summary_renders_html_and_map_links() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "evhtml", "evhtml@x.com").await;
+
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/statuses",
+        Some(&token),
+        Some(json!({
+            "status": "Compliant with [FEP-8a8e](https://codeberg.org/fediverse/fep/src/branch/main/fep/8a8e/fep-8a8e.md)",
+            "title": "Test event",
+            "content_type": "text/markdown",
+            "post_type": "event",
+            "visibility": "public",
+            "event": {
+                "start_time": "2030-06-01T18:00:00+02:00",
+                "end_time": "2030-06-01T20:00:00+02:00",
+                "timezone": "Europe/Rome",
+                "join_mode": "free",
+                "locations": [{
+                    "type": "place",
+                    "name": "MIT",
+                    "latitude": 42.3582529,
+                    "longitude": -71.0966272
+                }],
+            }
+        })),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let id = body["id"].as_str().unwrap();
+
+    let resp = env
+        .app
+        .clone()
+        .oneshot(
+            Request::get(format!("/ap/users/evhtml/statuses/{id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let doc: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(doc["type"], "Event");
+
+    // `content` carries the rendered markdown.
+    let content = doc["content"].as_str().unwrap();
+    assert!(
+        content.contains(
+            "<a href=\"https://codeberg.org/fediverse/fep/src/branch/main/fep/8a8e/fep-8a8e.md\""
+        ),
+        "{content}"
+    );
+
+    // `summary` — what Mastodon displays for non-Note types — renders
+    // the same HTML excerpt, never the raw markdown source.
+    let summary = doc["summary"].as_str().unwrap();
+    assert!(
+        summary.contains(
+            "<a href=\"https://codeberg.org/fediverse/fep/src/branch/main/fep/8a8e/fep-8a8e.md\""
+        ),
+        "rendered link in summary: {summary}"
+    );
+    assert!(
+        !summary.contains("[FEP-8a8e]("),
+        "no raw markdown in summary: {summary}"
+    );
+
+    // The Where line links the place to OSM by coordinates.
+    assert!(
+        summary.contains("https://www.openstreetmap.org/?mlat=42.3582529&amp;mlon=-71.0966272"),
+        "map link in summary: {summary}"
+    );
+    assert!(
+        summary.contains(">MIT</a>"),
+        "place line is the link text: {summary}"
+    );
+}
+
 /// Section 7 — reschedule auto-fills `previous_start_time` from the
 /// stored start; an explicit organizer value wins.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

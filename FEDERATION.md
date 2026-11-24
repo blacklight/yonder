@@ -23,7 +23,10 @@ interoperability notes (FEP-8a8e).
 ### Outbound
 
 - Events are `Event` objects: `name`, generated `summary` (preamble +
-  excerpt), `startTime`/`endTime` in the event's IANA `timezone`,
+  excerpt — the rendered, sanitized `content_html`, never raw
+  markdown, because Mastodon-style clients render the summary in
+  place of the content for non-Note types; images are dropped and
+  truncation closes tags cleanly), `startTime`/`endTime` in the event's IANA `timezone`,
   `displayEndTime`, `eventStatus` + iCal `status` companions,
   `previousStartTime` on reschedules, `location` (array of `Place` /
   `VirtualLocation` with `sc:address` parts), `isOnline`, `category`

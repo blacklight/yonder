@@ -1252,6 +1252,7 @@ impl StatusBatch {
                     &bundle.row,
                     &bundle.locations,
                     status.language.as_deref(),
+                    ctx.config.events.map_provider,
                 );
                 format!("{preamble}{desc_html}")
             }

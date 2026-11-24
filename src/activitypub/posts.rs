@@ -671,13 +671,28 @@ fn event_fields(
         }
     }
 
-    // Generated summary: preamble + plain-text excerpt.
+    // Generated summary: preamble + rendered-HTML excerpt. Mastodon
+    // renders the `summary` in place of `content` for non-Note types,
+    // so the excerpt is the sanitized `content_html` — links and
+    // emphasis survive — never the raw markdown source.
+    let fallback_html;
+    let description_html = match status.content_html.as_deref() {
+        Some(html) => html,
+        None => {
+            fallback_html = format!(
+                "<p>{}</p>",
+                pubby_sdk::content::html_escape(&status.content)
+            );
+            fallback_html.as_str()
+        }
+    };
     let summary = crate::events::summary::ap_summary_html(
         row,
         &bundle.locations,
         status.language.as_deref(),
-        Some(status.content.as_str()),
+        Some(description_html),
         ctx.config.events.summary_excerpt_chars,
+        ctx.config.events.map_provider,
     );
     if !summary.is_empty() {
         doc["summary"] = json!(summary);

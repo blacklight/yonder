@@ -843,6 +843,9 @@ const statusBadge = computed(() => {
 .status-event__locs a {
   text-decoration: none;
 }
+.status-event__locs li svg {
+  margin-inline-end: 0.35rem;
+}
 .status-event__map-btn {
   border: 0;
   background: none;

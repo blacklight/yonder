@@ -23,11 +23,13 @@ summary_excerpt_chars = 300        # generated AP summary excerpt
 reminder_lead_minutes = 60         # pleroma:event_reminder lead time
 remote_refresh_after_minutes = 360 # staleness before a participant view re-fetches a remote event
 reminder_sweep_schedule = "*/5 * * * *"  # empty disables reminders
+map_provider = "osm"                  # "google" links places to Google Maps instead
 
 [events.geocoding]
-provider = "none"                  # "nominatim" enables server-side place lookup
+provider = "none"                  # "nominatim" | "google" enables place lookup
 nominatim_url = "https://nominatim.openstreetmap.org"
 user_agent = ""                    # required for nominatim (their usage policy)
+google_api_key = ""                # required for provider = "google"
 ```
 
 `events.enabled = false` only gates authoring and the frontend
@@ -54,6 +56,24 @@ surfaces — inbound Event parsing and existing events keep working.
   re-arms reminders.
 - Title falls back to the status text on create and to the stored
   title on edit.
+- Place locations carry structured address parts (§9.1 input
+  spellings); the read entity emits them under
+  `yonder.event.locations[].address` as a nested §9.2 object
+  (`street`/`locality`/`region`/`postal_code`/`country`/`text`). The
+  composer hydrates that shape back into the flat draft fields on
+  edit.
+- The composer offers address autocomplete on place locations when
+  `[events.geocoding]` names a provider: `provider = "nominatim"`
+  proxies `nominatim_url` (a descriptive `user_agent` is required by
+  their usage policy — self-hosting is recommended), `provider =
+  "google"` calls the Geocoding API with `google_api_key` (prefer the
+  `YONDER_EVENTS__GEOCODING__GOOGLE_API_KEY` env var). Both are
+  normalized server-side by `events::geocoding` and served to the SPA
+  at `GET /api/v1/yonder/geocoding/search?q=` (authenticated,
+  `search` rate-limit bucket); the instance entity advertises the
+  provider as `yonder.events_geocoding` so the field only renders when
+  lookup is configured. A picked suggestion fills every address part
+  the hit knows, including coordinates.
 - Invitees require a `direct`-visibility event and existing accounts —
   local or remote (a remote stub row exists once the actor is known,
   e.g. via `GET /api/v1/accounts/lookup` or search `resolve`). Invitees
@@ -76,7 +96,8 @@ Join modes: `free` (instant), `restricted` (organizer approval via
 `POST .../participation_requests/{account_id}/{authorize|reject}`),
 `invite` (invited rows only), `external` (redirect to
 `externalParticipationUrl`). Organizer extras: `GET .../participations`,
-`POST .../invitees`, `DELETE .../participants/{account_id}`.
+`POST .../invitees` (direct-visibility events only — same rule as
+authoring), `DELETE .../participants/{account_id}`.
 
 Outbound responses follow the remote event's protocol: `Join`/`Leave`
 (Mobilizon-style) or `Accept`/`Reject`/`TentativeAccept` on the
@@ -173,6 +194,21 @@ bounded re-fetch (`EventRemoteRefresh`).
     `include_cancelled=true`.
   - **Errors:** a genuine miss is a cacheable 404; any other failure
     is a non-cacheable 500.
+
+## Rendering
+
+The status card renders start and end on separate labelled lines as
+`<date> <time> (<IANA zone>)` (e.g. `Europe/Amsterdam`, plus the
+viewer's local time when the zones differ). Place locations link to
+the configured `[events] map_provider` — `osm` (default,
+openstreetmap.org, coordinates preferred with an address-text search
+fallback) or `google` (Google Maps search URL, no API key needed) —
+and a map button opens an embedded OpenStreetMap preview in a modal.
+Every event also offers **Copy link** (the status permalink) and
+**Download calendar** (the per-event ICS feed — a plain link for
+public/unlisted events, an authenticated download otherwise) for
+clients that can't render events natively; the same pair is emitted
+as `Link` attachments on the ActivityPub object.
 
 ## Federation
 

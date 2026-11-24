@@ -559,6 +559,24 @@ fn event_attachments(
             docs.push(doc);
         }
     }
+    // `Link` attachments for clients that can't render events
+    // natively: the permalink ("copy link") and the ICS feed
+    // ("download calendar"). `mediaType` lets aware parsers skip the
+    // calendar link when promoting Links to virtual locations.
+    if let Some(page) = status.url.as_deref().or(status.uri.as_deref()) {
+        docs.push(json!({
+            "type": "Link",
+            "href": page,
+            "mediaType": "text/html",
+            "name": "Event page",
+        }));
+    }
+    docs.push(json!({
+        "type": "Link",
+        "href": format!("{}/api/v1/yonder/events/{}/ics", base.trim_end_matches('/'), status.id),
+        "mediaType": "text/calendar",
+        "name": "Calendar (.ics)",
+    }));
     let mut out = Vec::with_capacity(docs.len() + 1);
     if let Some(banner) = banner_doc {
         out.push(banner);

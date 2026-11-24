@@ -177,6 +177,101 @@ describe("ComposeBox", () => {
     });
   });
 
+  it("editing a non-direct event drops a stale invitee list", async () => {
+    // Invitees are direct-only; a wider-visibility event can carry a
+    // stale stored list (pre-guard data). The edit must send
+    // `invitees: []` — hydrating the ids would 422 every save.
+    const status = {
+      id: "7",
+      content: "<p>event body</p>",
+      media_attachments: [],
+      spoiler_text: "",
+      sensitive: false,
+      language: "en",
+      visibility: "public",
+      tags: [],
+      yonder: {
+        event: {
+          name: "Gig night",
+          status: "scheduled",
+          start_time: "2030-06-01T18:00:00+00:00",
+          timezone: "UTC",
+          invitees: ["999"],
+          locations: [],
+        },
+      },
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(status), { status: 200 })),
+      );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/compose", component: ComposeBox }],
+    });
+    await router.push("/compose?edit=7");
+    await router.isReady();
+    const wrapper = mount(ComposeBox, {
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const put = spy.mock.calls.find(
+      ([, i]) => (i as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    const body = JSON.parse((put![1] as RequestInit).body as string);
+    expect(body.event.invitees).toEqual([]);
+  });
+
+  it("editing a direct event preserves its invitee list", async () => {
+    const status = {
+      id: "8",
+      content: "<p>event body</p>",
+      media_attachments: [],
+      spoiler_text: "",
+      sensitive: false,
+      language: "en",
+      visibility: "direct",
+      tags: [],
+      yonder: {
+        event: {
+          name: "Secret gig",
+          status: "scheduled",
+          start_time: "2030-06-01T18:00:00+00:00",
+          timezone: "UTC",
+          invitees: ["999"],
+          locations: [],
+        },
+      },
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(status), { status: 200 })),
+      );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/compose", component: ComposeBox }],
+    });
+    await router.push("/compose?edit=8");
+    await router.isReady();
+    const wrapper = mount(ComposeBox, {
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const put = spy.mock.calls.find(
+      ([, i]) => (i as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    const body = JSON.parse((put![1] as RequestInit).body as string);
+    expect(body.event.invitees).toEqual(["999"]);
+  });
+
   it("Ctrl+Enter submits from the textarea, plain Enter does not", async () => {
     const spy = mockPost();
     const { wrapper } = mountWith(ComposeBox);

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
 import Button from "@/components/ui/Button.vue";
 import AccountChip from "@/components/ui/AccountChip.vue";
 import Avatar from "@/components/ui/Avatar.vue";
+import Modal from "@/components/ui/Modal.vue";
 import {
   eventDecideRequest,
   eventInvitees,
@@ -17,14 +18,17 @@ import { requestBlob } from "@/api/client";
 import { saveBlob } from "@/composables/useExports";
 import { useToastsStore } from "@/stores/toasts";
 import { useAuthStore } from "@/stores/auth";
+import { useInstanceStore } from "@/stores/instance";
 import { search } from "@/api/search";
-import type { Account, Status } from "@/api/entities";
+import type { Account, EventLocation, Status } from "@/api/entities";
 import { browserTimeZone } from "@/utils/timezone";
 
 const props = defineProps<{ status: Status }>();
 const { t, locale } = useI18n();
 const toasts = useToastsStore();
 const auth = useAuthStore();
+const instance = useInstanceStore();
+onMounted(() => void instance.ensure());
 
 const ev = computed(() => props.status.yonder?.event ?? null);
 
@@ -46,19 +50,22 @@ const isOrganizer = computed(() => synced.value?.reason === "own_event");
 const rsvpProtocol = computed(() => ev.value?.rsvp_protocol ?? "join");
 
 // --- date chip -------------------------------------------------------
+// Start/End render on separate lines as `<date> <time> (<zone>)` —
+// the IANA name (e.g. `Europe/Amsterdam`), not a `GMT+1` offset.
+const eventZone = computed(() => ev.value?.timezone || browserTimeZone());
 const fmt = computed(() => {
-  const zone = ev.value?.timezone || browserTimeZone();
   return new Intl.DateTimeFormat(locale.value, {
-    timeZone: zone,
+    timeZone: eventZone.value,
     weekday: "short",
     month: "short",
     day: "numeric",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZoneName: "short",
   });
 });
+const whenText = (iso: string) =>
+  `${fmt.value.format(new Date(iso))} (${eventZone.value})`;
 const viewerFmt = computed(
   () =>
     new Intl.DateTimeFormat(locale.value, {
@@ -70,13 +77,13 @@ const viewerFmt = computed(
 const startLabel = computed(() => {
   const iso = ev.value?.start_time;
   if (!iso) return t("events.postponedNoDate");
-  return fmt.value.format(new Date(iso));
+  return whenText(iso);
 });
 const endLabel = computed(() => {
   const e = ev.value;
   if (!e?.end_time || e.end_time_inferred || e.display_end_time === false)
     return null;
-  return fmt.value.format(new Date(e.end_time));
+  return whenText(e.end_time);
 });
 /** Viewer-zone clock time, only when it differs from the event zone. */
 const viewerTimeLabel = computed(() => {
@@ -91,19 +98,51 @@ function osmUrl(lat?: number | null, lon?: number | null): string | null {
   if (lat == null || lon == null) return null;
   return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=15/${lat}/${lon}`;
 }
-function locationText(
-  l: NonNullable<NonNullable<typeof ev.value>["locations"]>[number],
-) {
-  return [
-    l.street_address,
-    l.address_text,
-    l.locality,
-    l.region,
-    l.postal_code,
-    l.country,
-  ]
-    .filter(Boolean)
-    .join(", ");
+/** Structured address parts (§9.2 `address` object) in display order. */
+function addressParts(l: EventLocation): string[] {
+  const a = l.address;
+  if (!a || typeof a !== "object") return [];
+  return [a.street, a.locality, a.region, a.postal_code, a.country].filter(
+    (s): s is string => typeof s === "string" && s.length > 0,
+  );
+}
+/** The one-line address: structured parts joined, else the freeform
+ * `address.text` (remote `address_text`), else a bare-string address. */
+function locationText(l: EventLocation): string {
+  const parts = addressParts(l);
+  if (parts.length) return parts.join(", ");
+  const a = l.address;
+  if (typeof a === "string") return a;
+  return a?.text ?? "";
+}
+
+// Map links follow `[events] map_provider` (`osm` default, `google`
+// configurable) — coordinates win, the address text is the fallback
+// query for places without lat/lon.
+function googleMapsUrl(l: EventLocation): string | null {
+  const q =
+    l.latitude != null && l.longitude != null
+      ? `${l.latitude},${l.longitude}`
+      : locationText(l);
+  if (!q) return null;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`;
+}
+function placeMapUrl(l: EventLocation): string | null {
+  if (instance.eventsMapProvider === "google") return googleMapsUrl(l);
+  if (l.latitude != null && l.longitude != null)
+    return osmUrl(l.latitude, l.longitude);
+  const text = locationText(l);
+  return text
+    ? `https://www.openstreetmap.org/search?query=${encodeURIComponent(text)}`
+    : null;
+}
+
+// Embedded OSM preview — iframe embed needs no API key.
+const mapLocation = ref<EventLocation | null>(null);
+function osmEmbedUrl(lat: number, lon: number): string {
+  const d = 0.01;
+  const bbox = `${lon - d},${lat - d},${lon + d},${lat + d}`;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat},${lon}`;
 }
 
 // --- RSVP ------------------------------------------------------------
@@ -207,14 +246,26 @@ function icsPath(): string | null {
     return url.startsWith("/") ? url : `/${url}`;
   }
 }
-const copied = ref(false);
-async function copyIcs() {
+/** Absolute ICS URL — `ics_url` may arrive relative on older servers. */
+function icsAbsolute(): string | null {
   const url = ev.value?.ics_url;
-  if (!url) return;
-  // `ics_url` is already absolute; a relative one gets the origin.
-  const absolute = url.startsWith("http") ? url : `${location.origin}${url}`;
+  if (!url) return null;
+  return url.startsWith("http") ? url : `${location.origin}${url}`;
+}
+/** Public/unlisted ICS serves anonymously — render a real link so
+ * the browser (or "copy link address") handles it; narrower
+ * visibilities keep the authenticated blob download. */
+const icsIsPublic = computed(() =>
+  ["public", "unlisted"].includes(props.status.visibility),
+);
+/** "Copy link" copies the event permalink, not the feed URL. */
+const statusUrl = computed(
+  () => props.status.url ?? `${location.origin}/statuses/${props.status.id}`,
+);
+const copied = ref(false);
+async function copyLink() {
   try {
-    await navigator.clipboard.writeText(absolute);
+    await navigator.clipboard.writeText(statusUrl.value);
     copied.value = true;
     setTimeout(() => (copied.value = false), 2000);
   } catch {
@@ -348,11 +399,18 @@ const statusBadge = computed(() => {
     />
 
     <div class="status-event__head">
-      <span class="status-event__date">
-        <FontAwesomeIcon icon="calendar-days" />
-        {{ startLabel }}
-        <template v-if="endLabel">– {{ endLabel }}</template>
-      </span>
+      <div class="status-event__when">
+        <span class="status-event__when-line">
+          <FontAwesomeIcon icon="calendar-days" />
+          <span class="status-event__when-label">{{ t("events.start") }}</span>
+          {{ startLabel }}
+        </span>
+        <span v-if="endLabel" class="status-event__when-line">
+          <FontAwesomeIcon icon="calendar-days" />
+          <span class="status-event__when-label">{{ t("events.end") }}</span>
+          {{ endLabel }}
+        </span>
+      </div>
       <span v-if="viewerTimeLabel" class="status-event__viewer-tz">
         {{ t("events.viewerTime", { time: viewerTimeLabel }) }}
       </span>
@@ -392,21 +450,35 @@ const statusBadge = computed(() => {
           <span v-else>{{ l.name }}</span>
         </template>
         <template v-else>
-          <FontAwesomeIcon icon="location-dot" />
-          <a
-            v-if="osmUrl(l.latitude, l.longitude)"
-            :href="osmUrl(l.latitude, l.longitude)!"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {{ l.name || locationText(l) || t("events.place") }}
-          </a>
-          <span v-else>{{
-            l.name || locationText(l) || t("events.place")
-          }}</span>
-          <span v-if="l.name && locationText(l)" class="status-event__addr">
-            {{ locationText(l) }}
-          </span>
+          <div class="status-event__place--name">
+            <FontAwesomeIcon icon="location-dot" />
+            <a
+              v-if="placeMapUrl(l)"
+              :href="placeMapUrl(l)!"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {{ l.name || locationText(l) || t("events.place") }}
+            </a>
+            <span v-else>{{
+              l.name || locationText(l) || t("events.place")
+            }}</span>
+          </div>
+          <div class="status-event__addr" v-if="l.latitude != null && l.longitude != null">
+            <button
+              type="button"
+              class="status-event__map-btn"
+              :aria-label="t('events.showMap')"
+              :title="t('events.showMap')"
+              data-testid="event-show-map"
+              @click="mapLocation = l"
+            >
+              <FontAwesomeIcon icon="map-location-dot" />
+            </button>
+            <span v-if="l.name && locationText(l)">
+              {{ locationText(l) }}
+            </span>
+          </div>
         </template>
       </li>
     </ul>
@@ -512,11 +584,25 @@ const statusBadge = computed(() => {
 
     <!-- ICS actions -->
     <div class="status-event__ics">
-      <button type="button" class="status-event__ics-btn" @click="copyIcs">
+      <button type="button" class="status-event__ics-btn" @click="copyLink">
         <FontAwesomeIcon :icon="copied ? 'check' : 'link'" />
         {{ copied ? t("events.copied") : t("events.copyLink") }}
       </button>
-      <button type="button" class="status-event__ics-btn" @click="downloadIcs">
+      <a
+        v-if="icsIsPublic && icsAbsolute()"
+        :href="icsAbsolute()!"
+        class="status-event__ics-btn"
+        data-testid="download-calendar-link"
+      >
+        <FontAwesomeIcon icon="download" />
+        {{ t("events.downloadCalendar") }}
+      </a>
+      <button
+        v-else
+        type="button"
+        class="status-event__ics-btn"
+        @click="downloadIcs"
+      >
         <FontAwesomeIcon icon="download" />
         {{ t("events.downloadCalendar") }}
       </button>
@@ -597,7 +683,12 @@ const statusBadge = computed(() => {
               </Button>
             </div>
           </div>
-          <div class="status-event__invite">
+          <!-- Invitees are a direct-visibility mechanism — the
+               endpoint 422s anything wider. -->
+          <div
+            v-if="props.status.visibility === 'direct'"
+            class="status-event__invite"
+          >
             <input
               v-model="inviteQuery"
               class="status-event__invite-input"
@@ -626,6 +717,33 @@ const statusBadge = computed(() => {
         </template>
       </div>
     </div>
+
+    <Modal
+      v-if="mapLocation"
+      :title="
+        mapLocation.name || locationText(mapLocation) || t('events.place')
+      "
+      @close="mapLocation = null"
+    >
+      <iframe
+        v-if="mapLocation.latitude != null && mapLocation.longitude != null"
+        :src="osmEmbedUrl(mapLocation.latitude, mapLocation.longitude)"
+        class="status-event__map"
+        title="OpenStreetMap"
+        loading="lazy"
+        referrerpolicy="no-referrer-when-downgrade"
+      />
+      <a
+        v-if="placeMapUrl(mapLocation)"
+        :href="placeMapUrl(mapLocation)!"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="status-event__map-link"
+      >
+        <FontAwesomeIcon icon="arrow-up-right-from-square" />
+        {{ t("events.openInMaps") }}
+      </a>
+    </Modal>
   </div>
 </template>
 
@@ -651,9 +769,25 @@ const statusBadge = computed(() => {
   font-size: 0.85rem;
   color: var(--text-muted, #666);
 }
-.status-event__date {
+.status-event__when {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.status-event__when-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   font-weight: 600;
   color: var(--text, #222);
+}
+.status-event__when-label {
+  font-weight: 400;
+  color: var(--text-muted, #666);
+  min-width: 2.5rem;
+}
+.status-event__viewer-tz {
+  color: var(--text-muted, #666);
 }
 .status-event__badge {
   border-radius: 999px;
@@ -667,12 +801,13 @@ const statusBadge = computed(() => {
   color: #fff;
 }
 .status-event__name {
-  margin: 0.25rem 0 0;
+  margin: 0.75rem 0;
   padding: 0 0.75rem;
-  font-size: 1.05rem;
+  font-size: 1.5rem;
 }
 .status-event__name--cancelled {
   text-decoration: line-through;
+  color: var(--text-muted, #999);
 }
 .status-event__was {
   margin: 0;
@@ -690,12 +825,37 @@ const statusBadge = computed(() => {
   font-size: 0.9rem;
 }
 .status-event__locs a {
-  color: var(--accent, #4a9eff);
   text-decoration: none;
 }
-.status-event__addr {
+.status-event__map-btn {
+  border: 0;
+  background: none;
   color: var(--text-muted, #666);
+  cursor: pointer;
+  padding: 0 0.2rem;
+  font-size: 0.85rem;
+}
+.status-event__map-btn:hover {
+  color: var(--accent, #4a9eff);
+}
+.status-event__map {
+  width: 100%;
+  height: 20rem;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+}
+.status-event__map-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: var(--space-2, 0.5rem);
+  color: var(--accent, #4a9eff);
+  font-size: 0.85rem;
+}
+.status-event__addr {
+  color: var(--text-faint, #777);
   font-size: 0.8rem;
+  font-weight: 300;
 }
 .status-event__ext {
   margin: 0.4rem 0 0;
@@ -757,6 +917,7 @@ const statusBadge = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  text-decoration: none;
 }
 .status-event__ics-btn:hover {
   background: var(--bg-hover, #f0f0f0);

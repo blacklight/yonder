@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
 import Avatar from "@/components/ui/Avatar.vue";
 import { search } from "@/api/search";
+import { geocodeSearch, type GeoSuggestion } from "@/api/geocoding";
+import { useInstanceStore } from "@/stores/instance";
 import { FEP_CATEGORIES } from "@/api/events";
 import type { Account, MediaAttachment } from "@/api/entities";
 import type { EventDraft, EventLocationDraft } from "@/stores/compose";
@@ -26,6 +28,11 @@ const emit = defineEmits<{
   remove: [];
 }>();
 const { t } = useI18n();
+const instance = useInstanceStore();
+onMounted(() => void instance.ensure());
+// `[events.geocoding]` — address autocomplete only when the instance
+// proxies a provider; the provider name drives attribution.
+const geoEnabled = computed(() => instance.eventsGeocoding !== null);
 
 const JOIN_MODES = ["free", "restricted", "invite", "external"];
 const ATTENDEE_VISIBILITIES = ["organizers", "participants", "public"];
@@ -138,6 +145,71 @@ function removeLocation(i: number) {
   patch({ locations: props.event.locations.filter((_, j) => j !== i) });
 }
 
+// --- geocoding autocomplete (place locations) ------------------------
+// Per-index query/results — `event.locations` is a props array, so
+// suggestion state lives in parallel maps keyed by location index.
+const geoQuery = ref<Record<number, string>>({});
+const geoResults = ref<Record<number, GeoSuggestion[]>>({});
+const geoTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+function onGeoInput(i: number, value: string) {
+  geoQuery.value = { ...geoQuery.value, [i]: value };
+  const pending = geoTimers.get(i);
+  if (pending) clearTimeout(pending);
+  const q = value.trim();
+  if (q.length < 3 || !geoEnabled.value) {
+    geoResults.value = { ...geoResults.value, [i]: [] };
+    return;
+  }
+  geoTimers.set(
+    i,
+    setTimeout(() => void geoSearch(i, q), 300),
+  );
+}
+async function geoSearch(i: number, q: string) {
+  try {
+    const hits = await geocodeSearch(q);
+    geoResults.value = { ...geoResults.value, [i]: hits };
+  } catch {
+    geoResults.value = { ...geoResults.value, [i]: [] };
+  }
+}
+/** Enter picks the top suggestion, or runs the search immediately. */
+function onGeoEnter(i: number) {
+  const hits = geoResults.value[i];
+  if (hits?.length) pickGeo(i, hits[0]);
+  else {
+    const q = (geoQuery.value[i] ?? "").trim();
+    if (q.length >= 3) void geoSearch(i, q);
+  }
+}
+function geoLabel(h: GeoSuggestion): string {
+  return (
+    h.name ||
+    h.address_text ||
+    [h.street_address, h.locality, h.country].filter(Boolean).join(", ")
+  );
+}
+function pickGeo(i: number, h: GeoSuggestion) {
+  const loc = props.event.locations[i];
+  patchLocation(i, {
+    // A picked place fills every address field it knows; fields the
+    // hit lacks keep their current value. The venue `name` only
+    // fills when the user hasn't typed one.
+    name: loc.name || h.name || "",
+    streetAddress: h.street_address ?? loc.streetAddress,
+    locality: h.locality ?? loc.locality,
+    region: h.region ?? loc.region,
+    postalCode: h.postal_code ?? loc.postalCode,
+    country: h.country ?? loc.country,
+    addressText: h.address_text ?? loc.addressText,
+    latitude: h.latitude != null ? String(h.latitude) : loc.latitude,
+    longitude: h.longitude != null ? String(h.longitude) : loc.longitude,
+  });
+  geoResults.value = { ...geoResults.value, [i]: [] };
+  geoQuery.value = { ...geoQuery.value, [i]: "" };
+}
+
 // --- invitee picker (direct visibility only) -------------------------
 const inviteQuery = ref("");
 const inviteResults = ref<Account[]>([]);
@@ -236,6 +308,8 @@ function removeInvitee(id: string) {
           />
         </span>
       </label>
+    </div>
+    <div class="event__row">
       <label class="event__field">
         <span>{{ t("compose.eventTimezone") }}</span>
         <select
@@ -395,6 +469,37 @@ function removeInvitee(id: string) {
           "
         />
         <template v-else>
+          <div v-if="geoEnabled" class="event__loc-geo">
+            <input
+              :value="geoQuery[i] ?? ''"
+              :placeholder="t('compose.eventLocSearch')"
+              data-testid="event-geo-search"
+              @input="onGeoInput(i, ($event.target as HTMLInputElement).value)"
+              @keydown.enter.prevent="onGeoEnter(i)"
+            />
+            <ul
+              v-if="geoResults[i]?.length"
+              class="event__invitee-results"
+              data-testid="event-geo-results"
+            >
+              <li v-for="(h, j) in geoResults[i]" :key="j">
+                <button type="button" @click="pickGeo(i, h)">
+                  <span class="event__invitee-name">{{ geoLabel(h) }}</span>
+                  <span
+                    v-if="h.address_text && h.address_text !== geoLabel(h)"
+                    class="event__invitee-acct"
+                    >{{ h.address_text }}</span
+                  >
+                </button>
+              </li>
+            </ul>
+            <p
+              v-if="instance.eventsGeocoding === 'nominatim'"
+              class="event__hint"
+            >
+              {{ t("compose.eventLocGeoCredit") }}
+            </p>
+          </div>
           <input
             :value="loc.streetAddress"
             :placeholder="t('compose.eventLocStreet')"
@@ -688,6 +793,30 @@ function removeInvitee(id: string) {
   background: var(--bg);
   color: var(--text);
 }
+.event__loc-geo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  position: relative;
+}
+.event__loc-geo input {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+}
+.event__loc-geo .event__invitee-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: var(--bg);
+  max-height: 12rem;
+  overflow: auto;
+}
 .event__loc-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -814,8 +943,8 @@ function removeInvitee(id: string) {
   font-size: var(--text-sm);
 }
 .event__hint {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
   margin: 0;
 }
 </style>

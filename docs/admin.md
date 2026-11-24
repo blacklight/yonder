@@ -34,9 +34,9 @@ reflects the latest stored overlays.
 schedules). Everything else takes effect live via the hot-swapped
 `AppState::config()` snapshot.
 
-The `[events]` section (feature flag, authoring limits, reminder
-sweep schedule, `[events.geocoding]` provider) is overlay-writable;
-see [events.md](events.md).
+The `[events]` section (feature flag, authoring limits, `map_provider`,
+reminder sweep schedule, `[events.geocoding]` provider incl. the Google
+API key) is overlay-writable; see [events.md](events.md).
 
 ## Audit log
 

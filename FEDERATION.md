@@ -31,8 +31,11 @@ interoperability notes (FEP-8a8e).
   (`free|restricted|external|invite`), `externalParticipationUrl`,
   `maximumAttendeeCapacity`/`remainingAttendeeCapacity`,
   `requiredJoinVisibility` (organizer) for approval-gated events,
-  banner as `image`, flyer as attachment, and `attendees`/`organizers`
-  collection stubs on the object.
+  banner as `image`, flyer as attachment, `Link` attachments for the
+  permalink and the per-event ICS feed (`mediaType:
+  text/calendar` — clients that can't render events still get copy /
+  download affordances), and `attendees`/`organizers` collection
+  stubs on the object.
 - The actor document advertises `upcomingEvents`
   (`/ap/users/{u}/collections/upcoming_events` — OrderedCollection,
   ascending by `startTime`, public/unlisted only, postponed excluded).
@@ -59,6 +62,10 @@ interoperability notes (FEP-8a8e).
   participants (`update` + `pleroma:event_update`) and re-arms
   reminders only when `startTime` actually moved. `Delete` tombstones
   and notifies before the scrub.
+- `attachment[]` `Link` entries promote to virtual locations only when
+  the event is online or has no physical location; calendar feeds
+  (`text/calendar`, `.ics`) never promote, and a link matching the
+  object's own `url`/`id` is dropped (it duplicates the permalink).
 
 ### JSON-LD context
 

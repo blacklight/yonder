@@ -285,17 +285,28 @@ export interface Status {
   };
 }
 
-/** `yonder.event.locations[]` — FEP-8a8e place/virtual location. */
-export interface EventLocation {
-  type?: string;
-  name?: string | null;
-  url?: string | null;
-  street_address?: string | null;
+/** `yonder.event.locations[].address` — the §9.2 structured
+ * address object (input payloads use the flat `street_address`
+ * spellings instead; this is the read shape). */
+export interface EventLocationAddress {
+  street?: string | null;
   locality?: string | null;
   region?: string | null;
   postal_code?: string | null;
   country?: string | null;
-  address_text?: string | null;
+  /** Free-form address line (remote `address_text`). */
+  text?: string | null;
+}
+
+/** `yonder.event.locations[]` — FEP-8a8e place/virtual location. */
+export interface EventLocation {
+  type?: string;
+  uri?: string | null;
+  name?: string | null;
+  url?: string | null;
+  /** §9.2 read shape; a bare string is tolerated defensively for
+   * remote shapes that flatten the address. */
+  address?: EventLocationAddress | string | null;
   latitude?: number | null;
   longitude?: number | null;
 }
@@ -630,6 +641,12 @@ export interface InstanceEntity {
    * redirect target for anonymous `/` visitors (`instance.single_user`). */
   yonder?: {
     single_user?: string | null;
+    /** `events.enabled` — absent on older servers. */
+    events_enabled?: boolean;
+    /** `[events.geocoding]` provider name, or null/absent when off. */
+    events_geocoding?: "nominatim" | "google" | null;
+    /** `[events] map_provider` — `osm` (default) or `google`. */
+    events_map_provider?: "osm" | "google";
     [key: string]: unknown;
   };
   [key: string]: unknown;

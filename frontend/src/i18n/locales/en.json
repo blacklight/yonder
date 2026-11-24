@@ -729,7 +729,9 @@
     "eventArticleHint": "Articles can't be events",
     "pollEventHint": "Events can't have polls",
     "postType_event": "Event",
-    "eventRescheduleConfirm": "Changing the start time will mark this event as rescheduled. Continue?"
+    "eventRescheduleConfirm": "Changing the start time will mark this event as rescheduled. Continue?",
+    "eventLocSearch": "Search address…",
+    "eventLocGeoCredit": "Geodata © OpenStreetMap contributors"
   },
   "moderation": {
     "showResolved": "Show resolved",
@@ -1536,7 +1538,11 @@
     "calendarCopied": "Copied",
     "calendarRegenerate": "Regenerate",
     "calendarRevoke": "Revoke",
-    "discover": "Discover"
+    "discover": "Discover",
+    "start": "Start",
+    "end": "End",
+    "showMap": "Show map",
+    "openInMaps": "Open in maps"
   },
   "eventsDiscover": {
     "title": "Discover events",

@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::scopes::require_scope,
-    events::{api as events_api, entity as events_entity, validate::EventParams},
+    events::{api as events_api, entity as events_entity, geocoding, validate::EventParams},
     http::{
         middleware::{
             auth::{AuthContext, MaybeAuth},
@@ -105,35 +105,10 @@ fn i64_param(params: &Value, key: &str) -> Result<Option<i64>> {
     }
 }
 
-/// Blocking Nominatim GET — runs under `spawn_blocking` so the
-/// synchronous `ureq` agent never stalls a Tokio worker.
-fn geocode_fetch(url: String, user_agent: String) -> std::result::Result<Vec<u8>, String> {
-    let agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(10)))
-        .build()
-        .new_agent();
-    let mut req = agent.get(&url);
-    if !user_agent.is_empty() {
-        req = req.header("User-Agent", &user_agent);
-    }
-    req.call()
-        .map_err(|e| format!("geocoder request failed: {e}"))?
-        .into_body()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_vec()
-        .map_err(|e| format!("geocoder request failed: {e}"))
-}
-
-/// Async wrapper: clone the config strings, run the blocking fetch
-/// off-runtime, map failures to 502.
+/// Async wrapper over the shared geocoder fetch
+/// (`events::geocoding::geocode_get`).
 async fn geocode_get(state: &AppState, url: String) -> Result<Vec<u8>> {
-    let geo = &state.config().events.geocoding;
-    let user_agent = geo.user_agent.clone();
-    tokio::task::spawn_blocking(move || geocode_fetch(url, user_agent))
-        .await
-        .map_err(|e| Error::Internal(format!("geocoder task failed: {e}")))?
-        .map_err(Error::Upstream)
+    geocoding::geocode_get(&state.config().events.geocoding, url).await
 }
 
 /// `location_id` → a `place` [`LocationParams`] via the configured
@@ -159,34 +134,12 @@ async fn location_from_id(
     let bytes = geocode_get(state, url).await?;
     let body: Vec<Value> = serde_json::from_slice(&bytes)
         .map_err(|e| Error::Upstream(format!("geocoder lookup failed: {e}")))?;
-    let Some(first) = body.into_iter().next() else {
+    let Some(first) = body.first() else {
         return Err(Error::Validation("location_id not found".to_string()));
     };
-    let addr = first.get("address").cloned().unwrap_or(Value::Null);
-    let pick = |k: &str| addr.get(k).and_then(Value::as_str).map(str::to_string);
-    // road + house_number compose the street line when both exist.
-    let street = match (pick("road"), pick("house_number")) {
-        (Some(road), Some(house)) => Some(format!("{house} {road}")),
-        (Some(road), None) => Some(road),
-        (None, Some(house)) => Some(house),
-        (None, None) => None,
-    };
-    let loc = json!({
-        "type": "place",
-        "name": first.get("name").and_then(Value::as_str)
-            .or_else(|| first.get("display_name").and_then(Value::as_str)),
-        "latitude": first.get("lat").and_then(Value::as_f64)
-            .or_else(|| first.get("lat").and_then(Value::as_str).and_then(|s| s.parse().ok())),
-        "longitude": first.get("lon").and_then(Value::as_f64)
-            .or_else(|| first.get("lon").and_then(Value::as_str).and_then(|s| s.parse().ok())),
-        "street_address": street,
-        "locality": pick("city").or_else(|| pick("town")).or_else(|| pick("village"))
-            .or_else(|| pick("municipality")),
-        "region": pick("state"),
-        "postal_code": pick("postcode"),
-        "country": pick("country"),
-        "address_text": first.get("display_name").and_then(Value::as_str),
-    });
+    let mut loc = serde_json::to_value(geocoding::hit_from_nominatim(first))
+        .map_err(|e| Error::Internal(format!("geocoder result: {e}")))?;
+    loc["type"] = json!("place");
     serde_json::from_value(loc)
         .map(Some)
         .map_err(|e| Error::Validation(format!("location: {e}")))

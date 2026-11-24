@@ -29,13 +29,24 @@ vi.mock("@/api/client", () => ({
     filename: "event.ics",
   }),
 }));
+// `instance.ensure()` runs on mount — no instance entity means no
+// map provider override (osm default) and geocoding stays off.
+vi.mock("@/api/instance", () => ({
+  getInstance: vi.fn().mockRejectedValue(new Error("no instance")),
+}));
 vi.mock("@/composables/useExports", () => ({ saveBlob: vi.fn() }));
 
-function statusWith(event: Record<string, unknown>): Status {
+function statusWith(
+  event: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Status {
   return {
     id: "7",
+    url: "https://yonder.test/@alice/7",
+    visibility: "public",
     account: { acct: "alice", id: "1" },
     yonder: { event },
+    ...extra,
   } as unknown as Status;
 }
 
@@ -51,7 +62,10 @@ const BASE_EVENT = {
   participation: { state: null, can_join: true, reason: null },
 };
 
-async function mountCard(event: Record<string, unknown> = {}) {
+async function mountCard(
+  event: Record<string, unknown> = {},
+  extra: Record<string, unknown> = {},
+) {
   const pinia = createPinia();
   setActivePinia(pinia);
   useAuthStore().token = "test-token";
@@ -60,7 +74,7 @@ async function mountCard(event: Record<string, unknown> = {}) {
     routes: [{ path: "/", component: { template: "<div/>" } }],
   });
   const wrapper = mount(StatusEvent, {
-    props: { status: statusWith({ ...BASE_EVENT, ...event }) },
+    props: { status: statusWith({ ...BASE_EVENT, ...event }, extra) },
     global: { plugins: [i18n, router, pinia] },
   });
   await flushPromises();
@@ -93,13 +107,41 @@ describe("StatusEvent", () => {
           name: "Club",
           latitude: 41.9,
           longitude: 12.5,
-          locality: "Rome",
+          address: {
+            street: "Via Appia 1",
+            locality: "Rome",
+            country: "Italy",
+          },
         },
       ],
     });
     expect(w.text()).toContain("Gig night");
     expect(w.text()).toContain("Club");
+    expect(w.text()).toContain("Via Appia 1, Rome, Italy");
     expect(w.find("a[href*='openstreetmap.org']").exists()).toBe(true);
+    // Start/End on separate labelled lines with the IANA zone name.
+    expect(w.text()).toContain("Start");
+    expect(w.text()).toContain("End");
+    expect(w.text()).toContain("(UTC)");
+  });
+
+  it("opens the embedded OSM map modal from the map button", async () => {
+    const w = await mountCard({
+      locations: [
+        {
+          type: "place",
+          name: "Club",
+          latitude: 41.9,
+          longitude: 12.5,
+        },
+      ],
+    });
+    await w.get("[data-testid='event-show-map']").trigger("click");
+    await flushPromises();
+    const iframe =
+      document.querySelector<HTMLIFrameElement>(".status-event__map");
+    expect(iframe?.src).toContain("openstreetmap.org/export/embed.html");
+    expect(iframe?.src).toContain("marker=41.9,12.5");
   });
 
   it("shows Join for a fresh viewer on a join-protocol event", async () => {
@@ -225,6 +267,25 @@ describe("StatusEvent", () => {
     expect(decideMock).toHaveBeenCalledWith("7", "9", "authorize");
   });
 
+  it("hides the invite box unless the event is direct", async () => {
+    participationsMock.mockResolvedValue({ participations: [] });
+    const own = {
+      participation: {
+        state: "accepted",
+        can_join: false,
+        reason: "own_event",
+      },
+    };
+    const pub = await mountCard(own, { visibility: "public" });
+    await pub.get("[data-testid='organizer-panel-toggle']").trigger("click");
+    await flushPromises();
+    expect(pub.find("[data-testid='invite-search']").exists()).toBe(false);
+    const dir = await mountCard(own, { visibility: "direct" });
+    await dir.get("[data-testid='organizer-panel-toggle']").trigger("click");
+    await flushPromises();
+    expect(dir.find("[data-testid='invite-search']").exists()).toBe(true);
+  });
+
   it("invite picker searches accounts and invites the picked id as a string", async () => {
     searchMock.mockResolvedValue({
       accounts: [
@@ -240,13 +301,16 @@ describe("StatusEvent", () => {
     });
     participationsMock.mockResolvedValue({ participations: [] });
     inviteesMock.mockResolvedValue({ ok: true });
-    const w = await mountCard({
-      participation: {
-        state: "accepted",
-        can_join: false,
-        reason: "own_event",
+    const w = await mountCard(
+      {
+        participation: {
+          state: "accepted",
+          can_join: false,
+          reason: "own_event",
+        },
       },
-    });
+      { visibility: "direct" },
+    );
     await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
     await flushPromises();
     const input = w.get("[data-testid='invite-search']");
@@ -282,13 +346,16 @@ describe("StatusEvent", () => {
     });
     participationsMock.mockResolvedValue({ participations: [] });
     inviteesMock.mockResolvedValue({ ok: true });
-    const w = await mountCard({
-      participation: {
-        state: "accepted",
-        can_join: false,
-        reason: "own_event",
+    const w = await mountCard(
+      {
+        participation: {
+          state: "accepted",
+          can_join: false,
+          reason: "own_event",
+        },
       },
-    });
+      { visibility: "direct" },
+    );
     await w.get("[data-testid='organizer-panel-toggle']").trigger("click");
     await flushPromises();
     const input = w.get("[data-testid='invite-search']");
@@ -304,16 +371,27 @@ describe("StatusEvent", () => {
     expect(inviteesMock).toHaveBeenCalledWith("7", ["42"]);
   });
 
-  it("copy link writes the absolute ics url; download saves the blob", async () => {
-    const { saveBlob } = await import("@/composables/useExports");
-    const { requestBlob } = await import("@/api/client");
+  it("copy link writes the permalink; public events get a direct ICS link", async () => {
     const w = await mountCard();
     await w
       .findAll("button")
       .find((b) => b.text().includes("Copy link"))!
       .trigger("click");
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      "https://yonder.test/@alice/7",
+    );
+    const link = w.get("[data-testid='download-calendar-link']");
+    expect(link.attributes("href")).toBe(
       "https://yonder.test/api/v1/yonder/events/7/ics",
+    );
+  });
+
+  it("non-public events keep the authenticated ICS blob download", async () => {
+    const { saveBlob } = await import("@/composables/useExports");
+    const { requestBlob } = await import("@/api/client");
+    const w = await mountCard({}, { visibility: "private" });
+    expect(w.find("[data-testid='download-calendar-link']").exists()).toBe(
+      false,
     );
     await w
       .findAll("button")

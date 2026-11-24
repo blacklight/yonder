@@ -759,7 +759,9 @@
     "eventArticleHint": "Gli articoli non possono essere eventi",
     "pollEventHint": "Gli eventi non possono avere sondaggi",
     "postType_event": "Evento",
-    "eventRescheduleConfirm": "Cambiare l'orario di inizio segnerà l'evento come riprogrammato. Continuare?"
+    "eventRescheduleConfirm": "Cambiare l'orario di inizio segnerà l'evento come riprogrammato. Continuare?",
+    "eventLocSearch": "Cerca indirizzo…",
+    "eventLocGeoCredit": "Geodati © collaboratori di OpenStreetMap"
   },
   "moderation": {
     "showResolved": "Mostra risolte",
@@ -1536,7 +1538,11 @@
     "calendarCopied": "Copiato",
     "calendarRegenerate": "Rigenera",
     "calendarRevoke": "Revoca",
-    "discover": "Scopri"
+    "discover": "Scopri",
+    "start": "Inizio",
+    "end": "Fine",
+    "showMap": "Mostra mappa",
+    "openInMaps": "Apri nelle mappe"
   },
   "eventsDiscover": {
     "title": "Scopri eventi",

@@ -759,7 +759,9 @@
     "eventArticleHint": "Artikel können keine Veranstaltungen sein",
     "pollEventHint": "Veranstaltungen können keine Umfragen haben",
     "postType_event": "Veranstaltung",
-    "eventRescheduleConfirm": "Wenn die Startzeit geändert wird, wird die Veranstaltung als verschoben markiert. Fortfahren?"
+    "eventRescheduleConfirm": "Wenn die Startzeit geändert wird, wird die Veranstaltung als verschoben markiert. Fortfahren?",
+    "eventLocSearch": "Adresse suchen…",
+    "eventLocGeoCredit": "Geodaten © OpenStreetMap-Mitwirkende"
   },
   "moderation": {
     "showResolved": "Erledigte anzeigen",
@@ -1536,7 +1538,11 @@
     "calendarCopied": "Kopiert",
     "calendarRegenerate": "Neu erstellen",
     "calendarRevoke": "Widerrufen",
-    "discover": "Entdecken"
+    "discover": "Entdecken",
+    "start": "Beginn",
+    "end": "Ende",
+    "showMap": "Karte anzeigen",
+    "openInMaps": "In Karten öffnen"
   },
   "eventsDiscover": {
     "title": "Veranstaltungen entdecken",

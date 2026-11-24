@@ -1117,6 +1117,8 @@ pub struct EventsConfig {
     /// Cron schedule for the `event_reminder_sweep` job — empty
     /// disables reminders.
     pub reminder_sweep_schedule: Option<String>,
+    /// Map link target for physical event locations.
+    pub map_provider: EventMapProvider,
     /// Optional server-side place lookup (`[events.geocoding]`).
     pub geocoding: EventsGeocodingConfig,
 }
@@ -1133,7 +1135,27 @@ impl Default for EventsConfig {
             reminder_lead_minutes: 60,
             remote_refresh_after_minutes: 360,
             reminder_sweep_schedule: Some("*/5 * * * *".to_string()),
+            map_provider: EventMapProvider::Osm,
             geocoding: EventsGeocodingConfig::default(),
+        }
+    }
+}
+
+/// `events.map_provider` values — the link target rendered for
+/// physical event locations.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EventMapProvider {
+    #[default]
+    Osm,
+    Google,
+}
+
+impl EventMapProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Osm => "osm",
+            Self::Google => "google",
         }
     }
 }
@@ -1145,6 +1167,18 @@ pub enum GeocodingProvider {
     #[default]
     None,
     Nominatim,
+    Google,
+}
+
+impl GeocodingProvider {
+    /// Wire name emitted on the instance entity (`null` for `None`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Nominatim => "nominatim",
+            Self::Google => "google",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1154,6 +1188,9 @@ pub struct EventsGeocodingConfig {
     pub nominatim_url: String,
     /// Required by Nominatim's usage policy; ignored by other providers.
     pub user_agent: String,
+    /// Google Geocoding API key — required when `provider = "google"`.
+    /// Prefer the `YONDER_EVENTS__GEOCODING__GOOGLE_API_KEY` env var.
+    pub google_api_key: String,
 }
 
 impl Default for EventsGeocodingConfig {
@@ -1162,6 +1199,7 @@ impl Default for EventsGeocodingConfig {
             provider: GeocodingProvider::None,
             nominatim_url: "https://nominatim.openstreetmap.org".to_string(),
             user_agent: String::new(),
+            google_api_key: String::new(),
         }
     }
 }

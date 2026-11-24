@@ -528,22 +528,31 @@ function eventDraftFromStatus(s: Status): EventDraft {
     maximumAttendeeCapacity: numStr(ev?.maximum_attendee_capacity),
     attendeesVisibility: ev?.attendees_visibility ?? "organizers",
     categories: ev?.categories ?? [],
-    locations: (ev?.locations ?? []).map((l) => ({
-      kind: l.type === "virtual" ? "virtual" : "place",
-      name: str(l.name),
-      url: str(l.url),
-      streetAddress: str(l.street_address),
-      locality: str(l.locality),
-      region: str(l.region),
-      postalCode: str(l.postal_code),
-      country: str(l.country),
-      addressText: str(l.address_text),
-      latitude: numStr(l.latitude),
-      longitude: numStr(l.longitude),
-    })),
+    locations: (ev?.locations ?? []).map((l) => {
+      // §9.2 read shape: `address` is a nested object (structured
+      // parts + freeform `text`), not the flat §9.1 input fields. A
+      // bare string flattens into `addressText`.
+      const raw = l.address;
+      const a = raw && typeof raw === "object" ? raw : {};
+      return {
+        kind: l.type === "virtual" ? ("virtual" as const) : ("place" as const),
+        name: str(l.name),
+        url: str(l.url),
+        streetAddress: str(a.street),
+        locality: str(a.locality),
+        region: str(a.region),
+        postalCode: str(a.postal_code),
+        country: str(a.country),
+        addressText: str(typeof raw === "string" ? raw : a.text),
+        latitude: numStr(l.latitude),
+        longitude: numStr(l.longitude),
+      };
+    }),
     bannerMediaId: ev?.banner?.id ?? null,
     flyerMediaId: ev?.flyer?.id ?? null,
-    invitees: ev?.invitees ?? [],
+    // Invitees are direct-only — a wider-visibility event can't carry
+    // them, so a stale stored list must not wedge the edit.
+    invitees: s.visibility === "direct" ? (ev?.invitees ?? []) : [],
   };
 }
 
@@ -863,7 +872,16 @@ async function submit() {
         : undefined,
       event:
         isEvent.value && d.value.event
-          ? eventPayload(d.value.event)
+          ? {
+              ...eventPayload(d.value.event),
+              // Invitees are direct-only; a wider-visibility save
+              // clears the list (the picker is hidden, so the draft
+              // can't express "keep but don't show").
+              invitees:
+                (props.direct ? "direct" : d.value.visibility) === "direct"
+                  ? d.value.event.invitees
+                  : [],
+            }
           : undefined,
     };
     const sig = JSON.stringify(body);
@@ -1454,7 +1472,6 @@ async function submit() {
 .compose__text-wrap {
   position: relative;
   flex: 1 1 auto;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

@@ -8,6 +8,7 @@
 pub mod api;
 pub mod calendar;
 pub mod entity;
+pub mod geocoding;
 pub mod ics;
 pub mod inbound;
 pub mod jobs;

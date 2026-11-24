@@ -189,6 +189,17 @@ pub(crate) fn yonder_metadata(config: &crate::config::Config) -> Value {
         // `events.enabled` — the SPA hides the composer event type,
         // the Events nav entry and `/events` when false.
         "events_enabled": config.events.enabled,
+        // `events_geocoding` — the configured provider name
+        // (`nominatim`/`google`) or null; the composer shows address
+        // autocomplete only when set (and can attribute Nominatim).
+        "events_geocoding": (!matches!(
+            config.events.geocoding.provider,
+            crate::config::GeocodingProvider::None
+        ))
+        .then(|| config.events.geocoding.provider.as_str()),
+        // `events_map_provider` — `osm`|`google` link target for
+        // physical event locations.
+        "events_map_provider": config.events.map_provider.as_str(),
     })
 }
 

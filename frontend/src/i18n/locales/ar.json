@@ -759,7 +759,9 @@
     "eventArticleHint": "لا يمكن للمقالات أن تكون فعاليات",
     "pollEventHint": "لا يمكن للفعاليات أن تحتوي على استطلاعات",
     "postType_event": "فعالية",
-    "eventRescheduleConfirm": "سيؤدي تغيير وقت البدء إلى وضع علامة «معاد جدولتها» على الفعالية. متابعة؟"
+    "eventRescheduleConfirm": "سيؤدي تغيير وقت البدء إلى وضع علامة «معاد جدولتها» على الفعالية. متابعة؟",
+    "eventLocSearch": "ابحث عن عنوان…",
+    "eventLocGeoCredit": "البيانات الجيوغرافية © مساهمو OpenStreetMap"
   },
   "moderation": {
     "showResolved": "عرض المحلولة",
@@ -1536,7 +1538,11 @@
     "calendarCopied": "تم النسخ",
     "calendarRegenerate": "إعادة الإنشاء",
     "calendarRevoke": "إلغاء",
-    "discover": "استكشف"
+    "discover": "استكشف",
+    "start": "البداية",
+    "end": "النهاية",
+    "showMap": "إظهار الخريطة",
+    "openInMaps": "فتح في الخرائط"
   },
   "eventsDiscover": {
     "title": "استكشاف الفعاليات",

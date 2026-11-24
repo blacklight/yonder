@@ -826,17 +826,48 @@ pub fn parse_event(object: &Value, cfg: &EventsConfig) -> ParsedEvent {
 
     // `attachment[]` Link entries → virtual locations when the event
     // is online or has no other location; otherwise plain links.
-    let mut link_attachments: Vec<ParsedLink> = Vec::new();
+    // Calendar feeds (`text/calendar`, `.ics`) and self-links (the
+    // event's own permalink) never promote — they stay plain links
+    // or drop entirely.
+    // `url`/`id` may each be a string, a Link object or an array —
+    // collect every string form for the self-link check.
+    let object_urls: Vec<&str> = ["url", "id"]
+        .iter()
+        .flat_map(|k| match object.get(*k) {
+            Some(Value::String(s)) => vec![s.as_str()],
+            Some(Value::Array(a)) => a
+                .iter()
+                .filter_map(|v| v.as_str().or_else(|| v.get("href").and_then(Value::as_str)))
+                .collect(),
+            Some(v @ Value::Object(_)) => {
+                v.get("href").and_then(Value::as_str).into_iter().collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
+    let mut link_attachments: Vec<(ParsedLink, bool)> = Vec::new();
     if let Some(atts) = object.get("attachment").and_then(|v| v.as_array()) {
         for att in atts {
             if type_is(att, "Link") {
                 if let Some(href) = att.get("href").and_then(|h| h.as_str()) {
-                    if url_ok(href, false) {
-                        link_attachments.push(ParsedLink {
+                    if !url_ok(href, false) || object_urls.contains(&href) {
+                        continue;
+                    }
+                    let media_type = att
+                        .get("mediaType")
+                        .or_else(|| att.get("media_type"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let calendar = media_type.starts_with("text/calendar")
+                        || href.ends_with(".ics")
+                        || href.contains(".ics?");
+                    link_attachments.push((
+                        ParsedLink {
                             name: attachment_name(att),
                             href: href.to_string(),
-                        });
-                    }
+                        },
+                        !calendar,
+                    ));
                 }
             }
         }
@@ -845,8 +876,8 @@ pub fn parse_event(object: &Value, cfg: &EventsConfig) -> ParsedEvent {
         .locations
         .iter()
         .any(|l| l.kind == LocationKind::Place);
-    for link in link_attachments {
-        if (is_online || !has_physical) && parsed.locations.len() < max_locations {
+    for (link, promotable) in link_attachments {
+        if promotable && (is_online || !has_physical) && parsed.locations.len() < max_locations {
             parsed.locations.push(ParsedLocation {
                 kind: LocationKind::Virtual,
                 uri: None,
@@ -1716,6 +1747,36 @@ mod tests {
             p.end_time.unwrap(),
             p.start_time.unwrap() + Duration::minutes(90)
         );
+    }
+
+    #[test]
+    fn link_attachments_skip_calendar_and_self_links() {
+        // Our own emit adds a permalink + ICS `Link` attachment —
+        // the permalink is dropped entirely (it duplicates the
+        // status URL), the calendar feed survives only as a plain
+        // link, and a genuine `Link` still promotes when online.
+        let obj = json!({
+            "type": "Event",
+            "name": "Show",
+            "startTime": "2026-01-01T10:00:00Z",
+            "isOnline": true,
+            "url": "https://yonder.test/@alice/1",
+            "id": "https://yonder.test/@alice/1",
+            "attachment": [
+                {"type": "Link", "href": "https://yonder.test/@alice/1", "mediaType": "text/html", "name": "Event page"},
+                {"type": "Link", "href": "https://yonder.test/api/v1/yonder/events/1/ics", "mediaType": "text/calendar", "name": "Calendar (.ics)"},
+                {"type": "Link", "href": "https://meet.example.com/room", "name": "Join"},
+            ],
+        });
+        let p = parse_event(&obj, &cfg(60));
+        assert_eq!(p.locations.len(), 1);
+        assert_eq!(p.locations[0].kind, LocationKind::Virtual);
+        assert_eq!(
+            p.locations[0].url.as_deref(),
+            Some("https://meet.example.com/room")
+        );
+        assert_eq!(p.links.len(), 1);
+        assert!(p.links[0].href.ends_with("/ics"));
     }
 
     #[test]

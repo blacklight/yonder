@@ -22,6 +22,15 @@ export const useInstanceStore = defineStore("instance", () => {
     () =>
       entity.value !== null && entity.value.yonder?.events_enabled !== false,
   );
+  // `[events.geocoding]` provider name — null/absent disables the
+  // composer address autocomplete.
+  const eventsGeocoding = computed(
+    () => entity.value?.yonder?.events_geocoding ?? null,
+  );
+  // `[events] map_provider` — `osm` unless the instance says google.
+  const eventsMapProvider = computed<"osm" | "google">(
+    () => entity.value?.yonder?.events_map_provider ?? "osm",
+  );
   let inflight: Promise<InstanceEntity | null> | null = null;
 
   /** Fetch the instance entity once; failures stay unloaded — every
@@ -34,5 +43,13 @@ export const useInstanceStore = defineStore("instance", () => {
     await inflight;
   }
 
-  return { entity, translationEnabled, singleUser, eventsEnabled, ensure };
+  return {
+    entity,
+    translationEnabled,
+    singleUser,
+    eventsEnabled,
+    eventsGeocoding,
+    eventsMapProvider,
+    ensure,
+  };
 });

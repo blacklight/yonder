@@ -373,15 +373,22 @@ reminder_lead_minutes = 60
 remote_refresh_after_minutes = 360
 # Cron for the event_reminder_sweep job (every 5 min); empty disables.
 reminder_sweep_schedule = "*/5 * * * *"
+# Map link target for physical event locations: "osm" (default) or
+# "google". Links need no API key; only the embedded preview is OSM.
+map_provider = "osm"
 
-# Server-side place lookup for the composer (Nominatim proxy). Set
-# provider = "nominatim" and a descriptive user_agent (their usage
-# policy requires one); the location search endpoint is rate-limited
-# under the `search` bucket.
+# Server-side place lookup for the composer address autocomplete and
+# the pl-fe location_id flow. provider = "nominatim" proxies a
+# Nominatim instance (their usage policy requires a descriptive
+# user_agent; self-hosting is recommended for busy instances);
+# provider = "google" calls the Geocoding API and needs
+# google_api_key (prefer the YONDER_EVENTS__GEOCODING__GOOGLE_API_KEY
+# env var). The search endpoint is rate-limited under `search`.
 [events.geocoding]
 provider = "none"
 nominatim_url = "https://nominatim.openstreetmap.org"
 user_agent = ""
+google_api_key = ""
 
 [content]
 max_post_length = 5000

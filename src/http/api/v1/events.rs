@@ -217,6 +217,31 @@ pub async fn event_participations(
     Ok(Json(serde_json::json!({"participations": rows})))
 }
 
+/// `GET /api/v1/yonder/geocoding/search?q=` — address autocomplete
+/// for the composer, normalized across `[events.geocoding]`
+/// providers; `[]` when `provider = "none"`.
+#[utoipa::path(
+    get,
+    path = "/api/v1/yonder/geocoding/search",
+    tag = "events",
+    params(("q" = String, Query, description = "Free-text place query")),
+    responses(
+        (status = 200, description = "Place suggestions in §9.1 location shape"),
+        (status = 401, description = "Missing token", body = crate::error::ErrorBody),
+        (status = 502, description = "Geocoder upstream failure", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn geocoding_search(
+    State(state): State<Arc<AppState>>,
+    _auth: crate::http::middleware::auth::AuthContext,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<serde_json::Value>> {
+    let q = params.get("q").map(String::as_str).unwrap_or("");
+    let config = state.config();
+    let hits = crate::events::geocoding::search(&config.events.geocoding, q).await?;
+    Ok(Json(serde_json::json!(hits)))
+}
+
 /// `POST /api/v1/yonder/calendar/token` — mint (or rotate) the
 /// personalized calendar subscription token. The URL is returned
 /// once; only its hash is stored.

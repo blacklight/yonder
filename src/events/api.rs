@@ -350,6 +350,13 @@ pub async fn invitees(
     if ids.is_empty() {
         return Ok(());
     }
+    // Same rule as authoring validation: invitees are a
+    // `direct`-visibility mechanism (mentions carry the audience).
+    if status.visibility != "direct" {
+        return Err(Error::Validation(
+            "event.invitees requires visibility=direct".to_string(),
+        ));
+    }
     // Existing accounts — local or remote stubs (§16 invites remote
     // actors through `Invite` activities, delivered post-commit).
     let found: Vec<(i64, Option<String>)> =

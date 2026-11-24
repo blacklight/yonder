@@ -439,6 +439,11 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/yonder/events/{id}/participations",
             get(events::event_participations),
         )
+        // Composer address autocomplete — `[events.geocoding]` proxy.
+        .route(
+            "/api/v1/yonder/geocoding/search",
+            get(events::geocoding_search).route_layer(ratelimit::layer(state, "search")),
+        )
         // Personalized calendar subscription token (Section 18).
         .route(
             "/api/v1/yonder/calendar/token",

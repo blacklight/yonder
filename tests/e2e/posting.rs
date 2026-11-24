@@ -5644,6 +5644,63 @@ async fn local_event_rsvp_api() {
     );
 }
 
+/// Regression — RSVP'ing a *remote* event through the local API
+/// 404'd with "account not found": the organizer lookup went through
+/// the local-only `actor_of`, but a remote event's author is a remote
+/// account.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_event_rsvp_api() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let token = register(&env.app, "joiner", "joiner@x.com").await;
+    let core = env.state.ap.as_ref().unwrap().core.clone();
+
+    // A free-join remote event materialized by its organizer.
+    let activity = pubby_sdk::Activity {
+        id: format!("{BASE}/ap/activities/remotersvp"),
+        activity_type: "Create".into(),
+        actor: "https://remote.test/@org".into(),
+        object: json!({
+            "id": "https://remote.test/events/rsvp1",
+            "type": "Event",
+            "name": "Remote RSVP test",
+            "attributedTo": "https://remote.test/@org",
+            "startTime": "2030-03-01T10:00:00Z",
+            "joinMode": "free",
+            "content": "<p>come along</p>",
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+        }),
+        to: vec!["https://www.w3.org/ns/activitystreams#Public".into()],
+        cc: vec![],
+        published: None,
+        signature: None,
+    };
+    remote::handle(&core, &activity, &activity.to_json()).await;
+    let status_id: i64 = sqlx::query_scalar(
+        "SELECT id FROM statuses WHERE uri = 'https://remote.test/events/rsvp1'",
+    )
+    .fetch_one(&env.state.db)
+    .await
+    .unwrap();
+
+    // The RSVP succeeds (the outbound Join can't deliver to
+    // remote.test, but publish failures are logged, not fatal). The
+    // row pends until the home instance's Accept round-trips back.
+    let (code, body) = request(
+        &env.app,
+        "POST",
+        &format!("/api/v1/yonder/events/{status_id}/rsvp"),
+        Some(&token),
+        Some(json!({"state": "accepted"})),
+        &[],
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["participation"]["state"], "pending");
+}
+
 /// Section 11 — the Nicolex `/api/v1/pleroma/events*` adapter:
 /// create/joined_events/join/participations/requests/ics/location.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

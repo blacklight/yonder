@@ -83,6 +83,17 @@ async fn actor_of(db: &sqlx::PgPool, account_id: i64) -> Result<(String, String)
     .ok_or_else(|| Error::NotFound("account".into()))
 }
 
+/// The actor URI of any account, local or remote — the event
+/// organizer on a remote event is a remote account, so audience
+/// resolution must not go through the local-only [`actor_of`].
+async fn actor_uri_of(db: &sqlx::PgPool, account_id: i64) -> Result<String> {
+    sqlx::query_scalar("SELECT actor_id FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .fetch_optional(db)
+        .await?
+        .ok_or_else(|| Error::NotFound("account".into()))
+}
+
 async fn participation<'e, E>(
     db: E,
     status_id: i64,
@@ -129,6 +140,7 @@ async fn env_for(
     ctx: &PostContext,
     status: &posts::StatusRow,
     organizer_actor: &str,
+    our_actor: &str,
 ) -> Result<rsvp::RsvpEnv> {
     let organizer_actors: Vec<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT COALESCE(a.actor_id, o.uri) FROM event_organizers o \
@@ -147,7 +159,7 @@ async fn env_for(
         attributed_to_actor: None,
         required_join_visibility: vec![],
         organizer_actors,
-        our_actor: organizer_actor.to_string(),
+        our_actor: our_actor.to_string(),
         event_uri: status.uri.clone().unwrap_or_default(),
         now: chrono::Utc::now(),
     })
@@ -266,7 +278,9 @@ pub async fn rsvp(
         return Err(Error::Validation("organizers cannot rsvp".to_string()));
     }
     let (actor_uri, username) = actor_of(&ctx.db, account_id).await?;
-    let organizer_actor = actor_of(&ctx.db, status.account_id).await?.0;
+    // The organizer may be a remote account (RSVP on a remote event) —
+    // a local-only lookup here 404'd every remote-event RSVP.
+    let organizer_actor = actor_uri_of(&ctx.db, status.account_id).await?;
     let state = body.state.clone();
     let message = body.message.clone();
     let party = rsvp::RsvpParty {
@@ -277,7 +291,7 @@ pub async fn rsvp(
         invited: false,
         authorized_responder: false,
     };
-    let env = env_for(ctx, &status, &organizer_actor).await?;
+    let env = env_for(ctx, &status, &organizer_actor, &actor_uri).await?;
     let Some(outcome) = decide_and_apply(
         ctx,
         status_id,
@@ -676,26 +690,30 @@ pub async fn remove_participant(
     }
     // Remote participants get a Reject answering their stored join
     // or invite — pending *and* accepted rows (revocation), and
-    // `invited` rows on local events too (§16 remote invitees).
+    // `invited` rows on local events too (§16 remote invitees). Local
+    // events only: the Reject is published as the event author, which
+    // a remote event's author can never be.
     let mut outbound = None;
-    if let Some(target_actor) = sqlx::query_scalar::<_, String>(
-        "SELECT actor_id FROM accounts WHERE id = $1 AND domain IS NOT NULL",
-    )
-    .bind(target_account_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    {
-        let object = existing
-            .invite_activity_uri
-            .clone()
-            .or_else(|| existing.request_activity_uri.clone())
-            .or_else(|| status.uri.clone())
-            .unwrap_or_default();
-        outbound = Some(OutboundActivity::Reject {
-            object,
-            to: vec![target_actor],
-            cc: vec![],
-        });
+    if status.local {
+        if let Some(target_actor) = sqlx::query_scalar::<_, String>(
+            "SELECT actor_id FROM accounts WHERE id = $1 AND domain IS NOT NULL",
+        )
+        .bind(target_account_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            let object = existing
+                .invite_activity_uri
+                .clone()
+                .or_else(|| existing.request_activity_uri.clone())
+                .or_else(|| status.uri.clone())
+                .unwrap_or_default();
+            outbound = Some(OutboundActivity::Reject {
+                object,
+                to: vec![target_actor],
+                cc: vec![],
+            });
+        }
     }
     sqlx::query("DELETE FROM event_participations WHERE status_id = $1 AND account_id = $2")
         .bind(status_id)
@@ -824,8 +842,10 @@ pub async fn decide_request(
         )
         .await;
     }
-    // Remote joiners get the Accept/Reject answering their Join.
-    if !status.local {
+    // Remote joiners get the Accept/Reject answering their Join. Only
+    // meaningful on local events: the response is published as the
+    // event author, which requires the author to be a local account.
+    if status.local {
         if let Some(target_actor) = sqlx::query_scalar::<_, String>(
             "SELECT actor_id FROM accounts WHERE id = $1 AND domain IS NOT NULL",
         )

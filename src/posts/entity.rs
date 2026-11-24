@@ -103,7 +103,13 @@ pub fn media_url(config: &crate::config::Config, base_url: &str, row: &MediaRow)
         .file_path
         .as_ref()
         .map(|k| media::public_url(config, base_url, k));
-    let remote = row.remote_url.clone();
+    // Remote attachment URLs are remote-controlled — only http(s)
+    // values may be emitted (a `javascript:` media URL is a stored-XSS
+    // sink for clients that link it).
+    let remote = row
+        .remote_url
+        .as_deref()
+        .and_then(crate::urls::safe_remote_url);
     // Remote-media caching on → the local copy wins; off → the remote
     // URL is served directly.
     if config.media.fetch_remote_media {
@@ -138,8 +144,14 @@ pub fn media_entity(config: &crate::config::Config, base_url: &str, row: &MediaR
         "id": row.id.to_string(),
         "type": row.kind,
         "url": url,
-        "preview_url": row.preview_remote_url.clone().or(url),
-        "remote_url": row.remote_url,
+        // `preview_remote_url` is remote-controlled like `remote_url` —
+        // unsafe values fall back to the attachment URL.
+        "preview_url": row
+            .preview_remote_url
+            .as_deref()
+            .and_then(crate::urls::safe_remote_url)
+            .or_else(|| url.clone()),
+        "remote_url": crate::urls::safe_opt_url_json(row.remote_url.as_deref()),
         "description": row.description,
         "blurhash": row.blurhash,
         "meta": meta,
@@ -959,7 +971,9 @@ impl StatusBatch {
                         Some(d) => format!("{username}@{d}"),
                         None => username.clone(),
                     },
-                    "url": url.filter(|u| !u.is_empty()).unwrap_or(actor_id),
+                    "url": crate::urls::safe_url_json(
+                        &url.filter(|u| !u.is_empty()).unwrap_or(actor_id),
+                    ),
                 }));
         }
         let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
@@ -973,7 +987,21 @@ impl StatusBatch {
             cards
                 .entry(r.get::<i64, _>("status_id"))
                 .or_insert_with(|| {
-                    let embed_url: String = r.get("embed_url");
+                    // Card URLs are remote-controlled — only http(s)
+                    // values are emitted (unsafe → empty, which every
+                    // client already treats as "no link"). `embed_url`
+                    // additionally feeds the synthesized iframe `html`,
+                    // so it must be safe before interpolation.
+                    let card_url = crate::urls::safe_remote_url(&r.get::<String, _>("url"))
+                        .unwrap_or_default();
+                    let author_url =
+                        crate::urls::safe_remote_url(&r.get::<String, _>("author_url"))
+                            .unwrap_or_default();
+                    let provider_url =
+                        crate::urls::safe_remote_url(&r.get::<String, _>("provider_url"))
+                            .unwrap_or_default();
+                    let embed_url = crate::urls::safe_remote_url(&r.get::<String, _>("embed_url"))
+                        .unwrap_or_default();
                     let embed_width: i32 = r.get("embed_width");
                     let embed_height: i32 = r.get("embed_height");
                     let video = !embed_url.is_empty();
@@ -994,7 +1022,7 @@ impl StatusBatch {
                         String::new()
                     };
                     json!({
-                        "url": r.get::<String, _>("url"),
+                        "url": card_url,
                         "title": r.get::<String, _>("title"),
                         "description": r.get::<String, _>("description"),
                         "type": if video { "video" } else { "link" },
@@ -1003,9 +1031,9 @@ impl StatusBatch {
                         "width": embed_width,
                         "height": embed_height,
                         "author_name": r.get::<String, _>("author_name"),
-                        "author_url": r.get::<String, _>("author_url"),
+                        "author_url": author_url,
                         "provider_name": r.get::<String, _>("provider_name"),
-                        "provider_url": r.get::<String, _>("provider_url"),
+                        "provider_url": provider_url,
                         "image": image.map(|k| media::public_url(&ctx.config, &base_url, &k)),
                         "blurhash": Value::Null,
                     })
@@ -1109,7 +1137,7 @@ impl StatusBatch {
                 "state": state,
                 "quoted_status": quoted_status,
             },
-            "yonder_quote_uri": uri,
+            "yonder_quote_uri": crate::urls::safe_opt_url_json(uri.as_deref()),
         }))
     }
 
@@ -1236,8 +1264,8 @@ impl StatusBatch {
         });
         Ok(json!({
             "id": status.id.to_string(),
-            "uri": status.uri,
-            "url": status.url,
+            "uri": crate::urls::safe_opt_url_json(status.uri.as_deref()),
+            "url": crate::urls::safe_opt_url_json(status.url.as_deref()),
             "account": account_json,
             "content": content,
             "content_type": status.content_type,
@@ -1302,7 +1330,7 @@ impl StatusBatch {
                 "content_type": status.content_type,
                 "quote": match (status.quote_of_id, &status.quote_uri) {
                     (Some(id), _) => json!({"id": id.to_string(), "uri": quote_block.get("yonder_quote_uri").cloned().unwrap_or(Value::Null)}),
-                    (None, Some(uri)) => json!({"id": Value::Null, "uri": uri}),
+                    (None, Some(uri)) => json!({"id": Value::Null, "uri": crate::urls::safe_url_json(uri)}),
                     _ => Value::Null,
                 },
                 "article": article_block,

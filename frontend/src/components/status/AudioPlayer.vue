@@ -2,6 +2,7 @@
 import { computed, ref, useTemplateRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { FontAwesomeIcon } from "@/icons";
+import { safeHttpUrl } from "@/utils/sanitize";
 import type { MediaAttachment } from "@/api/entities";
 
 const props = defineProps<{
@@ -145,8 +146,9 @@ function onMeta() {
           />
         </div>
         <a
+          v-if="safeHttpUrl(media.url)"
           class="audio-player__btn audio-player__download"
-          :href="media.url"
+          :href="safeHttpUrl(media.url) ?? undefined"
           download
           :aria-label="t('status.media.download')"
           :title="t('status.media.download')"

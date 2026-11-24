@@ -23,6 +23,10 @@ fn base_clauses(viewer: Option<i64>, binds: &mut Vec<Bind>) -> Vec<String> {
         "NOT EXISTS (SELECT 1 FROM domain_blocks idb \
          WHERE idb.domain = a.domain AND idb.severity = 'suspend')"
             .to_string(),
+        // Unfetched stubs for phantom remote domains don't surface in
+        // search — only established remote actors (or fresh stubs
+        // still awaiting their first fetch).
+        crate::activitypub::storage::established_remote_clause("a"),
     ];
     if let Some(v) = viewer {
         binds.push(Bind::I64(v)); // $1 — the *viewer* convention

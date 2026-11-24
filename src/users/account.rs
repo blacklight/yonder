@@ -248,7 +248,10 @@ fn media_url(
     let local = local_key
         .as_ref()
         .map(|k| crate::media::public_url(config, base_url, k));
-    let remote = remote.clone();
+    // Remote avatar/banner URLs are remote-controlled — only http(s)
+    // values may be emitted (a `javascript:` avatar URL is a stored-XSS
+    // sink for clients that link it).
+    let remote = remote.as_deref().and_then(crate::urls::safe_remote_url);
     // With remote-media caching on, a locally cached copy wins; off,
     // the remote URL is served directly.
     if config.media.fetch_remote_media {
@@ -369,8 +372,13 @@ pub fn to_account(account: &AccountRow, base_url: &str, config: &crate::config::
         "acct": acct,
         "display_name": account.display_name.clone().unwrap_or_else(|| account.username.clone()),
         "note": note,
-        "url": account.url.clone().unwrap_or_else(|| account.actor_id.clone()),
-        "uri": account.actor_id,
+        // `url`/`uri` are remote-controlled on remote rows — emit them
+        // only when they parse as http(s); `null` otherwise (a
+        // `javascript:` profile URL is a stored-XSS sink).
+        "url": crate::urls::safe_url_json(
+            account.url.as_deref().unwrap_or(&account.actor_id),
+        ),
+        "uri": crate::urls::safe_url_json(&account.actor_id),
         "avatar": media_url(config, base_url, &account.avatar_path, &account.avatar_remote_url),
         "avatar_static": media_url(config, base_url, &account.avatar_path, &account.avatar_remote_url),
         "header": media_url(config, base_url, &account.banner_path, &account.banner_remote_url),

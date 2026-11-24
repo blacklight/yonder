@@ -58,13 +58,17 @@ where
 
 /// Run the counts query directly (cache miss or Redis down).
 async fn load_stats(db: &PgPool) -> Result<(i64, i64, i64)> {
-    let row = sqlx::query(
+    // `domain_count` counts only *established* remote actors — bare
+    // stubs for unfetchable phantom domains don't inflate it.
+    let established = crate::activitypub::storage::established_remote_clause("accounts");
+    let row = sqlx::query(&format!(
         "SELECT \
             (SELECT count(*) FROM accounts a JOIN users u ON u.account_id = a.id \
              WHERE a.domain IS NULL AND a.suspended_at IS NULL) AS user_count, \
             (SELECT count(*) FROM statuses WHERE local) AS status_count, \
-            (SELECT count(DISTINCT domain) FROM accounts WHERE domain IS NOT NULL) AS domain_count",
-    )
+            (SELECT count(DISTINCT domain) FROM accounts \
+             WHERE domain IS NOT NULL AND {established}) AS domain_count",
+    ))
     .fetch_one(db)
     .await?;
     Ok((
@@ -76,9 +80,13 @@ async fn load_stats(db: &PgPool) -> Result<(i64, i64, i64)> {
 
 /// Run the peers union query directly (cache miss or Redis down).
 async fn load_peers(db: &PgPool) -> Result<Vec<String>> {
-    sqlx::query_scalar::<_, String>(
+    // Only established remote actors contribute domains — unfetched
+    // stubs for phantom hosts stay out of the public peer list.
+    let established = crate::activitypub::storage::established_remote_clause("accounts");
+    sqlx::query_scalar::<_, String>(&format!(
         "SELECT DISTINCT d FROM ( \
-             SELECT domain AS d FROM accounts WHERE domain IS NOT NULL \
+             SELECT domain AS d FROM accounts \
+             WHERE domain IS NOT NULL AND {established} \
              UNION \
              SELECT lower(substring(inbox_url from '://([^/:]+)')) FROM relays \
              UNION \
@@ -91,7 +99,7 @@ async fn load_peers(db: &PgPool) -> Result<Vec<String>> {
                WHERE b.domain = sub.d AND b.severity IN ('silence', 'suspend') \
            ) \
          ORDER BY d",
-    )
+    ))
     .fetch_all(db)
     .await
     .map_err(Into::into)

@@ -138,6 +138,17 @@ describe("StatusMedia", () => {
     expect(document.body.textContent).toContain("a clip");
   });
 
+  it("renders no href for non-http(s) media links", () => {
+    const { wrapper } = mountWith(StatusMedia, {
+      props: {
+        media: [attachment({ type: "document", url: "javascript:alert(1)" })],
+        sensitive: false,
+      },
+    });
+    const link = wrapper.get(".status-media__item a");
+    expect(link.attributes("href")).toBeUndefined();
+  });
+
   it("keeps media hidden behind the sensitive cover", () => {
     const { wrapper } = mountWith(StatusMedia, {
       props: { media: [attachment()], sensitive: true },

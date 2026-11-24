@@ -85,4 +85,11 @@ describe("AudioPlayer", () => {
     expect(download.attributes("href")).toBe("https://x.test/files/track.mp3");
     expect(download.attributes("download")).toBeDefined();
   });
+
+  it("hides the download link for unsafe media URLs", () => {
+    const { wrapper } = mountWith(AudioPlayer, {
+      props: { media: attachment({ url: "javascript:alert(1)" }) },
+    });
+    expect(wrapper.find(".audio-player__download").exists()).toBe(false);
+  });
 });

@@ -514,9 +514,11 @@ pub async fn unmute(pool: &PgPool, account_id: i64, target_id: i64) -> Result<()
     Ok(())
 }
 
-/// Block a whole domain for `account_id` (idempotent).
+/// Block a whole domain for `account_id` (idempotent). The value is
+/// normalized like `domain_blocks` rows (`moderation::domain`) — a
+/// bare host comparison key, never arbitrary text.
 pub async fn block_domain(pool: &PgPool, account_id: i64, domain: &str) -> Result<()> {
-    let domain = domain.trim().to_lowercase();
+    let domain = crate::moderation::domain::normalize_domain(domain);
     if domain.is_empty() {
         return Err(Error::Validation("empty domain".to_string()));
     }
@@ -535,7 +537,7 @@ pub async fn block_domain(pool: &PgPool, account_id: i64, domain: &str) -> Resul
 pub async fn unblock_domain(pool: &PgPool, account_id: i64, domain: &str) -> Result<()> {
     sqlx::query("DELETE FROM account_domain_blocks WHERE account_id = $1 AND domain = $2")
         .bind(account_id)
-        .bind(domain.to_lowercase())
+        .bind(crate::moderation::domain::normalize_domain(domain))
         .execute(pool)
         .await?;
     Ok(())

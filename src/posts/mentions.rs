@@ -192,20 +192,39 @@ async fn resolve_token(ctx: &PostContext, token: &MentionToken) -> Result<Option
                 .await?
                 {
                     Some(actor_url) => {
-                        crate::activitypub::lookup::upsert_remote_stub(
-                            &ctx.db,
-                            &ctx.dispatcher,
-                            &ctx.config,
-                            &actor_url,
-                        )
-                        .await?;
-                        sqlx::query(
-                            "SELECT id, actor_id, url, username, domain FROM accounts \
-                             WHERE actor_id = $1",
-                        )
-                        .bind(&actor_url)
-                        .fetch_optional(&ctx.db)
-                        .await?
+                        // An open remote circuit means the actor can't
+                        // be fetched — don't mint a stub row for it;
+                        // the mention just doesn't resolve.
+                        let circuit_open =
+                            match crate::activitypub::moderation::actor_domain(&actor_url) {
+                                Some(d) => {
+                                    crate::jobs::remote_gate::circuit_open(
+                                        ctx.dispatcher.redis(),
+                                        &d,
+                                        crate::jobs::remote_gate::GateClass::Bulk,
+                                    )
+                                    .await
+                                }
+                                None => false,
+                            };
+                        if circuit_open {
+                            None
+                        } else {
+                            crate::activitypub::lookup::upsert_remote_stub(
+                                &ctx.db,
+                                &ctx.dispatcher,
+                                &ctx.config,
+                                &actor_url,
+                            )
+                            .await?;
+                            sqlx::query(
+                                "SELECT id, actor_id, url, username, domain FROM accounts \
+                                 WHERE actor_id = $1",
+                            )
+                            .bind(&actor_url)
+                            .fetch_optional(&ctx.db)
+                            .await?
+                        }
                     }
                     None => None,
                 },

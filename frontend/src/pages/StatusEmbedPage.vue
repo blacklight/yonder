@@ -8,7 +8,7 @@ import StatusMedia from "@/components/status/StatusMedia.vue";
 import StatusEmbedQuote from "@/components/status/StatusEmbedQuote.vue";
 import StatusEmbedCard from "@/components/status/StatusEmbedCard.vue";
 import { getStatus } from "@/api/statuses";
-import { sanitizeHtml } from "@/utils/sanitize";
+import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
 import { statusNoindex, useRobotsNoindex } from "@/utils/robots";
@@ -34,6 +34,8 @@ const booster = computed(() =>
   status.value?.reblog ? status.value.account : null,
 );
 const account = computed(() => shown.value?.account ?? null);
+// Remote-controlled URLs — http(s) only; anything else renders no link.
+const accountHref = computed(() => safeHttpUrl(account.value?.url));
 // Same rule as StatusCard: the federated `RE:` paragraph duplicates the
 // quote card — strip it whenever the quote will actually render.
 const RE_PARAGRAPH = /<p>\s*RE:\s*<a\b[^>]*>[\s\S]*?<\/a>\s*<\/p>\s*$/;
@@ -65,7 +67,9 @@ const content = computed(() => {
   );
 });
 
-const permalink = computed(() => shown.value?.url ?? shown.value?.uri ?? "");
+const permalink = computed(() =>
+  safeHttpUrl(shown.value?.url ?? shown.value?.uri),
+);
 
 // The iframe auto-resize protocol: embed.js swaps .yonder-embed
 // placeholders for iframes and listens for these messages to keep the
@@ -144,7 +148,7 @@ function onClick(event: MouseEvent) {
         <a
           v-if="account"
           class="embed-card__author"
-          :href="account.url"
+          :href="accountHref ?? undefined"
           target="_blank"
           rel="noopener"
         >
@@ -163,6 +167,7 @@ function onClick(event: MouseEvent) {
           </span>
         </a>
         <a
+          v-if="permalink"
           class="embed-card__date"
           :href="permalink"
           target="_blank"
@@ -235,6 +240,7 @@ function onClick(event: MouseEvent) {
           }}</span
         >
         <a
+          v-if="permalink"
           class="embed-card__permalink"
           :href="permalink"
           target="_blank"

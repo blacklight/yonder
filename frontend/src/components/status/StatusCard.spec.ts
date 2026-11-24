@@ -311,6 +311,27 @@ describe("StatusCard", () => {
     );
   });
 
+  it("does not open unsafe permalinks from the menu", async () => {
+    const open = vi
+      .spyOn(window, "open")
+      .mockImplementation(() => null as never);
+    const { wrapper } = mountWith(StatusCard, {
+      props: {
+        status: status({
+          url: "javascript:alert(1)",
+          uri: "javascript:alert(2)",
+        }),
+      },
+    });
+    await wrapper.get(".menu__trigger").trigger("click");
+    await menuItems()
+      .find((i) => i.text().includes("Open in new tab"))!
+      .trigger("click");
+    await flushPromises();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
   it("sanitizes content", () => {
     const s = status({ content: "<p>ok</p><script>alert(1)</script>" });
     const { wrapper } = mountWith(StatusCard, { props: { status: s } });

@@ -144,6 +144,57 @@ describe("StatusEmbedQuote", () => {
     expect(link.attributes("href")).toBe("https://remote.test/s/1");
   });
 
+  it("renders no links for unsafe remote URLs", async () => {
+    const inner = status({
+      id: "9",
+      url: "javascript:alert(1)",
+      uri: "javascript:alert(2)",
+      account: account({ url: "javascript:alert(3)" }),
+    });
+    const { wrapper } = mountWith(StatusEmbedQuote, {
+      props: { status: quoting(inner) },
+    });
+    await flushPromises();
+
+    expect(
+      wrapper.get(".embed-quote__identity").attributes("href"),
+    ).toBeUndefined();
+    expect(
+      wrapper.get(".embed-quote__date").attributes("href"),
+    ).toBeUndefined();
+  });
+
+  it("does not window.open an unsafe permalink on card click", async () => {
+    const open = vi
+      .spyOn(window, "open")
+      .mockImplementation(() => null as never);
+    const inner = status({
+      id: "9",
+      url: "javascript:alert(1)",
+      uri: "javascript:alert(2)",
+    });
+    const { wrapper } = mountWith(StatusEmbedQuote, {
+      props: { status: quoting(inner) },
+    });
+    await flushPromises();
+    await wrapper.get(".embed-quote").trigger("click");
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("does not link pending quotes with unsafe AP uris", async () => {
+    const s = status({
+      quote: { state: "pending", quoted_status: null },
+      yonder: { quote: { id: null, uri: "javascript:alert(1)" } },
+    });
+    const { wrapper } = mountWith(StatusEmbedQuote, {
+      props: { status: s },
+    });
+    await flushPromises();
+    expect(wrapper.find("a.embed-quote--unavailable").exists()).toBe(false);
+    expect(wrapper.text()).toContain("unavailable");
+  });
+
   it("stops fetching at the depth cap", async () => {
     const { wrapper } = mountWith(StatusEmbedQuote, {
       props: { status: quoting(null), depth: 4 },

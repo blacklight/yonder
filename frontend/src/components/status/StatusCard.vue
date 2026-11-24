@@ -17,7 +17,7 @@ import StatusEmbedModal from "./StatusEmbedModal.vue";
 import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
 import ComposeBox from "@/components/compose/ComposeBox.vue";
-import { sanitizeHtml } from "@/utils/sanitize";
+import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate, formatRelativeDate } from "@/utils/relativeDate";
 import { ApiError } from "@/api/errors";
@@ -533,9 +533,12 @@ async function runAction(item: MenuItem) {
       case "copy":
         await navigator.clipboard.writeText(s.url ?? s.uri);
         break;
-      case "open":
-        window.open(s.url ?? s.uri, "_blank", "noopener");
+      case "open": {
+        // Remote-controlled permalink — http(s) only.
+        const url = safeHttpUrl(s.url ?? s.uri);
+        if (url) window.open(url, "_blank", "noopener");
         break;
+      }
       case "embed":
         embedOpen.value = true;
         break;

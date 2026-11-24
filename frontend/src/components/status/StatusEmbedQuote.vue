@@ -8,7 +8,7 @@ import CwBlock from "./CwBlock.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusEmbedCard from "./StatusEmbedCard.vue";
 import { getStatus } from "@/api/statuses";
-import { sanitizeHtml } from "@/utils/sanitize";
+import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
 import { formatAbsoluteDate } from "@/utils/relativeDate";
 import type { Status } from "@/api/entities";
@@ -56,8 +56,13 @@ const hasQuote = computed(
     Boolean(props.status.quote_id),
 );
 // Pending remote quotes carry only the AP uri — offer it as a link.
-const remoteUri = computed(() => props.status.yonder?.quote?.uri ?? null);
-const permalink = computed(() => target.value?.url ?? target.value?.uri ?? "");
+// Remote-controlled URLs pass through `safeHttpUrl`: non-http(s)
+// values (e.g. `javascript:`) render no link at all.
+const remoteUri = computed(() => safeHttpUrl(props.status.yonder?.quote?.uri));
+const permalink = computed(() =>
+  safeHttpUrl(target.value?.url ?? target.value?.uri),
+);
+const accountHref = computed(() => safeHttpUrl(target.value?.account.url));
 
 // The federated `RE:` paragraph mirrors the quote card — strip it when
 // the next level will render (materialized now or fetchable).
@@ -101,7 +106,7 @@ function open(event: MouseEvent) {
     @click.stop="open"
   >
     <header class="embed-quote__author">
-      <a :href="target.account.url" class="embed-quote__identity">
+      <a :href="accountHref ?? undefined" class="embed-quote__identity">
         <Avatar
           :src="target.account.avatar"
           :name="target.account.display_name || target.account.username"

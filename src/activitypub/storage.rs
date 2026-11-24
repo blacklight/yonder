@@ -330,7 +330,12 @@ async fn upsert_remote_account(
                 .map_err(db_err)?;
         }
     }
-    let url = doc_str(actor_data, "url").unwrap_or_else(|| actor_id.to_string());
+    // Actor `url`/avatar/banner are remote-controlled — store only
+    // http(s) values so non-API consumers (feeds, AP outbox) never see
+    // a `javascript:` URL either.
+    let url = doc_str(actor_data, "url")
+        .and_then(|u| crate::urls::safe_remote_url(&u))
+        .unwrap_or_else(|| actor_id.to_string());
     let inbox = doc_str(actor_data, "inbox").unwrap_or_default();
     let shared_inbox = actor_data
         .get("endpoints")
@@ -355,12 +360,12 @@ async fn upsert_remote_account(
         .get("icon")
         .and_then(|i| i.get("url"))
         .and_then(|v| v.as_str())
-        .map(String::from);
+        .and_then(crate::urls::safe_remote_url);
     let banner = actor_data
         .get("image")
         .and_then(|i| i.get("url"))
         .and_then(|v| v.as_str())
-        .map(String::from);
+        .and_then(crate::urls::safe_remote_url);
     // Best-effort remote counters (epic 14): Mastodon-shaped actor docs
     // publish `followersCount`/`followingCount`/`statusesCount`; absent
     // fields leave the columns untouched.
@@ -1309,6 +1314,32 @@ pub(crate) async fn upsert_remote_actor_row(
     dispatcher: &crate::jobs::Dispatcher,
 ) -> Result<Option<i64>> {
     upsert_remote_account(pool, config, actor_id, actor_data, dispatcher).await
+}
+
+/// SQL predicate over an `accounts` row alias for remote actors safe
+/// to surface in public listings (`instance.peers`,
+/// `instance.stats.domain_count`, account search). A bare stub minted
+/// by `upsert_remote_stub` counts only while it's fresh *and* has no
+/// failed/gone actor-fetch marker — phantom `*.<domain>` actors
+/// (unfetchable hosts claimed by remote collections) stop amplifying
+/// the moment their first `RemoteActorFetch` records 'actor' or
+/// 'actor_gone' in `remote_network_syncs`. Rows carrying a real actor
+/// document (`inbox`/`preferredUsername` in `actor_data`, the same
+/// test `upsert_remote_stub` uses) or an `actor_cache` entry always
+/// count; local accounts (`domain IS NULL`) always count.
+pub(crate) fn established_remote_clause(alias: &str) -> String {
+    let stale_secs = super::REMOTE_ACTOR_STALE_SECONDS;
+    format!(
+        "({alias}.domain IS NULL \
+         OR COALESCE({alias}.actor_data->>'inbox', '') <> '' \
+         OR COALESCE({alias}.actor_data->>'preferredUsername', '') <> '' \
+         OR EXISTS (SELECT 1 FROM actor_cache ac WHERE ac.actor_id = {alias}.actor_id) \
+         OR ({alias}.created_at > now() - make_interval(secs => {stale_secs}) \
+             AND NOT EXISTS ( \
+                 SELECT 1 FROM remote_network_syncs s \
+                 WHERE s.account_id = {alias}.id \
+                   AND s.direction IN ('actor', 'actor_gone'))))"
+    )
 }
 
 /// Whether a `RemoteActorFetch` for `account_id` recently failed (the

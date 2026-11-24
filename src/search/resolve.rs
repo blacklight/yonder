@@ -108,10 +108,30 @@ pub(crate) async fn lookup_fqn(
     // `resolve_actor_url` already filters pubby's fabricated
     // `https://{d}/@{u}` fallback, so `None` here is a genuine miss.
     match lookup::resolve_actor_url(Some(ap), username, domain, INTERACTIVE_LOOKUP_TIMEOUT).await? {
-        Some(actor_url) => Ok(Some(
-            lookup::upsert_remote_stub(&state.db, &state.dispatcher, &state.config(), &actor_url)
+        Some(actor_url) => {
+            // An open remote circuit means the domain can't be fetched
+            // — don't mint a stub row for it.
+            if let Some(d) = crate::activitypub::moderation::actor_domain(&actor_url) {
+                if crate::jobs::remote_gate::circuit_open(
+                    state.dispatcher.redis(),
+                    &d,
+                    crate::jobs::remote_gate::GateClass::Bulk,
+                )
+                .await
+                {
+                    return Ok(None);
+                }
+            }
+            Ok(Some(
+                lookup::upsert_remote_stub(
+                    &state.db,
+                    &state.dispatcher,
+                    &state.config(),
+                    &actor_url,
+                )
                 .await?,
-        )),
+            ))
+        }
         None => {
             remember_miss(state, &key).await?;
             enqueue_actor_resolve(state, username, domain).await;

@@ -32,6 +32,7 @@ pub mod social;
 pub mod tags;
 pub mod timelines;
 pub mod translation;
+pub mod urls;
 pub mod users;
 pub mod webmentions;
 

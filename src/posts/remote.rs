@@ -429,7 +429,11 @@ fn object_url(object: &Value, object_id: &str) -> String {
         Some(v) => href(v),
         None => None,
     };
-    picked.unwrap_or(object_id).to_string()
+    // The picked `url` is remote-controlled — only http(s) values are
+    // stored (the entity render re-checks regardless).
+    picked
+        .and_then(crate::urls::safe_remote_url)
+        .unwrap_or_else(|| object_id.to_string())
 }
 
 /// The best playable `url` Link for a `Video`/`Audio` object with no
@@ -450,6 +454,11 @@ fn playable_link(object: &Value) -> Option<PlayableLink> {
         let Some(href) = l.get("href").and_then(|v| v.as_str()) else {
             continue;
         };
+        // Same http(s) rule as `attachment[].url` — the href becomes a
+        // stored `remote_url`.
+        if crate::urls::safe_remote_url(href).is_none() {
+            continue;
+        }
         let mt = l.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
         if mt.starts_with("video/") {
             return Some(PlayableLink {
@@ -1165,6 +1174,11 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
     {
         let url = att.get("url").and_then(att_url_str);
         let Some(url) = url else { continue };
+        // Attachment URLs must be http(s) — anything else can't be
+        // fetched and must never reach a client `href`/`src` sink.
+        let Some(url) = crate::urls::safe_remote_url(url) else {
+            continue;
+        };
         let media_type = att.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
         // Events extend `attachment_kind`: a `Document`/`Image` named
         // `Banner` without a mediaType counts as an image.
@@ -1179,8 +1193,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
         // The image already renders inline in the post body — a
         // `media_attachments` row would show it twice.
         if kind == "image"
-            && banner_url.as_deref() != Some(url)
-            && super::render::normalize_url_for_match(url)
+            && banner_url.as_deref() != Some(url.as_str())
+            && super::render::normalize_url_for_match(&url)
                 .is_some_and(|u| inline_image_srcs.contains(&u))
         {
             continue;
@@ -1190,10 +1204,11 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
             .or_else(|| att.get("summary"))
             .and_then(|v| v.as_str())
             .map(|s| s.chars().take(5000).collect::<String>());
-        let preview_art = preview_art_url(att, object);
+        let preview_art =
+            preview_art_url(att, object).and_then(|u| crate::urls::safe_remote_url(&u));
         atts.push(RemoteAtt {
             kind,
-            url: url.to_string(),
+            url,
             media_type: media_type.to_string(),
             description,
             preview_art,
@@ -1220,7 +1235,8 @@ async fn upsert(core: &ApCore, activity: &pubby_sdk::Activity, object: &Value) -
                 url: link.href,
                 media_type: link.media_type,
                 description,
-                preview_art: preview_art_url(&Value::Null, object),
+                preview_art: preview_art_url(&Value::Null, object)
+                    .and_then(|u| crate::urls::safe_remote_url(&u)),
             });
         }
     }

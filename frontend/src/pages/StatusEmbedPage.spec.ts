@@ -229,6 +229,24 @@ describe("StatusEmbedPage", () => {
     expect(wrapper.find(".embed-card__preview").exists()).toBe(false);
   });
 
+  it("renders no links for unsafe account and permalink URLs", async () => {
+    vi.mocked(getStatus).mockResolvedValue(
+      status({
+        url: "javascript:alert(1)",
+        uri: "javascript:alert(2)",
+        account: account({ url: "javascript:alert(3)" }),
+      }),
+    );
+    const { wrapper } = mountWith(StatusEmbedPage, { props: { id: "10" } });
+    await flushPromises();
+
+    expect(
+      wrapper.get(".embed-card__author").attributes("href"),
+    ).toBeUndefined();
+    expect(wrapper.find(".embed-card__date").exists()).toBe(false);
+    expect(wrapper.find(".embed-card__permalink").exists()).toBe(false);
+  });
+
   it("shows the unavailable state when the fetch fails", async () => {
     vi.mocked(getStatus).mockRejectedValue(new Error("404"));
     const { wrapper } = mountWith(StatusEmbedPage, { props: { id: "10" } });

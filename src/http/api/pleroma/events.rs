@@ -199,11 +199,26 @@ async fn status_params(
         None => EventParams::default(),
     };
     if has_event_fields || status_id.is_none() {
+        let stored_start = event.start_time.clone();
+        let stored_end = event.end_time.clone();
         if params.get("start_time").is_some() {
             event.start_time = str_param(params, "start_time").map(str::to_string);
         }
         if params.get("end_time").is_some() {
             event.end_time = str_param(params, "end_time").map(str::to_string);
+        } else if params.get("start_time").is_some() {
+            // A start-only edit that moves past the stored end would
+            // fail `end_time > start_time` validation — shift the end
+            // by the same delta so the event keeps its duration.
+            let parse =
+                |s: Option<&str>| s.and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok());
+            if let (Some(new_start), Some(old_start), Some(old_end)) = (
+                parse(event.start_time.as_deref()),
+                parse(stored_start.as_deref()),
+                parse(stored_end.as_deref()),
+            ) {
+                event.end_time = Some((old_end + (new_start - old_start)).to_rfc3339());
+            }
         }
         // Nicolex carries the offset inside the RFC-3339 instants;
         // `timezone` is display metadata.
@@ -255,6 +270,12 @@ async fn status_params(
                 event.locations.push(lp);
             }
         }
+    }
+
+    // Nicolex has no IANA-zone concept — the instants' own offsets are
+    // authoritative; default the display timezone to UTC.
+    if (has_event_fields || status_id.is_none()) && event.timezone.is_none() {
+        event.timezone = Some("UTC".to_string());
     }
 
     // `banner_id` is Nicolex's media param — it both attaches the

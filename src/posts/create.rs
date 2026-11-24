@@ -170,14 +170,17 @@ pub async fn validate(
     // The stored object type on edit — an `Event` status keeps its
     // post type (edits can't convert it to a note/article, which
     // would orphan the `events` side-table row).
-    let existing_object_type: Option<String> = match editing_status_id {
-        Some(id) => sqlx::query_scalar("SELECT object_type FROM statuses WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&ctx.db)
-            .await?
-            .flatten(),
-        None => None,
-    };
+    let (existing_object_type, stored_visibility): (Option<String>, Option<String>) =
+        match editing_status_id {
+            Some(id) => {
+                sqlx::query_as("SELECT object_type, visibility FROM statuses WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(&ctx.db)
+                    .await?
+                    .unwrap_or_default()
+            }
+            None => (None, None),
+        };
     let editing_is_event = existing_object_type.as_deref() == Some("Event");
     // An event intent relaxes the empty-body rule — the event name
     // lives in `title`, the description may legitimately be empty.
@@ -213,9 +216,16 @@ pub async fn validate(
         return Err(Error::Validation("status cannot be empty".to_string()));
     }
 
+    // An edit that omits `visibility` keeps the stored one — resetting
+    // to the account default would silently widen e.g. a `direct` post.
     let mut visibility = match &params.visibility {
         Some(v) => super::normalize_visibility(v)?,
-        None => super::default_visibility(&user_settings.default_visibility).to_string(),
+        None => match editing_status_id {
+            Some(_) => stored_visibility.clone().unwrap_or_else(|| {
+                super::default_visibility(&user_settings.default_visibility).to_string()
+            }),
+            None => super::default_visibility(&user_settings.default_visibility).to_string(),
+        },
     };
     let language = match &params.language {
         Some(l) if !l.trim().is_empty() => Some(l.trim().to_string()),

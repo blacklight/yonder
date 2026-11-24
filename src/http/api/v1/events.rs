@@ -399,11 +399,14 @@ fn parse_radius_km(raw: Option<&String>) -> Result<f64> {
 )]
 pub async fn events_list(
     State(state): State<Arc<AppState>>,
-    auth: crate::http::middleware::auth::AuthContext,
+    auth: crate::http::middleware::auth::MaybeAuth,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
     uri: axum::http::Uri,
 ) -> Result<Response> {
-    let viewer = auth.account_id;
+    // Anonymous callers may browse the discovery scopes (`local`,
+    // `federated`, `account:{id}`); viewer-scoped listings answer
+    // empty without a token.
+    let viewer = auth.0.as_ref().map(|a| a.account_id);
     let scope = params.get("scope").map(String::as_str).unwrap_or("mine");
     let limit = params
         .get("limit")
@@ -411,46 +414,53 @@ pub async fn events_list(
         .unwrap_or(20)
         .clamp(1, 40);
 
-    // Scope → status-id candidate set.
+    // Scope → status-id candidate set. Viewer-scoped listings answer
+    // empty for anonymous callers.
     let ids: Vec<i64> = match scope {
-        "mine" => {
-            sqlx::query_scalar(
-                "SELECT p.status_id FROM event_participations p \
-             WHERE p.account_id = $1 AND p.role = 'organizer'",
-            )
-            .bind(viewer)
-            .fetch_all(&state.db)
-            .await?
-        }
-        "participating" => {
-            let mut q = String::from(
-                "SELECT p.status_id FROM event_participations p WHERE p.account_id = $1",
-            );
-            if let Some(st) = params.get("state") {
-                q.push_str(" AND p.state = $2");
-                let rows: Vec<i64> = if st == "going" {
-                    sqlx::query_scalar(
-                        "SELECT p.status_id FROM event_participations p \
-                         WHERE p.account_id = $1 AND p.state IN ('accepted','tentative')",
-                    )
-                    .bind(viewer)
-                    .fetch_all(&state.db)
-                    .await?
+        "mine" => match viewer {
+            Some(viewer) => {
+                sqlx::query_scalar(
+                    "SELECT p.status_id FROM event_participations p \
+                 WHERE p.account_id = $1 AND p.role = 'organizer'",
+                )
+                .bind(viewer)
+                .fetch_all(&state.db)
+                .await?
+            }
+            None => Vec::new(),
+        },
+        "participating" => match viewer {
+            Some(viewer) => {
+                let mut q = String::from(
+                    "SELECT p.status_id FROM event_participations p WHERE p.account_id = $1",
+                );
+                if let Some(st) = params.get("state") {
+                    q.push_str(" AND p.state = $2");
+                    let rows: Vec<i64> = if st == "going" {
+                        sqlx::query_scalar(
+                            "SELECT p.status_id FROM event_participations p \
+                             WHERE p.account_id = $1 AND p.state IN ('accepted','tentative')",
+                        )
+                        .bind(viewer)
+                        .fetch_all(&state.db)
+                        .await?
+                    } else {
+                        sqlx::query_scalar(&q)
+                            .bind(viewer)
+                            .bind(st)
+                            .fetch_all(&state.db)
+                            .await?
+                    };
+                    rows
                 } else {
                     sqlx::query_scalar(&q)
                         .bind(viewer)
-                        .bind(st)
                         .fetch_all(&state.db)
                         .await?
-                };
-                rows
-            } else {
-                sqlx::query_scalar(&q)
-                    .bind(viewer)
-                    .fetch_all(&state.db)
-                    .await?
+                }
             }
-        }
+            None => Vec::new(),
+        },
         s if s.starts_with("account:") => {
             let account_id: i64 = s[8..]
                 .parse()
@@ -463,18 +473,21 @@ pub async fn events_list(
             .fetch_all(&state.db)
             .await?
         }
-        "home" => {
+        "home" => match viewer {
             // Events authored by accounts the viewer follows.
-            sqlx::query_scalar(
-                "SELECT s.id FROM statuses s \
-                 JOIN follows f ON f.target_account_id = s.account_id \
-                 WHERE f.account_id = $1 AND s.object_type = 'Event' \
-                   AND NOT s.tombstone",
-            )
-            .bind(viewer)
-            .fetch_all(&state.db)
-            .await?
-        }
+            Some(viewer) => {
+                sqlx::query_scalar(
+                    "SELECT s.id FROM statuses s \
+                     JOIN follows f ON f.target_account_id = s.account_id \
+                     WHERE f.account_id = $1 AND s.object_type = 'Event' \
+                       AND NOT s.tombstone",
+                )
+                .bind(viewer)
+                .fetch_all(&state.db)
+                .await?
+            }
+            None => Vec::new(),
+        },
         // `federated`: public events everywhere. `local`: public +
         // local-visibility events from this instance only. Neither
         // includes `unlisted` — plan §8 forbids calendar/search output
@@ -525,7 +538,7 @@ pub async fn events_list(
                    AND (6371.0 * acos(greatest(-1.0, least(1.0, \
                      cos(radians($2)) * cos(radians(l.latitude)) \
                        * cos(radians(l.longitude) - radians($3)) \
-                     + sin(radians($2)) * sin(radians(l.latitude))))) <= $6",
+                     + sin(radians($2)) * sin(radians(l.latitude)))))) <= $6",
             )
             .bind(&ids)
             .bind(lat)
@@ -689,7 +702,7 @@ pub async fn events_list(
             .iter()
             .filter_map(|id| statuses.get(id).cloned())
             .collect();
-        let visible = posts::visible_ids(&state.db, &batch, Some(viewer)).await?;
+        let visible = posts::visible_ids(&state.db, &batch, viewer).await?;
         for (id, st) in consumed {
             if visible.contains(id) {
                 visible_rows.push((*id, *st));
@@ -736,7 +749,7 @@ pub async fn events_list(
         .iter()
         .filter_map(|id| statuses.get(id).cloned())
         .collect();
-    let out = posts::entity::status_entities(&ctx(&state), &page_rows, Some(viewer)).await?;
+    let out = posts::entity::status_entities(&ctx(&state), &page_rows, viewer).await?;
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(
         header::CONTENT_TYPE,

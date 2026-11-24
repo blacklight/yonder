@@ -455,7 +455,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             axum::routing::post(events::calendar_token_create)
                 .delete(events::calendar_token_revoke),
         )
-        // Events list (Section 15) — authenticated, `status` bucket.
+        // Events list (Section 15) — `MaybeAuth`, `status` bucket.
         .route(
             "/api/v1/yonder/events",
             get(events::events_list).route_layer(ratelimit::layer(state, "status")),

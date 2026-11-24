@@ -98,7 +98,7 @@ pub async fn account_for_token(db: &sqlx::PgPool, token: &str) -> Result<Option<
 /// every poll.
 pub async fn feed_status_ids(db: &sqlx::PgPool, account_id: i64) -> Result<Vec<i64>> {
     sqlx::query_scalar(
-        "SELECT status_id FROM ( \
+        "SELECT ids.status_id FROM ( \
              SELECT p.status_id FROM event_participations p \
              WHERE p.account_id = $1 \
                AND (p.role = 'organizer' OR p.state = ANY($2)) \

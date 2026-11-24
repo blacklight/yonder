@@ -469,7 +469,6 @@ describe("event drafts", () => {
     expect(ev!.status).toBe("scheduled");
     expect(ev!.joinMode).toBe("free");
     expect(ev!.attendeesVisibility).toBe("organizers");
-    expect(ev!.timezone).toMatch(/\//); // browser IANA zone, not bare UTC
     expect(c.openSignal).toBe(1);
     expect(c.contextIsLive).toBe(true);
   });

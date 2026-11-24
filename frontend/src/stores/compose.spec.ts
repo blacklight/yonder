@@ -451,7 +451,15 @@ describe("event drafts", () => {
 
   it("openEvent resets into event mode with a zoned payload", () => {
     const c = useComposeStore();
-    c.update({ text: "leftover", poll: { options: ["a", "b"], expiresIn: 1, multiple: false, hideTotals: false } });
+    c.update({
+      text: "leftover",
+      poll: {
+        options: ["a", "b"],
+        expiresIn: 1,
+        multiple: false,
+        hideTotals: false,
+      },
+    });
     c.openEvent();
     expect(c.draft.postType).toBe("event");
     expect(c.draft.poll).toBeNull();
@@ -478,7 +486,11 @@ describe("event drafts", () => {
     const c = useComposeStore();
     c.openEvent();
     c.update({
-      event: { ...c.draft.event!, startTime: "2030-01-01T10:00", categories: ["MUSIC"] },
+      event: {
+        ...c.draft.event!,
+        startTime: "2030-01-01T10:00",
+        categories: ["MUSIC"],
+      },
     });
     const raw = localStorage.getItem("yonder.compose.draft");
     expect(raw).toContain('"postType":"event"');

@@ -86,7 +86,10 @@ export function zonedLocalToRfc3339(
 
 /** RFC 3339 instant → `datetime-local` wall time in `timeZone`
  * (edit hydration). `null` on unparseable input. */
-export function rfc3339ToZonedLocal(iso: string, timeZone: string): string | null {
+export function rfc3339ToZonedLocal(
+  iso: string,
+  timeZone: string,
+): string | null {
   const utcMs = Date.parse(iso);
   if (Number.isNaN(utcMs)) return null;
   const shifted = new Date(utcMs + tzOffsetMs(utcMs, timeZone));

@@ -143,9 +143,7 @@ onMounted(async () => {
                   @change="onAlertChange"
                 />
                 <span>{{
-                  t(
-                    `settingsNotifications.types.${kind.replace(/[.:]/g, "_")}`,
-                  )
+                  t(`settingsNotifications.types.${kind.replace(/[.:]/g, "_")}`)
                 }}</span>
               </label>
             </section>

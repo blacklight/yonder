@@ -35,6 +35,19 @@ Events tab when it's absent (and `yonder.events_enabled` mirrors the
 flag for programmatic checks). See [events.md](events.md) for the
 `[events]` configuration surface.
 
+## Instance statistics
+
+`stats.user_count`, `stats.status_count` and `stats.domain_count` are
+shared through the `instance:stats` Redis cache entry rather than
+recounted for every request. The `InstanceStatsRefresh` job
+(`instance.stats_refresh_schedule`, default `0 */3 * * *`) recomputes
+them every three hours when the schedule is enabled; the cached value
+is kept for four hours so queueing and retry delay does not push the
+count back onto a request. Setting the schedule to `""` disables the
+pre-calculation — a cache miss still computes the same query inline as
+a fallback.
+`yonder run-job instance_stats_refresh` forces a refresh immediately.
+
 ## Domains: the acct domain vs the federation origin
 
 `instance.domain` and `federation.base_url` can name different hosts —

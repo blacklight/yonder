@@ -113,6 +113,10 @@ rules = []
 expose_moderated_instances = true
 # Serve the list of known remote domains at /api/v1/instance/peers.
 peers_api_enabled = true
+# Cron expression for pre-calculating the public instance counters
+# (`user_count`, `status_count`, `domain_count`). Set to "" to disable;
+# a cache miss still computes them inline as a fallback.
+stats_refresh_schedule = "0 */3 * * *"
 # Enable the profile directory.
 directory_enabled = true
 # Personal-instance mode: anonymous visitors to `/` are redirected to

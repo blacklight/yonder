@@ -220,6 +220,10 @@ pub enum JobKind {
     /// Delete unattached media uploads past the retention window
     /// (epic 12).
     CleanupOrphanMedia,
+    /// Precompute the public instance counters served by
+    /// `/api/v1/instance` (`{}` — the
+    /// `instance.stats_refresh_schedule` fan-out).
+    InstanceStatsRefresh,
     /// Settle an inbound `Follow`'s notification once pubby's dispatch
     /// has stored the row — emits `follow` or `follow_request`
     /// depending on which row landed (epic 14).
@@ -307,6 +311,7 @@ impl JobKind {
         JobKind::FetchLinkPreview,
         JobKind::StatusDeletion,
         JobKind::CleanupOrphanMedia,
+        JobKind::InstanceStatsRefresh,
         JobKind::FollowEvent,
         JobKind::TimelineFanOut,
         JobKind::DeleteMediaObject,
@@ -352,6 +357,7 @@ impl JobKind {
             JobKind::FetchLinkPreview => "fetch_link_preview",
             JobKind::StatusDeletion => "status_deletion",
             JobKind::CleanupOrphanMedia => "cleanup_orphan_media",
+            JobKind::InstanceStatsRefresh => "instance_stats_refresh",
             JobKind::FollowEvent => "follow_event",
             JobKind::TimelineFanOut => "timeline_fan_out",
             JobKind::DeleteMediaObject => "delete_media_object",
@@ -403,6 +409,7 @@ impl JobKind {
             | JobKind::EventReminderSweep => Queue::Bulk,
             JobKind::CleanupRemoteActivities
             | JobKind::CleanupRemoteMedia
+            | JobKind::InstanceStatsRefresh
             | JobKind::AccountDeletion
             | JobKind::ExportCleanup
             | JobKind::CleanupOrphanMedia
@@ -709,6 +716,7 @@ mod tests {
         assert_eq!(JobKind::EmailSend.queue(), Queue::Default);
         assert_eq!(JobKind::NotificationFanout.queue(), Queue::Notifications);
         assert_eq!(JobKind::CleanupRemoteActivities.queue(), Queue::Cleanup);
+        assert_eq!(JobKind::InstanceStatsRefresh.queue(), Queue::Cleanup);
         assert_eq!(JobKind::Export.queue(), Queue::Bulk);
         assert_eq!(JobKind::CleanupRemoteMedia.queue(), Queue::Cleanup);
     }

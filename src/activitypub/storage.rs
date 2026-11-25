@@ -1324,14 +1324,15 @@ pub(crate) async fn upsert_remote_actor_row(
 /// (unfetchable hosts claimed by remote collections) stop amplifying
 /// the moment their first `RemoteActorFetch` records 'actor' or
 /// 'actor_gone' in `remote_network_syncs`. Rows carrying a real actor
-/// document (`inbox`/`preferredUsername` in `actor_data`, the same
-/// test `upsert_remote_stub` uses) or an `actor_cache` entry always
-/// count; local accounts (`domain IS NULL`) always count.
+/// document (the `inbox` column, mirrored from `actor_data`, or a
+/// claimed `preferredUsername` — the same test `upsert_remote_stub`
+/// uses) or an `actor_cache` entry always count; local accounts
+/// (`domain IS NULL`) always count.
 pub(crate) fn established_remote_clause(alias: &str) -> String {
     let stale_secs = super::REMOTE_ACTOR_STALE_SECONDS;
     format!(
         "({alias}.domain IS NULL \
-         OR COALESCE({alias}.actor_data->>'inbox', '') <> '' \
+         OR COALESCE({alias}.inbox, '') <> '' \
          OR COALESCE({alias}.actor_data->>'preferredUsername', '') <> '' \
          OR EXISTS (SELECT 1 FROM actor_cache ac WHERE ac.actor_id = {alias}.actor_id) \
          OR ({alias}.created_at > now() - make_interval(secs => {stale_secs}) \
@@ -1448,5 +1449,17 @@ impl PgActivityPubStorage {
                 }
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn established_clause_uses_the_inbox_column_not_json_traversal() {
+        let clause = established_remote_clause("a");
+        assert!(clause.contains("COALESCE(a.inbox, '') <> ''"));
+        assert!(!clause.contains("a.actor_data->>'inbox'"));
     }
 }

@@ -286,6 +286,13 @@ pub enum JobCommand {
     /// this subcommand forces a sweep now.
     #[command(name = "event_reminder_sweep")]
     EventReminderSweep(JobArgs),
+    /// Recompute and cache the public instance counters.
+    ///
+    /// Payload: `{}` — normally cron-driven through
+    /// `instance.stats_refresh_schedule`; this subcommand forces a
+    /// refresh now.
+    #[command(name = "instance_stats_refresh")]
+    InstanceStatsRefresh(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -337,6 +344,7 @@ impl JobCommand {
             Self::EventsBackfill(a) => (JobKind::EventsBackfill, a),
             Self::EventRemoteRefresh(a) => (JobKind::EventRemoteRefresh, a),
             Self::EventReminderSweep(a) => (JobKind::EventReminderSweep, a),
+            Self::InstanceStatsRefresh(a) => (JobKind::InstanceStatsRefresh, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

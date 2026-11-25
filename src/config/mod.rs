@@ -418,6 +418,10 @@ pub struct InstanceConfig {
     /// Serve `GET /api/v1/instance/peers` (Mastodon's
     /// `peers_api_enabled`) — off means 404.
     pub peers_api_enabled: bool,
+    /// Cron expression for the instance-stats pre-calculation job.
+    /// Set to `""` to disable; a cache miss still computes the counts
+    /// inline as a fallback.
+    pub stats_refresh_schedule: Option<String>,
     /// Enable the profile directory.
     pub directory_enabled: bool,
     /// Personal-instance mode: anonymous visitors to `/` are redirected
@@ -455,6 +459,7 @@ impl Default for InstanceConfig {
             rules: Vec::new(),
             expose_moderated_instances: true,
             peers_api_enabled: true,
+            stats_refresh_schedule: Some("0 */3 * * *".to_string()),
             directory_enabled: true,
             single_user: None,
         }

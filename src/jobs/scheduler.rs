@@ -3,8 +3,7 @@
 //! Scheduled jobs *enqueue* through the [`Dispatcher`] — the scheduler
 //! only triggers, the worker executes, so cron jobs share the same
 //! retry/dead-letter semantics as every other job. Schedules come from
-//! the admin-configurable keys `federation.remote_activity_prune_schedule`
-//! and `media.remote_cleanup_schedule` (5-field crontab syntax).
+//! the admin-configurable `*_schedule` keys (5-field crontab syntax).
 //!
 //! The scheduler is in-process and registered from config at startup, so
 //! nothing needs to persist across restarts — run it wherever the
@@ -106,6 +105,10 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.media.orphan_cleanup_schedule.as_deref(),
             JobKind::CleanupOrphanMedia,
         ),
+        (
+            config.instance.stats_refresh_schedule.as_deref(),
+            JobKind::InstanceStatsRefresh,
+        ),
         // Epic-32 events: reminder sweep — emits
         // `pleroma:event_reminder` inside the configured lead window.
         (
@@ -195,5 +198,11 @@ mod tests {
     fn bad_cron_is_rejected() {
         assert!(to_cron("* * *").is_err());
         assert!(to_cron("").is_err());
+    }
+
+    #[tokio::test]
+    async fn default_instance_stats_schedule_is_accepted() {
+        let cron = to_cron("0 */3 * * *").unwrap();
+        assert!(Job::new_async(cron, |_id, _lock| Box::pin(async move {})).is_ok());
     }
 }

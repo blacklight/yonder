@@ -13,15 +13,9 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 
 use crate::{config::RegistrationMode, http::AppState, Error, Result};
-
-/// TTL for the cached `stats` counts. `domain_count` is a
-/// `count(DISTINCT domain)` over the whole remote-accounts table — on a
-/// large instance that's a multi-second seq scan + sort, far too slow
-/// for an endpoint clients poll. Counts don't need second accuracy.
-const STATS_TTL: Duration = Duration::from_secs(60);
 
 /// TTL for the cached `peers` domain list — the union scan is likewise
 /// expensive, and the listing doesn't need to reflect accounts that
@@ -56,28 +50,6 @@ where
     }
 }
 
-/// Run the counts query directly (cache miss or Redis down).
-async fn load_stats(db: &PgPool) -> Result<(i64, i64, i64)> {
-    // `domain_count` counts only *established* remote actors — bare
-    // stubs for unfetchable phantom domains don't inflate it.
-    let established = crate::activitypub::storage::established_remote_clause("accounts");
-    let row = sqlx::query(&format!(
-        "SELECT \
-            (SELECT count(*) FROM accounts a JOIN users u ON u.account_id = a.id \
-             WHERE a.domain IS NULL AND a.suspended_at IS NULL) AS user_count, \
-            (SELECT count(*) FROM statuses WHERE local) AS status_count, \
-            (SELECT count(DISTINCT domain) FROM accounts \
-             WHERE domain IS NOT NULL AND {established}) AS domain_count",
-    ))
-    .fetch_one(db)
-    .await?;
-    Ok((
-        row.get::<i64, _>("user_count"),
-        row.get::<i64, _>("status_count"),
-        row.get::<i64, _>("domain_count"),
-    ))
-}
-
 /// Run the peers union query directly (cache miss or Redis down).
 async fn load_peers(db: &PgPool) -> Result<Vec<String>> {
     // Only established remote actors contribute domains — unfetched
@@ -107,9 +79,12 @@ async fn load_peers(db: &PgPool) -> Result<Vec<String>> {
 
 /// `(user_count, status_count, domain_count)` for `instance.stats`.
 async fn instance_stats(state: &Arc<AppState>) -> Result<(i64, i64, i64)> {
-    cached_query(state, "instance:stats", STATS_TTL, |db| async move {
-        load_stats(&db).await
-    })
+    cached_query(
+        state,
+        crate::instance_stats::STATS_CACHE_KEY,
+        crate::instance_stats::STATS_TTL,
+        |db| async move { crate::instance_stats::load_stats(&db).await },
+    )
     .await
 }
 

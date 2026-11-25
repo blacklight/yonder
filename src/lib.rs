@@ -20,6 +20,7 @@ pub mod filters;
 pub mod frontends;
 pub mod http;
 pub mod i18n;
+pub mod instance_stats;
 pub mod interactions;
 pub mod jobs;
 pub mod logging;

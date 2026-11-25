@@ -632,6 +632,20 @@ async fn run_job_enqueue_inline_and_errors() {
     let out = yonder(&sb, &["run-job", "audit_log_cleanup", "--inline"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
 
+    let out = yonder(&sb, &["run-job", "instance_stats_refresh", "--inline"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let cached: Option<String> = redis
+        .conn()
+        .await
+        .unwrap()
+        .get(redis.key("cache:instance:stats"))
+        .await
+        .expect("read instance stats cache");
+    let cached: serde_json::Value =
+        serde_json::from_str(&cached.expect("instance stats refresh populates the cache"))
+            .expect("instance stats cache is JSON");
+    assert_eq!(cached["v"].as_array().map(Vec::len), Some(3));
+
     let out = yonder(&sb, &["run-job", "nope"]);
     assert_eq!(code(&out), 3);
     // Right name, wrong case: clap subcommands are case-sensitive, so

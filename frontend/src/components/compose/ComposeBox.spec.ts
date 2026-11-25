@@ -8,6 +8,7 @@ import { useComposeStore } from "@/stores/compose";
 import { useSettingsStore } from "@/stores/settings";
 import { useToastsStore } from "@/stores/toasts";
 import ComposeBox from "./ComposeBox.vue";
+import { getInstance } from "@/api/instance";
 
 vi.mock("@/api/emojis", () => ({
   customEmojis: vi.fn().mockResolvedValue([
@@ -174,6 +175,101 @@ describe("ComposeBox", () => {
       action: "Open",
       to: "/statuses/7",
     });
+  });
+
+  it("editing a non-direct event drops a stale invitee list", async () => {
+    // Invitees are direct-only; a wider-visibility event can carry a
+    // stale stored list (pre-guard data). The edit must send
+    // `invitees: []` — hydrating the ids would 422 every save.
+    const status = {
+      id: "7",
+      content: "<p>event body</p>",
+      media_attachments: [],
+      spoiler_text: "",
+      sensitive: false,
+      language: "en",
+      visibility: "public",
+      tags: [],
+      yonder: {
+        event: {
+          name: "Gig night",
+          status: "scheduled",
+          start_time: "2030-06-01T18:00:00+00:00",
+          timezone: "UTC",
+          invitees: ["999"],
+          locations: [],
+        },
+      },
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(status), { status: 200 })),
+      );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/compose", component: ComposeBox }],
+    });
+    await router.push("/compose?edit=7");
+    await router.isReady();
+    const wrapper = mount(ComposeBox, {
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const put = spy.mock.calls.find(
+      ([, i]) => (i as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    const body = JSON.parse((put![1] as RequestInit).body as string);
+    expect(body.event.invitees).toEqual([]);
+  });
+
+  it("editing a direct event preserves its invitee list", async () => {
+    const status = {
+      id: "8",
+      content: "<p>event body</p>",
+      media_attachments: [],
+      spoiler_text: "",
+      sensitive: false,
+      language: "en",
+      visibility: "direct",
+      tags: [],
+      yonder: {
+        event: {
+          name: "Secret gig",
+          status: "scheduled",
+          start_time: "2030-06-01T18:00:00+00:00",
+          timezone: "UTC",
+          invitees: ["999"],
+          locations: [],
+        },
+      },
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(status), { status: 200 })),
+      );
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/compose", component: ComposeBox }],
+    });
+    await router.push("/compose?edit=8");
+    await router.isReady();
+    const wrapper = mount(ComposeBox, {
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const put = spy.mock.calls.find(
+      ([, i]) => (i as RequestInit | undefined)?.method === "PUT",
+    );
+    expect(put).toBeTruthy();
+    const body = JSON.parse((put![1] as RequestInit).body as string);
+    expect(body.event.invitees).toEqual(["999"]);
   });
 
   it("Ctrl+Enter submits from the textarea, plain Enter does not", async () => {
@@ -821,5 +917,83 @@ describe("ComposeBox", () => {
     expect(d.summary).toBe("");
     expect(d.coverMediaId).toBeNull();
     expect(wrapper.find("[data-testid='article-title']").exists()).toBe(false);
+  });
+
+  it("event mode posts an Event status with the serialized payload", async () => {
+    const spy = mockPost();
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    await flushPromises();
+    expect(wrapper.find("[data-testid='event-builder']").exists()).toBe(true);
+    // Post is disabled until the event has a name and a start time.
+    expect(
+      wrapper.get("[data-testid='post']").attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.get("[data-testid='event-name']").setValue("Gig night");
+    await wrapper
+      .get("[data-testid='event-start']")
+      .setValue("2030-06-01T18:00");
+    await wrapper.get("[data-testid='post']").trigger("click");
+    await flushPromises();
+    const body = JSON.parse(spy.mock.calls[0][1]!.body as string);
+    expect(body.post_type).toBe("event");
+    expect(body.title).toBe("Gig night");
+    expect(body.event.timezone).toBeTruthy();
+    expect(body.event.start_time).toMatch(
+      /^2030-06-01T18:00:00[+-]\d{2}:\d{2}$/,
+    );
+    expect(body.event.status).toBe("scheduled");
+    expect(body.poll).toBeUndefined();
+    expect(body.in_reply_to_id).toBeUndefined();
+  });
+
+  it("toggling event off returns to a note and keeps the title", async () => {
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    await wrapper.get("[data-testid='event-name']").setValue("Gig night");
+    await wrapper.get("[data-testid='event-toggle']").trigger("click");
+    const d = useComposeStore().draft;
+    expect(d.postType).toBe("note");
+    expect(d.event).toBeNull();
+    expect(d.title).toBe("Gig night");
+    expect(wrapper.find("[data-testid='event-builder']").exists()).toBe(false);
+  });
+
+  it("offers the event type only once the instance confirms it", async () => {
+    let resolveInst!: (v: unknown) => void;
+    vi.mocked(getInstance).mockImplementationOnce(
+      () => new Promise((r) => (resolveInst = r)) as never,
+    );
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    const options = () =>
+      wrapper
+        .findAll("[data-testid='post-type'] option")
+        .map((o) => o.attributes("value"));
+    // Off until the response lands — an older server never answers
+    // with the flag, so a missing response must not expose the type.
+    expect(options()).toEqual(["note", "article"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(false);
+
+    resolveInst({ yonder: { events_enabled: true } });
+    await flushPromises();
+    expect(options()).toEqual(["note", "article", "event"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(true);
+  });
+
+  it("hides the event type when the instance disables events", async () => {
+    vi.mocked(getInstance).mockResolvedValueOnce({
+      yonder: { events_enabled: false },
+    } as never);
+    const { wrapper } = mountWith(ComposeBox);
+    await flushPromises();
+    expect(
+      wrapper
+        .findAll("[data-testid='post-type'] option")
+        .map((o) => o.attributes("value")),
+    ).toEqual(["note", "article"]);
+    expect(wrapper.find("[data-testid='event-toggle']").exists()).toBe(false);
   });
 });

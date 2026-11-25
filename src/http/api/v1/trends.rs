@@ -247,7 +247,8 @@ pub async fn statuses_trending(
     let by_id = crate::posts::load_many(&state.db, &ids).await?;
     // `load_many` is hash-keyed — restore the ranking order.
     let rows: Vec<_> = ids.iter().filter_map(|i| by_id.get(i).cloned()).collect();
-    let ctx = crate::posts::PostContext::new(&state);
+    let mut ctx = crate::posts::PostContext::new(&state);
+    ctx.set_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     Ok(Json(json!(
         crate::posts::entity::status_entities(&ctx, &rows, viewer).await?
     )))

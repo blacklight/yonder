@@ -37,6 +37,14 @@ vi.mock("@/api/adminUsers", async (orig) => {
   const m = await orig<typeof import("@/api/adminUsers")>();
   return { ...m, reverseAdminAction: vi.fn() };
 });
+const listEventsMock = vi.fn();
+vi.mock("@/api/events", () => ({
+  listEvents: (...a: unknown[]) => listEventsMock(...a),
+  cursorOf: (url?: string) =>
+    url
+      ? (new URL(url, location.origin).searchParams.get("cursor") ?? undefined)
+      : undefined,
+}));
 import {
   lookup,
   getAccount,
@@ -184,6 +192,8 @@ describe("ProfilePage", () => {
       pages: 1,
       complete: true,
     });
+    listEventsMock.mockReset();
+    listEventsMock.mockResolvedValue({ items: [], next: undefined });
     document.title = "";
   });
 
@@ -1064,5 +1074,142 @@ describe("ProfilePage", () => {
     expect(wrapper.find(".profile__banner-btn").exists()).toBe(false);
     expect(wrapper.find(".profile__avatar-btn").exists()).toBe(false);
     expect(wrapper.find(".profile__avatar").exists()).toBe(true);
+  });
+
+  describe("Events tab", () => {
+    function setEventsEnabled(enabled: boolean) {
+      useInstanceStore().entity = {
+        yonder: { events_enabled: enabled },
+      } as never;
+    }
+
+    const tabLabels = (wrapper: ReturnType<typeof mountWith>["wrapper"]) =>
+      wrapper.findAll(".tabs button").map((b) => b.text());
+
+    async function openEventsTab(
+      wrapper: ReturnType<typeof mountWith>["wrapper"],
+    ) {
+      const tab = wrapper
+        .findAll(".tabs button")
+        .find((b) => b.text() === "Events");
+      expect(tab, "Events tab").toBeTruthy();
+      await tab!.trigger("click");
+      await flushPromises();
+    }
+
+    it("hides the tab when the instance disables events", async () => {
+      setEventsEnabled(false);
+      vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+      const wrapper = await openProfile("/@alice");
+      expect(tabLabels(wrapper)).toEqual(["Posts", "Media"]);
+      expect(listEventsMock).not.toHaveBeenCalled();
+    });
+
+    it("lists the account's events through the list API", async () => {
+      setEventsEnabled(true);
+      vi.mocked(lookup).mockResolvedValue(account({ id: "1", acct: "alice" }));
+      listEventsMock.mockResolvedValue({
+        items: [status({ id: "ev-1", content: "<p>meetup</p>" })],
+        next: undefined,
+      });
+      const wrapper = await openProfile("/@alice");
+      await openEventsTab(wrapper);
+      expect(listEventsMock).toHaveBeenCalledWith({
+        scope: "account:1",
+        limit: 20,
+        cursor: undefined,
+        include_cancelled: true,
+      });
+      expect(wrapper.text()).toContain("meetup");
+    });
+
+    it("shows the empty state when the account has no events", async () => {
+      setEventsEnabled(true);
+      vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+      const wrapper = await openProfile("/@alice");
+      await openEventsTab(wrapper);
+      expect(wrapper.text()).toContain("No events.");
+    });
+
+    it("surfaces a failed events load as an alert", async () => {
+      setEventsEnabled(true);
+      vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+      listEventsMock.mockRejectedValue(new Error("boom"));
+      const wrapper = await openProfile("/@alice");
+      await openEventsTab(wrapper);
+      expect(wrapper.find("[role='alert']").text()).toContain(
+        "Something went wrong.",
+      );
+    });
+
+    it("ignores an events response that lands after the account changed", async () => {
+      setEventsEnabled(true);
+      let resolveAlice!: (v: unknown) => void;
+      listEventsMock.mockImplementation(({ scope }: { scope: string }) =>
+        scope === "account:1"
+          ? new Promise((r) => (resolveAlice = r))
+          : Promise.resolve({
+              items: [status({ id: "bob-ev", content: "<p>bob event</p>" })],
+              next: undefined,
+            }),
+      );
+      vi.mocked(lookup).mockImplementation((acct: string) =>
+        Promise.resolve(
+          acct.includes("bob")
+            ? account({ id: "2", acct: "bob" })
+            : account({ id: "1", acct: "alice" }),
+        ),
+      );
+      const { wrapper, router } = mountWith(ProfilePage);
+      await router.push("/@alice");
+      await flushPromises();
+      await openEventsTab(wrapper);
+      // Navigate away while alice's events request is still in flight.
+      await router.push("/@bob");
+      await flushPromises();
+      expect(wrapper.text()).toContain("bob event");
+      resolveAlice({
+        items: [status({ id: "alice-ev", content: "<p>alice event</p>" })],
+        next: undefined,
+      });
+      await flushPromises();
+      expect(wrapper.text()).toContain("bob event");
+      expect(wrapper.text()).not.toContain("alice event");
+    });
+
+    it("reloads posts, not events, when leaving the Events tab", async () => {
+      setEventsEnabled(true);
+      vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+      const wrapper = await openProfile("/@alice");
+      await openEventsTab(wrapper);
+      const eventsCalls = listEventsMock.mock.calls.length;
+      const postCalls = vi.mocked(accountStatuses).mock.calls.length;
+      await wrapper.findAll(".tabs button")[0].trigger("click");
+      await flushPromises();
+      expect(vi.mocked(accountStatuses).mock.calls.length).toBeGreaterThan(
+        postCalls,
+      );
+      expect(listEventsMock.mock.calls.length).toBe(eventsCalls);
+    });
+
+    it("does not start a duplicate first page while one is in flight", async () => {
+      setEventsEnabled(true);
+      vi.mocked(lookup).mockResolvedValue(account({ acct: "alice" }));
+      let resolveFirst!: (v: unknown) => void;
+      listEventsMock.mockImplementationOnce(
+        () => new Promise((r) => (resolveFirst = r)),
+      );
+      const wrapper = await openProfile("/@alice");
+      await openEventsTab(wrapper);
+      await wrapper.findAll(".tabs button")[0].trigger("click");
+      await openEventsTab(wrapper);
+      expect(listEventsMock).toHaveBeenCalledTimes(1);
+      resolveFirst({
+        items: [status({ id: "ev-once", content: "<p>once</p>" })],
+        next: undefined,
+      });
+      await flushPromises();
+      expect(wrapper.text()).toContain("once");
+    });
   });
 });

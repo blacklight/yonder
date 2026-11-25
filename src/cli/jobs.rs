@@ -267,6 +267,25 @@ pub enum JobCommand {
     /// `"all"`.
     #[command(name = "search_index_backfill")]
     SearchIndexBackfill(JobArgs),
+    /// Re-materialize remote Event statuses that predate the `events`
+    /// side table — re-fetches each through the remote-status fetch
+    /// path; paged and self-continuing.
+    ///
+    /// Payload: `{"after_id": <status id>, "batch_size": <n>}` —
+    /// defaults cover the whole table.
+    #[command(name = "events_backfill")]
+    EventsBackfill(JobArgs),
+    /// Re-fetch a remote event not refreshed within
+    /// `events.remote_refresh_after_minutes`.
+    ///
+    /// Payload: `{"status_id": <id>}`.
+    #[command(name = "event_remote_refresh")]
+    EventRemoteRefresh(JobArgs),
+    /// Emit `pleroma:event_reminder` notifications for events starting
+    /// inside `events.reminder_lead_minutes`. Normally cron-driven;
+    /// this subcommand forces a sweep now.
+    #[command(name = "event_reminder_sweep")]
+    EventReminderSweep(JobArgs),
     /// Any argv clap didn't match to a job subcommand — resolves to
     /// the same not-found/validation errors a bare `kind` string used
     /// to produce.
@@ -315,6 +334,9 @@ impl JobCommand {
             Self::QuoteAuthorization(a) => (JobKind::QuoteAuthorization, a),
             Self::SearchIndexSync(a) => (JobKind::SearchIndexSync, a),
             Self::SearchIndexBackfill(a) => (JobKind::SearchIndexBackfill, a),
+            Self::EventsBackfill(a) => (JobKind::EventsBackfill, a),
+            Self::EventRemoteRefresh(a) => (JobKind::EventRemoteRefresh, a),
+            Self::EventReminderSweep(a) => (JobKind::EventReminderSweep, a),
             Self::Other(argv) => return Err(unknown_kind(&argv)),
         };
         Ok((kind, args))

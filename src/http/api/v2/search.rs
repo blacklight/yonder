@@ -52,12 +52,6 @@ pub async fn search_v2(
     let caller = search::authorize(&state, auth.0)?;
     let parsed = search::params::parse(&params)?;
     let results = search::search(&state, caller.as_ref(), &parsed).await?;
-    let body = search::render(
-        &state,
-        &results,
-        caller.as_ref().map(|a| a.account_id),
-        false,
-    )
-    .await?;
+    let body = search::render(&state, &results, caller.as_ref(), false).await?;
     Ok(Json(body))
 }

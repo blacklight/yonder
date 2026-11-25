@@ -27,6 +27,12 @@ lives under the `yonder` extension object.
 | Timeline language filter | `users.filter_languages` | yonder settings |
 | Email notifications (6 flags) | `users.email_notif_*` | yonder settings (`email_notifications`) |
 
+Web Push alert toggles (`data.alerts` per subscription) cover the
+event notification types too: `pleroma:participation_request`,
+`pleroma:participation_accepted`, `pleroma:event_update` and
+`pleroma:event_reminder` (absent key defaults to on). See
+[events.md](events.md).
+
 `PATCH /api/v1/yonder/settings` also accepts `default_visibility`,
 `default_posting_language`, `default_sensitive` and
 `default_content_type` so the endpoint is a complete writable settings

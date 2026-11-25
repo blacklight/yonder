@@ -20,6 +20,7 @@ pub mod blocks;
 pub mod conversations;
 pub mod custom_emojis;
 pub mod emoji_admin;
+pub mod events;
 pub mod featured_tags;
 pub mod filters;
 pub mod follow_requests;
@@ -60,7 +61,7 @@ use crate::{
 /// strings — snowflake values exceed JS's `Number.MAX_SAFE_INTEGER`,
 /// so round-tripping through a JS number silently corrupts them —
 /// but bare JSON numbers are accepted for convenience.
-#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, serde::Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum EntityId {
     /// String form (`"1234"`), matching entity serialization.
@@ -410,6 +411,54 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/api/v1/yonder/statuses/{id}/history",
             get(transfer::status_history),
+        )
+        .route("/api/v1/yonder/events/{id}/ics", get(events::event_ics))
+        // Section 11 RSVP + organizer management — dedicated
+        // `events_rsvp` bucket (RSVP fan-out can be chatty).
+        .route(
+            "/api/v1/yonder/events/{id}/rsvp",
+            axum::routing::post(events::event_rsvp)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
+            "/api/v1/yonder/events/{id}/invitees",
+            axum::routing::post(events::event_invitees)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
+            "/api/v1/yonder/events/{id}/dm-invites",
+            axum::routing::post(events::event_dm_invites)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
+            "/api/v1/yonder/events/{id}/participants/{account_id}",
+            axum::routing::delete(events::event_remove_participant)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
+            "/api/v1/yonder/events/{id}/participation_requests/{account_id}/{decision}",
+            axum::routing::post(events::event_decide_request)
+                .route_layer(ratelimit::layer(state, "events_rsvp")),
+        )
+        .route(
+            "/api/v1/yonder/events/{id}/participations",
+            get(events::event_participations),
+        )
+        // Composer address autocomplete — `[events.geocoding]` proxy.
+        .route(
+            "/api/v1/yonder/geocoding/search",
+            get(events::geocoding_search).route_layer(ratelimit::layer(state, "search")),
+        )
+        // Personalized calendar subscription token (Section 18).
+        .route(
+            "/api/v1/yonder/calendar/token",
+            axum::routing::post(events::calendar_token_create)
+                .delete(events::calendar_token_revoke),
+        )
+        // Events list (Section 15) — `MaybeAuth`, `status` bucket.
+        .route(
+            "/api/v1/yonder/events",
+            get(events::events_list).route_layer(ratelimit::layer(state, "status")),
         )
         .route(
             "/api/v1/yonder/history/messages",
@@ -1174,6 +1223,16 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     admin_domain_blocks::list,
     admin_domain_blocks::show,
     admin_domain_blocks::update,
-    admin_domain_blocks::delete_block
+    admin_domain_blocks::delete_block,
+    events::event_ics,
+    events::event_rsvp,
+    events::event_invitees,
+    events::event_dm_invites,
+    events::event_remove_participant,
+    events::event_decide_request,
+    events::event_participations,
+    events::calendar_token_create,
+    events::calendar_token_revoke,
+    events::events_list
 ))]
 pub struct ApiDoc;

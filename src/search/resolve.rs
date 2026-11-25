@@ -361,11 +361,28 @@ async fn materialize_status(
     let Some(author) = attributed_to(doc) else {
         return Ok(None);
     };
+    // For `Event` objects the signer may differ from `attributedTo`
+    // (a Mobilizon group event signed by a member). Sign with the
+    // object's self-claimed `actor` when present so `upsert`'s
+    // ownership gate — including the collective-attribution check —
+    // applies exactly as it would for an inbox Create. Without it the
+    // synthetic actor would equal `attributedTo` and skip the gate.
+    let signer = if doc.get("type").and_then(|v| v.as_str()) == Some("Event") {
+        doc.get("actor")
+            .and_then(|a| {
+                a.as_str()
+                    .map(str::to_string)
+                    .or_else(|| a.get("id").and_then(|i| i.as_str()).map(str::to_string))
+            })
+            .unwrap_or_else(|| author.clone())
+    } else {
+        author.clone()
+    };
     let object_id = doc.get("id").and_then(|v| v.as_str()).unwrap_or("");
     let raw = json!({
         "id": format!("{object_id}#activity"),
         "type": "Create",
-        "actor": author,
+        "actor": signer,
         "to": doc.get("to").cloned().unwrap_or(Value::Null),
         "cc": doc.get("cc").cloned().unwrap_or(Value::Null),
         "object": doc,

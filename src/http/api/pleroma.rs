@@ -29,6 +29,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 
+mod events;
+
 use crate::{
     auth::scopes::require_scope,
     http::{
@@ -80,6 +82,7 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             "/api/v1/pleroma/backups/{id}/download",
             get(download_backup),
         )
+        .merge(events::router(state))
 }
 
 /// JSON or `application/x-www-form-urlencoded` — Akkoma accepts both.

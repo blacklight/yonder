@@ -4,6 +4,19 @@
 
 ### Added
 
+- `events`: FEP-8a8e event support — events as first-class statuses
+  (`statuses.object_type = 'Event'`) with structured side tables,
+  lenient inbound parsing (Mobilizon, Gancio, WordPress Event Bridge,
+  Nicolex shapes), local authoring/editing from the composer and the
+  Nicolex-compatible `/api/v1/pleroma/events` adapter, a yonder-native
+  RSVP API sharing the §7.1 state machine with inbound
+  `Join`/`Leave`/`Accept`/`Reject`/`TentativeAccept`/`Invite`
+  activities, `pleroma:*` event notifications with a reminder sweep
+  and stale-remote refresh jobs, ICS export (per-event, anonymous
+  profile feed, token-gated personalized subscription), and discovery
+  (`/api/v1/yonder/events` with category/hashtag/online/near-me
+  filters, the `/events` and `/events/discover` pages, the profile
+  Events tab, and the actor `upcomingEvents` collection).
 - `jobs`: Split remote-fetch work off `default` into dedicated
   `remote_status` (quote/pin/media refresh fetches), `remote`
   (actor/network/media/Webmention fetches) and `remote_bulk` (large
@@ -42,6 +55,17 @@
   the background via a new `remote_actor_resolve` job, and give the
   in-process worker its own database pool
   ([`a9f6893`](https://git.platypush.tech/blacklight/yonder/commit/a9f6893fb8155db6157b225f2c9ea9e6ce11a1a4)).
+- `events`: Fix event location handling end to end — the composer
+  hydrates the §9.2 nested `address` object on edit (the flat fields
+  never matched, so saves could wipe locations), the status card
+  renders place addresses, links them to OpenStreetMap or Google Maps
+  (`[events] map_provider`), offers an embedded OSM preview, and
+  shows Copy link / Download calendar actions for clients without
+  event support. Event `Link` attachments now carry the permalink
+  and ICS feed; calendar links never promote to virtual locations on
+  ingest. Composer place locations get address autocomplete via
+  `[events.geocoding]` (Nominatim or Google with `google_api_key`)
+  at `GET /api/v1/yonder/geocoding/search`.
 
 ### Changed
 

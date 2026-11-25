@@ -43,7 +43,7 @@ use crate::http::AppState;
 use crate::posts::{self, mentions::ResolvedMention, render, PostContext, StatusRow};
 use crate::{Error, Result};
 
-use super::{actors::sync_call, delivery, ApContext};
+use super::{actors::sync_call, context, delivery, ApContext};
 
 /// The doc-cache key for a served status object.
 fn object_key(status_id: i64) -> pubby_sdk::cache::CacheKey {
@@ -267,10 +267,13 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
 
     let mut object = Object::new(status.uri.clone().unwrap_or_default());
     let article = posts::is_article(status);
+    let event = event_bundle(ctx, status).await?;
     object.object_type = if status.poll_id.is_some() {
         "Question"
     } else if article {
         "Article"
+    } else if event.is_some() {
+        "Event"
     } else {
         "Note"
     }
@@ -306,7 +309,17 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         hashtags(ctx, status.id).await?,
         |name| format!("{}/tags/{name}", ctx.base_url()),
     ));
-    object.attachment = attachments(ctx, status).await?;
+    // Event media loads once — attachments and the flyer `image`
+    // share the same list.
+    let event_media = if event.is_some() {
+        Some(posts::entity::media_for_status(ctx, status.id).await?)
+    } else {
+        None
+    };
+    object.attachment = match (&event, &event_media) {
+        (Some(bundle), Some(media)) => event_attachments(ctx, status, bundle, media)?,
+        _ => attachments(ctx, status).await?,
+    };
     object.to = to;
     object.cc = cc;
     object.language = status.language.clone();
@@ -317,6 +330,21 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
         "content": status.content,
         "mediaType": status.content_type,
     });
+    // Catodon-style event invite (migration 0063): a `direct` status
+    // marked in `status_event_invites` carries the event URI under
+    // both property names — `yonder:` for Yonder peers, `catodon:` so
+    // Catodon renders "invited you to an event".
+    if status.visibility == "direct" {
+        let invite_uri: Option<String> =
+            sqlx::query_scalar("SELECT event_uri FROM status_event_invites WHERE status_id = $1")
+                .bind(status.id)
+                .fetch_optional(&ctx.db)
+                .await?;
+        if let Some(uri) = invite_uri {
+            doc["yonder:inviteTo"] = json!(uri);
+            doc["catodon:inviteTo"] = json!(uri);
+        }
+    }
     // Epic 20 — Emoji tags for every local `:code:` in the text, so
     // remote instances can render and record them (pubby has no
     // Emoji tag builder; `doc["tag"]` is the emitted array). A map
@@ -402,6 +430,27 @@ pub async fn build_object(ctx: &PostContext, status: &StatusRow) -> Result<Value
             "name": "Yonder",
         });
     }
+    // FEP-8a8e Event fields `Object` can't express — name, generated
+    // summary, times, locations, join mode, capacity, collections.
+    if let Some(bundle) = &event {
+        for (k, v) in event_fields(
+            ctx,
+            status,
+            bundle,
+            &actor_id,
+            event_media.as_deref().unwrap_or(&[]),
+        )?
+        .as_object()
+        .cloned()
+        .unwrap_or_default()
+        {
+            doc[k] = v;
+        }
+        doc["generator"] = json!({
+            "type": "Application",
+            "name": "Yonder",
+        });
+    }
     pubby_sdk::quotes::allow_public_quotes(&mut doc);
     // Quotes (epic 13): stamp every FEP-0449 spelling. `quote_of_id`
     // resolves through the target row; `quote_uri` covers remote
@@ -427,6 +476,331 @@ async fn hashtags(ctx: &PostContext, status_id: i64) -> Result<Vec<String>> {
     .fetch_all(&ctx.db)
     .await
     .map_err(Into::into)
+}
+
+// ---------------------------------------------------------------------------
+// Event (FEP-8a8e) object fields — plan.md §5.2
+// ---------------------------------------------------------------------------
+
+/// The `events` bundle for an event status — `None` for non-events
+/// and (defensively) event rows missing their side-table row.
+async fn event_bundle(
+    ctx: &PostContext,
+    status: &StatusRow,
+) -> Result<Option<crate::events::entity::EventBundle>> {
+    if !posts::is_event(status) {
+        return Ok(None);
+    }
+    let mut bundles = crate::events::entity::load_many(&ctx.db, &[status.id], None).await?;
+    Ok(bundles.remove(&status.id))
+}
+
+/// One AS2 `Document` for a media row — shared by the generic
+/// attachment list and the event variant (which adds `focalPoint`).
+fn media_doc(
+    config: &crate::config::Config,
+    base_url: &str,
+    m: &posts::entity::MediaRow,
+) -> Option<Value> {
+    let url = posts::entity::media_url(config, base_url, m)?;
+    let doc_type = match m.kind.as_str() {
+        "image" => "Image",
+        "video" => "Video",
+        "audio" => "Audio",
+        _ => "Document",
+    };
+    let mut doc = json!({
+        "type": doc_type,
+        "url": url,
+        "mediaType": m.content_type,
+        "name": m.description,
+        "blurhash": m.blurhash,
+        "width": m.width,
+        "height": m.height,
+    });
+    if let (Some(x), Some(y)) = (m.focus_x, m.focus_y) {
+        doc["focalPoint"] = json!([x, y]);
+    }
+    Some(doc)
+}
+
+/// Event `attachment[]`: the banner first with `isBannerImage`, then
+/// the remaining media (the flyer is promoted to `image`, so it is
+/// not repeated), then Markdown inline images like notes get.
+fn event_attachments(
+    ctx: &PostContext,
+    status: &StatusRow,
+    bundle: &crate::events::entity::EventBundle,
+    media: &[posts::entity::MediaRow],
+) -> Result<Vec<Value>> {
+    let base = ctx.base_url();
+    let banner_id = bundle.row.banner_media_id;
+    let flyer_id = bundle.row.flyer_media_id;
+    let mut banner_doc = None;
+    let mut docs: Vec<Value> = Vec::new();
+    for m in media {
+        if Some(m.id) == flyer_id {
+            continue;
+        }
+        let Some(mut doc) = media_doc(&ctx.config, &base, m) else {
+            continue;
+        };
+        if Some(m.id) == banner_id {
+            doc["isBannerImage"] = json!(true);
+            banner_doc = Some(doc);
+        } else {
+            docs.push(doc);
+        }
+    }
+    // Markdown `![alt](url)` images — same treatment as notes.
+    if status.content_type == "text/markdown" {
+        let mut seen: std::collections::HashSet<String> = docs
+            .iter()
+            .chain(banner_doc.iter())
+            .filter_map(|d| d.get("url").and_then(|u| u.as_str()).map(str::to_string))
+            .collect();
+        for image in render::markdown_images(&status.content, &ctx.config) {
+            if !seen.insert(image.url.clone()) {
+                continue;
+            }
+            let mut doc = json!({
+                "type": "Image",
+                "url": image.url,
+                "mediaType": inline_image_media_type(&image.url),
+            });
+            if !image.alt.is_empty() {
+                doc["name"] = json!(image.alt);
+            }
+            docs.push(doc);
+        }
+    }
+    // `Link` attachments for clients that can't render events
+    // natively: the permalink ("copy link") and the ICS feed
+    // ("download calendar"). `mediaType` lets aware parsers skip the
+    // calendar link when promoting Links to virtual locations.
+    if let Some(page) = status.url.as_deref().or(status.uri.as_deref()) {
+        docs.push(json!({
+            "type": "Link",
+            "href": page,
+            "mediaType": "text/html",
+            "name": "Event page",
+        }));
+    }
+    docs.push(json!({
+        "type": "Link",
+        "href": format!("{}/api/v1/yonder/events/{}/ics", base.trim_end_matches('/'), status.id),
+        "mediaType": "text/calendar",
+        "name": "Calendar (.ics)",
+    }));
+    let mut out = Vec::with_capacity(docs.len() + 1);
+    if let Some(banner) = banner_doc {
+        out.push(banner);
+    }
+    out.extend(docs);
+    Ok(out)
+}
+
+/// One `event_locations` row → the wire `location[]` entry —
+/// `Place` with `PostalAddress`, or `VirtualLocation`.
+fn event_location_doc(loc: &crate::events::model::EventLocationRow) -> Value {
+    use crate::events::model::LocationKind;
+    let mut doc = json!({
+        "type": if loc.kind == LocationKind::Place { "Place" } else { "VirtualLocation" },
+    });
+    if let Some(name) = &loc.name {
+        doc["name"] = json!(name);
+    }
+    match loc.kind {
+        LocationKind::Place => {
+            let has_structured = loc.street_address.is_some()
+                || loc.locality.is_some()
+                || loc.region.is_some()
+                || loc.postal_code.is_some()
+                || loc.country.is_some();
+            if has_structured {
+                let mut address = json!({ "type": "PostalAddress" });
+                for (key, value) in [
+                    ("streetAddress", &loc.street_address),
+                    ("addressLocality", &loc.locality),
+                    ("addressRegion", &loc.region),
+                    ("postalCode", &loc.postal_code),
+                    ("addressCountry", &loc.country),
+                ] {
+                    if let Some(v) = value {
+                        address[key] = json!(v);
+                    }
+                }
+                doc["address"] = address;
+            } else if let Some(text) = &loc.address_text {
+                doc["address"] = json!(text);
+            }
+            if let Some(lat) = loc.latitude {
+                doc["latitude"] = json!(lat);
+            }
+            if let Some(lon) = loc.longitude {
+                doc["longitude"] = json!(lon);
+            }
+        }
+        LocationKind::Virtual => {
+            if let Some(url) = &loc.url {
+                doc["url"] = json!(url);
+            }
+        }
+    }
+    doc
+}
+
+/// The FEP-8a8e fields `build_object` merges onto an Event document
+/// (plan.md §5.2). `actor_id` is the status author's actor URL — the
+/// `requiredJoinVisibility`/organizer fallback.
+fn event_fields(
+    ctx: &PostContext,
+    status: &StatusRow,
+    bundle: &crate::events::entity::EventBundle,
+    actor_id: &str,
+    media: &[posts::entity::MediaRow],
+) -> Result<Value> {
+    use crate::events::model::{JoinMode, LocationKind};
+    let row = &bundle.row;
+    let mut doc = json!({});
+
+    if let Some(title) = status.title.as_deref().filter(|t| !t.is_empty()) {
+        doc["name"] = json!(title);
+        if let Some(lang) = status.language.as_deref() {
+            doc["nameMap"] = json!({ lang: title });
+        }
+    }
+
+    // Generated summary: preamble + rendered-HTML excerpt. Mastodon
+    // renders the `summary` in place of `content` for non-Note types,
+    // so the excerpt is the sanitized `content_html` — links and
+    // emphasis survive — never the raw markdown source.
+    let fallback_html;
+    let description_html = match status.content_html.as_deref() {
+        Some(html) => html,
+        None => {
+            fallback_html = format!(
+                "<p>{}</p>",
+                pubby_sdk::content::html_escape(&status.content)
+            );
+            fallback_html.as_str()
+        }
+    };
+    let summary = crate::events::summary::ap_summary_html(
+        row,
+        &bundle.locations,
+        status.language.as_deref(),
+        Some(description_html),
+        ctx.config.events.summary_excerpt_chars,
+        ctx.config.events.map_provider,
+    );
+    if !summary.is_empty() {
+        doc["summary"] = json!(summary);
+        if let Some(lang) = status.language.as_deref() {
+            doc["summaryMap"] = json!({ lang: doc["summary"].clone() });
+        }
+    }
+
+    // Times in the event zone (Gancio style). Postponed events omit
+    // start/end entirely — `previousStartTime` carries the old slot.
+    if let Some(start) = row.start_time {
+        doc["startTime"] = json!(crate::events::summary::rfc3339_in_zone(row, start));
+        if let Some(end) = row.end_time {
+            doc["endTime"] = json!(crate::events::summary::rfc3339_in_zone(row, end));
+        }
+        doc["displayEndTime"] = json!(row.display_end_time);
+    }
+    if let Some(tz) = &row.timezone {
+        doc["timezone"] = json!(tz);
+    }
+    doc["eventStatus"] = json!(super::context::event_status_token(row.status));
+    doc["status"] = json!(super::context::ical_status(row.status));
+    if let Some(prev) = row.previous_start_time {
+        doc["previousStartTime"] = json!(crate::events::summary::rfc3339_in_zone(row, prev));
+    }
+
+    let locations: Vec<Value> = bundle.locations.iter().map(event_location_doc).collect();
+    if !locations.is_empty() {
+        doc["location"] = json!(locations);
+        let all_virtual = bundle
+            .locations
+            .iter()
+            .all(|l| l.kind == LocationKind::Virtual);
+        doc["isOnline"] = json!(all_virtual);
+    }
+
+    match row.categories.as_slice() {
+        [] => {}
+        [single] => doc["category"] = json!(single),
+        many => doc["category"] = json!(many),
+    }
+
+    doc["joinMode"] = json!(row.join_mode.to_string());
+    if let Some(url) = &row.external_participation_url {
+        doc["externalParticipationUrl"] = json!(url);
+    }
+    // Approval-gated join modes name the organizer as the required
+    // join visibility (plan.md §5.2).
+    if matches!(row.join_mode, JoinMode::Restricted | JoinMode::Invite) {
+        doc["requiredJoinVisibility"] = json!([actor_id]);
+    }
+    if row.is_capacity_limited() {
+        if let Some(cap) = row.maximum_attendee_capacity {
+            doc["maximumAttendeeCapacity"] = json!(cap);
+        }
+        if let Some(remaining) = row.remaining_capacity() {
+            doc["remainingAttendeeCapacity"] = json!(remaining);
+        }
+    }
+
+    // Collection stubs — the OrderedCollection/OrganizersCollection
+    // endpoints land with the RSVP section; emit id + totalItems now.
+    let object_id = status.uri.clone().unwrap_or_default();
+    doc["attendees"] = json!({
+        "id": format!("{object_id}/attendees"),
+        "type": "OrderedCollection",
+        "totalItems": row.participants_count,
+    });
+    let organizer_items: Vec<String> = bundle
+        .organizers
+        .iter()
+        .filter_map(|o| {
+            o.account_id
+                .and_then(|aid| bundle.organizer_accounts.get(&aid))
+        })
+        .map(|a| a.actor_id.clone())
+        .collect();
+    let organizer_items = if organizer_items.is_empty() {
+        vec![actor_id.to_string()]
+    } else {
+        organizer_items
+    };
+    doc["organizers"] = json!({
+        "id": format!("{object_id}/organizers"),
+        "type": "OrganizersCollection",
+        "totalItems": organizer_items.len(),
+        "items": organizer_items,
+    });
+
+    // Flyer → `image` (never duplicating the banner).
+    if let Some(flyer_id) = row.flyer_media_id {
+        if let Some(m) = media.iter().find(|m| m.id == flyer_id) {
+            if let Some(url) = posts::entity::media_url(&ctx.config, &ctx.base_url(), m) {
+                let mut image = json!({
+                    "type": "Image",
+                    "url": url,
+                    "mediaType": m.content_type,
+                    "name": m.description,
+                });
+                if let (Some(w), Some(h)) = (m.width, m.height) {
+                    image["width"] = json!(w);
+                    image["height"] = json!(h);
+                }
+                doc["image"] = image;
+            }
+        }
+    }
+    Ok(doc)
 }
 
 /// `Object` → the pubby `Object` struct the activity builders want —
@@ -457,6 +831,9 @@ pub async fn publish_create(
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
     }
+    if posts::is_event(status) {
+        activity["@context"] = context::event_context();
+    }
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
 }
@@ -480,8 +857,55 @@ pub async fn publish_update(
     if let Some(object) = activity.get_mut("object") {
         merge_object_extras(object, &doc);
     }
+    if posts::is_event(status) {
+        activity["@context"] = context::event_context();
+        // FEP-8a8e §7: an event Update reaches the usual audience
+        // *plus* every remote participant's actor — participants who
+        // don't follow the organizer still learn about reschedules,
+        // cancellations and moved-online transitions. The embedded
+        // object keeps the normal audience; only the activity-level
+        // `cc` widens (pubby collects recipient inboxes from there).
+        let extra = event_participant_actors(ctx, status.id)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(status_id = status.id, error = %e,
+                    "event participant audience lookup failed");
+                Vec::new()
+            });
+        if !extra.is_empty() {
+            let cc = activity.get_mut("cc").and_then(|v| v.as_array_mut());
+            match cc {
+                Some(arr) => {
+                    for actor in extra {
+                        let v = json!(actor);
+                        if !arr.contains(&v) {
+                            arr.push(v);
+                        }
+                    }
+                }
+                None => activity["cc"] = json!(extra),
+            }
+        }
+    }
     delivery::publish(ap, &username, &activity).await?;
     Ok(())
+}
+
+/// Remote participant actor URLs for an event — states that still
+/// care about updates (`accepted`, `tentative`, `pending`, `invited`;
+/// declined/rejected/ignored rows opted out). Local participants get
+/// stream updates already; remote rows carry `actor_id` URLs.
+async fn event_participant_actors(ctx: &PostContext, status_id: i64) -> Result<Vec<String>> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT a.actor_id FROM event_participations p \
+         JOIN accounts a ON a.id = p.account_id \
+         WHERE p.status_id = $1 AND a.domain IS NOT NULL \
+           AND p.state IN ('accepted','tentative','pending','invited')",
+    )
+    .bind(status_id)
+    .fetch_all(&ctx.db)
+    .await
+    .map_err(Into::into)
 }
 
 /// Delete → `Delete(object_uri)` to the stored audience's inboxes.
@@ -521,6 +945,26 @@ pub(crate) fn merge_object_extras(target: &mut Value, doc: &Value) {
         "image",
         "preview",
         "generator",
+        // FEP-8a8e Event fields (plan.md §5.2) — an object is a
+        // Question or an Event, never both, so sharing `endTime`
+        // with polls is safe.
+        "startTime",
+        "endTime",
+        "displayEndTime",
+        "timezone",
+        "eventStatus",
+        "status",
+        "previousStartTime",
+        "location",
+        "isOnline",
+        "category",
+        "joinMode",
+        "externalParticipationUrl",
+        "requiredJoinVisibility",
+        "maximumAttendeeCapacity",
+        "remainingAttendeeCapacity",
+        "attendees",
+        "organizers",
     ] {
         if let Some(v) = doc.get(key) {
             target[key] = v.clone();
@@ -673,11 +1117,33 @@ async fn serve_object_inner(
     if signer.is_none() {
         return Err(Error::NotFound("status".into()));
     }
-    match signer_account {
-        Some(id) if posts::can_see(&ctx.db, &status, Some(id)).await? => {
-            build_object(&ctx, &status).await.map(|doc| (doc, false))
+    let mut allowed = match signer_account {
+        Some(id) => posts::can_see(&ctx.db, &status, Some(id)).await?,
+        None => false,
+    };
+    // `direct` objects are fetched by the *remote instance actor* on
+    // behalf of the addressed user — that actor usually has no
+    // `accounts` row (and never a mention), so `can_see` alone 404s
+    // every invite fetch (§16 invitees-only events depend on it).
+    // The signature already verified the keyId URL; a signer domain
+    // matching a mentioned account's domain is the delegation proof.
+    if !allowed && status.visibility == "direct" {
+        if let Some(domain) = signer.as_deref().and_then(super::moderation::actor_domain) {
+            allowed = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM status_mentions sm \
+                 JOIN accounts a ON a.id = sm.account_id \
+                 WHERE sm.status_id = $1 AND lower(a.domain) = $2)",
+            )
+            .bind(status.id)
+            .bind(&domain)
+            .fetch_one(&ctx.db)
+            .await?;
         }
-        _ => Err(Error::NotFound("status".into())),
+    }
+    if allowed {
+        build_object(&ctx, &status).await.map(|doc| (doc, false))
+    } else {
+        Err(Error::NotFound("status".into()))
     }
 }
 
@@ -844,13 +1310,180 @@ pub(crate) async fn verify_signature(
 
 fn json_response(doc: Value) -> Response {
     let mut doc = doc;
-    doc["@context"] = pubby_sdk::model::ap_context();
+    // Event documents carry the FEP-8a8e context (plan.md §5.1);
+    // everything else keeps pubby's.
+    doc["@context"] = if doc.get("type").and_then(|v| v.as_str()) == Some("Event") {
+        context::event_context()
+    } else {
+        pubby_sdk::model::ap_context()
+    };
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "application/activity+json")],
         Json(doc),
     )
         .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Event `attendees`/`organizers` collections (FEP-8a8e §7.1)
+// ---------------------------------------------------------------------------
+
+/// `GET /ap/users/{u}/statuses/{id}/{attendees,organizers}` —
+/// `OrderedCollection` of actor URIs. `totalItems` is always public;
+/// `orderedItems` is gated by `events.attendees_visibility`:
+/// `public` → everyone, `participants` → accepted/tentative
+/// participants and the organizer, `organizers` → organizer only,
+/// anything else → empty. The `organizers` collection is public.
+/// Signer-gated documents are never edge-cached.
+pub async fn serve_event_collection(
+    State(state): State<Arc<AppState>>,
+    Path((username, status_id, kind)): Path<(String, i64, String)>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+) -> Response {
+    match event_collection_inner(&state, &username, status_id, &kind, &headers, &uri).await {
+        Ok((doc, public)) => {
+            super::edge::apply(json_response(doc), public, super::edge::anonymous(&headers))
+        }
+        Err(e) => {
+            // Only genuine misses are cacheable 404s — a transient
+            // failure must not be frozen at the edge as "not found".
+            let not_found = matches!(e, Error::NotFound(_));
+            if !not_found {
+                tracing::warn!(status_id, kind, error = %e, "event collection failed");
+            }
+            super::edge::apply(
+                (if not_found {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })
+                .into_response(),
+                not_found,
+                super::edge::anonymous(&headers),
+            )
+        }
+    }
+}
+
+async fn event_collection_inner(
+    state: &Arc<AppState>,
+    username: &str,
+    status_id: i64,
+    kind: &str,
+    headers: &HeaderMap,
+    uri: &axum::http::Uri,
+) -> Result<(Value, bool)> {
+    let Some(ap) = &state.ap else {
+        return Err(Error::NotFound("ap".into()));
+    };
+    let ctx = PostContext::new(state);
+    let status = posts::load_any(&ctx.db, status_id)
+        .await?
+        .ok_or_else(|| Error::NotFound("status".into()))?;
+    if !status.local || status.tombstone || !posts::is_event(&status) {
+        return Err(Error::NotFound("status".into()));
+    }
+    let event = sqlx::query_as::<_, crate::events::model::EventRow>(
+        "SELECT * FROM events WHERE status_id = $1",
+    )
+    .bind(status_id)
+    .fetch_optional(&ctx.db)
+    .await?
+    .ok_or_else(|| Error::NotFound("event".into()))?;
+    let base = status.uri.clone().unwrap_or_default();
+    let coll_uri = format!("{base}/{kind}");
+
+    // Verified signer → local account (for the participants gate).
+    let signer = verify_signature(state, ap, username, headers, uri).await;
+    let signer_account = match &signer {
+        Some(actor) => signer_account_id(&ctx, actor).await?,
+        None => None,
+    };
+
+    let (total, items): (i64, Vec<String>) = if kind == "organizers" {
+        // Public: disclosed organizers plus the status author.
+        let mut actors: Vec<String> = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT COALESCE(a.actor_id, o.uri) FROM event_organizers o \
+             LEFT JOIN accounts a ON a.id = o.account_id WHERE o.status_id = $1 \
+             ORDER BY o.position",
+        )
+        .bind(status_id)
+        .fetch_all(&ctx.db)
+        .await?
+        .into_iter()
+        .flatten()
+        .collect();
+        if let Some(author) =
+            sqlx::query_scalar::<_, String>("SELECT actor_id FROM accounts WHERE id = $1")
+                .bind(status.account_id)
+                .fetch_optional(&ctx.db)
+                .await?
+        {
+            if !actors.contains(&author) {
+                actors.insert(0, author);
+            }
+        }
+        let n = actors.len() as i64;
+        (n, actors)
+    } else {
+        // attendees — states that mean "going".
+        let rows = sqlx::query_as::<_, (i64, String)>(
+            "SELECT p.account_id, p.state FROM event_participations p \
+             WHERE p.status_id = $1 AND p.role <> 'organizer' \
+               AND p.state IN ('accepted','tentative')",
+        )
+        .bind(status_id)
+        .fetch_all(&ctx.db)
+        .await?;
+        let total = rows.len() as i64;
+        let allowed = match event.attendees_visibility {
+            crate::events::model::AttendeesVisibility::Public => true,
+            crate::events::model::AttendeesVisibility::Participants => {
+                signer_account.is_some_and(|sid| {
+                    sid == status.account_id || rows.iter().any(|(id, _)| *id == sid)
+                })
+            }
+            crate::events::model::AttendeesVisibility::Organizers => {
+                signer_account.is_some_and(|sid| sid == status.account_id)
+            }
+        };
+        if !allowed {
+            return Ok((
+                json!({
+                    "id": coll_uri,
+                    "type": "OrderedCollection",
+                    "totalItems": total,
+                    "orderedItems": [],
+                }),
+                false,
+            ));
+        }
+        let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+        let actors: Vec<String> = if ids.is_empty() {
+            vec![]
+        } else {
+            sqlx::query_scalar::<_, String>("SELECT actor_id FROM accounts WHERE id = ANY($1)")
+                .bind(&ids)
+                .fetch_all(&ctx.db)
+                .await?
+        };
+        (total, actors)
+    };
+
+    Ok((
+        json!({
+            "id": coll_uri,
+            "type": "OrderedCollection",
+            "totalItems": total,
+            "orderedItems": items,
+        }),
+        // Items are only anonymous-visible under `public` attendees
+        // visibility (or the organizers collection, which is public).
+        kind == "organizers"
+            || event.attendees_visibility == crate::events::model::AttendeesVisibility::Public,
+    ))
 }
 
 #[cfg(test)]

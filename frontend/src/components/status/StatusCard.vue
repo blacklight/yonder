@@ -12,6 +12,7 @@ import ShowMore from "./ShowMore.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusQuote from "./StatusQuote.vue";
 import StatusPoll from "./StatusPoll.vue";
+import StatusEvent from "./StatusEvent.vue";
 import StatusEmbedModal from "./StatusEmbedModal.vue";
 import StatusFooter from "./StatusFooter.vue";
 import ReactionPicker from "./ReactionPicker.vue";
@@ -106,6 +107,15 @@ const articleBody = computed(() => {
   }
   return rest;
 });
+
+// FEP-8a8e event metadata — non-null on `object_type = 'Event'`
+// statuses; the card renders the structured block plus RSVP.
+const eventCard = computed(() => shown.value.yonder?.event ?? null);
+// Event bodies come from `yonder.event.content` (the description
+// HTML); articles keep the folded-prefix strip in `articleBody`.
+const bodySource = computed(
+  () => eventCard.value?.content ?? articleBody.value,
+);
 
 // The whole card is the permalink's click target, Mastodon-style —
 // except interactive elements (links, buttons, the composer) and an
@@ -209,7 +219,7 @@ const translatedFromName = computed(() => {
 // original entity.
 const displayedContent = computed(() =>
   highlightCodeBlocks(
-    sanitizeHtml(translation.value?.content ?? articleBody.value, {
+    sanitizeHtml(translation.value?.content ?? bodySource.value, {
       mentions: shown.value.mentions,
       tags: shown.value.tags,
       // Translated HTML keeps literal `:code:` — `emojis` expands it.
@@ -723,6 +733,9 @@ async function onReact(emoji: string) {
           <EmojiText :text="article.summary" :emojis="shown.emojis" />
         </p>
       </div>
+      <!-- FEP-8a8e event card: date, locations, RSVP, ICS actions,
+           organizer panel. -->
+      <StatusEvent v-if="eventCard" :status="shown" />
       <!-- Only the text clamps — media, quotes, polls and link
            previews always render whole, never sliced by the fade. -->
       <ShowMore :disabled="!clampBody">

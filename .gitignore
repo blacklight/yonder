@@ -267,3 +267,4 @@ frontend/*.tsbuildinfo
 
 # CI-built binary staged into the Docker build context (tag pipeline)
 /prebuilt/yonder
+/AGENTS.md

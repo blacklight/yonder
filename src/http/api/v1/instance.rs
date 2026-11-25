@@ -137,9 +137,13 @@ pub(crate) fn asset_url(base_url: &str, path: &Option<String>, name: &str) -> Op
 /// discovery key) a client can read regardless of which entity shape
 /// it fetches.
 pub(crate) fn pleroma_metadata(config: &crate::config::Config) -> Value {
+    let mut features = vec!["pleroma_emoji_reactions", "yonder"];
+    if config.events.enabled {
+        features.push("events");
+    }
     json!({
         "metadata": {
-            "features": ["pleroma_emoji_reactions", "yonder"],
+            "features": features,
             "post_formats": ["text/plain", "text/markdown"],
             // Akkoma-style WebPush discovery: clients need the VAPID
             // public key *before* they can create a subscription
@@ -190,6 +194,20 @@ pub(crate) fn yonder_metadata(config: &crate::config::Config) -> Value {
         .filter(|user| crate::auth::registration::validate_username(config, user).is_ok());
     json!({
         "single_user": single_user,
+        // `events.enabled` — the SPA hides the composer event type,
+        // the Events nav entry and `/events` when false.
+        "events_enabled": config.events.enabled,
+        // `events_geocoding` — the configured provider name
+        // (`nominatim`/`google`) or null; the composer shows address
+        // autocomplete only when set (and can attribute Nominatim).
+        "events_geocoding": (!matches!(
+            config.events.geocoding.provider,
+            crate::config::GeocodingProvider::None
+        ))
+        .then(|| config.events.geocoding.provider.as_str()),
+        // `events_map_provider` — `osm`|`google` link target for
+        // physical event locations.
+        "events_map_provider": config.events.map_provider.as_str(),
     })
 }
 

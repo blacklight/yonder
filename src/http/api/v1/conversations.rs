@@ -66,6 +66,7 @@ struct PageData {
 async fn load_page_data(
     state: &AppState,
     caller: i64,
+    client_app: Option<&str>,
     groups: &[conv::ConversationGroup],
 ) -> Result<PageData> {
     let keys: Vec<String> = groups.iter().map(|g| g.key.clone()).collect();
@@ -76,7 +77,7 @@ async fn load_page_data(
     all_ids.sort_unstable();
     all_ids.dedup();
     let rows = account_mapper::load_many(&state.db, &all_ids).await?;
-    let ctx = PostContext::new(state);
+    let ctx = PostContext::new(state).with_client_app(client_app);
     let base = ctx.base_url();
     let entities =
         account_mapper::account_entities(&state.db, &state.config(), &base, &rows).await?;
@@ -170,7 +171,7 @@ pub async fn list_conversations(
     let groups = conv::list(&state.db, auth.account_id, &page).await?;
     let keys: Vec<String> = groups.iter().map(|g| g.key.clone()).collect();
     let markers = conv::markers(&state.db, auth.account_id, &keys).await?;
-    let data = load_page_data(&state, auth.account_id, &groups).await?;
+    let data = load_page_data(&state, auth.account_id, auth.app_name.as_deref(), &groups).await?;
     let mut out = Vec::with_capacity(groups.len());
     for g in &groups {
         out.push(conversation_json(
@@ -218,7 +219,7 @@ pub async fn conversation_statuses(
     require_participant(&state, auth.account_id, key).await?;
     let page = paginate::parse(&params);
     let rows = conv::thread(&state.db, auth.account_id, key, &page).await?;
-    let ctx = PostContext::new(&state);
+    let ctx = PostContext::new(&state).with_client_app(auth.app_name.as_deref());
     let out = posts::entity::status_entities(&ctx, &rows, Some(auth.account_id)).await?;
     let cursors = crate::timelines::query::cursors(&rows);
     let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
@@ -266,7 +267,13 @@ pub async fn mark_conversation_read(
         newest_id,
     };
     let marker = conv::markers(&state.db, auth.account_id, &[key.to_string()]).await?;
-    let data = load_page_data(&state, auth.account_id, std::slice::from_ref(&group)).await?;
+    let data = load_page_data(
+        &state,
+        auth.account_id,
+        auth.app_name.as_deref(),
+        std::slice::from_ref(&group),
+    )
+    .await?;
     Ok(Json(conversation_json(
         auth.account_id,
         &group,

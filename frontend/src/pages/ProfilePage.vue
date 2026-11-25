@@ -19,6 +19,7 @@ import {
   syncRemoteAccount,
 } from "@/api/accounts";
 import { blockDomain, unblockDomain } from "@/api/domains";
+import { cursorOf, listEvents } from "@/api/events";
 import { fileReport } from "@/api/reports";
 import { adminAccountAction, setRole } from "@/api/admin";
 import { reverseAdminAction } from "@/api/adminUsers";
@@ -84,14 +85,18 @@ const statusesLoading = ref(false);
 // this page pins/unpins. Renders on the posts tab only.
 const pinnedStatuses = ref<Status[]>([]);
 const nextCursor = ref<string | undefined>();
-const tab = ref<"posts" | "media">("posts");
-const tabs = computed(
-  () =>
-    [
-      { key: "posts", label: t("profile.posts") },
-      { key: "media", label: t("profile.media") },
-    ] as const,
-);
+const tab = ref<"posts" | "media" | "events">("posts");
+const tabs = computed(() => {
+  const items = [
+    { key: "posts", label: t("profile.posts") },
+    { key: "media", label: t("profile.media") },
+  ] as const;
+  // §16: the Events tab lists this account's upcoming events — only
+  // when the instance exposes the events feature.
+  return instance.eventsEnabled
+    ? ([...items, { key: "events", label: t("profile.events") }] as const)
+    : items;
+});
 const showReplies = ref(false);
 const showBoosts = ref(true);
 const confirmAction = ref<MenuItem | null>(null);
@@ -422,6 +427,45 @@ async function loadStatuses(more = false) {
   }
 }
 
+// §16 Events tab — the account's events through the events list API
+// (visibility-scoped server-side; remote accounts resolve through the
+// same endpoint when their events are known locally).
+const eventItems = ref<Status[]>([]);
+const eventsCursor = ref<string | undefined>();
+const eventsLoading = ref(false);
+const eventsError = ref<string | null>(null);
+// Bumped whenever the displayed account changes; a request started
+// for an earlier account must not write into the current list.
+let eventsGen = 0;
+
+async function loadEvents(more = false) {
+  const a = account.value;
+  if (!a) return;
+  // One request at a time: a repeated tab switch while the first page
+  // is in flight must not start a duplicate (the in-flight one lands).
+  // `resolve()` clears `eventsLoading` before reloading for a new account.
+  if (eventsLoading.value || (more && !eventsCursor.value)) return;
+  const gen = eventsGen;
+  eventsLoading.value = true;
+  eventsError.value = null;
+  try {
+    const page = await listEvents({
+      scope: `account:${a.id}`,
+      limit: 20,
+      cursor: more ? eventsCursor.value : undefined,
+      include_cancelled: true,
+    });
+    if (gen !== eventsGen) return;
+    eventItems.value = more ? [...eventItems.value, ...page.items] : page.items;
+    eventsCursor.value = cursorOf(page.next);
+  } catch {
+    if (gen !== eventsGen) return;
+    eventsError.value = t("common.error");
+  } finally {
+    if (gen === eventsGen) eventsLoading.value = false;
+  }
+}
+
 /** `?pinned=true` — local pins and remote featured items alike.
  * Best-effort: a failed read just leaves the section empty rather
  * than blanking the whole profile. */
@@ -482,8 +526,17 @@ async function resolve(): Promise<void> {
     statuses.value = [];
     pinnedStatuses.value = [];
     nextCursor.value = undefined;
+    // The Events tab state belongs to the resolved account — without
+    // this, navigating between profiles while on the Events tab keeps
+    // showing the previous account's events.
+    eventsGen++;
+    eventItems.value = [];
+    eventsCursor.value = undefined;
+    eventsLoading.value = false;
+    eventsError.value = null;
     limitedReveal.value = false;
     if (!limitedHidden.value) await Promise.all([loadStatuses(), loadPinned()]);
+    if (tab.value === "events") void loadEvents();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) state.value = "sign-in";
     else if (e instanceof ApiError && (e.status === 404 || e.status === 422)) {
@@ -797,7 +850,19 @@ watch(
   },
   { immediate: true },
 );
-watch([tab, showReplies, showBoosts], () => {
+watch(tab, () => {
+  if (tab.value === "events") {
+    void loadEvents();
+    return;
+  }
+  statuses.value = [];
+  nextCursor.value = undefined;
+  void loadStatuses();
+});
+// The replies/boosts toggles only shape the posts list — they must not
+// refetch the Events tab.
+watch([showReplies, showBoosts], () => {
+  if (tab.value === "events") return;
   statuses.value = [];
   nextCursor.value = undefined;
   void loadStatuses();
@@ -1119,43 +1184,78 @@ watch([tab, showReplies, showBoosts], () => {
           >
         </div>
         <div class="timeline" :aria-busy="statusesLoading || undefined">
-          <template v-if="tab === 'posts'">
+          <template v-if="tab === 'events'">
             <StatusCard
-              v-for="s in pinnedStatuses"
-              :key="`pinned-${s.id}`"
+              v-for="s in eventItems"
+              :key="`event-${s.id}`"
               :status="s"
-              pinned-context
+              @removed="
+                (id: string) =>
+                  (eventItems = eventItems.filter((i) => i.id !== id))
+              "
+            />
+            <template v-if="eventsLoading">
+              <StatusCardSkeleton v-for="n in 2" :key="`ev-skel-${n}`" />
+            </template>
+            <p
+              v-else-if="eventsError"
+              class="profile__lists-error"
+              role="alert"
+            >
+              {{ eventsError }}
+            </p>
+            <p v-else-if="!eventItems.length" class="timeline__state">
+              {{ t("profile.noEvents") }}
+            </p>
+            <div v-if="eventsCursor" class="profile__more">
+              <Button
+                variant="secondary"
+                :loading="eventsLoading"
+                @click="loadEvents(true)"
+              >
+                {{ t("common.loadMore") }}
+              </Button>
+            </div>
+          </template>
+          <template v-else>
+            <template v-if="tab === 'posts'">
+              <StatusCard
+                v-for="s in pinnedStatuses"
+                :key="`pinned-${s.id}`"
+                :status="s"
+                pinned-context
+                @removed="dropRemoved"
+                @pinned="loadPinned"
+              />
+            </template>
+            <StatusCard
+              v-for="s in statuses"
+              :key="s.id"
+              :status="s"
               @removed="dropRemoved"
               @pinned="loadPinned"
             />
-          </template>
-          <StatusCard
-            v-for="s in statuses"
-            :key="s.id"
-            :status="s"
-            @removed="dropRemoved"
-            @pinned="loadPinned"
-          />
-          <template v-if="statusesLoading">
-            <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
-          </template>
-          <div v-infinite class="timeline__sentinel" aria-hidden="true" />
-          <p
-            v-if="!statusesLoading && !nextCursor && statuses.length"
-            class="timeline__state"
-          >
-            ·
-          </p>
-          <!-- Manual fallback for engines without IntersectionObserver. -->
-          <div v-if="nextCursor && !ioSupported" class="profile__more">
-            <Button
-              variant="secondary"
-              :loading="statusesLoading"
-              @click="loadStatuses(true)"
+            <template v-if="statusesLoading">
+              <StatusCardSkeleton v-for="n in 2" :key="`skel-${n}`" />
+            </template>
+            <div v-infinite class="timeline__sentinel" aria-hidden="true" />
+            <p
+              v-if="!statusesLoading && !nextCursor && statuses.length"
+              class="timeline__state"
             >
-              {{ t("common.loadMore") }}
-            </Button>
-          </div>
+              ·
+            </p>
+            <!-- Manual fallback for engines without IntersectionObserver. -->
+            <div v-if="nextCursor && !ioSupported" class="profile__more">
+              <Button
+                variant="secondary"
+                :loading="statusesLoading"
+                @click="loadStatuses(true)"
+              >
+                {{ t("common.loadMore") }}
+              </Button>
+            </div>
+          </template>
         </div>
       </template>
     </template>

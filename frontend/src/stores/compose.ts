@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import type { Status, StatusVisibility } from "@/api/entities";
 import { storageGet, storageRemove, storageSet } from "@/utils/storage";
+import { browserTimeZone } from "@/utils/timezone";
 import { useAuthStore } from "./auth";
 import { useSettingsStore } from "./settings";
 
@@ -14,6 +15,63 @@ export interface PollDraft {
   expiresIn: number;
   multiple: boolean;
   hideTotals: boolean;
+}
+
+/** One `event.locations[]` entry in draft form — string inputs for
+ * the numeric fields; `kind` is `place` | `virtual`. */
+export interface EventLocationDraft {
+  kind: "place" | "virtual";
+  name: string;
+  url: string;
+  streetAddress: string;
+  locality: string;
+  region: string;
+  postalCode: string;
+  country: string;
+  addressText: string;
+  latitude: string;
+  longitude: string;
+}
+
+/** FEP-8a8e event payload in draft form (camelCase; the submit path
+ * maps it onto the §9.1 `event` wire block). `startTime`/`endTime`
+ * are `datetime-local` wall times in `timezone`; empty `endTime`
+ * means open-ended. */
+export interface EventDraft {
+  startTime: string;
+  endTime: string;
+  timezone: string;
+  /** `scheduled|tentative|cancelled|postponed|rescheduled|moved_online` —
+   * edits only; creates are always scheduled/tentative server-side. */
+  status: string;
+  joinMode: string;
+  externalParticipationUrl: string;
+  maximumAttendeeCapacity: string;
+  attendeesVisibility: string;
+  categories: string[];
+  locations: EventLocationDraft[];
+  bannerMediaId: string | null;
+  flyerMediaId: string | null;
+  /** Direct-visibility invitees — local account ids. */
+  invitees: string[];
+}
+
+export function emptyEventDraft(): EventDraft {
+  return {
+    startTime: "",
+    endTime: "",
+    timezone: "UTC",
+    status: "scheduled",
+    joinMode: "free",
+    externalParticipationUrl: "",
+    maximumAttendeeCapacity: "",
+    attendeesVisibility: "organizers",
+    categories: [],
+    locations: [],
+    bannerMediaId: null,
+    flyerMediaId: null,
+    invitees: [],
+  };
 }
 
 export interface ComposeDraft {
@@ -44,6 +102,8 @@ export interface ComposeDraft {
   /** Uploaded attachment ids, in order. */
   mediaIds: string[];
   poll: PollDraft | null;
+  /** FEP-8a8e event payload — `Some` only while `postType === 'event'`. */
+  event: EventDraft | null;
   inReplyToId: string | null;
   /** Acct/name shown on the reply banner. */
   replyToAcct: string | null;
@@ -78,6 +138,7 @@ function emptyDraft(): ComposeDraft {
     seededSpoiler: "",
     mediaIds: [],
     poll: null,
+    event: null,
     inReplyToId: null,
     replyToAcct: null,
     quoteId: null,
@@ -171,7 +232,21 @@ export const useComposeStore = defineStore("compose", {
         s.draft.summary.trim() ||
         s.draft.coverMediaId !== null ||
         s.draft.mediaIds.length ||
-        s.draft.poll,
+        s.draft.poll ||
+        // An event shell (toggled on, nothing filled) isn't content —
+        // the shared title and populated fields carry the dirtiness.
+        (s.draft.event &&
+          Boolean(
+            s.draft.event.startTime ||
+            s.draft.event.endTime ||
+            s.draft.event.locations.length ||
+            s.draft.event.categories.length ||
+            s.draft.event.invitees.length ||
+            s.draft.event.bannerMediaId ||
+            s.draft.event.flyerMediaId ||
+            s.draft.event.externalParticipationUrl ||
+            s.draft.event.maximumAttendeeCapacity,
+          )),
       ),
     /** The draft still holds only what an `open*` action seeded —
      *  context, not user input — so a new context can replace it
@@ -183,7 +258,8 @@ export const useComposeStore = defineStore("compose", {
         s.draft.spoilerText === s.draft.seededSpoiler &&
         s.draft.cwEnabled === Boolean(s.draft.seededSpoiler) &&
         !s.draft.mediaIds.length &&
-        !s.draft.poll,
+        !s.draft.poll &&
+        !s.draft.event,
       ),
     /** The draft carries reply/quote/DM targeting context. */
     hasContext: (s) =>
@@ -325,6 +401,20 @@ export const useComposeStore = defineStore("compose", {
         cwEnabled: Boolean(target.spoiler_text),
         spoilerText: target.spoiler_text || "",
         seededSpoiler: target.spoiler_text || "",
+      });
+      this.contextIsLive = true;
+      this.openSignal++;
+    },
+
+    /** Event mode — the Events page's "New event" entry point and the
+     * composer's event toggle both land here: fresh draft, `postType`
+     * `event`, a default event payload in the browser's timezone. */
+    openEvent() {
+      this.reset();
+      this.update({
+        postType: "event",
+        poll: null,
+        event: { ...emptyEventDraft(), timezone: browserTimeZone() },
       });
       this.contextIsLive = true;
       this.openSignal++;

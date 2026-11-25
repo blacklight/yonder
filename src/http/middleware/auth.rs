@@ -63,6 +63,9 @@ pub struct AuthContext {
     pub role: String,
     /// Linked `sessions.id` when the token wraps an interactive login.
     pub session_id: Option<i64>,
+    /// `oauth_applications.name` of the token's client app — entity
+    /// rendering uses it to detect event-aware clients.
+    pub app_name: Option<String>,
     /// `users.approved_at IS NOT NULL` — the approval gate for writes.
     pub approved: bool,
     /// `users.email_verified_at IS NOT NULL`.
@@ -115,7 +118,7 @@ pub fn token_hash(token: &str) -> String {
 pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext> {
     let row = sqlx::query(
         "SELECT t.id AS token_id, t.user_id, u.account_id, t.scopes, \
-                t.access_class, a.role, s.id AS session_id, \
+                t.access_class, a.role, s.id AS session_id, ap.name AS app_name, \
                 u.approved_at IS NOT NULL AS approved, \
                 u.email_verified_at IS NOT NULL AS email_verified, \
                 a.suspended_at IS NOT NULL AS suspended, \
@@ -126,6 +129,7 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
          FROM oauth_access_tokens t
          JOIN users u ON u.id = t.user_id
          JOIN accounts a ON a.id = u.account_id
+         LEFT JOIN oauth_applications ap ON ap.id = t.application_id
          LEFT JOIN sessions s ON s.access_token_id = t.id
          WHERE t.token_hash = $1
            AND t.revoked_at IS NULL
@@ -155,6 +159,7 @@ pub async fn resolve_token(state: &AppState, token: &str) -> Result<AuthContext>
         scopes: row.get("scopes"),
         role: row.get("role"),
         session_id: row.get("session_id"),
+        app_name: row.get("app_name"),
         approved: row.get("approved"),
         email_verified: row.get("email_verified"),
         access_class,

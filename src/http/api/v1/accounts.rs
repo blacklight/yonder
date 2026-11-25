@@ -634,6 +634,7 @@ pub async fn account_statuses(
         account_id: account.id,
     };
     let viewer = auth.0.as_ref().map(|a| a.account_id);
+    let app_name = auth.0.as_ref().and_then(|a| a.app_name.as_deref());
     let rules = match viewer {
         Some(v) => {
             crate::filters::rules::load_active(&state.db, v, crate::filters::FilterContext::Account)
@@ -667,7 +668,8 @@ pub async fn account_statuses(
     } else {
         crate::timelines::query::fetch(&state.db, &scope, &filters, &page).await?
     };
-    let ctx = crate::posts::PostContext::new(&state);
+    let mut ctx = crate::posts::PostContext::new(&state);
+    ctx.set_client_app(app_name);
     let mut out = crate::posts::entity::status_entities(&ctx, &rows, viewer).await?;
     crate::filters::apply::attach_filtered(&state.db, &rules, &rows, &mut out).await?;
     let headers = if pinned {
@@ -709,7 +711,7 @@ pub async fn search_accounts(
     params.insert("type".into(), "accounts".into());
     let parsed = crate::search::params::parse(&params)?;
     let results = crate::search::search(&state, Some(&auth), &parsed).await?;
-    let rendered = crate::search::render(&state, &results, Some(auth.account_id), true).await?;
+    let rendered = crate::search::render(&state, &results, Some(&auth), true).await?;
     Ok(Json(rendered.get("accounts").cloned().unwrap_or(json!([]))))
 }
 

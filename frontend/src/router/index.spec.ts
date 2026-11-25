@@ -125,6 +125,41 @@ describe("single-user redirect", () => {
   });
 });
 
+describe("events gate", () => {
+  beforeEach(() => {
+    useAuthStore().setToken(null);
+    mockedGetInstance.mockReset();
+  });
+
+  it("sends visitors home when the instance disables events", async () => {
+    mockedGetInstance.mockResolvedValue({
+      yonder: { events_enabled: false },
+    } as never);
+    await router.push("/about");
+    await router.push("/events/discover");
+    expect(router.currentRoute.value.name).toBe("home");
+    signInAs("user");
+    await router.push("/events");
+    expect(router.currentRoute.value.name).toBe("home");
+  });
+
+  it("admits the events pages when enabled or unadvertised", async () => {
+    mockedGetInstance.mockResolvedValue({ yonder: {} } as never);
+    await router.push("/events/discover");
+    expect(router.currentRoute.value.name).toBe("events-discover");
+    signInAs("user");
+    await router.push("/events");
+    expect(router.currentRoute.value.name).toBe("events");
+  });
+
+  it("degrades to home when the instance fetch fails", async () => {
+    mockedGetInstance.mockRejectedValue(new Error("offline"));
+    await router.push("/about");
+    await router.push("/events/discover");
+    expect(router.currentRoute.value.name).toBe("home");
+  });
+});
+
 describe("feed document route", () => {
   // `*.atom`/`*.rss` URLs resolve to the `feed` route, whose guard
   // bounces to the backend document (`location.assign` is not

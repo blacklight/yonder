@@ -356,6 +356,40 @@ min_duration_seconds = 300
 # Default: 30 days.
 max_duration_seconds = 2592000
 
+[events]
+# `enabled = false` blocks new event creation and hides the SPA's
+# event surfaces; inbound Event parsing always runs.
+enabled = true
+# Inferred endTime for open-ended events; clamped to 1 minute - 1 week.
+default_duration_minutes = 180
+max_locations = 5
+max_categories = 3
+# Inbound parser keeps unknown category tokens (plan.md §6); this
+# flag gates custom categories in local authoring (later section).
+allow_custom_categories = false
+# Summary excerpt length for the generated AP summary.
+summary_excerpt_chars = 300
+reminder_lead_minutes = 60
+remote_refresh_after_minutes = 360
+# Cron for the event_reminder_sweep job (every 5 min); empty disables.
+reminder_sweep_schedule = "*/5 * * * *"
+# Map link target for physical event locations: "osm" (default) or
+# "google". Links need no API key; only the embedded preview is OSM.
+map_provider = "osm"
+
+# Server-side place lookup for the composer address autocomplete and
+# the pl-fe location_id flow. provider = "nominatim" proxies a
+# Nominatim instance (their usage policy requires a descriptive
+# user_agent; self-hosting is recommended for busy instances);
+# provider = "google" calls the Geocoding API and needs
+# google_api_key (prefer the YONDER_EVENTS__GEOCODING__GOOGLE_API_KEY
+# env var). The search endpoint is rate-limited under `search`.
+[events.geocoding]
+provider = "none"
+nominatim_url = "https://nominatim.openstreetmap.org"
+user_agent = ""
+google_api_key = ""
+
 [content]
 max_post_length = 5000
 max_bio_length = 5000

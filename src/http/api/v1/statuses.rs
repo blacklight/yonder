@@ -83,7 +83,8 @@ pub async fn show(
     auth: MaybeAuth,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     let status = posts::load(&ctx.db, id)
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
@@ -155,7 +156,8 @@ pub async fn context(
     ClientIp(ip): ClientIp,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.0.as_ref().and_then(|a| a.app_name.as_deref()));
     let status = posts::load(&ctx.db, id)
         .await?
         .ok_or_else(|| Error::NotFound("status".into()))?;
@@ -544,7 +546,8 @@ pub async fn list_by_ids(
         }
     }
     ids.truncate(100);
-    let ctx = PostContext::new(&state);
+    let mut ctx = PostContext::new(&state);
+    ctx.set_client_app(auth.app_name.as_deref());
     let mut statuses = Vec::with_capacity(ids.len());
     for id in ids {
         if let Some(status) = posts::load(&ctx.db, id).await? {
@@ -852,6 +855,8 @@ pub struct StatusCreateSchema {
     pub summary: Option<String>,
     /// Representative image attachment id (AS2 `image`).
     pub cover_media_id: Option<i64>,
+    /// FEP-8a8e event payload (`post_type=event`).
+    pub event: Option<Value>,
 }
 
 /// `poll` object shape.
@@ -967,6 +972,8 @@ fn params_from_json(body: &Value) -> Result<StatusParams> {
             .and_then(|v| v.as_str())
             .map(str::to_string),
         cover_media_id: opt_i64(body.get("cover_media_id"), "cover_media_id")?,
+        event: crate::events::validate::params_from_json(body.get("event"))?,
+        event_invite_uri: None,
     })
 }
 
@@ -1053,7 +1060,74 @@ fn params_from_pairs(pairs: &[(String, String)]) -> Result<StatusParams> {
                     .map_err(|_| Error::Validation("cover_media_id must be an integer".into()))
             })
             .transpose()?,
+        event: event_from_pairs(pairs)?,
+        event_invite_uri: None,
     })
+}
+
+/// `event[...]` form fields → the same [`EventParams`] the JSON
+/// `event` object deserializes into. Scalar fields are strings; the
+/// numeric/boolean keys are coerced; `event[categories][]` and
+/// `event[invitees][]` repeat; `event[locations]` carries a JSON
+/// array (nested form arrays don't survive urlencoding).
+fn event_from_pairs(
+    pairs: &[(String, String)],
+) -> Result<Option<crate::events::validate::EventParams>> {
+    let mut map = serde_json::Map::new();
+    let mut seen = false;
+    for (k, v) in pairs {
+        let Some(inner) = k.strip_prefix("event[").and_then(|s| s.strip_suffix(']')) else {
+            continue;
+        };
+        seen = true;
+        let (key, repeated) = match inner.strip_suffix("[]") {
+            Some(base) => (base, true),
+            None => (inner, false),
+        };
+        let value = match key {
+            "maximum_attendee_capacity" | "banner_media_id" | "flyer_media_id" => {
+                serde_json::from_str::<serde_json::Value>(v).unwrap_or_else(|_| json!(v))
+            }
+            "display_end_time" => match crate::users::settings::parse_bool_str(v) {
+                Ok(b) => json!(b),
+                Err(_) => json!(v),
+            },
+            "locations" => match serde_json::from_str::<serde_json::Value>(v) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    return Err(Error::Validation(
+                        "event[locations] must be a JSON array".to_string(),
+                    ))
+                }
+            },
+            // `invitees[]` repeats as bare strings — coerce each to a
+            // number so `Vec<i64>` deserializes.
+            "invitees" => match v.parse::<i64>() {
+                Ok(n) => json!(n),
+                Err(_) => {
+                    return Err(Error::Validation(
+                        "event[invitees][] must be account ids".to_string(),
+                    ))
+                }
+            },
+            _ => json!(v),
+        };
+        if repeated {
+            let entry = map.entry(key.to_string()).or_insert_with(|| json!([]));
+            match entry.as_array_mut() {
+                Some(arr) => arr.push(value),
+                None => *entry = json!([value]),
+            }
+        } else {
+            map.insert(key.to_string(), value);
+        }
+    }
+    if !seen {
+        return Ok(None);
+    }
+    serde_json::from_value::<crate::events::validate::EventParams>(serde_json::Value::Object(map))
+        .map(Some)
+        .map_err(|e| Error::Validation(format!("invalid event payload: {e}")))
 }
 
 /// Normalize the request body per its content type.

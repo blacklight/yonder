@@ -16,6 +16,7 @@
 pub mod actors;
 pub mod adapter;
 pub mod c2s;
+pub mod context;
 pub mod delivery;
 pub(crate) mod edge;
 pub mod featured;
@@ -24,12 +25,14 @@ pub mod inbox;
 pub mod incoming;
 pub(crate) mod lookup;
 pub mod moderation;
+pub mod nodeinfo;
 pub mod outbox;
 pub mod permalinks;
 pub mod posts;
 pub(crate) mod remote_lists;
 pub mod storage;
 pub mod thread;
+pub mod upcoming;
 
 use std::sync::Arc;
 
@@ -366,6 +369,23 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/ap/users/{username}/collections/featured",
             get(featured::serve_featured),
+        )
+        // FEP-8a8e upcoming-events collection (§16) — pubby has no
+        // route for this path.
+        .route(
+            "/ap/users/{username}/collections/upcoming_events",
+            get(upcoming::serve_upcoming_events),
+        )
+        // FEP-8a8e attendees/organizers collections — custom handlers
+        // (attendees_visibility gating isn't expressible in pubby's
+        // static collection config).
+        .route(
+            "/ap/users/{username}/statuses/{id}/attendees",
+            get(posts::serve_event_collection),
+        )
+        .route(
+            "/ap/users/{username}/statuses/{id}/organizers",
+            get(posts::serve_event_collection),
         )
         // Every GET under /ap/* fans into dispatch_multi.
         .route("/ap/{*rest}", get(serve(state)))

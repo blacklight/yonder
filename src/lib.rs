@@ -14,6 +14,7 @@ pub mod config;
 pub mod db;
 pub mod emoji;
 pub mod error;
+pub mod events;
 pub mod feeds;
 pub mod filters;
 pub mod frontends;

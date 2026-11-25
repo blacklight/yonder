@@ -75,6 +75,10 @@ pub struct PostContext {
     /// ActivityPub context — `None` when federation is disabled, in
     /// which case posting works without AP fan-out.
     pub ap: Option<ApContext>,
+    /// OAuth app name of the calling client, when the request was
+    /// authenticated — event-aware clients (pl-fe, soapbox, nicolex)
+    /// get entity rendering without the read-time event preamble.
+    pub client_app: Option<String>,
     /// Streaming event bus — `AppState`'s bus on request paths, a
     /// detached bus under `from_job` (publishes are no-ops there;
     /// epic-15 fan-out publishes its `user:{id}` events at the
@@ -92,6 +96,7 @@ impl PostContext {
             config: state.config().clone(),
             media: state.media.clone(),
             ap: state.ap.clone(),
+            client_app: None,
             bus: state.bus.clone(),
         }
     }
@@ -105,8 +110,22 @@ impl PostContext {
             config: ctx.config.clone(),
             media: ctx.media.clone(),
             ap,
+            client_app: None,
             bus: Default::default(),
         }
+    }
+
+    /// Record the calling OAuth app name — entity rendering uses it
+    /// for event-aware client detection (`events::entity`).
+    pub fn set_client_app(&mut self, app_name: Option<&str>) {
+        self.client_app = app_name.map(str::to_string);
+    }
+
+    /// Builder form of [`Self::set_client_app`] for handler-local
+    /// contexts: `PostContext::new(&state).with_client_app(auth.app_name.as_deref())`.
+    pub fn with_client_app(mut self, app_name: Option<&str>) -> Self {
+        self.set_client_app(app_name);
+        self
     }
 
     /// The public base URL status URIs and media URLs render against.
@@ -493,6 +512,13 @@ pub fn is_article(status: &StatusRow) -> bool {
         status.object_type.as_deref(),
         Some("Article") | Some("Page")
     )
+}
+
+/// Events (FEP-8a8e): `object_type == "Event"` statuses carry
+/// structured event data in the `events` side table
+/// (`events::model::EventRow`).
+pub fn is_event(status: &StatusRow) -> bool {
+    status.object_type.as_deref() == Some("Event")
 }
 
 /// [`can_see`] for a page of statuses in at most two queries — the

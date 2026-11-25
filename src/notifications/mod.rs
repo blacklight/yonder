@@ -59,6 +59,11 @@ pub enum NotificationType {
     /// has no `move` type; standard clients render it via
     /// `Account.moved` instead).
     Move,
+    /// FEP-8a8e event notifications — Nicolex/Pleroma wire names.
+    ParticipationRequest,
+    ParticipationAccepted,
+    EventUpdate,
+    EventReminder,
 }
 
 impl NotificationType {
@@ -79,6 +84,10 @@ impl NotificationType {
             Self::ModerationWarning => "moderation_warning",
             Self::AdminReport => "admin.report",
             Self::Move => "move",
+            Self::ParticipationRequest => "pleroma:participation_request",
+            Self::ParticipationAccepted => "pleroma:participation_accepted",
+            Self::EventUpdate => "pleroma:event_update",
+            Self::EventReminder => "pleroma:event_reminder",
         }
     }
 
@@ -99,6 +108,10 @@ impl NotificationType {
             "moderation_warning" => Self::ModerationWarning,
             "admin.report" => Self::AdminReport,
             "move" => Self::Move,
+            "pleroma:participation_request" => Self::ParticipationRequest,
+            "pleroma:participation_accepted" => Self::ParticipationAccepted,
+            "pleroma:event_update" => Self::EventUpdate,
+            "pleroma:event_reminder" => Self::EventReminder,
             _ => return None,
         })
     }

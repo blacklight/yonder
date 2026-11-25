@@ -56,6 +56,7 @@ pub struct Config {
     pub http: HttpConfig,
     pub rate_limit: RateLimitConfig,
     pub polls: PollsConfig,
+    pub events: EventsConfig,
     pub content: ContentConfig,
     /// LaTeX formula rendering (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`).
     pub math: MathConfig,
@@ -133,6 +134,7 @@ impl Config {
             "remote_sync",
             "remote_context",
             "webmention",
+            "events_rsvp",
         ] {
             let limit = self.rate_limit.bucket(name).expect("static bucket name");
             if limit.limit == 0 || limit.period_seconds == 0 {
@@ -216,6 +218,16 @@ impl Config {
         if !(1..=100).contains(&self.timelines.trends_max_limit) {
             return Err(crate::Error::Validation(
                 "timelines.trends_max_limit must be in 1..=100".to_string(),
+            ));
+        }
+        if !(1..=64).contains(&self.events.max_locations) {
+            return Err(crate::Error::Validation(
+                "events.max_locations must be in 1..=64".to_string(),
+            ));
+        }
+        if !(1..=32).contains(&self.events.max_categories) {
+            return Err(crate::Error::Validation(
+                "events.max_categories must be in 1..=32".to_string(),
             ));
         }
         if self.math.enabled {
@@ -939,6 +951,10 @@ pub struct RateLimitConfig {
     /// unauthenticated, so the anonymous ceiling is the anti-spam
     /// knob.
     pub webmention: RateLimit,
+    /// Event RSVP writes (`POST /yonder/events/{id}/rsvp`, Nicolex
+    /// join/leave, participation decisions) — each can fan out
+    /// federation deliveries, so it gets its own bucket.
+    pub events_rsvp: RateLimit,
 }
 
 impl RateLimitConfig {
@@ -961,6 +977,7 @@ impl RateLimitConfig {
             "remote_sync" => Some(&self.remote_sync),
             "remote_context" => Some(&self.remote_context),
             "webmention" => Some(&self.webmention),
+            "events_rsvp" => Some(&self.events_rsvp),
             _ => None,
         }
     }
@@ -1043,6 +1060,11 @@ impl Default for RateLimitConfig {
                 period_seconds: 300,
                 authenticated_limit: None,
             },
+            events_rsvp: RateLimit {
+                limit: 30,
+                period_seconds: 60,
+                authenticated_limit: Some(120),
+            },
         }
     }
 }
@@ -1064,6 +1086,120 @@ impl Default for PollsConfig {
             max_option_chars: 200,
             min_duration_seconds: 5 * 60,
             max_duration_seconds: 30 * 24 * 60 * 60,
+        }
+    }
+}
+
+/// FEP-8a8e event support (`[events]`). `enabled = false` blocks new
+/// event creation (`post_type=event`) and is advertised to clients via
+/// `yonder.events_enabled` / the pleroma `features` list; inbound
+/// parsing and existing events are unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventsConfig {
+    /// Gates new event authoring + the SPA's event surfaces.
+    pub enabled: bool,
+    /// Inferred `endTime` for open-ended local events and remote
+    /// events lacking `endTime` (Gancio uses 3 h).
+    pub default_duration_minutes: u32,
+    pub max_locations: u32,
+    pub max_categories: u32,
+    /// Accept category tokens outside the FEP list.
+    pub allow_custom_categories: bool,
+    /// Description excerpt length in the generated AP `summary`;
+    /// 0 = preamble only.
+    pub summary_excerpt_chars: u32,
+    /// Minutes before start that `pleroma:event_reminder` fires.
+    pub reminder_lead_minutes: u32,
+    /// Minutes before a remote event is considered stale and
+    /// re-fetchable on participant view.
+    pub remote_refresh_after_minutes: u32,
+    /// Cron schedule for the `event_reminder_sweep` job — empty
+    /// disables reminders.
+    pub reminder_sweep_schedule: Option<String>,
+    /// Map link target for physical event locations.
+    pub map_provider: EventMapProvider,
+    /// Optional server-side place lookup (`[events.geocoding]`).
+    pub geocoding: EventsGeocodingConfig,
+}
+
+impl Default for EventsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_duration_minutes: 180,
+            max_locations: 5,
+            max_categories: 3,
+            allow_custom_categories: false,
+            summary_excerpt_chars: 300,
+            reminder_lead_minutes: 60,
+            remote_refresh_after_minutes: 360,
+            reminder_sweep_schedule: Some("*/5 * * * *".to_string()),
+            map_provider: EventMapProvider::Osm,
+            geocoding: EventsGeocodingConfig::default(),
+        }
+    }
+}
+
+/// `events.map_provider` values — the link target rendered for
+/// physical event locations.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EventMapProvider {
+    #[default]
+    Osm,
+    Google,
+}
+
+impl EventMapProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Osm => "osm",
+            Self::Google => "google",
+        }
+    }
+}
+
+/// `events.geocoding.provider` values.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GeocodingProvider {
+    #[default]
+    None,
+    Nominatim,
+    Google,
+}
+
+impl GeocodingProvider {
+    /// Wire name emitted on the instance entity (`null` for `None`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Nominatim => "nominatim",
+            Self::Google => "google",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EventsGeocodingConfig {
+    pub provider: GeocodingProvider,
+    pub nominatim_url: String,
+    /// Required by Nominatim's usage policy; ignored by other providers.
+    pub user_agent: String,
+    /// Google Geocoding API key — required when `provider = "google"`.
+    /// Prefer the `YONDER_EVENTS__GEOCODING__GOOGLE_API_KEY` env var.
+    pub google_api_key: String,
+}
+
+impl Default for EventsGeocodingConfig {
+    fn default() -> Self {
+        Self {
+            provider: GeocodingProvider::None,
+            nominatim_url: "https://nominatim.openstreetmap.org".to_string(),
+            user_agent: String::new(),
+            google_api_key: String::new(),
         }
     }
 }

@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import Button from "@/components/ui/Button.vue";
 import Modal from "@/components/ui/Modal.vue";
 import PollBuilder from "./PollBuilder.vue";
+import EventBuilder from "./EventBuilder.vue";
 import EmojiPicker from "./EmojiPicker.vue";
 import TextAutocomplete, { type AcItem } from "./TextAutocomplete.vue";
 import { FontAwesomeIcon } from "@/icons";
@@ -19,9 +20,9 @@ import {
 import { ApiError } from "@/api/errors";
 import { customEmojis } from "@/api/emojis";
 import { composeLimits } from "@/api/instance";
-import { getInstance } from "@/api/instance";
 import { search } from "@/api/search";
-import { useComposeStore } from "@/stores/compose";
+import { useComposeStore, emptyEventDraft } from "@/stores/compose";
+import { useInstanceStore } from "@/stores/instance";
 import { useToastsStore } from "@/stores/toasts";
 import { useSettingsStore } from "@/stores/settings";
 import { useTimelineStore } from "@/stores/timeline";
@@ -29,6 +30,12 @@ import {
   NAMED_UNICODE_EMOJIS,
   type EmojiSelection,
 } from "@/utils/unicodeEmoji";
+import {
+  browserTimeZone,
+  rfc3339ToZonedLocal,
+  zonedLocalToRfc3339,
+} from "@/utils/timezone";
+import type { EventDraft } from "@/stores/compose";
 import type {
   Account,
   CustomEmoji,
@@ -55,9 +62,14 @@ const route = useRoute();
 const compose = useComposeStore();
 const toasts = useToastsStore();
 const settings = useSettingsStore();
+const instance = useInstanceStore();
 const timelines = useTimelineStore();
 
 const limits = ref(composeLimits(null));
+// `events.enabled` from the shared instance store — off until the
+// response confirms it, so the event type isn't offered before (or
+// without) the server saying so.
+const eventsEnabled = computed(() => instance.eventsEnabled);
 const media = ref<MediaAttachment[]>([]);
 const uploading = ref(false);
 const posting = ref(false);
@@ -110,6 +122,18 @@ function scheduledIsPast() {
 }
 const schedulePast = computed(scheduledIsPast);
 const isArticle = computed(() => d.value.postType === "article");
+const isEvent = computed(() => d.value.postType === "event");
+// Event authoring needs a name (shared `title`), a start time in a
+// valid zone, and — unless postponed — nothing else mandatory; the
+// server re-validates the full payload.
+const eventInvalid = computed(() => {
+  if (!isEvent.value || !d.value.event) return false;
+  const ev = d.value.event;
+  if (!d.value.title.trim()) return true;
+  if (ev.status === "postponed") return false;
+  if (!ev.startTime || !ev.timezone) return true;
+  return zonedLocalToRfc3339(ev.startTime, ev.timezone) === null;
+});
 const canPost = computed(
   () =>
     !posting.value &&
@@ -117,8 +141,11 @@ const canPost = computed(
     !pollInvalid.value &&
     !schedulePast.value &&
     !uploading.value &&
+    !eventInvalid.value &&
     (!isArticle.value || d.value.title.trim().length > 0) &&
-    (d.value.text.trim().length > 0 || media.value.length > 0),
+    (d.value.text.trim().length > 0 ||
+      media.value.length > 0 ||
+      (isEvent.value && Boolean(d.value.event))),
 );
 
 const banner = computed(() => {
@@ -194,7 +221,10 @@ const VISIBILITIES: StatusVisibility[] = [
   "direct",
 ];
 const CONTENT_TYPES = ["text/plain", "text/markdown"];
-const POST_TYPES = ["note", "article"];
+const POST_TYPES = ["note", "article", "event"];
+const postTypeOptions = computed(() =>
+  POST_TYPES.filter((pt) => pt !== "event" || eventsEnabled.value),
+);
 // `<option>` can't carry SVG icons — emoji glyphs stand in so the
 // choices are still visually distinguished inside the native picker.
 const VISIBILITY_OPTION_ICONS: Record<StatusVisibility, string> = {
@@ -207,6 +237,7 @@ const VISIBILITY_OPTION_ICONS: Record<StatusVisibility, string> = {
 const POST_TYPE_OPTION_ICONS: Record<string, string> = {
   note: "📝",
   article: "📄",
+  event: "📅",
 };
 const TITLE_MAX = 500; // mirrors the server-side `name` bound
 const SUMMARY_MAX = 2000; // mirrors the server-side `summary` bound
@@ -236,11 +267,9 @@ onMounted(async () => {
   // nextTick the parent's mount hooks (e.g. Modal's focus) have run.
   await nextTick();
   textarea.value?.focus();
-  try {
-    limits.value = composeLimits(await getInstance());
-  } catch {
-    /* defaults */
-  }
+  // `ensure()` never rejects; a failed fetch leaves the defaults.
+  await instance.ensure();
+  limits.value = composeLimits(instance.entity);
   // `?edit=<id>` reopens the draft of an own post for `PUT /statuses`.
   const edit = route.query.edit;
   if (typeof edit === "string" && edit) {
@@ -254,10 +283,15 @@ onMounted(async () => {
       compose.update({
         text: s.yonder?.source ?? s.content.replace(/<[^>]+>/g, ""),
         contentType: s.yonder?.content_type ?? "text/plain",
-        postType: s.yonder?.article ? "article" : "note",
-        title: s.yonder?.article?.title ?? "",
+        postType: s.yonder?.article
+          ? "article"
+          : s.yonder?.event
+            ? "event"
+            : "note",
+        title: s.yonder?.article?.title ?? s.yonder?.event?.name ?? "",
         summary: s.yonder?.article?.summary ?? "",
         coverMediaId: s.yonder?.article?.cover?.id ?? null,
+        event: s.yonder?.event ? eventDraftFromStatus(s) : null,
         visibility: s.visibility,
         language: s.language,
         sensitive: s.sensitive,
@@ -449,8 +483,120 @@ function togglePoll() {
         multiple: false,
         hideTotals: false,
       },
+      // Events can't carry polls either — leave event mode.
+      ...(isEvent.value ? { postType: "note", event: null } : {}),
     });
   }
+}
+
+/** Event mode toggle — `postType: "event"` with a fresh payload in
+ * the browser's zone; polls are dropped (mutual exclusion). Turning
+ * it off returns to a plain note but keeps the shared title text. */
+function toggleEvent() {
+  if (isEvent.value) {
+    compose.update({ postType: "note", event: null });
+  } else {
+    if (d.value.poll) compose.update({ poll: null });
+    compose.update({
+      postType: "event",
+      event: d.value.event ?? {
+        ...emptyEventDraft(),
+        timezone: browserTimeZone(),
+      },
+    });
+  }
+}
+
+/** `yonder.event` entity → `EventDraft` for `?edit=` hydration.
+ * Wall times are re-zoned into `datetime-local` strings; `invitees`
+ * comes back on the entity for the organizer so an edit doesn't
+ * silently drop the list. */
+function eventDraftFromStatus(s: Status): EventDraft {
+  const ev = s.yonder?.event;
+  const tz = ev?.timezone || browserTimeZone();
+  const toLocal = (iso?: string | null) =>
+    iso ? (rfc3339ToZonedLocal(iso, tz) ?? "") : "";
+  const str = (v?: string | null) => v ?? "";
+  const numStr = (v?: number | null) => (v == null ? "" : String(v));
+  return {
+    startTime: toLocal(ev?.start_time),
+    endTime: toLocal(ev?.end_time),
+    timezone: tz,
+    status: ev?.status ?? "scheduled",
+    joinMode: ev?.join_mode ?? "free",
+    externalParticipationUrl: str(ev?.external_participation_url),
+    maximumAttendeeCapacity: numStr(ev?.maximum_attendee_capacity),
+    attendeesVisibility: ev?.attendees_visibility ?? "organizers",
+    categories: ev?.categories ?? [],
+    locations: (ev?.locations ?? []).map((l) => {
+      // §9.2 read shape: `address` is a nested object (structured
+      // parts + freeform `text`), not the flat §9.1 input fields. A
+      // bare string flattens into `addressText`.
+      const raw = l.address;
+      const a = raw && typeof raw === "object" ? raw : {};
+      return {
+        kind: l.type === "virtual" ? ("virtual" as const) : ("place" as const),
+        name: str(l.name),
+        url: str(l.url),
+        streetAddress: str(a.street),
+        locality: str(a.locality),
+        region: str(a.region),
+        postalCode: str(a.postal_code),
+        country: str(a.country),
+        addressText: str(typeof raw === "string" ? raw : a.text),
+        latitude: numStr(l.latitude),
+        longitude: numStr(l.longitude),
+      };
+    }),
+    bannerMediaId: ev?.banner?.id ?? null,
+    flyerMediaId: ev?.flyer?.id ?? null,
+    // Invitees are direct-only — a wider-visibility event can't carry
+    // them, so a stale stored list must not wedge the edit.
+    invitees: s.visibility === "direct" ? (ev?.invitees ?? []) : [],
+  };
+}
+
+/** `EventDraft` → the §9.1 `event` wire block (snake_case; capacity
+ * and coordinates are real JSON numbers, entity ids stay strings —
+ * snowflakes exceed `Number.MAX_SAFE_INTEGER`). */
+function eventPayload(ev: EventDraft) {
+  const str = (v: string) => {
+    const t = v.trim();
+    return t === "" ? undefined : t;
+  };
+  const num = (v: string) => {
+    const n = Number(v);
+    return v.trim() === "" || !Number.isFinite(n) ? undefined : n;
+  };
+  const local = (v: string) =>
+    v ? (zonedLocalToRfc3339(v, ev.timezone) ?? undefined) : undefined;
+  return {
+    start_time: local(ev.startTime),
+    end_time: local(ev.endTime),
+    timezone: ev.timezone || undefined,
+    status: ev.status || undefined,
+    join_mode: ev.joinMode || undefined,
+    external_participation_url: str(ev.externalParticipationUrl),
+    maximum_attendee_capacity: num(ev.maximumAttendeeCapacity),
+    attendees_visibility: ev.attendeesVisibility || undefined,
+    categories: ev.categories,
+    locations: ev.locations.map((l) => ({
+      type: l.kind,
+      name: str(l.name),
+      url: str(l.url),
+      street_address: str(l.streetAddress),
+      locality: str(l.locality),
+      region: str(l.region),
+      postal_code: str(l.postalCode),
+      country: str(l.country),
+      address_text: str(l.addressText),
+      latitude: num(l.latitude),
+      longitude: num(l.longitude),
+    })),
+    banner_media_id: ev.bannerMediaId ?? undefined,
+    flyer_media_id: ev.flyerMediaId ?? undefined,
+    invitees: ev.invitees,
+  };
 }
 
 // Unicode picks insert the literal character; custom emoji insert
@@ -702,9 +848,10 @@ async function submit() {
       language: d.value.language || undefined,
       sensitive: d.value.sensitive || d.value.cwEnabled,
       spoiler_text: d.value.cwEnabled ? d.value.spoilerText : undefined,
-      in_reply_to_id: editId.value
-        ? undefined
-        : (d.value.inReplyToId ?? undefined),
+      in_reply_to_id:
+        editId.value || isEvent.value
+          ? undefined
+          : (d.value.inReplyToId ?? undefined),
       media_ids: media.value.length ? media.value.map((m) => m.id) : undefined,
       poll: d.value.poll
         ? {
@@ -717,11 +864,25 @@ async function submit() {
       quote_id: d.value.quoteId ?? undefined,
       scheduled_at: d.value.scheduledAt ?? undefined,
       post_type: d.value.postType,
-      title: isArticle.value ? d.value.title.trim() : undefined,
+      title:
+        isArticle.value || isEvent.value ? d.value.title.trim() : undefined,
       summary: isArticle.value ? d.value.summary.trim() : undefined,
       cover_media_id: isArticle.value
         ? (d.value.coverMediaId ?? undefined)
         : undefined,
+      event:
+        isEvent.value && d.value.event
+          ? {
+              ...eventPayload(d.value.event),
+              // Invitees are direct-only; a wider-visibility save
+              // clears the list (the picker is hidden, so the draft
+              // can't express "keep but don't show").
+              invitees:
+                (props.direct ? "direct" : d.value.visibility) === "direct"
+                  ? d.value.event.invitees
+                  : [],
+            }
+          : undefined,
     };
     const sig = JSON.stringify(body);
     if (sig !== idemBody) {
@@ -936,6 +1097,18 @@ async function submit() {
         @update="compose.update({ poll: $event })"
         @remove="compose.update({ poll: null })"
       />
+
+      <EventBuilder
+        v-if="isEvent && d.event"
+        :event="d.event"
+        :title="d.title"
+        :visibility="d.visibility"
+        :media="media"
+        :editing="Boolean(editId)"
+        @update="compose.update({ event: $event })"
+        @update-title="compose.update({ title: $event })"
+        @remove="toggleEvent"
+      />
     </div>
 
     <div class="compose__bottom">
@@ -960,14 +1133,33 @@ async function submit() {
           class="compose__ctl"
           :class="{ 'compose__ctl--on': d.poll }"
           :aria-label="t('compose.pollAdd')"
-          :disabled="media.length > 0 || isArticle"
+          :disabled="media.length > 0 || isArticle || isEvent"
           :title="
-            isArticle ? t('compose.pollArticleHint') : t('compose.pollAdd')
+            isArticle
+              ? t('compose.pollArticleHint')
+              : isEvent
+                ? t('compose.pollEventHint')
+                : t('compose.pollAdd')
           "
           data-testid="poll-toggle"
           @click="togglePoll"
         >
           <FontAwesomeIcon icon="square-poll-vertical" />
+        </button>
+        <button
+          v-if="eventsEnabled"
+          type="button"
+          class="compose__ctl"
+          :class="{ 'compose__ctl--on': isEvent }"
+          :aria-label="t('compose.event')"
+          :disabled="isArticle"
+          :title="
+            isArticle ? t('compose.eventArticleHint') : t('compose.event')
+          "
+          data-testid="event-toggle"
+          @click="toggleEvent"
+        >
+          <FontAwesomeIcon icon="calendar-days" />
         </button>
         <span class="compose__emoji-wrap">
           <button
@@ -1104,21 +1296,35 @@ async function submit() {
               @change="
                 (() => {
                   const v = ($event.target as HTMLSelectElement).value;
-                  compose.update(
-                    v === 'article'
-                      ? // Articles can't carry polls — drop the draft.
-                        { postType: v, poll: null }
-                      : {
-                          postType: v,
-                          title: '',
-                          summary: '',
-                          coverMediaId: null,
-                        },
-                  );
+                  if (v === 'article') {
+                    // Articles can't carry polls or events.
+                    compose.update({
+                      postType: v,
+                      poll: null,
+                      event: null,
+                    });
+                  } else if (v === 'event') {
+                    compose.update({
+                      postType: v,
+                      poll: null,
+                      event: d.event ?? {
+                        ...emptyEventDraft(),
+                        timezone: browserTimeZone(),
+                      },
+                    });
+                  } else {
+                    compose.update({
+                      postType: v,
+                      title: '',
+                      summary: '',
+                      coverMediaId: null,
+                      event: null,
+                    });
+                  }
                 })()
               "
             >
-              <option v-for="pt in POST_TYPES" :key="pt" :value="pt">
+              <option v-for="pt in postTypeOptions" :key="pt" :value="pt">
                 {{ POST_TYPE_OPTION_ICONS[pt] }}
                 {{ t(`compose.postType_${pt}`) }}
               </option>
@@ -1266,7 +1472,6 @@ async function submit() {
 .compose__text-wrap {
   position: relative;
   flex: 1 1 auto;
-  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

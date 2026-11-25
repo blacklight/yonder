@@ -242,7 +242,73 @@ export interface Status {
       summary: string | null;
       cover: MediaAttachment | null;
     } | null;
+    /** FEP-8a8e event metadata — present on `object_type = 'Event'`
+     * statuses; `participation` is the viewer's own RSVP row. */
+    event?: {
+      name?: string | null;
+      content?: string | null;
+      status?: string;
+      previous_start_time?: string | null;
+      start_time?: string | null;
+      end_time?: string | null;
+      display_end_time?: boolean;
+      end_time_inferred?: boolean;
+      timezone?: string | null;
+      utc_offset?: string | null;
+      join_mode?: string;
+      external_participation_url?: string | null;
+      rsvp_protocol?: string;
+      maximum_attendee_capacity?: number | null;
+      participants_count?: number;
+      remaining_capacity?: number | null;
+      pending_count?: number | null;
+      categories?: string[];
+      locations?: EventLocation[];
+      links?: { name?: string | null; href?: string }[];
+      banner?: MediaAttachment | null;
+      flyer?: MediaAttachment | null;
+      organizers?: unknown[];
+      organizers_disclosed?: boolean;
+      /** Authoring invitee list — populated for the organizer only;
+       * string ids (snowflakes exceed `Number.MAX_SAFE_INTEGER`). */
+      invitees?: string[];
+      attendees_visibility?: string;
+      participation?: {
+        state?: string;
+        role?: string;
+        can_join?: boolean;
+        reason?: string | null;
+      } | null;
+      comments_enabled?: boolean;
+      ics_url?: string;
+    } | null;
   };
+}
+
+/** `yonder.event.locations[].address` — the §9.2 structured
+ * address object (input payloads use the flat `street_address`
+ * spellings instead; this is the read shape). */
+export interface EventLocationAddress {
+  street?: string | null;
+  locality?: string | null;
+  region?: string | null;
+  postal_code?: string | null;
+  country?: string | null;
+  /** Free-form address line (remote `address_text`). */
+  text?: string | null;
+}
+
+/** `yonder.event.locations[]` — FEP-8a8e place/virtual location. */
+export interface EventLocation {
+  type?: string;
+  uri?: string | null;
+  name?: string | null;
+  url?: string | null;
+  /** §9.2 read shape; a bare string is tolerated defensively for
+   * remote shapes that flatten the address. */
+  address?: EventLocationAddress | string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 /** `statuses::context` — the Mastodon Context entity. */
@@ -575,6 +641,12 @@ export interface InstanceEntity {
    * redirect target for anonymous `/` visitors (`instance.single_user`). */
   yonder?: {
     single_user?: string | null;
+    /** `events.enabled` — absent on older servers. */
+    events_enabled?: boolean;
+    /** `[events.geocoding]` provider name, or null/absent when off. */
+    events_geocoding?: "nominatim" | "google" | null;
+    /** `[events] map_provider` — `osm` (default) or `google`. */
+    events_map_provider?: "osm" | "google";
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -607,4 +679,6 @@ export interface StatusCreateBody {
   summary?: string;
   /** Representative image attachment id (AS2 `image`). */
   cover_media_id?: string;
+  /** FEP-8a8e event payload — required for `post_type=event`. */
+  event?: Record<string, unknown>;
 }

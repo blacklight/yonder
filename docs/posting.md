@@ -110,6 +110,17 @@ sweep (`content.scheduled_status_sweep_schedule`) re-enqueues due rows
 `statuses.scheduled_deletion_at` the same way
 (`content.scheduled_deletion_sweep_schedule`).
 
+## Events
+
+`post_type=event` turns a status into an event (FEP-8a8e): the status
+carries `object_type='Event'` and a `statuses.title`, the event
+metadata (times, timezone, locations, categories, join mode,
+invitees, banner/flyer) lives in the `events` side tables and
+federates as an `Event` object. The composer's event builder and the
+Nicolex-compatible `/api/v1/pleroma/events` adapter both author them;
+RSVPs, notifications, calendar exports and discovery are covered in
+[events.md](events.md).
+
 ## Polls
 
 Voting serializes on the poll row (`SELECT … FOR UPDATE`): all vote

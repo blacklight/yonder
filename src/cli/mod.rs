@@ -333,6 +333,9 @@ pub fn build_registry(ap: Option<&ApContext>) -> crate::jobs::Registry {
     // Elasticsearch/OpenSearch search index — sync + backfill. The
     // handlers no-op under the Postgres backend.
     crate::search::register_jobs(&mut registry);
+    // FEP-8a8e events — remote-event backfill; EventRemoteRefresh
+    // stays on the stub until Section 12.
+    crate::events::jobs::register(&mut registry);
     registry
 }
 

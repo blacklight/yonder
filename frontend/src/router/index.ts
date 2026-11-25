@@ -17,6 +17,13 @@ declare module "vue-router" {
   }
 }
 
+/** Event pages are off entirely when `events.enabled = false`. */
+async function requireEventsEnabled() {
+  const instance = useInstanceStore();
+  await instance.ensure();
+  return instance.eventsEnabled ? true : { name: "home" };
+}
+
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
@@ -167,6 +174,21 @@ export const router = createRouter({
       name: "status-favourites",
       component: () => import("@/pages/StatusInteractionsPage.vue"),
       props: (route) => ({ id: route.params.id, kind: "likes" }),
+    },
+    {
+      path: "/events",
+      name: "events",
+      component: () => import("@/pages/EventsPage.vue"),
+      meta: { requiresAuth: true },
+      beforeEnter: requireEventsEnabled,
+    },
+    {
+      path: "/events/discover",
+      name: "events-discover",
+      component: () => import("@/pages/EventsDiscoverPage.vue"),
+      // Public, but still gated on `events.enabled` like every other
+      // event surface (docs/events.md).
+      beforeEnter: requireEventsEnabled,
     },
     {
       path: "/notifications",

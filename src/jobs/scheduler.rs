@@ -106,6 +106,12 @@ pub async fn start(config: &Config, dispatcher: &Dispatcher) -> Result<JobSchedu
             config.media.orphan_cleanup_schedule.as_deref(),
             JobKind::CleanupOrphanMedia,
         ),
+        // Epic-32 events: reminder sweep — emits
+        // `pleroma:event_reminder` inside the configured lead window.
+        (
+            config.events.reminder_sweep_schedule.as_deref(),
+            JobKind::EventReminderSweep,
+        ),
         // Periodic ES reindex — payload is injected below; only
         // meaningful with `search.elasticsearch_url` set.
         (

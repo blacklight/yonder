@@ -40,6 +40,11 @@ const ALERT_TYPES: &[&str] = &[
     "admin.sign_up",
     "admin.report",
     "reaction",
+    // FEP-8a8e event notifications (Nicolex wire names).
+    "pleroma:participation_request",
+    "pleroma:participation_accepted",
+    "pleroma:event_update",
+    "pleroma:event_reminder",
 ];
 
 const POLICIES: &[&str] = &["all", "followed", "follower", "none"];

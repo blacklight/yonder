@@ -151,7 +151,7 @@ pub async fn list(
     .await?;
     let cursors: Vec<i64> = rows.iter().map(|r| r.id).collect();
     let headers = paginate::headers(&state.config(), &uri, &params, &cursors, page.limit);
-    let ctx = PostContext::new(&state);
+    let ctx = PostContext::new(&state).with_client_app(auth.app_name.as_deref());
     let out = notifications::entities(&ctx, &rows, &rules).await?;
     Ok((headers, Json(Value::Array(out))))
 }
@@ -343,6 +343,7 @@ pub async fn show(
         .await?
         .ok_or_else(|| Error::NotFound("notification".into()))?;
     let ctx = PostContext::new(&state);
+    let ctx = ctx.with_client_app(auth.app_name.as_deref());
     let rules = crate::filters::rules::load_active(
         &state.db,
         auth.account_id,

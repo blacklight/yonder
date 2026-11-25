@@ -25,7 +25,12 @@ import { search } from "@/api/search";
 import type { Account, EventLocation, Status } from "@/api/entities";
 import { browserTimeZone } from "@/utils/timezone";
 
-const props = defineProps<{ status: Status }>();
+const props = withDefaults(
+  defineProps<{ status: Status; readonly?: boolean }>(),
+  {
+    readonly: false,
+  },
+);
 const { t, locale } = useI18n();
 const toasts = useToastsStore();
 const auth = useAuthStore();
@@ -175,7 +180,7 @@ async function rsvp(state: "accepted" | "tentative" | "declined" | "none") {
 const rsvpActions = computed(() => {
   const e = ev.value;
   const p = synced.value;
-  if (!e || !auth.isLoggedIn || !p) return [] as string[];
+  if (!e || props.readonly || !auth.isLoggedIn || !p) return [] as string[];
   if (isOrganizer.value) return [];
   const protocol = rsvpProtocol.value;
   if (protocol === "external" || protocol === "none") return [];
@@ -208,7 +213,8 @@ const rsvpActions = computed(() => {
 const rsvpDisabledReason = computed(() => {
   const e = ev.value;
   const p = synced.value;
-  if (!e || !auth.isLoggedIn || isOrganizer.value) return null;
+  if (!e || props.readonly || !auth.isLoggedIn || isOrganizer.value)
+    return null;
   if (rsvpProtocol.value === "external") return null; // Register link instead
   if (rsvpProtocol.value === "none") return "none";
   if (!p?.can_join && !p?.state) return p?.reason ?? "unavailable";
@@ -475,6 +481,7 @@ const statusBadge = computed(() => {
             class="status-event__addr"
           >
             <button
+              v-if="!readonly"
               type="button"
               class="status-event__map-btn"
               :aria-label="t('events.showMap')"
@@ -619,7 +626,7 @@ const statusBadge = computed(() => {
     </div>
 
     <!-- Organizer panel -->
-    <div v-if="isOrganizer" class="status-event__organizer">
+    <div v-if="!readonly && isOrganizer" class="status-event__organizer">
       <button
         type="button"
         class="status-event__organizer-toggle"

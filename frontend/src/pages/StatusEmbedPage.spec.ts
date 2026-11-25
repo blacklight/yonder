@@ -2,11 +2,20 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { flushPromises } from "@vue/test-utils";
 import { mountWith } from "@/test/render";
 import StatusEmbedPage from "./StatusEmbedPage.vue";
+import { useAuthStore } from "@/stores/auth";
 import type { Account, Status } from "@/api/entities";
 
 vi.mock("@/api/statuses", async (orig) => {
   const m = await orig<typeof import("@/api/statuses")>();
   return { ...m, getStatus: vi.fn() };
+});
+
+vi.mock("@/api/instance", async (orig) => {
+  const m = await orig<typeof import("@/api/instance")>();
+  return {
+    ...m,
+    getInstance: vi.fn().mockRejectedValue(new Error("no instance")),
+  };
 });
 
 import { getStatus } from "@/api/statuses";
@@ -128,6 +137,45 @@ describe("StatusEmbedPage", () => {
     expect(wrapper.text()).toContain("the original");
     expect(wrapper.get("[data-testid='embed-quote']")).toBeTruthy();
     expect(wrapper.html()).not.toContain("RE:");
+  });
+
+  it("renders event metadata instead of the fallback preamble", async () => {
+    useAuthStore().setToken("test-token");
+    vi.mocked(getStatus).mockResolvedValue(
+      status({
+        content: "<p>When: soon</p><p>fallback description</p>",
+        yonder: {
+          event: {
+            name: "Test event",
+            content: "<p>Event details</p>",
+            start_time: "2026-11-25T12:00:00+01:00",
+            end_time: "2026-11-25T13:00:00+01:00",
+            timezone: "Europe/Amsterdam",
+            rsvp_protocol: "join",
+            participation: { can_join: true, reason: null },
+            locations: [
+              {
+                type: "place",
+                name: "MIT",
+                latitude: 42.36,
+                longitude: -71.09,
+                address: { text: "Acorn Street, Cambridge" },
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const { wrapper } = mountWith(StatusEmbedPage, { props: { id: "10" } });
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='status-event']").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Test event");
+    expect(wrapper.text()).toContain("MIT");
+    expect(wrapper.text()).toContain("Event details");
+    expect(wrapper.text()).not.toContain("When: soon");
+    expect(wrapper.find("[data-testid^='rsvp-']").exists()).toBe(false);
+    expect(wrapper.find("[data-testid='event-show-map']").exists()).toBe(false);
   });
 
   it("renders media attachments", async () => {

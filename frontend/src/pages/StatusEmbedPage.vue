@@ -7,6 +7,7 @@ import Spinner from "@/components/ui/Spinner.vue";
 import StatusMedia from "@/components/status/StatusMedia.vue";
 import StatusEmbedQuote from "@/components/status/StatusEmbedQuote.vue";
 import StatusEmbedCard from "@/components/status/StatusEmbedCard.vue";
+import StatusEvent from "@/components/status/StatusEvent.vue";
 import { getStatus } from "@/api/statuses";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
@@ -55,9 +56,8 @@ const quoteRenders = computed(() =>
 const content = computed(() => {
   const s = shown.value;
   if (!s) return "";
-  const raw = quoteRenders.value
-    ? s.content.replace(RE_PARAGRAPH, "")
-    : s.content;
+  const body = s.yonder?.event?.content ?? s.content;
+  const raw = quoteRenders.value ? body.replace(RE_PARAGRAPH, "") : body;
   return highlightCodeBlocks(
     sanitizeHtml(raw, {
       mentions: s.mentions,
@@ -183,6 +183,7 @@ function onClick(event: MouseEvent) {
           <EmojiText :text="shown.spoiler_text" :emojis="shown.emojis" />
         </summary>
         <div class="embed-card__body">
+          <StatusEvent v-if="shown.yonder?.event" :status="shown" readonly />
           <!-- eslint-disable-next-line vue/no-v-html -->
           <div class="embed-card__content" v-html="content" />
           <StatusMedia
@@ -205,6 +206,7 @@ function onClick(event: MouseEvent) {
         </div>
       </details>
       <div v-else class="embed-card__body">
+        <StatusEvent v-if="shown.yonder?.event" :status="shown" readonly />
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div class="embed-card__content" v-html="content" />
         <StatusMedia

@@ -9,6 +9,14 @@ vi.mock("@/api/statuses", async (orig) => {
   return { ...m, getStatus: vi.fn() };
 });
 
+vi.mock("@/api/instance", async (orig) => {
+  const m = await orig<typeof import("@/api/instance")>();
+  return {
+    ...m,
+    getInstance: vi.fn().mockRejectedValue(new Error("no instance")),
+  };
+});
+
 import { getStatus } from "@/api/statuses";
 
 function account(over: Partial<Account> = {}): Account {
@@ -120,6 +128,34 @@ describe("StatusEmbedQuote", () => {
     // B's RE: link is redundant once C's card renders.
     expect(wrapper.text()).not.toContain("RE");
     expect(wrapper.findAll("[data-testid='embed-quote']")).toHaveLength(2);
+  });
+
+  it("renders a quoted event without its fallback preamble", async () => {
+    const inner = status({
+      id: "9",
+      content: "<p>When: soon</p><p>fallback description</p>",
+      yonder: {
+        event: {
+          name: "Quoted event",
+          content: "<p>Quoted details</p>",
+          start_time: "2026-11-25T12:00:00+01:00",
+          timezone: "Europe/Amsterdam",
+          locations: [
+            { type: "virtual", name: "Streaming", url: "https://stream.test" },
+          ],
+        },
+      },
+    });
+    const { wrapper } = mountWith(StatusEmbedQuote, {
+      props: { status: quoting(inner) },
+    });
+    await flushPromises();
+
+    expect(wrapper.find("[data-testid='status-event']").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Quoted event");
+    expect(wrapper.text()).toContain("Streaming");
+    expect(wrapper.text()).toContain("Quoted details");
+    expect(wrapper.text()).not.toContain("When: soon");
   });
 
   it("shows the unavailable card when the fetch fails", async () => {

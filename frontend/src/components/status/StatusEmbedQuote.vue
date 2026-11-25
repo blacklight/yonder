@@ -7,6 +7,7 @@ import Spinner from "@/components/ui/Spinner.vue";
 import CwBlock from "./CwBlock.vue";
 import StatusMedia from "./StatusMedia.vue";
 import StatusEmbedCard from "./StatusEmbedCard.vue";
+import StatusEvent from "./StatusEvent.vue";
 import { getStatus } from "@/api/statuses";
 import { sanitizeHtml, safeHttpUrl } from "@/utils/sanitize";
 import { highlightCodeBlocks } from "@/utils/highlight";
@@ -76,9 +77,8 @@ function nestedQuoteRenders(s: Status): boolean {
 const contentHtml = computed(() => {
   const t_ = target.value;
   if (!t_) return "";
-  const raw = nestedQuoteRenders(t_)
-    ? t_.content.replace(RE_PARAGRAPH, "")
-    : t_.content;
+  const body = t_.yonder?.event?.content ?? t_.content;
+  const raw = nestedQuoteRenders(t_) ? body.replace(RE_PARAGRAPH, "") : body;
   return highlightCodeBlocks(
     sanitizeHtml(raw, {
       mentions: t_.mentions,
@@ -129,6 +129,7 @@ function open(event: MouseEvent) {
       >
     </header>
     <CwBlock :spoiler-text="target.spoiler_text" :emojis="target.emojis">
+      <StatusEvent v-if="target.yonder?.event" :status="target" readonly />
       <!-- eslint-disable-next-line vue/no-v-html -->
       <div class="embed-quote__content" v-html="contentHtml" />
       <StatusMedia

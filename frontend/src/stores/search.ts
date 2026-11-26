@@ -17,27 +17,29 @@ export const useSearchStore = defineStore("search", () => {
     accounts: SearchResults["accounts"];
     hashtags: SearchResults["hashtags"];
   } | null>(null);
+  const suggestionOwner = ref<string | null>(null);
   const loading = ref(false);
   const suggestLoading = ref(false);
   const error = ref<string | null>(null);
-  let seq = 0;
+  let resultSeq = 0;
+  let suggestionSeq = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   resetOnUserChange(() => {
-    results.value = null;
-    suggestions.value = null;
+    clearResults();
+    clearSuggestions();
   });
 
   /** Full submitted search; `resolve` only from an explicit caller. */
   async function run(q: string, resolve = false) {
-    const id = ++seq;
+    const id = ++resultSeq;
     loading.value = true;
     error.value = null;
     try {
       const r = await search({ q, limit: 40, resolve });
-      if (id === seq) results.value = r;
+      if (id === resultSeq) results.value = r;
     } catch (e) {
-      if (id === seq) {
+      if (id === resultSeq) {
         error.value = e instanceof Error ? e.message : String(e);
         results.value = null;
       }
@@ -45,59 +47,78 @@ export const useSearchStore = defineStore("search", () => {
       // ordinary failures — record the error AND rethrow.
       throw e;
     } finally {
-      if (id === seq) loading.value = false;
+      if (id === resultSeq) loading.value = false;
     }
   }
 
   /** Debounced autocomplete — prefix mode, `resolve=false` always. */
-  function suggest(q: string, delayMs = 300) {
+  function suggest(q: string, delayMs = 300, owner = "default") {
     if (timer) clearTimeout(timer);
+    suggestionSeq++;
     if (q.trim().length < 2) {
-      suggestions.value = null;
+      clearSuggestions();
       return;
     }
+    suggestionOwner.value = owner;
     timer = setTimeout(() => {
       timer = null;
-      void fetchSuggestions(q.trim());
+      void fetchSuggestions(q.trim(), owner);
     }, delayMs);
   }
 
-  async function fetchSuggestions(q: string) {
-    const id = ++seq;
+  async function fetchSuggestions(q: string, owner: string) {
+    const id = ++suggestionSeq;
     suggestLoading.value = true;
     try {
       const [accounts, hashtags] = await Promise.all([
         search({ q, type: "accounts", limit: 5, resolve: false }),
         search({ q, type: "hashtags", limit: 5, resolve: false }),
       ]);
-      if (id === seq)
+      if (id === suggestionSeq) {
         suggestions.value = {
           accounts: accounts.accounts,
           hashtags: hashtags.hashtags,
         };
+        suggestionOwner.value = owner;
+      }
     } catch {
-      if (id === seq) suggestions.value = null;
+      if (id === suggestionSeq) {
+        suggestions.value = null;
+        suggestionOwner.value = null;
+      }
     } finally {
-      if (id === seq) suggestLoading.value = false;
+      if (id === suggestionSeq) suggestLoading.value = false;
     }
   }
 
   function clearSuggestions() {
+    suggestionSeq++;
     suggestions.value = null;
+    suggestionOwner.value = null;
+    suggestLoading.value = false;
     if (timer) {
       clearTimeout(timer);
       timer = null;
     }
   }
 
+  function clearResults() {
+    resultSeq++;
+    results.value = null;
+    loading.value = false;
+    error.value = null;
+  }
+
   return {
     results,
     suggestions,
+    suggestionOwner,
     loading,
     suggestLoading,
     error,
     run,
     suggest,
     clearSuggestions,
+    clearResults,
   };
 });

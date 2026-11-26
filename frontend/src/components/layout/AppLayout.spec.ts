@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { i18n } from "@/i18n";
@@ -8,7 +8,7 @@ import { useNotificationsStore } from "@/stores/notifications";
 import { useConversationsStore } from "@/stores/conversations";
 import AppLayout from "./AppLayout.vue";
 
-function layout() {
+function layout(attach = false) {
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
     const url = String(input);
     if (url.includes("/instance"))
@@ -28,6 +28,31 @@ function layout() {
       );
     if (url.includes("/conversations"))
       return Promise.resolve(new Response("[]", { status: 200 }));
+    if (url.includes("/api/v2/search")) {
+      const type = new URL(url, "https://test.local").searchParams.get("type");
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            accounts:
+              type === "accounts"
+                ? [
+                    {
+                      id: "1",
+                      acct: "alice",
+                      username: "alice",
+                      display_name: "Alice",
+                      avatar: "",
+                      emojis: [],
+                    },
+                  ]
+                : [],
+            statuses: [],
+            hashtags: type === "hashtags" ? [{ name: "alice" }] : [],
+          }),
+          { status: 200 },
+        ),
+      );
+    }
     return Promise.resolve(new Response("{}", { status: 200 }));
   });
   const router = createRouter({
@@ -37,6 +62,7 @@ function layout() {
   return mount(AppLayout, {
     global: { plugins: [i18n, router] },
     slots: { default: "<p>page</p>" },
+    ...(attach ? { attachTo: document.body } : {}),
   });
 }
 
@@ -48,6 +74,7 @@ function labels(w: ReturnType<typeof layout>): string[] {
 
 describe("AppLayout", () => {
   beforeEach(() => vi.restoreAllMocks());
+  afterEach(() => vi.useRealTimers());
 
   it("anonymous menu shows public items only", () => {
     const w = layout();
@@ -260,6 +287,33 @@ describe("AppLayout", () => {
     expect(
       (w.findAll(".layout__search-input")[0].element as HTMLInputElement).value,
     ).toBe("");
+  });
+
+  it("search inputs fetch and render autocomplete suggestions", async () => {
+    vi.useFakeTimers();
+    const w = layout(true);
+    const form = w.get(".layout__search--sidebar");
+    const input = form.get("input");
+    await input.setValue("ali");
+    await vi.advanceTimersByTimeAsync(300);
+    await flushPromises();
+
+    const searchUrls = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([input]) => String(input))
+      .filter((url) => url.includes("/api/v2/search"));
+    expect(searchUrls.some((url) => url.includes("type=accounts"))).toBe(true);
+    expect(searchUrls.some((url) => url.includes("type=hashtags"))).toBe(true);
+    expect(form.findAll(".search__suggestion")).toHaveLength(2);
+    expect(form.text()).toContain("@alice");
+    expect(form.text()).toContain("#alice");
+
+    (input.element as HTMLElement).focus();
+    await input.trigger("keydown", { key: "ArrowDown" });
+    expect(document.activeElement).toBe(
+      form.findAll(".search__suggestion")[0].element,
+    );
+    w.unmount();
   });
 
   it("sidebar keeps a search fallback below the wide breakpoint", () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, useTemplateRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { useSearchStore } from "@/stores/search";
@@ -12,6 +12,7 @@ import Button from "@/components/ui/Button.vue";
 import Input from "@/components/ui/Input.vue";
 import Tabs from "@/components/ui/Tabs.vue";
 import StatusCard from "@/components/status/StatusCard.vue";
+import SearchSuggestions from "@/components/search/SearchSuggestions.vue";
 import { useStatusEvents } from "@/composables/useStatusEvents";
 import { dropFromStatusList, patchStatusList } from "@/utils/statusStream";
 
@@ -20,9 +21,17 @@ const store = useSearchStore();
 const auth = useAuthStore();
 const route = useRoute();
 const router = useRouter();
-const q = ref(String(route.query.q ?? ""));
+function routeQuery(): string {
+  const value = route.query.q;
+  if (Array.isArray(value)) return String(value[0] ?? "");
+  return String(value ?? "");
+}
+
+const q = ref(routeQuery());
 const tab = ref<"accounts" | "statuses" | "hashtags">("accounts");
 const unauthorized = ref(false);
+const suggestions =
+  useTemplateRef<InstanceType<typeof SearchSuggestions>>("suggestions");
 
 const tabs = computed(
   () =>
@@ -37,11 +46,6 @@ const isFqnOrUrl = computed(
     /^https?:\/\//.test(q.value.trim()) ||
     /^@?[\w.]+@[\w.-]+\.[a-zA-Z]{2,}$/.test(q.value.trim()),
 );
-const suggestionAccounts = computed(() => store.suggestions?.accounts ?? []);
-const suggestionHashtags = computed(() => store.suggestions?.hashtags ?? []);
-const hasSuggestions = computed(
-  () => suggestionAccounts.value.length + suggestionHashtags.value.length > 0,
-);
 const activeEmpty = computed(() => {
   const r = store.results;
   if (!r || store.loading) return false;
@@ -52,17 +56,35 @@ const activeEmpty = computed(() => {
 
 function onInput() {
   unauthorized.value = false;
-  store.suggest(q.value);
+  store.suggest(q.value, 300, "page");
 }
 
-async function submit() {
-  if (!q.value.trim()) return;
+function onSearchKeydown(event: KeyboardEvent) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || target.type !== "search") return;
+  if (event.key === "Enter") {
+    if (event.isComposing) return;
+    event.preventDefault();
+    submit();
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Tab"].includes(event.key)) return;
+  const edge =
+    event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey)
+      ? "last"
+      : "first";
+  if (suggestions.value?.focusEdge(edge)) event.preventDefault();
+}
+
+async function performSearch() {
+  const term = q.value.trim();
+  if (!term) return;
   unauthorized.value = false;
   store.clearSuggestions();
   // One-shot remote resolve: only signed-in, only on explicit submit.
   const resolve = auth.isLoggedIn && isFqnOrUrl.value;
   try {
-    await store.run(q.value.trim(), resolve);
+    await store.run(term, resolve);
     // Land on the first tab that actually has hits.
     const r = store.results;
     if (r?.accounts.length) tab.value = "accounts";
@@ -72,6 +94,14 @@ async function submit() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) unauthorized.value = true;
   }
+}
+
+function submit() {
+  const term = q.value.trim();
+  if (!term) return;
+  q.value = term;
+  if (term === routeQuery().trim()) void performSearch();
+  else void router.push({ name: "search", query: { q: term } });
 }
 
 function goAccount(acct: string) {
@@ -96,9 +126,19 @@ useStatusEvents({
   },
 });
 
-onMounted(() => {
-  if (q.value.trim()) void submit();
-});
+watch(
+  () => route.query.q,
+  () => {
+    q.value = routeQuery();
+    if (q.value.trim()) void performSearch();
+    else {
+      unauthorized.value = false;
+      store.clearSuggestions();
+      store.clearResults();
+    }
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
@@ -115,45 +155,13 @@ onMounted(() => {
           clearable
           :placeholder="t('nav.searchPlaceholder')"
           @update:model-value="onInput"
+          @keydown="onSearchKeydown"
         />
         <Button type="submit" :loading="store.loading">
           {{ t("nav.search") }}
         </Button>
       </form>
-      <ul v-if="hasSuggestions" class="search__suggestions" role="listbox">
-        <li
-          v-for="a in suggestionAccounts"
-          :key="a.id"
-          class="search__suggestion"
-          role="option"
-          aria-selected="false"
-          tabindex="0"
-          @click="goAccount(a.acct)"
-          @keydown.enter="goAccount(a.acct)"
-        >
-          <Avatar :src="a.avatar" :name="a.display_name || a.acct" size="sm" />
-          <span class="search__names">
-            <span class="search__display"
-              ><EmojiText
-                :text="a.display_name || a.username"
-                :emojis="a.emojis"
-            /></span>
-            <span class="search__acct">@{{ a.acct }}</span>
-          </span>
-        </li>
-        <li
-          v-for="h in suggestionHashtags"
-          :key="h.name"
-          class="search__suggestion"
-          role="option"
-          aria-selected="false"
-          tabindex="0"
-          @click="goTag(h.name)"
-          @keydown.enter="goTag(h.name)"
-        >
-          <span class="search__tag">#{{ h.name }}</span>
-        </li>
-      </ul>
+      <SearchSuggestions ref="suggestions" owner="page" />
     </div>
     <p v-if="unauthorized" class="search__alert" role="alert">
       {{ t("search.signInRequired") }}
@@ -235,32 +243,6 @@ onMounted(() => {
 .search__input {
   flex: 1;
   min-width: 0;
-}
-.search__suggestions {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 20;
-  margin: var(--space-1) 0 0;
-  padding: var(--space-2) 0;
-  list-style: none;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgb(0 0 0 / 0.12);
-  max-height: 20rem;
-  overflow-y: auto;
-}
-.search__suggestion {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  cursor: pointer;
-}
-.search__suggestion:hover {
-  background: var(--bg-hover, var(--bg-sunken));
 }
 .search__results {
   list-style: none;

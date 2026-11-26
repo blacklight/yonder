@@ -50,6 +50,41 @@ describe("search store", () => {
     );
   });
 
+  it("invalidates in-flight suggestions when the query becomes too short", async () => {
+    const releases: ((v: unknown) => void)[] = [];
+    api.search.mockImplementation(
+      () => new Promise((resolve) => releases.push(resolve)),
+    );
+    const store = useSearchStore();
+    store.suggest("ali", 0);
+    await vi.runAllTimersAsync();
+    expect(releases).toHaveLength(2);
+
+    store.suggest("a", 0);
+    for (const release of releases)
+      release({ ...empty, accounts: [{ id: "stale" }] });
+    await vi.runAllTimersAsync();
+
+    expect(store.suggestions).toBeNull();
+  });
+
+  it("autocomplete does not invalidate a submitted search in flight", async () => {
+    let releaseRun: (v: unknown) => void = () => {};
+    api.search.mockImplementation((query: { type?: string }) => {
+      if (!query.type) return new Promise((resolve) => (releaseRun = resolve));
+      return Promise.resolve({ ...empty });
+    });
+    const store = useSearchStore();
+    const pending = store.run("cats");
+    store.suggest("ca", 0);
+    await vi.runAllTimersAsync();
+
+    releaseRun({ ...empty, accounts: [{ id: "1" }] });
+    await pending;
+
+    expect(store.results?.accounts[0]?.id).toBe("1");
+  });
+
   it("run rethrows so callers can distinguish a 401", async () => {
     api.search.mockRejectedValue(new ApiError("unauthorized", 401));
     const store = useSearchStore();

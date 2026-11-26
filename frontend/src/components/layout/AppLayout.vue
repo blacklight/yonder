@@ -9,6 +9,7 @@ import NavMenu, { type NavItem } from "./NavMenu.vue";
 import MobileMenu from "./MobileMenu.vue";
 import BottomNav, { type BottomNavItem } from "./BottomNav.vue";
 import QuoteComposeModal from "@/components/compose/QuoteComposeModal.vue";
+import SearchSuggestions from "@/components/search/SearchSuggestions.vue";
 import { FontAwesomeIcon } from "@/icons";
 import { useTheme } from "@/composables/useTheme";
 import { useAuthStore } from "@/stores/auth";
@@ -16,6 +17,7 @@ import { useComposeStore } from "@/stores/compose";
 import { useInstanceStore } from "@/stores/instance";
 import { useNotificationsStore } from "@/stores/notifications";
 import { useConversationsStore } from "@/stores/conversations";
+import { useSearchStore } from "@/stores/search";
 
 const { t, locale } = useI18n();
 const route = useRoute();
@@ -25,6 +27,7 @@ const compose = useComposeStore();
 const instance = useInstanceStore();
 const notifications = useNotificationsStore();
 const conversations = useConversationsStore();
+const searchStore = useSearchStore();
 const { resolvedMode, toggle } = useTheme();
 
 const locales = [
@@ -70,6 +73,8 @@ watch(
   () => route.fullPath,
   () => (menuOpen.value = false),
 );
+
+watch(searchQuery, (q) => searchStore.suggest(q, 300, "layout"));
 
 interface MenuEntry extends NavItem {
   visible: boolean;
@@ -459,11 +464,34 @@ async function setLocale(code: string) {
 
 function search() {
   const q = searchQuery.value.trim();
-  if (q) void router.push({ name: "search", query: { q } });
+  if (!q) return;
+  searchStore.clearSuggestions();
+  void router.push({ name: "search", query: { q } });
 }
 
 const sidebarSearch = useTemplateRef<HTMLInputElement>("sidebarSearch");
 const asideSearch = useTemplateRef<HTMLInputElement>("asideSearch");
+const sidebarSuggestions =
+  useTemplateRef<InstanceType<typeof SearchSuggestions>>("sidebarSuggestions");
+const asideSuggestions =
+  useTemplateRef<InstanceType<typeof SearchSuggestions>>("asideSuggestions");
+
+function onSearchKeydown(which: "sidebar" | "aside", event: KeyboardEvent) {
+  if (event.key === "Enter") {
+    if (event.isComposing) return;
+    event.preventDefault();
+    search();
+    return;
+  }
+  if (!["ArrowDown", "ArrowUp", "Tab"].includes(event.key)) return;
+  const suggestions =
+    which === "sidebar" ? sidebarSuggestions.value : asideSuggestions.value;
+  const edge =
+    event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey)
+      ? "last"
+      : "first";
+  if (suggestions?.focusEdge(edge)) event.preventDefault();
+}
 
 function clearSearch(which: "sidebar" | "aside") {
   searchQuery.value = "";
@@ -492,6 +520,7 @@ function clearSearch(which: "sidebar" | "aside") {
           class="layout__search-input"
           :placeholder="t('nav.searchPlaceholder')"
           :aria-label="t('nav.search')"
+          @keydown="onSearchKeydown('sidebar', $event)"
         />
         <button
           v-if="searchQuery"
@@ -503,6 +532,7 @@ function clearSearch(which: "sidebar" | "aside") {
         >
           <FontAwesomeIcon icon="xmark" />
         </button>
+        <SearchSuggestions ref="sidebarSuggestions" owner="layout" />
       </form>
 
       <Button
@@ -620,6 +650,7 @@ function clearSearch(which: "sidebar" | "aside") {
           class="layout__search-input"
           :placeholder="t('nav.searchPlaceholder')"
           :aria-label="t('nav.search')"
+          @keydown="onSearchKeydown('aside', $event)"
         />
         <button
           v-if="searchQuery"
@@ -631,6 +662,7 @@ function clearSearch(which: "sidebar" | "aside") {
         >
           <FontAwesomeIcon icon="xmark" />
         </button>
+        <SearchSuggestions ref="asideSuggestions" owner="layout" />
       </form>
 
       <div class="layout__aside-footer">

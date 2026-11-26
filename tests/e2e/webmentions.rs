@@ -854,6 +854,36 @@ async fn interaction_backfeed() {
     assert!(html.contains("u-like-of"), "{html}");
     assert!(html.contains(&source), "{html}");
 
+    // The capture fires mid-delivery — the SDK writes the `confirmed`
+    // ledger row (`mark_sent`) only after the POST completes.
+    // Unfavouriting before that write races the retraction job against
+    // it: the retraction diffs the empty document against a ledger
+    // that has no row yet, retracts nothing, and no later job ever
+    // runs for this source — the retraction is lost permanently.
+    // Wait for the delivery job's final write so the retraction is
+    // enqueued strictly after the row exists.
+    let db = env.state.db.clone();
+    let like_source0 = like_source.clone();
+    let ledger_confirmed = wait_for(ASYNC_BUDGET, move || {
+        let db = db.clone();
+        let like_source = like_source0.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM webmentions WHERE source = $1 \
+                 AND direction = 'outgoing' AND status = 'confirmed')",
+            )
+            .bind(&like_source)
+            .fetch_one(&db)
+            .await
+            .unwrap_or(false)
+        }
+    })
+    .await;
+    assert!(
+        ledger_confirmed,
+        "like webmention not recorded as confirmed"
+    );
+
     // Unfavouriting retracts — the receiver is re-notified and the
     // ledger row is marked deleted.
     let (status, _, _) = request(
@@ -883,7 +913,26 @@ async fn interaction_backfeed() {
         }
     })
     .await;
-    assert!(retracted, "like webmention not retracted");
+    if !retracted {
+        let rows: Vec<(String, String, String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+            "SELECT source, target, status, updated_at FROM webmentions ORDER BY id",
+        )
+        .fetch_all(&env.state.db)
+        .await
+        .unwrap_or_default();
+        let fav: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM favourites WHERE account_id = $1 AND status_id = $2)",
+        )
+        .bind(my_account_id)
+        .bind(wm_reply_id)
+        .fetch_one(&env.state.db)
+        .await
+        .unwrap_or(true);
+        panic!(
+            "like webmention not retracted; ledger: {rows:?}; favourite still present: {fav}; captured: {:?}",
+            captured.lock().unwrap()
+        );
+    }
     cancel.cancel();
     worker.await.unwrap().unwrap();
 }

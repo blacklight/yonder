@@ -119,7 +119,7 @@ pub async fn enqueue(ctx: &PostContext, status: &StatusRow) {
     }
     if let Err(e) = ctx
         .dispatcher
-        .enqueue(JobKind::WebmentionOutgoing, json!({"status_id": status.id}))
+        .enqueue_no_dedupe(JobKind::WebmentionOutgoing, json!({"status_id": status.id}))
         .await
     {
         tracing::warn!(status_id = status.id, error = %e, "webmention outgoing enqueue failed");
@@ -204,7 +204,7 @@ pub async fn enqueue_like(ctx: &PostContext, status: &StatusRow, account_id: i64
     }
     if let Err(e) = ctx
         .dispatcher
-        .enqueue(
+        .enqueue_no_dedupe(
             JobKind::WebmentionOutgoing,
             json!({"like_status_id": status.id, "like_account_id": account_id}),
         )

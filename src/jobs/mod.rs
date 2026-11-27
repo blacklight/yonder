@@ -597,12 +597,26 @@ impl Dispatcher {
 
     /// Enqueue `kind` on its default queue.
     pub async fn enqueue(&self, kind: JobKind, payload: Value) -> Result<String> {
-        self.dispatch(kind.queue(), kind, payload, None).await
+        self.dispatch(kind.queue(), kind, payload, None, true).await
+    }
+
+    /// Enqueue `kind` on its default queue, skipping the remote dedupe
+    /// claim — for job kinds that re-derive their effect from current
+    /// state at execution time. Suppressing such an enqueue as a
+    /// duplicate loses the state transition it represents: the
+    /// in-flight job may have snapshotted state *before* the change
+    /// (a favourite retracted while its `like-of` delivery is still
+    /// running never retracts). Duplicate executions of these jobs
+    /// are benign — each run diffes current state against the ledger
+    /// and converges.
+    pub async fn enqueue_no_dedupe(&self, kind: JobKind, payload: Value) -> Result<String> {
+        self.dispatch(kind.queue(), kind, payload, None, false)
+            .await
     }
 
     /// Enqueue `kind` on `queue` explicitly.
     pub async fn enqueue_on(&self, queue: Queue, kind: JobKind, payload: Value) -> Result<String> {
-        self.dispatch(queue, kind, payload, None).await
+        self.dispatch(queue, kind, payload, None, true).await
     }
 
     /// Enqueue `kind` to fire no earlier than `delay` from now.
@@ -612,25 +626,26 @@ impl Dispatcher {
         payload: Value,
         delay: std::time::Duration,
     ) -> Result<String> {
-        self.dispatch(kind.queue(), kind, payload, Some(delay))
+        self.dispatch(kind.queue(), kind, payload, Some(delay), true)
             .await
     }
 
     /// Shared claim → push path for every enqueue variant. Remote
     /// queues first claim a dedupe slot for `(kind, payload)`; a held
     /// slot short-circuits to the existing job id. The claim is
-    /// released if the push itself fails.
+    /// released if the push itself fails. `dedupe` opts out of the
+    /// claim for state-deriving jobs (see [`Self::enqueue_no_dedupe`]).
     async fn dispatch(
         &self,
         queue: Queue,
         kind: JobKind,
         payload: Value,
         delay: Option<std::time::Duration>,
+        dedupe: bool,
     ) -> Result<String> {
         let mut envelope = JobEnvelope::new(kind, queue, payload, self.max_attempts);
-        let dedupe_key = queue
-            .is_remote()
-            .then(|| remote_dedupe_key(kind, &envelope.payload));
+        let dedupe_key =
+            (dedupe && queue.is_remote()).then(|| remote_dedupe_key(kind, &envelope.payload));
         if let Some(key) = dedupe_key {
             match self.claim_dedupe(&key, &envelope.id).await? {
                 DedupeClaim::Duplicate(id) => return Ok(id),

@@ -88,7 +88,7 @@ pub async fn receive(State(state): State<Arc<AppState>>, body: Bytes) -> Respons
 
     if let Err(e) = state
         .dispatcher
-        .enqueue(
+        .enqueue_no_dedupe(
             JobKind::WebmentionIncoming,
             json!({"source": source, "target": target}),
         )

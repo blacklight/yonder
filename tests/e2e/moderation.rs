@@ -173,6 +173,60 @@ async fn request(
     (status, headers, body)
 }
 
+/// Minimal multipart body: a `file` part plus optional text fields.
+fn multipart(file_name: &str, file: &[u8], fields: &[(&str, &str)]) -> (String, Vec<u8>) {
+    let boundary = "yondertestboundary";
+    let mut out = Vec::new();
+    for (name, value) in fields {
+        out.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    out.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; \
+             filename=\"{file_name}\"\r\nContent-Type: text/csv\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    out.extend_from_slice(file);
+    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (format!("multipart/form-data; boundary={boundary}"), out)
+}
+
+/// Raw response variant of [`request`] for multipart uploads and CSV downloads.
+async fn raw_request(
+    app: &Router,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    content_type: Option<&str>,
+    body: Vec<u8>,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let mut req = Request::builder().method(method).uri(path);
+    if let Some(t) = token {
+        req = req.header("authorization", format!("Bearer {t}"));
+    }
+    if let Some(ct) = content_type {
+        req = req.header("content-type", ct);
+    }
+    let resp = app
+        .clone()
+        .oneshot(req.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, headers, bytes)
+}
+
 fn job_ctx(env: &Env) -> JobContext {
     JobContext {
         db: env.state.db.clone(),
@@ -655,6 +709,160 @@ async fn domain_block_crud_and_public_listing() {
 
     assert_eq!(audit_count(&env, "domain_block.create").await, 2);
     assert_eq!(audit_count(&env, "domain_block.delete").await, 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn domain_block_csv_import_export() {
+    let _permit = harness::acquire().await;
+    let Some(env) = test_env(Config::default()).await else {
+        return;
+    };
+    let admin = register(&env.app, "root", "root@x.test").await;
+    make_role(&env, "root", "admin").await;
+
+    // An existing row is skipped by default, exactly like Mastodon's importer.
+    let (status, _, body) = request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/domain_blocks",
+        Some(&admin),
+        Some(json!({
+            "domain": "existing.example",
+            "severity": "silence",
+            "public_comment": "original",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let csv = "#domain,#severity,#reject_media,#reject_reports,#public_comment,#obfuscate\n\
+               new.example,suspend,true,false,\"spam, farm\",true\n\
+               existing.example,suspend,true,true,updated,true\n\
+               broken.example,wat,false,false,,false\n\
+               localhost,suspend,false,false,,false\n";
+    let (ct, upload) = multipart("blocks.csv", csv.as_bytes(), &[]);
+    let (status, _, body) = raw_request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/domain_blocks/import",
+        Some(&admin),
+        Some(&ct),
+        upload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["created"], 1);
+    assert_eq!(result["updated"], 0);
+    assert_eq!(result["skipped_existing"], 1);
+    // One unknown severity plus the attempt to block the instance itself.
+    assert_eq!(result["skipped_invalid"], 2);
+    assert_eq!(result["total_rows"], 4);
+    assert_eq!(result["errors"].as_array().unwrap().len(), 2);
+
+    let (_, _, blocks) = request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/domain_blocks",
+        Some(&admin),
+        None,
+    )
+    .await;
+    let rows = blocks.as_array().unwrap();
+    let existing = rows
+        .iter()
+        .find(|row| row["domain"] == "existing.example")
+        .unwrap();
+    assert_eq!(existing["severity"], "silence");
+    assert_eq!(existing["public_comment"], "original");
+    let imported = rows
+        .iter()
+        .find(|row| row["domain"] == "new.example")
+        .unwrap();
+    assert_eq!(imported["severity"], "suspend");
+    assert_eq!(imported["reject_media"], true);
+    assert_eq!(imported["public_comment"], "spam, farm");
+    assert_eq!(imported["obfuscate"], true);
+    assert!(!rows.iter().any(|row| row["domain"] == "localhost"));
+
+    // `overwrite=true` opts into upserting existing rows.
+    let overwrite_csv = "#domain,#severity,#public_comment\nexisting.example,suspend,updated\n";
+    let (ct, upload) = multipart(
+        "blocks.csv",
+        overwrite_csv.as_bytes(),
+        &[("overwrite", "true")],
+    );
+    let (status, _, body) = raw_request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/domain_blocks/import",
+        Some(&admin),
+        Some(&ct),
+        upload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["updated"], 1);
+
+    // Pleroma/Akkoma-style headerless domain lists default to suspend.
+    let (ct, upload) = multipart(
+        "list.txt",
+        b"plain.example\nhttps://Url.example/some/path\n",
+        &[],
+    );
+    let (status, _, body) = raw_request(
+        &env.app,
+        "POST",
+        "/api/v1/admin/domain_blocks/import",
+        Some(&admin),
+        Some(&ct),
+        upload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["created"], 2);
+    for domain in ["plain.example", "url.example"] {
+        let row: Option<Value> =
+            sqlx::query_scalar("SELECT severity FROM domain_blocks WHERE domain = $1")
+                .bind(domain)
+                .fetch_optional(&env.state.db)
+                .await
+                .unwrap()
+                .map(|severity: String| json!(severity));
+        assert_eq!(row, Some(json!("suspend")));
+    }
+
+    let (status, headers, body) = raw_request(
+        &env.app,
+        "GET",
+        "/api/v1/admin/domain_blocks/export",
+        Some(&admin),
+        None,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("content-type").unwrap(),
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(
+        headers.get("content-disposition").unwrap(),
+        "attachment; filename=\"domain_blocks.csv\""
+    );
+    let exported = String::from_utf8(body).unwrap();
+    assert!(exported.starts_with(
+        "#domain,#severity,#reject_media,#reject_reports,#public_comment,#obfuscate\n"
+    ));
+    assert!(exported.contains("existing.example,suspend,false,false,updated,false"));
+    assert!(exported.contains("new.example,suspend,true,false,\"spam, farm\",true"));
+    assert!(exported.contains("plain.example,suspend,false,false,,false"));
+    assert!(!exported.contains("broken.example"));
+    assert!(!exported.contains("localhost"));
+
+    assert_eq!(audit_count(&env, "domain_block.import").await, 3);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

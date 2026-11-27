@@ -53,6 +53,21 @@ process dies between the effect and the audit insert, the effect is
 not audited. Effects and audit rows are not in one transaction
 across the database, Redis and the job queue.
 
+## Domain block CSV
+
+The `/admin/domain-blocks` panel can export the current instance blocklist
+and import a CSV back. The wire endpoints are
+`GET /api/v1/admin/domain_blocks/export` and
+`POST /api/v1/admin/domain_blocks/import`; the CSV is Mastodon-compatible
+and also accepts the headerless domain lists commonly used with
+Pleroma/Akkoma. The same import is available to operators as
+`yonder domain-block import <PATH> [--overwrite]`. The panel can also
+fetch public limitations from another instance's `domain_blocks` endpoint —
+or Pleroma/Akkoma instance metadata — and lets the operator choose rows,
+severity and public reason in a modal before importing. See
+[moderation.md](moderation.md#instance-domain-blocks) for the exact format
+and merge semantics.
+
 ## Relays
 
 `GET`/`POST /api/v1/admin/relays`, `POST /api/v1/admin/relays/{id}/authorize`,

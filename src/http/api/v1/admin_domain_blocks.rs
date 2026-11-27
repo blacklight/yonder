@@ -13,7 +13,9 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
+    http::{header, HeaderMap, HeaderValue},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -22,7 +24,10 @@ use serde_json::{json, Value};
 use crate::{
     auth::scopes::require_scope,
     http::{middleware::auth::AuthContext, AppState},
-    moderation::blocks::{self, BlockRow, Severity},
+    moderation::{
+        blocks::{self, BlockRow, Severity},
+        csv as domain_csv,
+    },
     Error, Result,
 };
 
@@ -298,6 +303,105 @@ pub async fn delete_block(
     tx.commit().await?;
     blocks::refresh_blocked(&state).await?;
     Ok(Json(json!({})))
+}
+
+/// `GET /api/v1/admin/domain_blocks/export` — every block as a
+/// Mastodon-compatible CSV download.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/domain_blocks/export",
+    tag = "admin",
+    responses(
+        (status = 200, description = "Mastodon-compatible domain block CSV", content_type = "text/csv"),
+        (status = 403, description = "Admin role required", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn export_csv(State(state): State<Arc<AppState>>, auth: AuthContext) -> Result<Response> {
+    require_scope(&state.config(), &auth, "admin:read:domain_blocks")?;
+    let rows = blocks::list_export(&state.db).await?;
+    let bytes = domain_csv::export(&rows)?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/csv; charset=utf-8"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"domain_blocks.csv\""),
+    );
+    Ok((headers, bytes).into_response())
+}
+
+fn malformed_multipart(e: impl std::fmt::Display) -> Error {
+    Error::Validation(format!("malformed multipart: {e}"))
+}
+
+/// `POST /api/v1/admin/domain_blocks/import` — bulk-import a
+/// Mastodon-compatible CSV (`file` or `data` multipart field). Files
+/// exported by Mastodon v4.1+, headerless one-domain-per-line lists
+/// and common Pleroma/Akkoma blocklist spellings are accepted.
+/// Existing rows are skipped by default (Mastodon's behavior); pass
+/// `overwrite=true` to update them.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/domain_blocks/import",
+    tag = "admin",
+    request_body(
+        content = String,
+        description = "Multipart CSV upload: file (or data), optional overwrite boolean",
+        content_type = "multipart/form-data"
+    ),
+    responses(
+        (status = 200, description = "Import counters plus row-level validation errors"),
+        (status = 403, description = "Admin role required", body = crate::error::ErrorBody),
+        (status = 422, description = "Malformed CSV or multipart body", body = crate::error::ErrorBody),
+    )
+)]
+pub async fn import_csv(
+    State(state): State<Arc<AppState>>,
+    auth: AuthContext,
+    mut multipart: Multipart,
+) -> Result<Json<Value>> {
+    require_scope(&state.config(), &auth, "admin:write:domain_blocks")?;
+
+    let mut filename: Option<String> = None;
+    let mut upload: Option<Vec<u8>> = None;
+    let mut overwrite = false;
+    while let Some(field) = multipart.next_field().await.map_err(malformed_multipart)? {
+        match field.name().unwrap_or("") {
+            "file" | "data" => {
+                filename = field.file_name().map(str::to_owned);
+                upload = Some(field.bytes().await.map_err(malformed_multipart)?.to_vec());
+            }
+            "overwrite" => {
+                let value = field.text().await.map_err(malformed_multipart)?;
+                overwrite = domain_csv::parse_bool(&value).ok_or_else(|| {
+                    Error::Validation(format!("invalid overwrite boolean {value:?}"))
+                })?;
+            }
+            _ => {}
+        }
+    }
+    let bytes = upload.ok_or_else(|| Error::Validation("a CSV file field is required".into()))?;
+    if bytes.is_empty() {
+        return Err(Error::Validation("the CSV file is empty".into()));
+    }
+
+    let parsed = domain_csv::parse_import(&bytes)?;
+    let report = domain_csv::apply_import(
+        &state.db,
+        &state.config().instance.domain,
+        parsed,
+        overwrite,
+        filename.as_deref(),
+        auth.account_id,
+    )
+    .await?;
+    if report.mutated() {
+        blocks::refresh_blocked(&state).await?;
+    }
+
+    Ok(Json(report.json()))
 }
 
 /// Mastodon `Admin::DomainBlock` entity — `digest` is the SHA-256 of

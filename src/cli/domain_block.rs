@@ -1,10 +1,11 @@
-//! `yonder domain-block` — instance moderation CRUD over the shared
-//! `moderation::blocks` service, mirroring the HTTP admin handler's
+//! `yonder domain-block` — instance moderation CRUD and CSV import over
+//! the shared moderation services, mirroring the HTTP admin handler's
 //! transaction and audit shape exactly (`domain_block.create` /
-//! `.update` / `.delete`). `private_comment` is moderation-internal
-//! and never leaves the process.
+//! `.update` / `.delete` / `.import`). `private_comment` is
+//! moderation-internal and never leaves the process.
 
-use std::path::Path;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 use clap::Subcommand;
 use serde_json::{json, Value};
@@ -13,6 +14,7 @@ use crate::{
     moderation::{
         audit,
         blocks::{self, Severity},
+        csv as domain_csv,
         domain::normalize_domain,
     },
     Error, Result,
@@ -48,6 +50,19 @@ pub enum DomainBlockCommand {
         private_comment: Option<String>,
         /// Skip the confirmation prompt (required for --severity
         /// suspend in non-interactive use).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Bulk-import domain blocks from a Mastodon-compatible CSV file.
+    /// Existing blocks are skipped unless --overwrite is passed.
+    Import {
+        /// CSV file to import (Mastodon/Pleroma/Akkoma-compatible).
+        path: PathBuf,
+        /// Update existing blocks instead of skipping them.
+        #[arg(long)]
+        overwrite: bool,
+        /// Skip the confirmation prompt for files containing suspend
+        /// rows (or --overwrite).
         #[arg(long)]
         yes: bool,
     },
@@ -113,6 +128,11 @@ pub async fn run(
             )
             .await
         }
+        DomainBlockCommand::Import {
+            path: import_path,
+            overwrite,
+            yes,
+        } => import(path, &import_path, overwrite, yes, out, actor).await,
         DomainBlockCommand::Remove { domain, yes } => remove(path, &domain, yes, out, actor).await,
         DomainBlockCommand::List { limit } => list(path, limit, out).await,
     }
@@ -201,6 +221,101 @@ async fn add(
         out.emit_human(&format!(
             "{verb} {} ({})",
             entity["domain"], entity["severity"]
+        ))?;
+    }
+    Ok(0)
+}
+
+async fn import(
+    path: Option<&Path>,
+    import_path: &Path,
+    overwrite: bool,
+    yes: bool,
+    out: &Output,
+    actor: Option<&str>,
+) -> Result<u8> {
+    let ctx = context::load_runtime(path, true).await?;
+    let max_bytes = ctx.config.admin.max_import_size;
+    let mut bytes = Vec::new();
+    std::fs::File::open(import_path)?
+        .take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(Error::Validation(format!(
+            "CSV file exceeds the admin.max_import_size cap of {max_bytes} bytes",
+        )));
+    }
+    if bytes.is_empty() {
+        return Err(Error::Validation("the CSV file is empty".into()));
+    }
+    let parsed = domain_csv::parse_import(&bytes)?;
+
+    let suspend_rows = parsed
+        .rows
+        .iter()
+        .filter(|row| row.severity == Severity::Suspend)
+        .count();
+    let mut details = Vec::new();
+    if suspend_rows > 0 {
+        details.push(format!(
+            "{suspend_rows} suspend row{}",
+            if suspend_rows == 1 { "" } else { "s" }
+        ));
+    }
+    if overwrite && !parsed.rows.is_empty() {
+        details.push("overwriting existing blocks".to_string());
+    }
+    let details = details.join(", ");
+    if !details.is_empty()
+        && !confirm::confirm(
+            &format!(
+                "import {} domain block rows from {} ({details})?",
+                parsed.rows.len(),
+                import_path.display(),
+            ),
+            yes,
+        )?
+    {
+        return confirm::declined(out);
+    }
+
+    let actor = context::resolve_actor(&ctx.pool, actor).await?;
+    let report = domain_csv::apply_import(
+        &ctx.pool,
+        &ctx.config.instance.domain,
+        parsed,
+        overwrite,
+        import_path.file_name().and_then(|name| name.to_str()),
+        actor.account_id,
+    )
+    .await?;
+    if report.mutated() {
+        blocks::refresh_blocked(&ctx.state).await?;
+    }
+
+    if out.json_mode() {
+        out.emit_json(&report.json())?;
+        return Ok(0);
+    }
+    out.emit_human(&format!(
+        "import finished: created {}, updated {}, skipped {} existing, {} invalid, {} duplicates ({} rows)",
+        report.created,
+        report.updated,
+        report.skipped_existing,
+        report.skipped_invalid,
+        report.duplicates,
+        report.total_rows,
+    ))?;
+    for issue in report.errors.iter().take(10) {
+        out.emit_human(&format!(
+            "line {}: {} — {}",
+            issue.line, issue.domain, issue.error
+        ))?;
+    }
+    if report.errors.len() > 10 {
+        out.emit_human(&format!(
+            "… and {} more row errors",
+            report.errors.len() - 10
         ))?;
     }
     Ok(0)

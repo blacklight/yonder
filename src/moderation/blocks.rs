@@ -93,6 +93,12 @@ fn block_row(r: &sqlx::postgres::PgRow) -> BlockRow {
 
 const BLOCK_COLS: &str = "id, domain, severity, reject_media, reject_reports, obfuscate, \
      private_comment, public_comment, created_by_account_id, created_at";
+const INSERT_BLOCK: &str = concat!(
+    "INSERT INTO domain_blocks ",
+    "(domain, severity, reject_media, reject_reports, obfuscate, ",
+    "private_comment, public_comment, created_by_account_id) ",
+    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+);
 
 /// Create or update the block for `domain` (already normalized).
 /// Returns the stored row. `db` is any sqlx executor — the routes
@@ -114,15 +120,77 @@ pub async fn upsert<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    write(
+        db,
+        domain,
+        severity,
+        reject_media,
+        reject_reports,
+        obfuscate,
+        private_comment,
+        public_comment,
+        created_by,
+        true,
+    )
+    .await?
+    .ok_or_else(|| Error::Internal("domain block upsert returned no row".into()))
+}
+
+/// Insert a block without touching an existing row. `None` means the
+/// domain was already blocked — important for additive bulk imports,
+/// where a pre-check alone cannot close the insert race.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert<'e, E>(
+    db: E,
+    domain: &str,
+    severity: Severity,
+    reject_media: bool,
+    reject_reports: bool,
+    obfuscate: bool,
+    private_comment: &str,
+    public_comment: &str,
+    created_by: i64,
+) -> Result<Option<BlockRow>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    write(
+        db,
+        domain,
+        severity,
+        reject_media,
+        reject_reports,
+        obfuscate,
+        private_comment,
+        public_comment,
+        created_by,
+        false,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn write<'e, E>(
+    db: E,
+    domain: &str,
+    severity: Severity,
+    reject_media: bool,
+    reject_reports: bool,
+    obfuscate: bool,
+    private_comment: &str,
+    public_comment: &str,
+    created_by: i64,
+    update_on_conflict: bool,
+) -> Result<Option<BlockRow>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     if domain.is_empty() {
         return Err(Error::Validation("invalid domain".into()));
     }
-    let row = sqlx::query(&format!(
-        "INSERT INTO domain_blocks \
-             (domain, severity, reject_media, reject_reports, obfuscate, \
-              private_comment, public_comment, created_by_account_id) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) \
-         ON CONFLICT (domain) DO UPDATE SET \
+    let sql = if update_on_conflict {
+        format!(
+            "{INSERT_BLOCK} ON CONFLICT (domain) DO UPDATE SET \
              severity = EXCLUDED.severity, \
              reject_media = EXCLUDED.reject_media, \
              reject_reports = EXCLUDED.reject_reports, \
@@ -130,19 +198,23 @@ where
              private_comment = EXCLUDED.private_comment, \
              public_comment = EXCLUDED.public_comment, \
              updated_at = now() \
-         RETURNING {BLOCK_COLS}"
-    ))
-    .bind(domain)
-    .bind(severity.as_str())
-    .bind(reject_media)
-    .bind(reject_reports)
-    .bind(obfuscate)
-    .bind(private_comment)
-    .bind(public_comment)
-    .bind(created_by)
-    .fetch_one(db)
-    .await?;
-    Ok(block_row(&row))
+             RETURNING {BLOCK_COLS}"
+        )
+    } else {
+        format!("{INSERT_BLOCK} ON CONFLICT (domain) DO NOTHING RETURNING {BLOCK_COLS}")
+    };
+    let row = sqlx::query(&sql)
+        .bind(domain)
+        .bind(severity.as_str())
+        .bind(reject_media)
+        .bind(reject_reports)
+        .bind(obfuscate)
+        .bind(private_comment)
+        .bind(public_comment)
+        .bind(created_by)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.as_ref().map(block_row))
 }
 
 /// Load a block by normalized domain.
@@ -232,6 +304,18 @@ pub async fn list(
     .bind(max_id)
     .bind(since_id)
     .bind(limit)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.iter().map(block_row).collect())
+}
+
+/// Every block oldest-first, for backup-style CSV export. Unlike the
+/// paginated admin listing this is intentionally unbounded — exports
+/// must not silently truncate at a UI page size.
+pub async fn list_export(db: &PgPool) -> Result<Vec<BlockRow>> {
+    let rows = sqlx::query(&format!(
+        "SELECT {BLOCK_COLS} FROM domain_blocks ORDER BY id ASC"
+    ))
     .fetch_all(db)
     .await?;
     Ok(rows.iter().map(block_row).collect())

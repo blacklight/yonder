@@ -81,6 +81,41 @@ Admin CRUD (admin role only): `POST/GET /api/v1/admin/domain_blocks`,
 names exactly, `digest` = SHA-256 of the domain. POST upserts on the
 normalized domain (`https://Example.com:443/x` == `example.com`).
 
+Bulk transfer is available at `GET /api/v1/admin/domain_blocks/export`
+and `POST /api/v1/admin/domain_blocks/import` (multipart `file` or
+`data`). Export uses Mastodon v4.1+'s exact CSV header:
+`#domain,#severity,#reject_media,#reject_reports,#public_comment,#obfuscate`.
+Private comments stay staff-internal and are not exported. Imports accept
+that shape, unprefixed equivalents (`domain,severity,...`) with an optional
+`private_comment` column, and headerless one-domain-per-line lists of the
+kind commonly shared for Pleroma/Akkoma. Headerless rows default to
+`suspend`; the Akkoma/Pleroma `reject` severity alias also maps to
+`suspend`, while `limit` maps to `silence`. Existing domains are skipped
+unless the multipart `overwrite=true` field is sent — imports are
+additive by default. The same service backs
+`yonder domain-block import <PATH> [--overwrite]` for operators; the CLI
+uses `--yes` for non-interactive confirmation when a file contains suspend
+rows or `--overwrite` is passed. Invalid rows are reported in the response
+without aborting valid rows, rows are capped at 20,000 (Mastodon's limit)
+and `admin.max_import_size` bounds uploads, and the batch is atomic for
+the valid rows.
+Imports that create or update rows write one aggregate
+`domain_block.import` audit row.
+
+The `/admin/domain-blocks` panel can also import the public limitations of
+another instance directly in the browser. It first tries the remote
+`GET /api/v1/instance/domain_blocks` endpoint and falls back to the
+Pleroma/Akkoma federation transparency metadata in `GET /api/v1/instance`
+(`reject` maps to `suspend`, `federated_timeline_removal` to `silence`).
+Retrieved entries open in a selection modal, selected by default, where the
+operator can select or deselect rows, keep each remote severity or force one
+severity for the import, and either keep the remote reasons or enter one
+custom public reason for all selected rows. The browser then submits the
+selection through the same bulk CSV import path (with the source instance
+recorded in the private note), so existing rows are skipped unless overwrite
+is enabled. This discovery only works when the remote instance publishes its
+blocks and allows browser access to those public API endpoints.
+
 Public listing `GET /api/v1/instance/domain_blocks` returns domain
 (obfuscated when marked), severity and `public_comment`; gated by
 `instance.expose_moderated_instances` (default `true`) → 404 when off.

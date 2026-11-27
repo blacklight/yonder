@@ -61,6 +61,9 @@ yonder user require-reset <username>
 yonder domain-block add <DOMAIN> [--severity noop|silence|suspend]
       [--reject-media] [--reject-reports] [--obfuscate]
       [--public-comment S] [--private-comment S] [--yes]
+yonder domain-block import <PATH> [--overwrite] [--yes]
+                                   # Mastodon/Pleroma/Akkoma CSV; existing
+                                   # blocks are skipped unless --overwrite
 yonder domain-block remove <DOMAIN> [--yes]
 yonder domain-block list [--limit N]
 
@@ -130,7 +133,9 @@ whether federation and the in-process worker are on. It bypasses
   overlay exits 0 with a notice.
 - **Destructive commands** (`user delete`, `disable-2fa`,
   `domain-block remove`, `domain-block add --severity suspend`,
-  `relay remove`, `frontend remove`) prompt on a TTY; without
+  `domain-block import` when the file contains suspend rows or
+  `--overwrite` is passed, `relay remove`, `frontend remove`) prompt
+  on a TTY; without
   `--yes` and a TTY they refuse before mutating (exit 4).
 - **`--actor`** is audit attribution, not authorization — the CLI
   assumes host/DB-level access. Mutating commands need a real actor:

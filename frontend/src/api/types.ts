@@ -895,6 +895,50 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/admin/domain_blocks/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * `GET /api/v1/admin/domain_blocks/export` — every block as a
+     *     Mastodon-compatible CSV download.
+     */
+    get: operations["export_csv"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/admin/domain_blocks/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * `POST /api/v1/admin/domain_blocks/import` — bulk-import a
+     *     Mastodon-compatible CSV (`file` or `data` multipart field). Files
+     *     exported by Mastodon v4.1+, headerless one-domain-per-line lists
+     *     and common Pleroma/Akkoma blocklist spellings are accepted.
+     *     Existing rows are skipped by default (Mastodon's behavior); pass
+     *     `overwrite=true` to update them.
+     */
+    post: operations["import_csv"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/admin/domain_blocks/{id}": {
     parameters: {
       query?: never;
@@ -6595,6 +6639,76 @@ export interface operations {
         };
       };
       /** @description Invalid domain or severity */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  export_csv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Mastodon-compatible domain block CSV */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/csv": unknown;
+        };
+      };
+      /** @description Admin role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+    };
+  };
+  import_csv: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** @description Multipart CSV upload: file (or data), optional overwrite boolean */
+    requestBody: {
+      content: {
+        "multipart/form-data": string;
+      };
+    };
+    responses: {
+      /** @description Import counters plus row-level validation errors */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Admin role required */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ErrorBody"];
+        };
+      };
+      /** @description Malformed CSV or multipart body */
       422: {
         headers: {
           [name: string]: unknown;

@@ -271,6 +271,21 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
             post(admin_domain_blocks::create).get(admin_domain_blocks::list),
         )
         .route(
+            "/api/v1/admin/domain_blocks/export",
+            get(admin_domain_blocks::export_csv),
+        )
+        .route(
+            "/api/v1/admin/domain_blocks/import",
+            post(admin_domain_blocks::import_csv)
+                // 20k rows plus comments need more than axum's 2 MiB
+                // multipart default; reuse the admin import cap plus
+                // multipart framing overhead.
+                .route_layer(DefaultBodyLimit::disable())
+                .route_layer(tower_http::limit::RequestBodyLimitLayer::new(
+                    state.config().admin.max_import_size as usize + 64 * 1024,
+                )),
+        )
+        .route(
             "/api/v1/admin/domain_blocks/{id}",
             get(admin_domain_blocks::show)
                 .patch(admin_domain_blocks::update)
@@ -1224,6 +1239,8 @@ pub fn router(state: &Arc<AppState>) -> Router<Arc<AppState>> {
     admin_domain_blocks::show,
     admin_domain_blocks::update,
     admin_domain_blocks::delete_block,
+    admin_domain_blocks::export_csv,
+    admin_domain_blocks::import_csv,
     events::event_ics,
     events::event_rsvp,
     events::event_invitees,

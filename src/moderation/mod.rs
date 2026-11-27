@@ -9,6 +9,7 @@
 pub mod actions;
 pub mod audit;
 pub mod blocks;
+pub mod csv;
 pub mod domain;
 pub mod reports;
 

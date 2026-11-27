@@ -557,6 +557,106 @@ async fn domain_block_and_relay() {
     );
     assert_eq!(code(&out), 3);
 
+    let import_path = sb.dir.join("blocks.csv");
+    let import_arg = import_path.to_string_lossy().to_string();
+    std::fs::write(
+        &import_path,
+        "#domain,#severity,#reject_media,#reject_reports,#public_comment,#obfuscate\n\
+         csv-one.example,silence,false,false,quiet,false\n\
+         csv-two.example,suspend,true,false,spam,true\n",
+    )
+    .unwrap();
+    let out = yonder(
+        &sb,
+        &[
+            "--actor",
+            "admin",
+            "domain-block",
+            "import",
+            &import_arg,
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 4);
+
+    let out = yonder(
+        &sb,
+        &[
+            "--actor",
+            "admin",
+            "domain-block",
+            "import",
+            &import_arg,
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let report = stdout_json(&out);
+    assert_eq!(report["created"], 2);
+    assert_eq!(report["updated"], 0);
+    assert_eq!(report["total_rows"], 2);
+
+    std::fs::write(
+        &import_path,
+        "#domain,#severity,#reject_media,#reject_reports,#public_comment,#obfuscate\n\
+         csv-one.example,suspend,true,false,now spam,true\n\
+         csv-two.example,suspend,true,false,spam,true\n",
+    )
+    .unwrap();
+    let out = yonder(
+        &sb,
+        &[
+            "--actor",
+            "admin",
+            "domain-block",
+            "import",
+            &import_arg,
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let report = stdout_json(&out);
+    assert_eq!(report["created"], 0);
+    assert_eq!(report["updated"], 0);
+    assert_eq!(report["skipped_existing"], 2);
+    let out = yonder(&sb, &["domain-block", "list", "--json"]);
+    let blocks = stdout_json(&out);
+    let csv_one = blocks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["domain"] == "csv-one.example")
+        .unwrap();
+    assert_eq!(csv_one["severity"], "silence");
+
+    let out = yonder(
+        &sb,
+        &[
+            "--actor",
+            "admin",
+            "domain-block",
+            "import",
+            &import_arg,
+            "--overwrite",
+            "--yes",
+            "--json",
+        ],
+    );
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let report = stdout_json(&out);
+    assert_eq!(report["updated"], 2);
+    let out = yonder(&sb, &["domain-block", "list", "--json"]);
+    let blocks = stdout_json(&out);
+    let csv_one = blocks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["domain"] == "csv-one.example")
+        .unwrap();
+    assert_eq!(csv_one["severity"], "suspend");
+
     // Relays.
     let out = yonder(
         &sb,
